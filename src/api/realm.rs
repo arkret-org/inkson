@@ -425,7 +425,7 @@ impl CokretApi {
             );
         }
         let envelope =
-            crate::operation::cx_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)
+            crate::operation::ck_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)?
                 .build("yougen");
         self.submit_event_envelope(&envelope).await
     }
@@ -441,7 +441,7 @@ impl CokretApi {
         patch: Value,
     ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
-            crate::operation::cx_ops::space_update_patch(realm_id, actor_id, space_id, patch)
+            crate::operation::ck_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
                 .build("yougen");
         self.submit_event_envelope(&envelope).await
     }
@@ -536,7 +536,7 @@ impl CokretApi {
         let invitee = self
             .resolve_invitee_for_invite(target, realm_id, actor_id)
             .await?;
-        let envelope = crate::operation::cx_ops::invite_create_structured(
+        let envelope = crate::operation::ck_ops::invite_create_structured(
             realm_id,
             actor_id,
             invite_id,
@@ -544,7 +544,7 @@ impl CokretApi {
             role,
             invitee.invite_delivery_target,
             &invitee.introduction_evidence_digest,
-        )
+        )?
         .build("yougen");
         self.submit_event_envelope(&envelope).await
     }
@@ -557,7 +557,8 @@ impl CokretApi {
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
-            crate::operation::cx_ops::invite_accept(realm_id, actor_id, invite_id).build("yougen");
+            crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?
+                .build("yougen");
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::model::RealmJoinMethod::InviteAccept)?;
@@ -619,7 +620,7 @@ impl CokretApi {
         reason: Option<&str>,
     ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
-            crate::operation::cx_ops::invite_cancel(realm_id, actor_id, invite_id, reason)
+            crate::operation::ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?
                 .build("yougen");
         self.submit_event_envelope(&envelope).await
     }
@@ -741,38 +742,28 @@ impl CokretApi {
             .await
     }
 
-    // ── Policy (signed decisions) ───────────────────────────────────
-
-    pub async fn policy_check(
-        &self,
-        actor: &str,
-        action: &str,
-        resource: &str,
-    ) -> anyhow::Result<PolicyCheckOutcome> {
-        self.post_json(
-            "_cokret/self/policy/check",
-            json!({"actor_id": actor, "action": action, "resource": resource}),
-        )
-        .await
-    }
-
     /// Resolve the current anchor head for `realm_id` to be stamped onto
-    /// outgoing reducer-input events as `anchor_ref`. Wraps
-    /// `GET /_cokret/self/snapshot/head?realm_id=...` and returns the
-    /// `ck:anchor:sha256:<hex>` ref the server projects as the realm's
-    /// head.
+    /// outgoing reducer-input events as `anchor_ref`.
+    ///
+    /// Spec resolution (2026-06-11, `renames.json` migration group
+    /// `snapshot_head_returns_manifest`): `ck.self.snapshot.head` returns
+    /// the full signed `ck.schema.snapshot.v1` manifest, which carries no
+    /// `ck:anchor:sha256:<hex>` head — the legacy `SnapshotHeadState`
+    /// pointer DTO (whose `snapshot_ref` doubled as the anchor head) is
+    /// hard-rejected on current wire. Until anchor-head sourcing is
+    /// re-specified for clients, fail closed instead of fabricating an
+    /// `anchor_ref`. soland currently fails closed earlier with
+    /// `not_implemented` on the operation, so the post-decode branch is
+    /// unreachable against current servers either way.
     pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
-        let response = self.snapshot_head(realm_id).await?;
-        // Soland projects the head as a snapshot_ref in the form
-        // `ck:anchor:sha256:<hex>` (matches event-envelope.schema.json
-        // $defs/anchor_ref). Trust the server's wire shape and return
-        // it verbatim — fail closed if the field is empty so an
-        // upstream bug shows up locally before the wire round-trip.
-        if response.snapshot_ref.is_empty() {
-            anyhow::bail!(
-                "snapshot-head for {realm_id} returned an empty snapshot_ref \u{2014} cannot stamp anchor_ref"
-            );
-        }
-        Ok(response.snapshot_ref)
+        let manifest = self.snapshot_head(realm_id).await?;
+        let manifest_id = manifest
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        anyhow::bail!(
+            "ck.self.snapshot.head for {realm_id} returned snapshot manifest `{manifest_id}`, \
+             which carries no anchor head \u{2014} cannot stamp anchor_ref"
+        );
     }
 }

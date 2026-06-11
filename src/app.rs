@@ -5670,12 +5670,9 @@ fn persist_realm_surface_preference(
     );
 }
 
-fn default_flow_id_for_realm(realm_id: &str) -> String {
-    realm_id
-        .strip_prefix("ck:realm:")
-        .map(|suffix| format!("ck:flow:{suffix}"))
-        .unwrap_or_else(|| realm_id.to_owned())
-}
+// YOU-05-009: the main-flow id derivation is a protocol mapping rule; the
+// single authoritative copy lives in `crate::local_state`.
+use crate::local_state::default_flow_id_for_realm;
 
 fn resolve_realm_surface(
     route: &Route,
@@ -7118,8 +7115,10 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 };
                 match events_result {
                     Ok(events) => {
-                        if let Some(frontier) = frontier_label(&events.frontier) {
-                            frontier_state.set(frontier);
+                        // Spec `ServiceDescribe.frontier` is a typed
+                        // EventId list; surface the first head.
+                        if let Some(frontier) = events.frontier.first() {
+                            frontier_state.set(frontier.to_string());
                         }
                     }
                     Err(error) if is_auth_expired_error(&error) => {
@@ -7214,20 +7213,6 @@ pub fn merge_timeline_events(
         }
     }
     merged
-}
-
-fn frontier_label(frontier: &serde_json::Value) -> Option<String> {
-    if let Some(items) = frontier.as_array() {
-        return items
-            .iter()
-            .filter_map(|item| item.as_str())
-            .next()
-            .map(ToOwned::to_owned);
-    }
-    frontier
-        .as_str()
-        .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned)
 }
 
 #[cfg(test)]
@@ -7386,15 +7371,9 @@ mod tests {
         ));
     }
 
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn isolated_store(tag: &str) -> LocalStateStore {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("yougen-app-{tag}-{stamp}.json"));
-        LocalStateStore::with_path(path)
-    }
+    use crate::local_state::isolated_store_for_tests as isolated_store;
 
     #[test]
     fn boot_session_token_uses_fresh_oidc_access_token() {

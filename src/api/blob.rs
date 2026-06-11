@@ -37,14 +37,76 @@ impl CokretApi {
         .await
     }
 
-    pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadOutcome> {
+    /// YOU-01-007 — build the spec `blob_upload_request_body`
+    /// multipart/form-data form for `POST /_cokret/self/blob/upload`.
+    /// Spec form fields (additionalProperties: false): `content`
+    /// (binary, required), `size_bytes` (required), `realm_id`,
+    /// `content_digest`, `media_type`, `filename`, `purpose`. The
+    /// former raw-body + private `x-cokret-*` header wire shape is
+    /// gone; metadata that has no spec form field (e.g. the encrypted
+    /// attachment envelope) travels in the referencing event payload,
+    /// never on the upload.
+    fn blob_upload_form(
+        bytes: Vec<u8>,
+        media_type: &str,
+        realm_id: Option<&str>,
+        content_digest: Option<&str>,
+        filename: Option<&str>,
+        purpose: Option<&str>,
+    ) -> anyhow::Result<reqwest::multipart::Form> {
+        let media_type = if media_type.trim().is_empty() {
+            "application/octet-stream"
+        } else {
+            media_type.trim()
+        };
+        let size_bytes = bytes.len();
+        let mut content = reqwest::multipart::Part::bytes(bytes)
+            .mime_str(media_type)
+            .map_err(|err| anyhow::anyhow!("invalid media_type for blob upload: {err}"))?;
+        if let Some(filename) = filename {
+            content = content.file_name(filename.to_owned());
+        }
+        let mut form = reqwest::multipart::Form::new()
+            .part("content", content)
+            .text("size_bytes", size_bytes.to_string())
+            .text("media_type", media_type.to_owned());
+        if let Some(realm_id) = realm_id.map(str::trim).filter(|value| !value.is_empty()) {
+            form = form.text("realm_id", realm_id.to_owned());
+        }
+        if let Some(content_digest) = content_digest {
+            form = form.text("content_digest", content_digest.to_owned());
+        }
+        if let Some(filename) = filename {
+            form = form.text("filename", filename.to_owned());
+        }
+        if let Some(purpose) = purpose {
+            form = form.text("purpose", purpose.to_owned());
+        }
+        Ok(form)
+    }
+
+    async fn post_blob_upload_form(
+        &self,
+        form: reqwest::multipart::Form,
+    ) -> anyhow::Result<BlobUploadOutcome> {
         let request = self
             .http
             .post(self.endpoint("_cokret/self/blob/upload")?)
-            .header("content-type", "application/octet-stream")
-            .body(bytes);
+            .multipart(form);
         self.send_json(self.prepare_request(request), Method::POST)
             .await
+    }
+
+    pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadOutcome> {
+        let form = Self::blob_upload_form(
+            bytes.to_vec(),
+            "application/octet-stream",
+            None,
+            None,
+            None,
+            None,
+        )?;
+        self.post_blob_upload_form(form).await
     }
 
     /// Owned-bytes variant of [`upload_blob`] used by the composer
@@ -74,24 +136,16 @@ impl CokretApi {
         realm_id: Option<&str>,
         filename: Option<&str>,
     ) -> anyhow::Result<BlobUploadOutcome> {
-        let content_type = if content_type.trim().is_empty() {
-            "application/octet-stream"
-        } else {
-            content_type
-        };
-        let mut request = self
-            .http
-            .post(self.endpoint("_cokret/self/blob/upload")?)
-            .header("content-type", content_type)
-            .body(bytes);
-        if let Some(realm_id) = realm_id.filter(|value| !value.trim().is_empty()) {
-            request = request.header("x-cokret-realm-id", realm_id.trim());
-        }
-        if let Some(filename) = filename.and_then(safe_blob_filename_header) {
-            request = request.header("x-cokret-filename", filename);
-        }
-        self.send_json(self.prepare_request(request), Method::POST)
-            .await
+        let filename = filename.and_then(safe_blob_filename_header);
+        let form = Self::blob_upload_form(
+            bytes,
+            content_type,
+            realm_id,
+            None,
+            filename.as_deref(),
+            None,
+        )?;
+        self.post_blob_upload_form(form).await
     }
 
     pub async fn upload_encrypted_mls_attachment_asset(
@@ -99,21 +153,19 @@ impl CokretApi {
         realm_id: &str,
         asset: &crate::blob::EncryptedClientAsset,
     ) -> anyhow::Result<BlobUploadOutcome> {
-        // The envelope is now the SDK's canonical `EncryptedAttachmentEnvelope`
-        // (spec `blob.schema.json#/$defs/encrypted_attachment` wire shape), not
-        // the old private `cokret.encrypted_attachment.v1` JSON.
-        let envelope = serde_json::to_string(&asset.envelope)?;
-        let request = self
-            .http
-            .post(self.endpoint("_cokret/self/blob/upload")?)
-            .header("content-type", crate::blob::CIPHERTEXT_MEDIA_TYPE)
-            .header("x-cokret-realm-id", realm_id)
-            .header("x-cokret-blob-encrypted", "true")
-            .header("x-cokret-attachment-envelope", envelope)
-            .header("x-cokret-content-digest", asset.ciphertext_digest())
-            .body(asset.ciphertext.clone());
-        self.send_json(self.prepare_request(request), Method::POST)
-            .await
+        // The ciphertext travels as the opaque multipart `content` part.
+        // The SDK's canonical `EncryptedAttachmentEnvelope` does NOT ride
+        // on the upload (the spec form has no field for it); it travels
+        // alongside the blob_ref in the referencing message payload.
+        let form = Self::blob_upload_form(
+            asset.ciphertext.clone(),
+            crate::blob::CIPHERTEXT_MEDIA_TYPE,
+            Some(realm_id),
+            Some(&asset.ciphertext_digest()),
+            None,
+            None,
+        )?;
+        self.post_blob_upload_form(form).await
     }
 
     pub async fn upload_file_transfer_ciphertext(
@@ -121,16 +173,15 @@ impl CokretApi {
         ciphertext: Vec<u8>,
         content_digest: &str,
     ) -> anyhow::Result<BlobUploadOutcome> {
-        let request = self
-            .http
-            .post(self.endpoint("_cokret/self/blob/upload")?)
-            .header("content-type", crate::blob::CIPHERTEXT_MEDIA_TYPE)
-            .header("x-cokret-blob-encrypted", "true")
-            .header("x-cokret-blob-purpose", "file_transfer")
-            .header("x-cokret-content-digest", content_digest)
-            .body(ciphertext);
-        self.send_json(self.prepare_request(request), Method::POST)
-            .await
+        let form = Self::blob_upload_form(
+            ciphertext,
+            crate::blob::CIPHERTEXT_MEDIA_TYPE,
+            None,
+            Some(content_digest),
+            None,
+            Some("file_transfer"),
+        )?;
+        self.post_blob_upload_form(form).await
     }
 
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {

@@ -3,10 +3,9 @@ use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
 use serde_json::{Value, json};
 
-use crate::hlc::Hlc;
 use crate::local_state::{LocalStateStore, MoveSubmissionState};
 use crate::models::RealmTreeNodeKind;
-use crate::operation::cx_ops;
+use crate::operation::ck_ops;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -37,7 +36,7 @@ const MEMBER_SEARCH_THRESHOLD: usize = 8;
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to
-// ck.self.events.submit via the cx_ops::* event builders. The original
+// ck.self.events.submit via the ck_ops::* event builders. The original
 // helpers (and their tests) are preserved in git history.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -707,7 +706,7 @@ pub fn RealmMembersPanel(
                                                         .handle
                                                         .clone()
                                                         .unwrap_or_else(|| invitee.did.clone());
-                                                    let op = cx_ops::invite_create_structured(
+                                                    let op = match ck_ops::invite_create_structured(
                                                         &realm,
                                                         &actor,
                                                         &invite_id,
@@ -715,8 +714,13 @@ pub fn RealmMembersPanel(
                                                         None,
                                                         invitee.invite_delivery_target.clone(),
                                                         &invitee.introduction_evidence_digest,
-                                                    )
-                                                    .build("yougen");
+                                                    ) {
+                                                        Ok(builder) => builder.build("yougen"),
+                                                        Err(err) => {
+                                                            status_msg.set(format!("invite failed: {err:#}"));
+                                                            return;
+                                                        }
+                                                    };
                                                     let op_id = op.local_operation_id().to_owned();
                                                     status_msg.set(format!(
                                                         "submitting invite for {}",
@@ -1489,17 +1493,12 @@ pub fn RealmAdminPanel(
     // that's in a failed state stores its move_id here; the detail block
     // below renders the reason / anchor_ref.
     let mut move_detail_open = use_signal(|| Option::<String>::None);
-    // Conflict-repair dialog state. Surfaces when the local projection
-    // has bottom=expose cells; the operator picks two of the conflicting
-    // heads + a recovery capability ref and submits a head_in repair
-    // Move.
-    let mut repair_target_cell = use_signal(String::new);
-    let mut repair_head_a = use_signal(String::new);
-    let mut repair_head_b = use_signal(String::new);
-    let mut repair_capability_ref = use_signal(|| "cap.recovery-01".to_owned());
-    let mut repair_state_witness_ref = use_signal(String::new);
-    let mut repair_inclusion_proof_ref = use_signal(String::new);
-    let mut repair_winner_json = use_signal(String::new);
+    // YOU-01-011: the former conflict-repair submit dialog was removed —
+    // `ck.conflict.repair` is not in the spec event-kind-registry (186
+    // kinds, no conflict/repair entry), so the client must not mint that
+    // wire kind. The bottom-cells banner below stays as read-only
+    // diagnostics; repair tooling returns once a repair kind is
+    // registered via CKP.
     // Read the local anchor view for this realm once per render. Surfaces:
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
     //  - frontier head    → debug visibility into what Move builders thread
@@ -1509,17 +1508,6 @@ pub fn RealmAdminPanel(
         .bottom_cells
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    // Per-cell safer-winner suggestion, cloned out of the anchor_view so
-    // the rsx! event handlers don't have to borrow it. Tuple is
-    // (cell_ref, head_a_move_id, head_b_move_id, safer_value_json).
-    let safer_suggestions: Vec<(String, String, String, String)> = bottom_cells
-        .iter()
-        .filter_map(|(cell_ref, _)| {
-            let (head_a, head_b, value) = anchor_view.safer_winner_for(cell_ref)?;
-            let json = serde_json::to_string_pretty(&value).ok()?;
-            Some((cell_ref.clone(), head_a, head_b, json))
-        })
         .collect();
     let anchor_frontier_label = if anchor_view.frontier.is_empty() {
         "(no Anchor seen — using sha256(empty) sentinel)".to_owned()
@@ -1813,7 +1801,7 @@ pub fn RealmAdminPanel(
                         span { class: "badge red", "bottom/conflict" }
                     }
                     div { class: "muted",
-                        "One or more cells in this Realm's projection have unresolved bottom/conflict diagnostics — soland received concurrent Events it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a recovery repair Event before downstream queries return a definitive value."
+                        "One or more cells in this Realm's projection have unresolved bottom/conflict diagnostics — soland received concurrent Events it cannot deterministically merge. Repair requires a registered recovery-repair event kind (pending CKP registration); until then this panel is read-only diagnostics for operators."
                     }
                     for (cell_ref, info) in &bottom_cells {
                         {
@@ -1844,184 +1832,6 @@ pub fn RealmAdminPanel(
                                     }
                                 }
                             }
-                        }
-                        // "Prefer safer side" prefill - only rendered for
-                        // cell families where there's a semantic safety
-                        // ordering (member.state, capability.grant). For
-                        // everything else the operator picks manually below.
-                        if let Some((_, head_a, head_b, winner_json)) = safer_suggestions
-                            .iter()
-                            .find(|(c, _, _, _)| c == cell_ref)
-                            .cloned()
-                        {
-                            div { class: "actions",
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "prefer-safer-side-button",
-                                    "data-cell": "{cell_ref}",
-                                    onclick: {
-                                        let cell_ref_owned = cell_ref.clone();
-                                        move |_| {
-                                            repair_target_cell.set(cell_ref_owned.clone());
-                                            repair_head_a.set(head_a.clone());
-                                            repair_head_b.set(head_b.clone());
-                                            repair_winner_json.set(winner_json.clone());
-                                        }
-                                    },
-                                    "Prefer safer side"
-                                }
-                            }
-                        }
-                    }
-                }
-                // Conflict-repair Event dialog - only rendered when
-                // bottom_cells is non-empty (i.e. there is something to
-                // repair). Admin / moderator only; soland's authz reducer
-                // rejects unsigned-by-recovery capability submissions.
-                div { class: "event", "data-testid": "conflict-repair-dialog",
-                    div { class: "event-head",
-                        span { "Conflict repair" }
-                        span { class: "badge amber", "admin / moderator" }
-                    }
-                    div { class: "muted",
-                        "Build a repair Event with the competing heads and recovery capability ref to merge the two concurrent histories. Soland's authz reducer requires the repair to be signed by a holder of the named recovery capability."
-                    }
-                    Label { html_for: "repair-target-cell-input", "Target cell (id of unresolved bottom/conflict cell)" }
-                    Input {
-                        id: "repair-target-cell-input",
-                        "data-testid": "repair-target-cell-input",
-                        value: "{repair_target_cell}",
-                        placeholder: "ck:cell:ck.component.realm.organization.v1:...",
-                        oninput: move |event: FormEvent| repair_target_cell.set(event.value()),
-                    }
-                    Label { html_for: "repair-head-a-input", "conflict_head_A" }
-                    Input {
-                        id: "repair-head-a-input",
-                        "data-testid": "repair-head-a-input",
-                        value: "{repair_head_a}",
-                        placeholder: "ck:anchor:sha256:headA...",
-                        oninput: move |event: FormEvent| repair_head_a.set(event.value()),
-                    }
-                    Label { html_for: "repair-head-b-input", "conflict_head_B" }
-                    Input {
-                        id: "repair-head-b-input",
-                        "data-testid": "repair-head-b-input",
-                        value: "{repair_head_b}",
-                        placeholder: "ck:anchor:sha256:headB...",
-                        oninput: move |event: FormEvent| repair_head_b.set(event.value()),
-                    }
-                    Label { html_for: "repair-capability-input", "recovery_capability ref" }
-                    Input {
-                        id: "repair-capability-input",
-                        "data-testid": "repair-capability-input",
-                        value: "{repair_capability_ref}",
-                        placeholder: "cap.recovery-01",
-                        oninput: move |event: FormEvent| repair_capability_ref.set(event.value()),
-                    }
-                    Label { html_for: "repair-state-witness-input", "state_witness ref" }
-                    Input {
-                        id: "repair-state-witness-input",
-                        "data-testid": "repair-state-witness-input",
-                        value: "{repair_state_witness_ref}",
-                        placeholder: "ck:snapshot:sha256:...",
-                        oninput: move |event: FormEvent| repair_state_witness_ref.set(event.value()),
-                    }
-                    Label { html_for: "repair-inclusion-proof-input", "inclusion_proof ref" }
-                    Input {
-                        id: "repair-inclusion-proof-input",
-                        "data-testid": "repair-inclusion-proof-input",
-                        value: "{repair_inclusion_proof_ref}",
-                        placeholder: "ck:proof:sha256:...",
-                        oninput: move |event: FormEvent| repair_inclusion_proof_ref.set(event.value()),
-                    }
-                    Label { html_for: "repair-winner-json-input", "Winner value (JSON)" }
-                    Textarea {
-                        id: "repair-winner-json-input",
-                        "data-testid": "repair-winner-json-input",
-                        value: "{repair_winner_json}",
-                        placeholder: "{{\"title\": \"merged\"}}",
-                        oninput: move |event: FormEvent| repair_winner_json.set(event.value()),
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            "data-testid": "repair-submit-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                let realm = selected_realm_id.clone();
-                                let actor_account_did = account_did.clone();
-                                move |_| {
-                                    let base = base.clone();
-                                    let realm = realm.clone();
-                                    let actor_id = actor_account_did.trim().to_owned();
-                                    let api_token = token();
-                                    let cell = repair_target_cell().trim().to_owned();
-                                    let head_a = repair_head_a().trim().to_owned();
-                                    let head_b = repair_head_b().trim().to_owned();
-                                    let cap = repair_capability_ref().trim().to_owned();
-                                    let witness = repair_state_witness_ref().trim().to_owned();
-                                    let proof = repair_inclusion_proof_ref().trim().to_owned();
-                                    let winner_str = repair_winner_json();
-                                    if cell.is_empty() || head_a.is_empty() || head_b.is_empty()
-                                        || cap.is_empty() || witness.is_empty() || proof.is_empty()
-                                    {
-                                        status_msg.set(
-                                            "fill cell + both heads + recovery capability + state witness + inclusion proof before submitting repair"
-                                                .to_owned(),
-                                        );
-                                        return;
-                                    }
-                                    let winner_value: serde_json::Value =
-                                        match serde_json::from_str(&winner_str) {
-                                            Ok(v) => v,
-                                            Err(err) => {
-                                                status_msg.set(format!(
-                                                    "winner value is not valid JSON: {err}"
-                                                ));
-                                                return;
-                                            }
-                                        };
-                                    let _hlc = Hlc::now("yougen").to_string();
-                                    if actor_id.is_empty() {
-                                        status_msg.set("account actor unavailable".to_owned());
-                                        return;
-                                    }
-                                    let heads = vec![head_a, head_b];
-                                    let envelope = crate::operation::cx_ops::conflict_repair(
-                                        &realm,
-                                        &actor_id,
-                                        &cell,
-                                        &heads,
-                                        &cap,
-                                        &witness,
-                                        &proof,
-                                        winner_value,
-                                    )
-                                    .build("yougen");
-                                    let op_id = envelope.local_operation_id().to_owned();
-                                    spawn(async move {
-                                        match crate::views::helpers::with_authed_api(
-                                            &base,
-                                            api_token,
-                                            |api| async move {
-                                                api.submit_event_envelope(&envelope).await
-                                            },
-                                        )
-                                        .await
-                                        {
-                                            Ok(resp) => status_msg.set(format!(
-                                                "repair event {}: state=accepted event_id={}",
-                                                short_protocol_id(&op_id),
-                                                short_protocol_id(&resp.event_id)
-                                            )),
-                                            Err(err) => status_msg.set(format!(
-                                                "repair submit failed: {}", err.display()
-                                            )),
-                                        }
-                                    });
-                                }
-                            },
-                            "Submit repair Move"
                         }
                     }
                 }
@@ -2482,7 +2292,10 @@ pub fn RealmAdminPanel(
             } // closes `if active_section == RealmAdminSection::Access`
 
             if active_section == RealmAdminSection::Security {
-            // MLS epoch rotation
+            // MLS epoch rotation. YOU-01-009: the spec has no
+            // `POST /_cokret/self/mls/rotate` shim — epoch rotation is a
+            // real local `self_update_commit` published as the canonical
+            // `ck.mls.commit` event (persist-on-accept).
             div { class: "event", "data-testid": "mls-rotation",
                 div { class: "event-head", span { "MLS Epoch" } span { "rotation" } }
                 div { class: "actions",
@@ -2492,23 +2305,74 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
+                            let actor_account_did = account_did.clone();
+                            let device = device_id.clone();
+                            let state_store = state_store;
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
+                                let actor_id = actor_account_did.trim().to_owned();
+                                let device = device.clone();
                                 let api_token = token();
+                                let mut state_store = state_store;
+                                if actor_id.is_empty() {
+                                    status_msg.set("rotate failed: account is not connected".to_owned());
+                                    return;
+                                }
+                                // Build the forced self-update commit + the
+                                // canonical ck.mls.commit event locally.
+                                let secure_store =
+                                    crate::secure_key_store::default_secure_key_store("yougen");
+                                let built = {
+                                    let store = state_store.read();
+                                    crate::mls::runtime::force_epoch_rotation_commit(
+                                        &store,
+                                        secure_store.as_ref(),
+                                        &realm,
+                                        &actor_id,
+                                        &device,
+                                    )
+                                    .map_err(|err| err.user_message())
+                                    .and_then(|(commit_envelope, snapshot)| {
+                                        let schedule_hash = commit_envelope.commit_digest.clone();
+                                        crate::views::kanban::kanban_mls_commit_event_from_store(
+                                            &store,
+                                            &realm,
+                                            &actor_id,
+                                            &schedule_hash,
+                                            &commit_envelope,
+                                        )
+                                        .map(|event| (event, commit_envelope.epoch, snapshot))
+                                    })
+                                };
+                                let (commit_event, next_epoch, snapshot) = match built {
+                                    Ok(parts) => parts,
+                                    Err(err) => {
+                                        status_msg.set(format!("rotate failed: {err}"));
+                                        return;
+                                    }
+                                };
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.rotate_mls_epoch(&realm).await
+                                            api.submit_event_envelope(&commit_event).await
                                         },
                                     )
                                     .await
                                     {
-                                        Ok(resp) => status_msg.set(format!(
-                                            "rotated to epoch {}", resp.epoch
-                                        )),
+                                        Ok(_) => {
+                                            // Persist-on-accept: only advance the
+                                            // local snapshot after the server
+                                            // accepted the ck.mls.commit.
+                                            state_store
+                                                .write()
+                                                .save_mls_snapshot(realm.clone(), snapshot);
+                                            status_msg.set(format!(
+                                                "rotated to epoch {next_epoch}"
+                                            ));
+                                        }
                                         Err(err) => status_msg.set(format!(
                                             "rotate failed: {}", err.display()
                                         )),
@@ -2726,7 +2590,7 @@ pub fn RealmAdminPanel(
                                     } else {
                                         serde_json::Value::Null
                                     };
-                                let envelope = crate::operation::cx_ops::capability_grant(
+                                let envelope = crate::operation::ck_ops::capability_grant(
                                     &realm,
                                     &actor_id,
                                     &grant_val,
@@ -2794,7 +2658,7 @@ pub fn RealmAdminPanel(
                                     );
                                     return;
                                 }
-                                let envelope = crate::operation::cx_ops::capability_revoke(
+                                let envelope = crate::operation::ck_ops::capability_revoke(
                                     &realm,
                                     &actor_id,
                                     &grant_val,

@@ -228,16 +228,19 @@ impl TimelineEvent {
     }
 }
 
-fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> Value {
-    result.unwrap_or_else(|err| panic!("{context}: {err}"))
+// YOU-02-001: these helpers return `Result` instead of panicking — the
+// realm/flow ids they parse come from server-synced UI state, and a
+// non-canonical id must not abort the client (wasm panic = blank page).
+fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> anyhow::Result<Value> {
+    result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
 }
 
-fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
+fn flow_id_value(value: &str) -> anyhow::Result<cokret_sdk::FlowId> {
     cokret_sdk::FlowId::new(value.to_owned())
-        .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
+        .map_err(|err| anyhow::anyhow!("invalid flow id {value:?}: {err:?}"))
 }
 
-fn text_content(body: &str) -> Value {
+fn text_content(body: &str) -> anyhow::Result<Value> {
     // Spec `event-payload.schema.json` `content_block` requires `kind` (a
     // `content_kind` string matching `^cx\.content\.[a-z0-9_]+...` or a
     // reverse-domain id) and `body` (string). Plain timeline text uses
@@ -306,7 +309,7 @@ pub(crate) fn message_create_operation(
     thread_id: Option<&str>,
     body: &str,
     incident_priority: Option<&str>,
-) -> EventEnvelope {
+) -> anyhow::Result<EventEnvelope> {
     // Spec `event-payload.schema.json` `message_create_payload` requires
     // `flow_id` and `track_name` (`flow-and-message.md` §2). The default Flow
     // for a Realm is `ck:flow:<uuid>` (typed-id re-tag, matching
@@ -323,41 +326,38 @@ pub(crate) fn message_create_operation(
         );
     }
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(&flow_id),
+        flow_id_value(&flow_id)?,
         "discussion",
-        sdk_payload_value(content.to_value(), "timeline message content serialize"),
+        sdk_payload_value(content.to_value(), "timeline message content serialize")?,
     );
     if let Some(thread_id) = thread_id {
         payload = payload.with_reply_to(thread_id);
     }
-    OperationBuilder::new(realm_id, actor, "ck.message.create")
+    Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
         .body(sdk_payload_value(
             payload.to_value(),
             "timeline ck.message.create payload serialize",
-        ))
-        .build("yougen")
+        )?)
+        .build("yougen"))
 }
 
-fn default_flow_id_for_realm(realm_id: &str) -> String {
-    realm_id
-        .strip_prefix("ck:realm:")
-        .map(|suffix| format!("ck:flow:{suffix}"))
-        .unwrap_or_else(|| realm_id.to_owned())
-}
+// YOU-05-009: the main-flow id derivation is a protocol mapping rule; the
+// single authoritative copy lives in `crate::local_state`.
+use crate::local_state::default_flow_id_for_realm;
 
 fn message_revise_operation(
     realm_id: &str,
     actor: &str,
     event_id: &str,
     body: &str,
-) -> EventEnvelope {
-    OperationBuilder::new(realm_id, actor, "ck.message.revise")
+) -> anyhow::Result<EventEnvelope> {
+    Ok(OperationBuilder::new(realm_id, actor, "ck.message.revise")
         .target_ref(event_id)
         .body(json!({
-            "content": text_content(body),
+            "content": text_content(body)?,
             "target_ref": event_id,
         }))
-        .build("yougen")
+        .build("yougen"))
 }
 
 fn pending_send_error_is_permanent(error: &str) -> bool {
@@ -1041,9 +1041,20 @@ pub fn TimelinePanel(
                                                     let api_token = token();
                                                     let wait_for = active_sync_token(sync_cursor());
                                                     spawn(async move {
-                                                        if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                                            let op = reaction_add_operation(&realm, &actor, &eid, &emoji);
-                                                            let _ = api.submit_event_envelope(&op).await;
+                                                        // YOU-02-007: surface reaction submit
+                                                        // failures instead of swallowing them —
+                                                        // the picker is already closed, so the
+                                                        // status line is the only feedback left.
+                                                        match authed_api_with_sync(&base, api_token, wait_for) {
+                                                            Ok(api) => {
+                                                                let op = reaction_add_operation(&realm, &actor, &eid, &emoji);
+                                                                if let Err(error) = api.submit_event_envelope(&op).await {
+                                                                    write_status.set(format!("reaction failed: {error}"));
+                                                                }
+                                                            }
+                                                            Err(error) => {
+                                                                write_status.set(format!("reaction failed: {error}"));
+                                                            }
                                                         }
                                                     });
                                                     show_reaction_picker.set(None);
@@ -1107,12 +1118,31 @@ pub fn TimelinePanel(
                                                     spawn(async move {
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                                             Ok(api) => {
-                                                                let op = message_revise_operation(
+                                                                let op = match message_revise_operation(
                                                                     &realm,
                                                                     &actor,
                                                                     &eid,
                                                                     &content,
-                                                                );
+                                                                ) {
+                                                                    Ok(op) => op,
+                                                                    Err(error) => {
+                                                                        // Rollback optimistic edit
+                                                                        if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
+                                                                            if let Some(rev) = found.revisions.pop() {
+                                                                                found.body = rev.body;
+                                                                                found.timestamp = rev.timestamp;
+                                                                                found.operation_id = rev.operation_id;
+                                                                                found.event_id = rev.event_id;
+                                                                            }
+                                                                            found.edited = !found.revisions.is_empty();
+                                                                            found.pending = false;
+                                                                            found.failed = true;
+                                                                            found.error = Some(format!("edit failed: {error:#}"));
+                                                                        }
+                                                                        write_status.set(format!("edit failed: {error:#}"));
+                                                                        return;
+                                                                    }
+                                                                };
                                                                 let op_id = op.local_operation_id().to_owned();
                                                                 match api.submit_event_envelope(&op).await {
                                                                 Ok(updated) => {
@@ -1664,13 +1694,24 @@ pub fn TimelinePanel(
                             let wait_for = active_sync_token(sync_cursor());
                             spawn(async move {
                                 if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                    let op = message_create_operation(
+                                    let op = match message_create_operation(
                                         &realm,
                                         &actor,
                                         thread_id.as_deref(),
                                         &body,
                                         Some(incident_priority_for_send.as_str()),
-                                    );
+                                    ) {
+                                        Ok(op) => op,
+                                        Err(error) => {
+                                            if let Some(event) = timeline.write().iter_mut().find(|e| e.id == event_id) {
+                                                event.pending = false;
+                                                event.failed = true;
+                                                event.error = Some(format!("send failed: {error:#}"));
+                                            }
+                                            write_status.set(format!("send failed: {error:#}"));
+                                            return;
+                                        }
+                                    };
                                     let op_id = op.local_operation_id().to_owned();
                                     match submit_timeline_message_with_plaintext_retry(
                                         &api,
@@ -1933,13 +1974,28 @@ pub fn TimelinePanel(
                                 spawn(async move {
                                     match authed_api_with_sync(&base, api_token, wait_for) {
                                         Ok(api) => {
-                                            let op = message_create_operation(
+                                            let op = match message_create_operation(
                                                 &realm,
                                                 &actor,
                                                 thread_id.as_deref(),
                                                 &body_clone,
                                                 Some(incident_priority_for_send.as_str()),
-                                            );
+                                            ) {
+                                                Ok(op) => op,
+                                                Err(error) => {
+                                                    if let Some(found) = timeline
+                                                        .write()
+                                                        .iter_mut()
+                                                        .find(|candidate| candidate.id == local_event_id)
+                                                    {
+                                                        found.pending = false;
+                                                        found.failed = true;
+                                                        found.error = Some(format!("send failed: {error:#}"));
+                                                    }
+                                                    write_status.set(format!("send failed: {error:#}"));
+                                                    return;
+                                                }
+                                            };
                                             let op_id = op.local_operation_id().to_owned();
                                             let mut attempt = 0usize;
                                             loop {
@@ -2051,24 +2107,34 @@ pub fn TimelinePanel(
                             let realm = sc.clone();
                             let wait_for = active_sync_token(sync_cursor());
                             spawn(async move {
-                                let _ = with_authed_api_with_sync(
+                                // YOU-02-007: report the outcome instead of
+                                // silently dropping it — offline / denied
+                                // submissions used to vanish without any
+                                // user-visible signal.
+                                let outcome = with_authed_api_with_sync(
                                     &base,
                                     api_token,
                                     wait_for,
                                     |api| async move {
-                                        let _ = api
-                                            .report_moderation(
-                                                &realm,
-                                                "local:event",
-                                                "spam",
-                                                &actor,
-                                            )
-                                            .await;
-                                        let _ = api.send_to_device(&actor, &dev).await;
+                                        api.report_moderation(
+                                            &realm,
+                                            "local:event",
+                                            "spam",
+                                            &actor,
+                                        )
+                                        .await?;
+                                        api.send_to_device(&actor, &dev).await?;
                                         Ok(())
                                     },
                                 )
                                 .await;
+                                match outcome {
+                                    Ok(()) => write_status.set("report submitted".to_owned()),
+                                    Err(error) => write_status.set(format!(
+                                        "report failed: {}",
+                                        error.display()
+                                    )),
+                                }
                             });
                         }
                     },
@@ -2082,10 +2148,10 @@ pub fn TimelinePanel(
 /// Read the sender identity from a timeline event envelope.
 ///
 /// canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
-/// `sender → sender_actor_id`)。优先 `actor_id` / `sender_actor_id`;`sender`
-/// 已废弃,降到尾部仅作向后兼容容忍服务端旧值。
+/// `sender → sender_actor_id`,hard_reject)。只读 `actor_id` /
+/// `sender_actor_id`;legacy `sender` 不再容忍。
 fn timeline_actor_id(event: &Value) -> Option<&str> {
-    ["actor_id", "sender_actor_id", "sender"]
+    ["actor_id", "sender_actor_id"]
         .into_iter()
         .find_map(|key| event.get(key).and_then(Value::as_str))
 }
@@ -2316,7 +2382,8 @@ mod tests {
             None,
             "hello",
             None,
-        );
+        )
+        .expect("builds");
 
         assert_eq!(
             op.payload["flow_id"],
@@ -2339,7 +2406,8 @@ mod tests {
             None,
             "hello",
             Some("sev1"),
-        );
+        )
+        .expect("builds");
 
         assert_eq!(
             op.payload["flow_id"],
@@ -2375,7 +2443,8 @@ mod tests {
             "did:web:bob.example",
             "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
             "edited",
-        );
+        )
+        .expect("builds");
 
         assert_eq!(
             op.payload["target_ref"],

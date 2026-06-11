@@ -463,9 +463,9 @@ fn context_field<'a>(ctx: &'a NotificationEvalContext, field: &str) -> Option<&'
         "notification_type" => Some(ctx.notification_type.as_str()),
         "flow_id" => ctx.flow_id.as_deref(),
         // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
-        // sender → sender_actor_id)。规则引擎暴露的 key 为 `actor_id`;`sender`
-        // 已废弃,仍接受以兼容旧规则配置(文档应标注废弃)。
-        "actor_id" | "sender_actor_id" | "sender" => ctx.sender.as_deref(),
+        // sender → sender_actor_id,hard_reject)。规则引擎只暴露
+        // `actor_id` / `sender_actor_id`;legacy `sender` 不再接受。
+        "actor_id" | "sender_actor_id" => ctx.sender.as_deref(),
         "flow_track" | "track_name" => ctx.flow_track.as_deref(),
         "priority" | "notification_priority" => ctx.priority.as_deref(),
         "watch_state" => effective_watch_level(ctx).map(WatchLevel::as_wire),

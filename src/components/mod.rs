@@ -35,9 +35,8 @@ pub mod mls_history_backup;
 /// that restores encrypted history on a fresh device. Mounted once near the
 /// app shell; renders only when boot detection flags `needs_mls_unlock`.
 pub mod mls_unlock;
-/// P3B.5 — "Pending N" badge that surfaces the offline-queue depth
-/// next to the connection status indicator.
-pub mod offline_pending_badge;
+// YOU-02-008: the P3B.5 `offline_pending_badge` component was removed
+// together with the unwired offline-queue modules (see `src/lib.rs`).
 pub mod permission_pill;
 /// G3.Y3 — global policy-deny toast / banner. Mounted once near the
 /// app shell so any view inherits the 403 surface without needing to
@@ -84,7 +83,6 @@ pub(crate) use mls_history_backup::{
     schedule_mls_history_backup_after_commit, upload_mls_history_backup_now,
 };
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
-pub use offline_pending_badge::OfflinePendingBadge;
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
 };

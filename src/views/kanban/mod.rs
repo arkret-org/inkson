@@ -231,14 +231,9 @@ fn toast_editor_bootstrap_script(
     const uploadImage = async (blob, callback) => {{
         try {{
             const base = (config.baseUrl || window.location.origin).replace(/\/+$/, "");
-            const headers = {{
-                "content-type": blob.type || "application/octet-stream"
-            }};
+            const headers = {{}};
             if (config.token) {{
                 headers.authorization = `Bearer ${{config.token}}`;
-            }}
-            if (config.realmId) {{
-                headers["x-cokret-realm-id"] = config.realmId;
             }}
             const safeName = (blob.name || "")
                 .split(/[\\/]/)
@@ -246,13 +241,25 @@ fn toast_editor_bootstrap_script(
                 .replace(/[^A-Za-z0-9._-]+/g, "_")
                 .replace(/^[._-]+|[._-]+$/g, "")
                 .slice(0, 128);
+            // YOU-01-007: spec blob_upload_request_body is
+            // multipart/form-data — content + size_bytes (+ optional
+            // realm_id / media_type / filename). The browser sets the
+            // multipart boundary content-type itself.
+            const mediaType = blob.type || "application/octet-stream";
+            const form = new FormData();
+            form.append("content", blob, safeName || "upload.bin");
+            form.append("size_bytes", String(blob.size));
+            form.append("media_type", mediaType);
+            if (config.realmId) {{
+                form.append("realm_id", config.realmId);
+            }}
             if (safeName) {{
-                headers["x-cokret-filename"] = safeName;
+                form.append("filename", safeName);
             }}
             const response = await fetch(`${{base}}/_cokret/self/blob/upload`, {{
                 method: "POST",
                 headers,
-                body: blob
+                body: form
             }});
             if (!response.ok) {{
                 throw new Error(`upload failed: ${{response.status}}`);
@@ -262,8 +269,8 @@ fn toast_editor_bootstrap_script(
             if (!blobRef) {{
                 throw new Error("upload response missing blob_ref");
             }}
-            const mediaType = blob.type || body.media_type || "image/png";
-            const markdownTarget = blobRef.includes("#") ? blobRef : `${{blobRef}}#${{mediaType}}`;
+            const markdownMediaType = blob.type || body.media_type || "image/png";
+            const markdownTarget = blobRef.includes("#") ? blobRef : `${{blobRef}}#${{markdownMediaType}}`;
             callback(markdownTarget, blob.name || "image");
         }} catch (error) {{
             console.warn("[yougen] image upload failed", error);
@@ -1510,7 +1517,7 @@ pub fn KanbanPanel(
                                             let col_count = columns().len();
                                             let rank = format!("r{:03}", col_count + 1);
                                             let list_space_id = format!("ck:space:{}", uuid_v7());
-                                            let op = crate::operation::cx_ops::space_create(
+                                            let op = match crate::operation::ck_ops::space_create(
                                                 &realm,
                                                 &actor,
                                                 &list_space_id,
@@ -1518,8 +1525,13 @@ pub fn KanbanPanel(
                                                 &title,
                                                 Some(&board_space_id),
                                                 Some(&rank),
-                                            )
-                                            .build("yougen");
+                                            ) {
+                                                Ok(builder) => builder.build("yougen"),
+                                                Err(err) => {
+                                                    board_status.set(format!("cannot create list: {err:#}"));
+                                                    return;
+                                                }
+                                            };
                                             if let Some(reason) = kanban_plaintext_block_reason(
                                                 selected_scope_security_encrypted,
                                                 &op,
@@ -1595,7 +1607,7 @@ pub fn KanbanPanel(
                                                     return;
                                                 }
                                                 let board_space_id = format!("ck:space:{}", uuid_v7());
-                                                let op = crate::operation::cx_ops::space_create(
+                                                let op = match crate::operation::ck_ops::space_create(
                                                     &realm,
                                                     &actor,
                                                     &board_space_id,
@@ -1603,8 +1615,13 @@ pub fn KanbanPanel(
                                                     &title,
                                                     None,
                                                     None,
-                                                )
-                                                .build("yougen");
+                                                ) {
+                                                    Ok(builder) => builder.build("yougen"),
+                                                    Err(err) => {
+                                                        board_status.set(format!("cannot create board: {err:#}"));
+                                                        return;
+                                                    }
+                                                };
                                                 if let Some(reason) = kanban_plaintext_block_reason(
                                                     selected_scope_security_encrypted,
                                                     &op,
@@ -4995,14 +5012,12 @@ fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -
             continue;
         }
         for path in [
-            // actor_id 优先(canonical);`sender` 已废弃,降到尾部仅作向后兼容。
+            // 只读 canonical `actor_id` / `sender_actor_id`;legacy
+            // `sender` / `author` / `created_by` 为 hard_reject,不再容忍。
             &["body", "actor_id"][..],
             &["body", "sender_actor_id"][..],
             &["payload", "actor_id"][..],
             &["actor_id"][..],
-            &["body", "author"][..],
-            &["body", "created_by"][..],
-            &["body", "sender"][..],
         ] {
             if let Some(did) = json_path_string(Some(payload), path) {
                 dids.insert(did);
@@ -6594,7 +6609,7 @@ pub(crate) fn build_creator_mls_genesis_event(
         &governance_binding,
     )
     .map_err(|err| err.user_message())?;
-    let mut event = crate::operation::cx_ops::mls_genesis_with_governance(
+    let mut event = crate::operation::ck_ops::mls_genesis_with_governance(
         realm_id,
         actor_id,
         &summary.group_id,
@@ -6605,7 +6620,10 @@ pub(crate) fn build_creator_mls_genesis_event(
     Ok(Some(event))
 }
 
-fn kanban_mls_commit_event_from_store(
+// pub(crate): the realm_admin epoch-rotation button (YOU-01-009) reuses
+// this builder to wrap a forced `self_update_commit` into the canonical
+// `ck.mls.commit` event with the governance binding.
+pub(crate) fn kanban_mls_commit_event_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,
     actor_id: &str,
@@ -6647,7 +6665,7 @@ fn kanban_mls_commit_event_from_store(
     )
     .map_err(|err| format!("MLS commit payload failed: {err}"))?;
     let mut event =
-        crate::operation::cx_ops::mls_commit_with_governance(realm_id, actor_id, &payload)
+        crate::operation::ck_ops::mls_commit_with_governance(realm_id, actor_id, &payload)
             .map_err(|err| format!("MLS commit payload failed: {err}"))?
             .build("yougen");
     event.event_id = event_id;
@@ -6831,8 +6849,18 @@ fn dispatch_card_detail_update(
         snapshot: mls_new_snapshot,
     } = mls_events;
 
-    let op = crate::operation::cx_ops::flow_update_patch(&realm_id, &actor_id, &current.id, patch)
-        .build("yougen");
+    let op = match crate::operation::ck_ops::flow_update_patch(
+        &realm_id,
+        &actor_id,
+        &current.id,
+        patch,
+    ) {
+        Ok(builder) => builder.build("yougen"),
+        Err(err) => {
+            board_status.set(format!("cannot update card: {err:#}"));
+            return false;
+        }
+    };
     // R4: feed the guard the three-state security signal. An explicit
     // per-card `security_encrypted` flag (`Some`) wins; otherwise fall back to
     // the scope three-state so an unknown projection fails closed.
@@ -7175,13 +7203,14 @@ fn card_assignment_mutations(
 
     let mut mutations = Vec::new();
     for actor_id in selected_actor_ids.difference(&current_actor_ids) {
-        let operation = crate::operation::cx_ops::relation_create(
+        let operation = crate::operation::ck_ops::relation_create(
             realm_id,
             actor_id,
             "assigned_to",
             &current.id,
             actor_id,
         )
+        .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
         .build("yougen");
         let relation_id = relation_id_from_event_id(&operation.event_id).ok_or_else(|| {
             format!(
@@ -7205,7 +7234,7 @@ fn card_assignment_mutations(
         };
         for relation_id in relation_ids {
             let operation =
-                crate::operation::cx_ops::relation_tombstone(realm_id, actor_id, relation_id)
+                crate::operation::ck_ops::relation_tombstone(realm_id, actor_id, relation_id)
                     .build("yougen");
             mutations.push(CardAssignmentMutation::Tombstone {
                 actor_id: actor_id.clone(),
@@ -7707,16 +7736,9 @@ mod tests {
 
     const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000010";
 
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn temp_state_store(name: &str) -> LocalStateStore {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        LocalStateStore::with_path(
-            std::env::temp_dir().join(format!("yougen-kanban-{name}-{stamp}.json")),
-        )
-    }
+    use crate::local_state::isolated_store_for_tests as temp_state_store;
 
     #[cfg(not(target_arch = "wasm32"))]
     fn assert_registered_payload_valid(event: &crate::operation::EventEnvelope) {
@@ -9485,14 +9507,14 @@ mod tests {
 
     #[test]
     fn encrypted_scope_blocks_plaintext_flow_update_payload() {
-        let event = crate::operation::cx_ops::flow_update_patch(
+        let event = crate::operation::ck_ops::flow_update_patch(
             TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({
                 "body": {"$op": "set", "value": "private description"},
             }),
-        )
+        ).expect("builds")
         .build("yougen");
 
         assert!(kanban_event_carries_plaintext_private_content(&event));
@@ -9509,14 +9531,14 @@ mod tests {
     /// normal plaintext flows.
     #[test]
     fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
-        let private_update = crate::operation::cx_ops::flow_update_patch(
+        let private_update = crate::operation::ck_ops::flow_update_patch(
             TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({
                 "body": {"$op": "set", "value": "private description"},
             }),
-        )
+        ).expect("builds")
         .build("yougen");
         assert!(kanban_event_carries_plaintext_private_content(
             &private_update
@@ -9535,7 +9557,7 @@ mod tests {
         // Non-private metadata (container scaffold) is exempt even when the
         // security state is unknown, so board/list creation is not bricked
         // while the projection is in flight.
-        let board_create = crate::operation::cx_ops::space_create(
+        let board_create = crate::operation::ck_ops::space_create(
             TEST_REALM_ID,
             "did:web:alice.example",
             "ck:space:00000000-0000-7000-8000-0000000000aa",
@@ -9543,7 +9565,7 @@ mod tests {
             "Roadmap",
             None,
             None,
-        )
+        ).expect("builds")
         .build("yougen");
         assert!(
             kanban_plaintext_block_reason(None, &board_create).is_none(),
@@ -9563,14 +9585,14 @@ mod tests {
         .expect("test encryption should produce payload")
         .payload;
         let encrypted_payload = serde_json::to_value(encrypted_payload).unwrap();
-        let event = crate::operation::cx_ops::flow_update_patch(
+        let event = crate::operation::ck_ops::flow_update_patch(
             TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({
                 "synthesis": {"$op": "set", "value": encrypted_payload},
             }),
-        )
+        ).expect("builds")
         .build("yougen");
 
         assert!(!kanban_event_carries_plaintext_private_content(&event));
@@ -9806,7 +9828,7 @@ mod tests {
 
     #[test]
     fn encrypted_scope_allows_structural_flow_position_update() {
-        let event = crate::operation::cx_ops::flow_position_update(
+        let event = crate::operation::ck_ops::flow_position_update(
             TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
@@ -9815,7 +9837,7 @@ mod tests {
                 "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000002",
                 "rank": "U",
             }),
-        )
+        ).expect("builds")
         .build("yougen");
 
         assert_eq!(event.kind, "ck.flow.update");
@@ -9825,7 +9847,7 @@ mod tests {
 
     #[test]
     fn encrypted_scope_allows_content_only_metadata_create_payloads() {
-        let flow = crate::operation::cx_ops::kanban_card_flow_create(
+        let flow = crate::operation::ck_ops::kanban_card_flow_create(
             TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
@@ -9833,9 +9855,9 @@ mod tests {
             "ck:space:0196419b-0000-7000-8000-000000000002",
             "private card title",
             "U",
-        )
+        ).expect("builds")
         .build("yougen");
-        let space = crate::operation::cx_ops::space_create(
+        let space = crate::operation::ck_ops::space_create(
             TEST_REALM_ID,
             "did:web:alice.example",
             "ck:space:0196419b-0000-7000-8000-000000000002",
@@ -9843,7 +9865,7 @@ mod tests {
             "private list title",
             Some("ck:space:0196419b-0000-7000-8000-000000000001"),
             Some("U"),
-        )
+        ).expect("builds")
         .build("yougen");
 
         assert!(kanban_plaintext_block_reason(Some(true), &flow).is_none());
@@ -9858,7 +9880,7 @@ mod tests {
     /// blocked (only E2EE may leave the client for that field).
     #[test]
     fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_content() {
-        let board = crate::operation::cx_ops::space_create(
+        let board = crate::operation::ck_ops::space_create(
             TEST_REALM_ID,
             "did:web:alice.example",
             "ck:space:0196419b-0000-7000-8000-00000000aa01",
@@ -9866,7 +9888,7 @@ mod tests {
             "ZZTEST board title",
             None,
             None,
-        )
+        ).expect("builds")
         .build("yougen");
         assert_eq!(board.kind, "ck.space.create");
         assert!(
@@ -9874,7 +9896,7 @@ mod tests {
             "encrypted scope must not block board container create"
         );
 
-        let list = crate::operation::cx_ops::space_create(
+        let list = crate::operation::ck_ops::space_create(
             TEST_REALM_ID,
             "did:web:alice.example",
             "ck:space:0196419b-0000-7000-8000-00000000aa02",
@@ -9882,7 +9904,7 @@ mod tests {
             "Todos list title",
             Some("ck:space:0196419b-0000-7000-8000-00000000aa01"),
             Some("r001"),
-        )
+        ).expect("builds")
         .build("yougen");
         assert_eq!(list.kind, "ck.space.create");
         assert!(
@@ -9891,14 +9913,14 @@ mod tests {
         );
 
         // Counter-case: plaintext private body in a flow update is still blocked.
-        let private_update = crate::operation::cx_ops::flow_update_patch(
+        let private_update = crate::operation::ck_ops::flow_update_patch(
             TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({
                 "body": {"$op": "set", "value": "private description"},
             }),
-        )
+        ).expect("builds")
         .build("yougen");
         assert!(
             kanban_plaintext_block_reason(Some(true), &private_update).is_some(),
@@ -9908,14 +9930,14 @@ mod tests {
 
     #[test]
     fn encrypted_scope_allows_flow_summary_metadata_update() {
-        let event = crate::operation::cx_ops::flow_update_patch(
+        let event = crate::operation::ck_ops::flow_update_patch(
             TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({
                 "summary": {"$op": "set", "value": "metadata summary"},
             }),
-        )
+        ).expect("builds")
         .build("yougen");
 
         assert!(!kanban_event_carries_plaintext_private_content(&event));
@@ -10160,7 +10182,9 @@ mod tests {
                     "kind": "ck.message.create",
                     "body": {
                         "target_ref": "ck:flow:target",
-                        "sender": "did:web:bob.example",
+                        // canonical actor key only — the legacy `sender`
+                        // fallback was removed (hard_reject).
+                        "actor_id": "did:web:bob.example",
                     },
                 }),
             },
@@ -10452,12 +10476,12 @@ mod tests {
             DEMO_FLOW_ONBOARDING_COPY_ID,
             DEMO_FLOW_SECURITY_SIGNOFF_ID,
         ] {
-            let event = crate::operation::cx_ops::flow_update_patch(
+            let event = crate::operation::ck_ops::flow_update_patch(
                 DEMO_BOARD_SPACE_ID,
                 "did:web:acme.example:users:alice",
                 flow_id,
                 json!({"synthesis": {"$op": "set", "value": "demo synthesis"}}),
-            )
+            ).expect("builds")
             .build("yougen");
             assert_eq!(event.kind, "ck.flow.update");
             assert_eq!(event.local_target_ref(), Some(flow_id));

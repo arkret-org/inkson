@@ -253,29 +253,10 @@ pub fn mint_dpop_proof(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::path::PathBuf;
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    use crate::local_state::isolated_store_for_tests as isolated_store;
     use crate::secure_key_store::MemorySecureKeyStore;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn isolated_store(tag: &str) -> LocalStateStore {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path: PathBuf =
-            std::env::temp_dir().join(format!("yougen-auth-dpop-{tag}-{stamp}.json"));
-        LocalStateStore::with_path(path)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn isolated_store(_tag: &str) -> LocalStateStore {
-        LocalStateStore::default()
-    }
 
     #[test]
     fn ensure_device_key_is_idempotent() {

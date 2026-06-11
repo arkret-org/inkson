@@ -29,18 +29,16 @@
 
 use cokret_sdk::RealmId;
 use cokret_sdk::model::{
-    AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
-    AgentParticipationSetReqBody,
+    AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentParticipation,
+    AgentParticipationEntry, AgentParticipationScope, AgentParticipationSetReqBody,
+    AgentPauseRequestBody, AgentProvisionRequestBody, AgentResumeRequestBody,
+    AgentRotateKeyRequestBody, AgentSidecarThreadEnsureRequestBody, AgentView,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
-use crate::models::{
-    AgentGrantAttachReqBody, AgentLifecycleReqBody, AgentProvisionReqBody, AgentResBody,
-    AgentRotateKeyReqBody, AgentSidecarThreadEnsureReqBody,
-};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
@@ -572,7 +570,7 @@ pub fn AgentsPanel(
                                     let api_token = token();
                                     spawn(async move {
                                         let caps_refs: Vec<&str> = caps.iter().map(String::as_str).collect();
-                                        let op = crate::operation::cx_ops::agent_endpoint(
+                                        let op = crate::operation::ck_ops::agent_endpoint(
                                             &realm, &actor, &did, &proto, &caps_refs,
                                         )
                                         .build("yougen");
@@ -836,7 +834,7 @@ pub fn AgentsPanel(
                                                 "ck:session:{}",
                                                 crate::operation::uuid_v7()
                                             );
-                                            let op = crate::operation::cx_ops::agent_interop_session_start(
+                                            let op = crate::operation::ck_ops::agent_interop_session_start(
                                                 &realm,
                                                 &actor,
                                                 &target,
@@ -1151,14 +1149,16 @@ pub fn PersonalAgentAdminPanel(
     token: Signal<String>,
     controller_did: String,
 ) -> Element {
-    let mut agents = use_signal(Vec::<AgentResBody>::new);
+    let mut agents = use_signal(Vec::<AgentView>::new);
     let mut list_status = use_signal(String::new);
     let mut selected_agent_id = use_signal(String::new);
     let mut new_display_name = use_signal(|| "my-personal-agent".to_owned());
-    let mut new_agent_id = use_signal(String::new);
-    let mut rotate_vm = use_signal(String::new);
-    let mut grant_kind = use_signal(|| "ck.agent.action_request".to_owned());
-    let mut grant_scope_json = use_signal(|| "{}".to_owned());
+    // Spec `agent_rotate_key_request_body` = `{replacement_key,
+    // proof_of_possession}` (full JSON); the scaffold takes the raw body.
+    let mut rotate_body_json = use_signal(String::new);
+    // Spec `agent_grant_attach_request_body` = `{grant}` — the scaffold
+    // takes the grant object as raw JSON.
+    let mut grant_json = use_signal(|| "{}".to_owned());
     let mut sidecar_realm = use_signal(String::new);
     let mut deactivate_confirm = use_signal(String::new);
     let mut last_op_status = use_signal(String::new);
@@ -1211,11 +1211,22 @@ pub fn PersonalAgentAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => {
+                                            // SDK `AgentList.agents` is loose
+                                            // `Vec<Value>`; decode each row as
+                                            // the spec `agent_view` shape and
+                                            // skip malformed rows.
+                                            let rows: Vec<AgentView> = resp
+                                                .agents
+                                                .into_iter()
+                                                .filter_map(|row| {
+                                                    serde_json::from_value(row).ok()
+                                                })
+                                                .collect();
                                             list_status.set(format!(
                                                 "fetched {} agent(s)",
-                                                resp.agents.len()
+                                                rows.len()
                                             ));
-                                            agents.set(resp.agents);
+                                            agents.set(rows);
                                         }
                                         Err(err) => list_status.set(format!(
                                             "list failed: {}",
@@ -1230,9 +1241,22 @@ pub fn PersonalAgentAdminPanel(
                 }
                 for agent in agents.read().iter() {
                     {
-                        let agent = agent.clone();
-                        let id = agent.agent_principal_id.clone();
-                        let agent_id_label = short_protocol_id(&agent.agent_id);
+                        // Spec `agent_view` = `{agent: agent_projection,
+                        // status, grants, key_state}`; the projection
+                        // carries `agent_principal_id` / `display_name`.
+                        let status = agent.status.clone();
+                        let id = agent
+                            .agent
+                            .get("agent_principal_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
+                        let display_name = agent
+                            .agent
+                            .get("display_name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("(unnamed)")
+                            .to_owned();
                         let id_label = short_protocol_id(&id);
                         rsx! {
                             div {
@@ -1248,14 +1272,13 @@ pub fn PersonalAgentAdminPanel(
                                     // R3 — FSM-state badge with semantic colouring:
                                     // active=green, paused=amber, deactivated=red.
                                     span {
-                                        class: "{agent_state_badge_class(&agent.state)}",
+                                        class: "{agent_state_badge_class(&status)}",
                                         "data-testid": "agent-state-badge",
-                                        "data-state": "{agent.state}",
-                                        "{agent_state_label(&agent.state)}"
+                                        "data-state": "{status}",
+                                        "{agent_state_label(&status)}"
                                     }
                                 }
-                                div { class: "muted", "did: {agent_id_label}" }
-                                div { class: "muted", "display_name: {agent.display_name}" }
+                                div { class: "muted", "display_name: {display_name}" }
                                 div { class: "actions",
                                     Button {
                                         variant: if selected_agent_id() == id { ButtonVariant::Primary } else { ButtonVariant::Secondary },
@@ -1286,9 +1309,13 @@ pub fn PersonalAgentAdminPanel(
                                                     })
                                                     .await
                                                     {
-                                                        Ok(a) => last_op_status.set(format!(
-                                                            "get {} state={}",
-                                                            a.agent_principal_id, a.state
+                                                        Ok(view) => last_op_status.set(format!(
+                                                            "get {} status={}",
+                                                            view.agent
+                                                                .get("agent_principal_id")
+                                                                .and_then(Value::as_str)
+                                                                .unwrap_or("(unknown)"),
+                                                            view.status
                                                         )),
                                                         Err(err) => last_op_status.set(format!(
                                                             "get failed: {}",
@@ -1327,12 +1354,6 @@ pub fn PersonalAgentAdminPanel(
                         value: "{new_display_name}",
                         oninput: move |event: FormEvent| new_display_name.set(event.value()),
                     }
-                    Input {
-                        "data-testid": "agent-admin-provision-agent-did",
-                        placeholder: "optional agent_id (server-issued if blank)",
-                        value: "{new_agent_id}",
-                        oninput: move |event: FormEvent| new_agent_id.set(event.value()),
-                    }
                 }
                 div { class: "actions",
                     Button {
@@ -1340,23 +1361,20 @@ pub fn PersonalAgentAdminPanel(
                         "data-testid": "agent-admin-provision-button",
                         onclick: {
                             let base = base_url.clone();
-                            let controller = controller_did.clone();
                             move |_| {
                                 let base = base.clone();
-                                let controller = controller.clone();
                                 let api_token = token();
                                 let display = new_display_name();
-                                let agent_id_input = new_agent_id();
-                                let agent_id = if agent_id_input.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(agent_id_input.trim().to_owned())
-                                };
-                                let body = AgentProvisionReqBody {
-                                    display_name: display,
-                                    controller_did: Some(controller),
-                                    agent_id,
-                                    initial_grants: Vec::new(),
+                                // Spec `agent_provision_request_body`:
+                                // {display_name, requested_scope,
+                                // accountability, pairing_ttl_ms} — the
+                                // controller binding comes from the
+                                // authenticated session, not the body.
+                                let body = AgentProvisionRequestBody {
+                                    display_name: Some(display),
+                                    requested_scope: None,
+                                    accountability: Value::Null,
+                                    pairing_ttl_ms: None,
                                 };
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, move |api| {
@@ -1367,9 +1385,11 @@ pub fn PersonalAgentAdminPanel(
                                     })
                                     .await
                                     {
-                                        Ok(agent) => last_op_status.set(format!(
-                                            "provisioned {} (state={})",
-                                            agent.agent_principal_id, agent.state
+                                        Ok(outcome) => last_op_status.set(format!(
+                                            "provisioned {} (pairing_request_id={}, expires_at={})",
+                                            outcome.agent_principal_id,
+                                            outcome.pairing_request_id,
+                                            outcome.expires_at
                                         )),
                                         Err(err) => last_op_status.set(format!(
                                             "provision failed: {}",
@@ -1413,7 +1433,7 @@ pub fn PersonalAgentAdminPanel(
                                 if id.is_empty() { return; }
                                 let base = base.clone();
                                 let api_token = token();
-                                let body = AgentLifecycleReqBody { reason: Some("controller_paused".to_owned()) };
+                                let body = AgentPauseRequestBody { reason: Some("controller_paused".to_owned()) };
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, move |api| {
                                         let id = id.clone();
@@ -1424,8 +1444,10 @@ pub fn PersonalAgentAdminPanel(
                                     })
                                     .await
                                     {
+                                        // Spec response is operation_status_outcome {ok, status}.
                                         Ok(r) => last_op_status.set(format!(
-                                            "pause: {} → state={}", r.agent_principal_id, r.state
+                                            "pause: status={}",
+                                            r.get("status").and_then(Value::as_str).unwrap_or("(unknown)")
                                         )),
                                         Err(err) => last_op_status.set(format!(
                                             "pause failed: {}", err.display()
@@ -1447,7 +1469,9 @@ pub fn PersonalAgentAdminPanel(
                                 if id.is_empty() { return; }
                                 let base = base.clone();
                                 let api_token = token();
-                                let body = AgentLifecycleReqBody { reason: Some("controller_resumed".to_owned()) };
+                                // Spec resume body carries only the
+                                // optional sidecar_exposure_ack.
+                                let body = AgentResumeRequestBody { sidecar_exposure_ack: None };
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, move |api| {
                                         let id = id.clone();
@@ -1459,7 +1483,8 @@ pub fn PersonalAgentAdminPanel(
                                     .await
                                     {
                                         Ok(r) => last_op_status.set(format!(
-                                            "resume: {} → state={}", r.agent_principal_id, r.state
+                                            "resume: status={}",
+                                            r.get("status").and_then(Value::as_str).unwrap_or("(unknown)")
                                         )),
                                         Err(err) => last_op_status.set(format!(
                                             "resume failed: {}", err.display()
@@ -1491,7 +1516,7 @@ pub fn PersonalAgentAdminPanel(
                                     if id.is_empty() { return; }
                                     let base = base.clone();
                                     let api_token = token();
-                                    let body = AgentLifecycleReqBody { reason: Some("controller_deactivated".to_owned()) };
+                                    let body = AgentDeactivateRequestBody { reason: Some("controller_deactivated".to_owned()) };
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, move |api| {
                                             let id = id.clone();
@@ -1503,7 +1528,8 @@ pub fn PersonalAgentAdminPanel(
                                         .await
                                         {
                                             Ok(r) => last_op_status.set(format!(
-                                                "deactivate: {} → state={}", r.agent_principal_id, r.state
+                                                "deactivate: status={}",
+                                                r.get("status").and_then(Value::as_str).unwrap_or("(unknown)")
                                             )),
                                             Err(err) => last_op_status.set(format!(
                                                 "deactivate failed: {}", err.display()
@@ -1530,27 +1556,38 @@ pub fn PersonalAgentAdminPanel(
                 div { class: "workflow-form",
                     Input {
                         "data-testid": "agent-admin-rotate-vm-input",
-                        placeholder: "new verification_method (e.g. did:key:zNew...)",
-                        value: "{rotate_vm}",
-                        oninput: move |event: FormEvent| rotate_vm.set(event.value()),
+                        placeholder: "rotate body JSON: {{\"replacement_key\": {{...}}, \"proof_of_possession\": {{...}}}}",
+                        value: "{rotate_body_json}",
+                        oninput: move |event: FormEvent| rotate_body_json.set(event.value()),
                     }
                     div { class: "actions",
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "agent-admin-rotate-key-button",
-                            disabled: selected_agent_id().is_empty() || rotate_vm().trim().is_empty(),
+                            disabled: selected_agent_id().is_empty() || rotate_body_json().trim().is_empty(),
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
                                     let id = selected_agent_id();
-                                    let vm = rotate_vm();
-                                    if id.is_empty() || vm.trim().is_empty() { return; }
+                                    let raw = rotate_body_json();
+                                    if id.is_empty() || raw.trim().is_empty() { return; }
                                     let base = base.clone();
                                     let api_token = token();
-                                    let body = AgentRotateKeyReqBody {
-                                        new_verification_method: vm,
-                                        previous_key_id: None,
-                                    };
+                                    // Spec agent_rotate_key_request_body =
+                                    // {replacement_key, proof_of_possession};
+                                    // the scaffold takes the body verbatim
+                                    // so the runtime can supply a real
+                                    // proof-of-possession.
+                                    let body: AgentRotateKeyRequestBody =
+                                        match serde_json::from_str(&raw) {
+                                            Ok(body) => body,
+                                            Err(err) => {
+                                                last_op_status.set(format!(
+                                                    "rotate_key body is not valid JSON: {err}"
+                                                ));
+                                                return;
+                                            }
+                                        };
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, move |api| {
                                             let id = id.clone();
@@ -1562,9 +1599,9 @@ pub fn PersonalAgentAdminPanel(
                                         .await
                                         {
                                             Ok(r) => last_op_status.set(format!(
-                                                "rotate_key: {} authorized={}",
-                                                r.agent_principal_id,
-                                                short_protocol_id(&r.authorized_verification_method)
+                                                "rotate_key: ok={} authorized_event_ref={}",
+                                                r.ok,
+                                                short_protocol_id(r.authorized_event_ref.as_str())
                                             )),
                                             Err(err) => last_op_status.set(format!(
                                                 "rotate_key failed: {}", err.display()
@@ -1593,26 +1630,20 @@ pub fn PersonalAgentAdminPanel(
                     span { class: "badge blue", "ck.self.agent.grant.attach / detach" }
                 }
                 div { class: "muted",
-                    "TODO(P3-impl): expand the grant_kind input into a dropdown driven by the 14 CKP-0008 capability actions; today the input is free-form so the wire shape can be exercised."
+                    "Spec agent_grant_attach_request_body carries the full grant object under the single `grant` property; the scaffold takes that object as raw JSON so cotest journey vectors can drive the wire shape."
                 }
                 div { class: "workflow-form",
                     Input {
                         "data-testid": "agent-admin-grant-kind-input",
-                        placeholder: "grant_kind (one of ck.agent.* capability actions)",
-                        value: "{grant_kind}",
-                        oninput: move |event: FormEvent| grant_kind.set(event.value()),
-                    }
-                    Input {
-                        "data-testid": "agent-admin-grant-scope-input",
-                        placeholder: "scope (JSON)",
-                        value: "{grant_scope_json}",
-                        oninput: move |event: FormEvent| grant_scope_json.set(event.value()),
+                        placeholder: "grant (JSON capability-grant object)",
+                        value: "{grant_json}",
+                        oninput: move |event: FormEvent| grant_json.set(event.value()),
                     }
                     div { class: "actions",
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "agent-admin-grant-attach-button",
-                            disabled: selected_agent_id().is_empty() || grant_kind().trim().is_empty(),
+                            disabled: selected_agent_id().is_empty() || grant_json().trim().is_empty(),
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -1620,13 +1651,16 @@ pub fn PersonalAgentAdminPanel(
                                     if id.is_empty() { return; }
                                     let base = base.clone();
                                     let api_token = token();
-                                    let scope: Value = serde_json::from_str(grant_scope_json().as_str())
-                                        .unwrap_or(json!({}));
-                                    let body = AgentGrantAttachReqBody {
-                                        grant_kind: grant_kind(),
-                                        scope,
-                                        expires_at: None,
+                                    let grant: Value = match serde_json::from_str(grant_json().as_str()) {
+                                        Ok(grant) => grant,
+                                        Err(err) => {
+                                            last_op_status.set(format!(
+                                                "grant is not valid JSON: {err}"
+                                            ));
+                                            return;
+                                        }
                                     };
+                                    let body = AgentGrantAttachRequestBody { grant };
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, move |api| {
                                             let id = id.clone();
@@ -1638,9 +1672,9 @@ pub fn PersonalAgentAdminPanel(
                                         .await
                                         {
                                             Ok(r) => last_op_status.set(format!(
-                                                "grant.attach: {} grant_id={}",
-                                                r.agent_principal_id,
-                                                short_protocol_id(&r.grant_id)
+                                                "grant.attach: ok={} grant_id={}",
+                                                r.ok,
+                                                short_protocol_id(r.grant_id.as_str())
                                             )),
                                             Err(err) => last_op_status.set(format!(
                                                 "grant.attach failed: {}", err.display()
@@ -1686,9 +1720,8 @@ pub fn PersonalAgentAdminPanel(
                                         .await
                                         {
                                             Ok(r) => last_op_status.set(format!(
-                                                "grant.detach: {} grant_id={}",
-                                                r.agent_principal_id,
-                                                short_protocol_id(&r.grant_id)
+                                                "grant.detach: ok={} revoked_at={}",
+                                                r.ok, r.revoked_at
                                             )),
                                             Err(err) => last_op_status.set(format!(
                                                 "grant.detach failed: {}", err.display()
@@ -1739,10 +1772,33 @@ pub fn PersonalAgentAdminPanel(
                                     let api_token = token();
                                     let realm = sidecar_realm();
                                     let controller = controller_did.clone();
-                                    let body = AgentSidecarThreadEnsureReqBody {
-                                        realm_id: realm.trim().to_owned(),
-                                        controller_principal_id: controller,
-                                        agent_principal_id: id.clone(),
+                                    // Typed ids fail fast on malformed
+                                    // input before the wire round-trip.
+                                    let realm_id = match RealmId::new(realm.trim().to_owned()) {
+                                        Ok(realm_id) => realm_id,
+                                        Err(err) => {
+                                            last_op_status.set(format!("invalid realm_id: {err:?}"));
+                                            return;
+                                        }
+                                    };
+                                    let agent_principal_id = match cokret_sdk::Did::new(id.clone()) {
+                                        Ok(did) => did,
+                                        Err(err) => {
+                                            last_op_status.set(format!("invalid agent_principal_id: {err:?}"));
+                                            return;
+                                        }
+                                    };
+                                    let controller_principal_id = match cokret_sdk::Did::new(controller) {
+                                        Ok(did) => did,
+                                        Err(err) => {
+                                            last_op_status.set(format!("invalid controller_principal_id: {err:?}"));
+                                            return;
+                                        }
+                                    };
+                                    let body = AgentSidecarThreadEnsureRequestBody {
+                                        realm_id,
+                                        controller_principal_id,
+                                        agent_principal_id,
                                     };
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, move |api| {
@@ -1756,9 +1812,9 @@ pub fn PersonalAgentAdminPanel(
                                         {
                                             Ok(r) => last_op_status.set(format!(
                                                 "sidecar.ensure: circle={} flow={} relation={}",
-                                                short_protocol_id(&r.private_circle_id),
-                                                short_protocol_id(&r.private_flow_id),
-                                                short_protocol_id(&r.private_relation_id)
+                                                short_protocol_id(r.private_circle_id.as_str()),
+                                                short_protocol_id(r.private_flow_id.as_str()),
+                                                short_protocol_id(r.private_relation_id.as_str())
                                             )),
                                             Err(err) => last_op_status.set(format!(
                                                 "sidecar.ensure failed: {}", err.display()
@@ -2213,7 +2269,7 @@ mod tests {
     /// event-payload.schema.json#/$defs/agent_endpoint_payload.
     #[test]
     fn agent_endpoint_body_keys_pin_canonical_wire() {
-        let op = crate::operation::cx_ops::agent_endpoint(
+        let op = crate::operation::ck_ops::agent_endpoint(
             "ck:space:test",
             "did:web:alice.example",
             "did:web:agent.example",
@@ -2230,7 +2286,7 @@ mod tests {
 
     #[test]
     fn agent_result_body_carries_audit_binding() {
-        let op = crate::operation::cx_ops::agent_interop_session_result(
+        let op = crate::operation::ck_ops::agent_interop_session_result(
             "ck:space:test",
             "did:web:alice.example",
             "ck:session:test",

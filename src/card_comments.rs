@@ -87,24 +87,23 @@ impl CardComment {
 /// via `reply_to`. The author is omitted on purpose — the reducer derives it
 /// from the envelope `actor_id`.
 ///
-/// `flow_id` is the card's Flow id and is invalid as a typed `FlowId` only if
-/// the caller passes a malformed id; on that programmer error we panic
-/// (mirrors the `messaging/polls.rs` convention).
-pub fn build_card_comment_payload(comment: &CardComment) -> Value {
-    let mentions: Vec<Value> = comment
+/// `flow_id` is the card's Flow id; card ids ultimately come from server
+/// sync data, so a malformed id surfaces as a recoverable error instead of
+/// a panic (YOU-02-001 — on wasm a panic kills the whole page).
+pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value> {
+    let mentions = comment
         .mentions
         .iter()
         .map(|did| {
-            serde_json::to_value(Mention {
-                subject_id: did.clone(),
-                handle_at_time: None,
-                display_name_at_time: None,
-                mention_text_original: None,
-                resolved_at: None,
-            })
-            .expect("Mention serializes to JSON")
+            // YOU-05-006: `Mention` is now the SDK's strongly-typed model,
+            // so the extracted string is validated into a `Did` here and a
+            // malformed mention surfaces as a recoverable error.
+            let subject_id = cokret_sdk::Did::new(did.clone())
+                .map_err(|err| anyhow::anyhow!("invalid mention DID {did:?}: {err:?}"))?;
+            serde_json::to_value(Mention::new(subject_id))
+                .map_err(|err| anyhow::anyhow!("mention serialize: {err}"))
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<Value>>>()?;
 
     let mut content = cokret_sdk::ContentBlock::new("ck.content.text", comment.body.clone())
         .with_field("format", json!("markdown"));
@@ -112,13 +111,16 @@ pub fn build_card_comment_payload(comment: &CardComment) -> Value {
         content = content.with_field("mentions", Value::Array(mentions));
     }
 
-    let flow_id = cokret_sdk::FlowId::new(comment.card_flow_id.clone())
-        .unwrap_or_else(|err| panic!("invalid card flow id {:?}: {err:?}", comment.card_flow_id));
+    let flow_id = cokret_sdk::FlowId::new(comment.card_flow_id.clone()).map_err(|err| {
+        anyhow::anyhow!("invalid card flow id {:?}: {err:?}", comment.card_flow_id)
+    })?;
 
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(
         flow_id,
         DISCUSSION_TRACK,
-        content.to_value().expect("content block serializes"),
+        content
+            .to_value()
+            .map_err(|err| anyhow::anyhow!("content block serialize: {err}"))?,
     );
     if let Some(reply_to) = &comment.reply_to {
         payload = payload.with_reply_to(reply_to.clone());
@@ -126,7 +128,7 @@ pub fn build_card_comment_payload(comment: &CardComment) -> Value {
 
     payload
         .to_value()
-        .expect("card comment message_create payload serializes")
+        .map_err(|err| anyhow::anyhow!("card comment message_create payload serialize: {err}"))
 }
 
 /// F-CARD-COMMENT-1: extract `@did:<method>:<id>` mentions from a
@@ -203,7 +205,7 @@ mod tests {
     #[test]
     fn build_payload_uses_flow_track_and_content() {
         let comment = CardComment::new(CARD_FLOW_ID, "hi @did:web:bob.example");
-        let payload = build_card_comment_payload(&comment);
+        let payload = build_card_comment_payload(&comment).expect("builds");
         // Required schema fields.
         assert_eq!(payload["flow_id"], CARD_FLOW_ID);
         assert_eq!(payload["track_name"], "discussion");
@@ -226,7 +228,7 @@ mod tests {
     fn build_payload_threads_via_reply_to() {
         let comment = CardComment::new(CARD_FLOW_ID, "agreed")
             .with_reply_to("ck:message:01904100-0000-7000-8000-000000000002");
-        let payload = build_card_comment_payload(&comment);
+        let payload = build_card_comment_payload(&comment).expect("builds");
         assert_eq!(
             payload["reply_to"],
             "ck:message:01904100-0000-7000-8000-000000000002"
@@ -236,7 +238,7 @@ mod tests {
     #[test]
     fn build_payload_validates_against_message_create_schema() {
         let comment = CardComment::new(CARD_FLOW_ID, "ship it @did:web:bob.example");
-        let payload = build_card_comment_payload(&comment);
+        let payload = build_card_comment_payload(&comment).expect("builds");
         cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload("ck.message.create", &payload)
             .expect("card comment payload must satisfy message_create_payload schema");

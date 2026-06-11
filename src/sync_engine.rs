@@ -39,7 +39,7 @@ use serde_json::Value;
 
 use crate::api::{
     AccountSubscribeSnapshotOutcome, CokretApi, is_auth_expired_error, is_invalid_cursor_error,
-    is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
+    is_stale_frontier_error, is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalAnchorView, LocalStateStore};
@@ -59,8 +59,12 @@ const MIN_BACKOFF_SECS: u64 = 1;
 /// floods the browser network panel with identical snapshots.
 ///
 /// Yougen currently folds each NDJSON response with `Response::bytes()`,
-/// so it cannot yet keep the spec's long-lived account stream open. Keep
-/// the fallback poll interval human-scale until the client switches to a
+/// so it cannot yet keep the spec's long-lived account stream open
+/// (YOU-01-010 残留:wasm 需要 web-sys ReadableStream 帧读取器才能
+/// 改造为常驻流)。Every frame of each response IS consumed and the
+/// cursor advances to the response's last cursor-bearing frame, so the
+/// poll only bounds realtime latency, not catchup correctness. Keep the
+/// fallback poll interval human-scale until the client switches to a
 /// true frame reader.
 const MIN_INTER_ITERATION_MS: u64 = 5_000;
 
@@ -120,9 +124,16 @@ enum IterationOutcome {
     /// Response applied successfully — reset backoff, immediately
     /// re-enter the loop.
     Ok,
-    /// Cursor was rejected. Clear the persisted cursor and re-enter the
-    /// loop as a full sync.
+    /// Cursor was rejected (`cursor_expired` / `cursor_integrity_invalid`
+    /// / `cursor_unrecognized`). Clear the persisted cursor and re-enter
+    /// the loop as a full sync (client-sync.md §12.3).
     InvalidCursor,
+    /// `stale_frontier` — the cursor is still valid but the service
+    /// frontier lags. Per client-sync.md §4 the cursor MUST NOT be
+    /// cleared; the iteration already refreshed the frontier via
+    /// `account/describe`, so just retry with the same cursor after a
+    /// beat.
+    StaleFrontier,
     /// Auth expired or server otherwise told us the session is dead.
     /// Engine exits; refresh poller + login flow take over.
     AuthExpired,
@@ -211,6 +222,13 @@ pub async fn run_sync_engine(
                 // show the cursor-rejection that just got handled.
                 backoff_secs = MIN_BACKOFF_SECS;
                 ctx.last_error.clone().set(None);
+                sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
+            }
+            IterationOutcome::StaleFrontier => {
+                // Keep the cursor (spec MUST NOT clear it) and retry
+                // after a beat — the iteration already consulted
+                // `account/describe` for the current frontier.
+                backoff_secs = MIN_BACKOFF_SECS;
                 sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
             IterationOutcome::AuthExpired => {
@@ -383,6 +401,22 @@ async fn run_iteration(
             state_store.write().save_sync_cursor("-");
             sync_cursor.set("-".to_owned());
             IterationOutcome::InvalidCursor
+        }
+        Err(error) if is_stale_frontier_error(&error) => {
+            // client-sync.md §4 / §12.3: stale_frontier keeps the
+            // cursor. Refresh the service frontier via account/describe
+            // (step 2 of the recovery flow) before retrying with the
+            // SAME cursor; failures here are best-effort — the retry
+            // itself is the recovery.
+            if let Err(describe_error) = api.sync_describe().await {
+                tracing::debug!(
+                    ?describe_error,
+                    "stale_frontier recovery: account/describe failed"
+                );
+            }
+            let mut last_error = ctx.last_error;
+            last_error.set(Some(format!("sync_engine: {error}")));
+            IterationOutcome::StaleFrontier
         }
         Err(error) => IterationOutcome::Transient(format!("sync_engine: {error}")),
     }
@@ -628,9 +662,10 @@ fn ingest_member_identity_events_from_projection(
 /// - 每个 member roster 条目的内联 `identity_events[]`;
 /// - 投影顶层的 `state.events[]` / `events[]` 事件日志。
 ///
-/// actor DID 的取法是宽松的:依次尝试事件自身的 `actor` / `actor_id` /
-/// `sender` / `did`,取不到再回落到该 roster 条目的 `actor_id` / `did`。
-/// 取到的字符串经 `Did::new` 校验,非法的(不是合法 DID 语法)直接跳过 ——
+/// actor DID 取自事件自身的 `actor_id` / `did`,取不到再回落到该
+/// roster 条目的 `actor_id` / `did`(legacy `actor` / `sender` 键为
+/// forbidden-wire-fields hard_reject,不再容忍)。取到的字符串经
+/// `Did::new` 校验,非法的(不是合法 DID 语法)直接跳过 ——
 /// 失效钩子是 best-effort,宁可漏失效也不 panic。
 ///
 /// TRUST-CACHE 边界说明:这里只清缓存(让下次解析重新走 authority 链),
@@ -652,9 +687,7 @@ fn invalidate_cache_for_revocation_events(
     /// 从事件(可回落到 roster 条目)里取 actor DID 字符串。
     fn actor_id_str<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
         let from = |v: &'a Value| {
-            v.get("actor")
-                .or_else(|| v.get("actor_id"))
-                .or_else(|| v.get("sender"))
+            v.get("actor_id")
                 .or_else(|| v.get("did"))
                 .and_then(Value::as_str)
         };

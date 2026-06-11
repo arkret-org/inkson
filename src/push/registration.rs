@@ -373,16 +373,13 @@ fn current_platform_str() -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::{
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
 
     use chrono::{Duration, Utc};
     use ed25519_dalek::pkcs8::EncodePrivateKey as _;
 
     use super::*;
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    use crate::local_state::isolated_store_for_tests as isolated_store;
     use crate::local_state::PersistedSessionGrant;
     use crate::push::{FcmPushTokenProvider, PushTokenProvider};
 
@@ -447,23 +444,6 @@ mod tests {
             session_expires_at: None,
             stored_at: Utc::now(),
         }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn isolated_store(tag: &str) -> LocalStateStore {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join(format!("push-registration-{tag}-{stamp}.json"));
-        LocalStateStore::with_path(path)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn isolated_store(_tag: &str) -> LocalStateStore {
-        LocalStateStore::default()
     }
 
     #[test]

@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
-use crate::operation::cx_ops;
+use crate::operation::ck_ops;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
@@ -784,8 +784,11 @@ pub fn DocumentPanel(
                                         document_realm_id()
                                     };
 
-                                    let op = if is_create {
-                                        cx_ops::document_morph_create(
+                                    // YOU-02-001: payload builders no longer
+                                    // panic on non-canonical ids; surface the
+                                    // build error in the save status instead.
+                                    let op_builder = if is_create {
+                                        ck_ops::document_morph_create(
                                             &operation_realm_id,
                                             &actor_key_save,
                                             &morph_id,
@@ -793,37 +796,65 @@ pub fn DocumentPanel(
                                             body,
                                         )
                                     } else {
-                                        cx_ops::document_morph_update(
+                                        ck_ops::document_morph_update(
                                             &operation_realm_id,
                                             &actor_key_save,
                                             &morph_id,
                                             body,
                                         )
-                                    }
-                                    .build("yougen");
-                                    let relation_op = linked_incident_for_wire
+                                    };
+                                    let op = match op_builder {
+                                        Ok(builder) => builder.build("yougen"),
+                                        Err(err) => {
+                                            sync_state.set(SyncState::Failed);
+                                            save_status.set(format!(
+                                                "Saved locally; sync: {err:#}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                    let relation_op = if linked_incident_for_wire
                                         .trim()
                                         .starts_with("ck:")
-                                        .then(|| {
-                                            cx_ops::document_relation_create(
-                                                &operation_realm_id,
-                                                &actor_key_save,
-                                                &morph_id,
-                                                linked_incident_for_wire.trim(),
-                                            )
-                                            .build("yougen")
-                                        });
+                                    {
+                                        match ck_ops::document_relation_create(
+                                            &operation_realm_id,
+                                            &actor_key_save,
+                                            &morph_id,
+                                            linked_incident_for_wire.trim(),
+                                        ) {
+                                            Ok(builder) => Some(builder.build("yougen")),
+                                            Err(err) => {
+                                                sync_state.set(SyncState::Failed);
+                                                save_status.set(format!(
+                                                    "Saved locally; sync: {err:#}"
+                                                ));
+                                                return;
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    };
 
+                                    // YOU-02-007: the incident relation op
+                                    // failure used to be swallowed; carry it
+                                    // out so the user sees the link did not
+                                    // stick even though the document synced.
                                     match with_authed_api(&base, token_val, |api| async move {
                                         let resp = api.submit_event_envelope(&op).await?;
+                                        let mut relation_error = None;
                                         if let Some(relation_op) = relation_op {
-                                            let _ = api.submit_event_envelope(&relation_op).await;
+                                            if let Err(err) =
+                                                api.submit_event_envelope(&relation_op).await
+                                            {
+                                                relation_error = Some(format!("{err:#}"));
+                                            }
                                         }
-                                        Ok(resp)
+                                        Ok((resp, relation_error))
                                     })
                                     .await
                                     {
-                                        Ok(resp) => {
+                                        Ok((resp, relation_error)) => {
                                             if is_create {
                                                 store_for_sync.write().save_private_data(
                                                     &actor_key_save,
@@ -834,10 +865,18 @@ pub fn DocumentPanel(
                                             current_morph_id.set(morph_id.clone());
                                             document_realm_id.set(operation_realm_id.clone());
                                             sync_state.set(SyncState::Synced);
-                                            save_status.set(format!(
-                                                "Saved and synced document {} (event {})",
-                                                morph_id, resp.event_id
-                                            ));
+                                            if let Some(relation_error) = relation_error {
+                                                save_status.set(format!(
+                                                    "Saved and synced document {} (event {}); \
+                                                     incident link failed: {relation_error}",
+                                                    morph_id, resp.event_id
+                                                ));
+                                            } else {
+                                                save_status.set(format!(
+                                                    "Saved and synced document {} (event {})",
+                                                    morph_id, resp.event_id
+                                                ));
+                                            }
                                         }
                                         Err(err) => {
                                             sync_state.set(SyncState::Failed);
@@ -1183,7 +1222,7 @@ pub fn DocumentPanel(
                                         comment_status.set(format!("comment {id} added locally"));
                                         return;
                                     }
-                                    let op = cx_ops::document_comment_create(
+                                    let op = match ck_ops::document_comment_create(
                                         &realm_id,
                                         &author_did,
                                         &morph_id,
@@ -1191,8 +1230,15 @@ pub fn DocumentPanel(
                                         end,
                                         &body_for_wire,
                                         None,
-                                    )
-                                    .build("yougen");
+                                    ) {
+                                        Ok(builder) => builder.build("yougen"),
+                                        Err(err) => {
+                                            comment_status.set(format!(
+                                                "comment {id} local; sync: {err:#}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     let base = base.clone();
                                     let token_val = token();
                                     spawn(async move {

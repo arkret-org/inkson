@@ -6,7 +6,7 @@
 //!   * Reads `ck.applet.registration` / `ck.applet.discovery` events out of the local raw-operation
 //!     projection and renders them as registry rows so users see which applets the Space already
 //!     accepts.
-//!   * Surfaces a registration form bound to [`crate::operation::cx_ops::applet_registration`] —
+//!   * Surfaces a registration form bound to [`crate::operation::ck_ops::applet_registration`] —
 //!     fills `service_did`, `namespace` and `capabilities` and submits via
 //!     `with_authed_api(api.submit_event_envelope)`.
 //!   * Per-session monitor lists active `interop_session.start/status` rows so an operator can see
@@ -304,7 +304,7 @@ pub fn AppletsPanel(
                                     let api_token = token();
                                     spawn(async move {
                                         let caps_refs: Vec<&str> = caps.iter().map(String::as_str).collect();
-                                        let op = crate::operation::cx_ops::applet_registration(
+                                        let op = crate::operation::ck_ops::applet_registration(
                                             &realm, &actor, &did, &ns, &caps_refs,
                                         )
                                         .build("yougen");
@@ -636,11 +636,11 @@ mod tests {
 
     /// Pin that the registry row body shape matches the canonical wire
     /// `body.service_did` / `body.namespace` schema the
-    /// cx_ops::applet_registration builder emits. If the builder changes
+    /// ck_ops::applet_registration builder emits. If the builder changes
     /// shape this test catches the view drift.
     #[test]
     fn applet_registration_body_keys_pin_canonical_wire() {
-        let op = crate::operation::cx_ops::applet_registration(
+        let op = crate::operation::ck_ops::applet_registration(
             "ck:space:test",
             "did:web:alice.example",
             "did:web:applet.example",

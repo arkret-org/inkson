@@ -51,7 +51,7 @@ fn contact_recipient_service_did(contact_did: &str) -> Option<String> {
 
 /// U3 — build the `consent_grant` introduction evidence for a contact-path
 /// invite and return its canonical digest (the value
-/// `cx_ops::invite_create_structured` stamps into the invite event).
+/// `ck_ops::invite_create_structured` stamps into the invite event).
 ///
 /// We build the evidence object by hand (matching
 /// `IntroductionEvidence::ConsentGrant`'s `{kind, consent_grant_ref}` wire
@@ -238,7 +238,15 @@ impl CokretApi {
         .await
     }
 
-    pub async fn snapshot_head(&self, realm_id: &str) -> anyhow::Result<SnapshotHeadState> {
+    /// `ck.self.snapshot.head`. Spec resolution (2026-06-11,
+    /// `renames.json` migration group `snapshot_head_returns_manifest`):
+    /// the response is the full signed `ck.schema.snapshot.v1` manifest
+    /// (`service-surface.md` §5.2); the legacy `SnapshotHeadState` pointer
+    /// DTO is hard-rejected on current wire. The manifest is returned as
+    /// raw JSON until the SDK grows a typed wire manifest. soland
+    /// currently does not declare this operation and fails closed with
+    /// `not_implemented`.
+    pub async fn snapshot_head(&self, realm_id: &str) -> anyhow::Result<Value> {
         self.get_json(&format!("_cokret/self/snapshot/head?realm_id={realm_id}"))
             .await
     }
@@ -405,7 +413,7 @@ impl CokretApi {
             .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
         let introduction_evidence_digest = contact_consent_evidence_digest(consent_grant_ref)?;
         let invite_id = format!("ck:invite:{}", crate::operation::uuid_v7());
-        let op = crate::operation::cx_ops::invite_create_structured(
+        let op = crate::operation::ck_ops::invite_create_structured(
             realm_id,
             actor_id,
             &invite_id,
@@ -413,7 +421,7 @@ impl CokretApi {
             None,
             invite_delivery_target,
             &introduction_evidence_digest,
-        )
+        )?
         .build("yougen");
         let submitted = self.submit_event_envelope(&op).await?;
         Ok(submitted.event_id)

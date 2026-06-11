@@ -66,13 +66,13 @@ pub fn build_relation_create(
     kind: &str,
     from_ref: &str,
     to_ref: &str,
-) -> OperationBuilder {
+) -> anyhow::Result<OperationBuilder> {
     let body = cokret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
         .to_value()
-        .unwrap_or_else(|err| panic!("invalid relation_create_payload: {err}"));
-    OperationBuilder::new(realm_id, actor, "ck.relation.create")
+        .map_err(|err| anyhow::anyhow!("invalid relation_create_payload: {err}"))?;
+    Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
         .target_ref(relation_id)
-        .body(body)
+        .body(body))
 }
 
 /// Build a `ck.relation.tombstone` operation by id.
@@ -161,6 +161,7 @@ mod tests {
             "ck:flow:f1",
             "ck:flow:f2",
         )
+        .expect("builds")
         .build("node");
         assert_eq!(op.kind, "ck.relation.create");
         // relation id is routed via target_ref, not a payload field.

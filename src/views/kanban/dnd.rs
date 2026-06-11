@@ -129,13 +129,18 @@ pub(super) fn submit_column_order_updates(
         "Column order sending... ({update_count} rank updates)"
     ));
     for (column_id, rank) in updates {
-        let op = crate::operation::cx_ops::space_update_patch(
+        let op = match crate::operation::ck_ops::space_update_patch(
             &realm_id,
             &actor_id,
             &column_id,
             json!({ "rank": rank }),
-        )
-        .build("yougen");
+        ) {
+            Ok(builder) => builder.build("yougen"),
+            Err(err) => {
+                board_status.set(format!("Column order failed: {err:#}"));
+                return;
+            }
+        };
         submit_kanban_operation_event(
             base_url.clone(),
             token,
@@ -190,7 +195,7 @@ pub(super) fn submit_kanban_move(
             board_status.set("cannot create card: missing rank".to_owned());
             return;
         };
-        crate::operation::cx_ops::kanban_card_flow_create(
+        crate::operation::ck_ops::kanban_card_flow_create(
             &realm_id,
             &actor_id,
             &subject,
@@ -199,15 +204,20 @@ pub(super) fn submit_kanban_move(
             title,
             rank,
         )
-        .build("yougen")
     } else {
-        crate::operation::cx_ops::flow_position_update(
+        crate::operation::ck_ops::flow_position_update(
             &realm_id,
             &actor_id,
             &subject,
             value.clone(),
         )
-        .build("yougen")
+    };
+    let envelope = match envelope {
+        Ok(builder) => builder.build("yougen"),
+        Err(err) => {
+            board_status.set(format!("cannot submit card update: {err:#}"));
+            return;
+        }
     };
     if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &envelope) {
         board_status.set(reason);
@@ -584,10 +594,10 @@ pub(super) fn dispatch_space_container_lifecycle(
     // Only Active <-> Archived reach here (validator rejects Tombstone).
     let builder = match target {
         SpaceContainerLifecycleState::Archived => {
-            crate::operation::cx_ops::realm_archive(&realm_id, &actor_id, &space_container_id)
+            crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, &space_container_id)
         }
         SpaceContainerLifecycleState::Active => {
-            crate::operation::cx_ops::space_restore(&realm_id, &actor_id, &space_container_id)
+            crate::operation::ck_ops::space_restore(&realm_id, &actor_id, &space_container_id)
         }
         SpaceContainerLifecycleState::Tombstoned => {
             // Invariant: `validate_space_container_lifecycle_transition` (called above)
@@ -700,10 +710,10 @@ pub(super) fn dispatch_flow_lifecycle(
 
     let builder = match target {
         FlowLifecycleState::Archived => {
-            crate::operation::cx_ops::flow_archive(&realm_id, &actor_id, &flow_id)
+            crate::operation::ck_ops::flow_archive(&realm_id, &actor_id, &flow_id)
         }
         FlowLifecycleState::Active => {
-            crate::operation::cx_ops::flow_restore(&realm_id, &actor_id, &flow_id)
+            crate::operation::ck_ops::flow_restore(&realm_id, &actor_id, &flow_id)
         }
         FlowLifecycleState::Redacted => {
             // Invariant: `validate_flow_lifecycle_transition` (called above)
@@ -716,7 +726,20 @@ pub(super) fn dispatch_flow_lifecycle(
             )
         }
     };
-    let op = builder.build("yougen");
+    let op = match builder {
+        Ok(builder) => builder.build("yougen"),
+        Err(err) => {
+            // Roll back the optimistic lifecycle flip applied above.
+            for col in columns.write().iter_mut() {
+                if let Some(card) = col.cards.iter_mut().find(|c| c.id == flow_id) {
+                    card.lifecycle = prior_state;
+                    break;
+                }
+            }
+            board_status.set(format!("lifecycle update failed: {err:#}"));
+            return;
+        }
+    };
 
     let kind = op.kind.clone();
     let base = base_url.clone();
@@ -880,7 +903,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
         }
         FlowPositionEffect::Remove => serde_json::Value::Null,
     };
-    let envelope = crate::operation::cx_ops::flow_position_cas_update(
+    let envelope = match crate::operation::ck_ops::flow_position_cas_update(
         &realm_id,
         &actor_id,
         kind,
@@ -888,8 +911,13 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
         &flow_id,
         expected_json.clone(),
         effect_json.clone(),
-    )
-    .build("yougen");
+    ) {
+        Ok(builder) => builder.build("yougen"),
+        Err(err) => {
+            board_status.set(format!("cannot submit {kind}: {err:#}"));
+            return;
+        }
+    };
     let move_id = envelope.local_operation_id().to_owned();
     let cell_id = flow_position_cell_id(&board_space_id, &flow_id);
     let effect_summary = match &effect {
@@ -1194,7 +1222,7 @@ pub(super) fn locate_flow_position_in_projection(
 /// Marks the first queued / soft-failed write as Quarantined. Event
 /// submit is the only write surface now, and a failed event needs the UI
 /// to reconstruct the equivalent envelope (TODO: wire that through
-/// cx_ops::flow_position_*) rather than replay stale bytes.
+/// ck_ops::flow_position_*) rather than replay stale bytes.
 pub(super) fn replay_first_move(
     _base_url: String,
     _token: Signal<String>,

@@ -12,8 +12,8 @@
 //! - `authz/capabilities.md` §3.3 — revoke + cascade.
 //! - `authz/capabilities.md` §3.4 — audit trail.
 
+use cokret_sdk::model::{Capability, CapabilitySubject};
 use dioxus::prelude::*;
-use serde_json::Value;
 
 use crate::api::CokretApi;
 use crate::components::{EmptyState, EmptyStateKind};
@@ -24,9 +24,9 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
-/// delegated to someone else). Decoded leniently because the soland
-/// projection schema is still in flux (spec §3 — fields can be empty
-/// when the originating event omits an optional attenuation step).
+/// delegated to someone else). Mapped from the authoritative SDK
+/// [`Capability`] grant rows that `ck.self.authz.get_effective_grants`
+/// returns (soland serialises the SDK `GrantList` verbatim).
 #[derive(Clone, Debug, PartialEq)]
 struct CapabilityRow {
     capability_id: String,
@@ -48,78 +48,30 @@ struct DelegationStep {
     constraints: String,
 }
 
-/// Best-effort decoder for one capability projection row. Soland's
-/// `effective-grants` response carries `Vec<Value>`; until the schema
-/// stabilises we pull strings out individually so unknown shapes
-/// degrade to an empty cell rather than a parse error.
-fn decode_capability_row(value: &Value) -> Option<CapabilityRow> {
-    let capability_id = value
-        .get("capability_id")
-        .or_else(|| value.get("grant_id"))
-        .and_then(|v| v.as_str())?
-        .to_owned();
-    let action = value
-        .get("action")
-        .or_else(|| value.get("actions").and_then(|a| a.get(0)))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let scope = value
-        .get("scope")
-        .or_else(|| value.get("resource"))
-        .map(|v| v.to_string())
-        .unwrap_or_default();
-    let issuer_did = value
-        .get("issuer")
-        .or_else(|| value.get("grantor"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let subject_did = value
-        .get("subject")
-        .or_else(|| value.get("grantee"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let expires_at = value
-        .get("expires_at")
-        .or_else(|| value.get("constraints").and_then(|c| c.get("expires_at")))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let chain = value
-        .get("chain")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|step| DelegationStep {
-                    issuer_did: step
-                        .get("issuer")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned(),
-                    subject_did: step
-                        .get("subject")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned(),
-                    constraints: step
-                        .get("constraints")
-                        .map(|v| v.to_string())
-                        .unwrap_or_default(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(CapabilityRow {
-        capability_id,
-        action,
-        scope,
-        issuer_did,
-        subject_did,
-        expires_at,
-        chain,
-    })
+/// Map one authoritative SDK [`Capability`] grant onto a display row.
+/// The SDK grant carries no per-hop delegation chain (only
+/// `parent_grant_id`), so `chain` stays empty until soland exposes a
+/// chain projection (see the G3.Y3-followup note below).
+fn decode_capability_row(grant: &Capability) -> CapabilityRow {
+    CapabilityRow {
+        capability_id: grant.id.as_str().to_owned(),
+        action: grant.actions.first().cloned().unwrap_or_default(),
+        scope: grant
+            .resources
+            .first()
+            .map(|resource| resource.to_string())
+            .unwrap_or_default(),
+        issuer_did: grant.issuer.as_str().to_owned(),
+        subject_did: match &grant.subject {
+            CapabilitySubject::Did(did) => did.as_str().to_owned(),
+            CapabilitySubject::Selector(selector) => selector.to_string(),
+        },
+        expires_at: grant
+            .expires_at
+            .map(|expires_at| expires_at.to_rfc3339())
+            .unwrap_or_default(),
+        chain: Vec::new(),
+    }
 }
 
 #[component]
@@ -150,19 +102,9 @@ pub fn CapabilitiesSettingsCard(
             .await
             {
                 Ok(resp) => {
-                    let decoded: Vec<CapabilityRow> = resp
-                        .grants
-                        .iter()
-                        .filter_map(decode_capability_row)
-                        .collect();
-                    if decoded.is_empty() && !resp.grants.is_empty() {
-                        status.set(format!(
-                            "Received {} grants but none matched the expected schema",
-                            resp.grants.len()
-                        ));
-                    } else {
-                        status.set(format!("Loaded {} capabilities", decoded.len()));
-                    }
+                    let decoded: Vec<CapabilityRow> =
+                        resp.grants.iter().map(decode_capability_row).collect();
+                    status.set(format!("Loaded {} capabilities", decoded.len()));
                     rows.set(decoded);
                 }
                 Err(err) => {
@@ -318,52 +260,44 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn decodes_minimal_capability_row() {
-        let value = json!({
-            "capability_id": "cap-1",
-            "action": "ck.space.write_message",
+    fn sample_grant(subject: serde_json::Value) -> Capability {
+        serde_json::from_value(json!({
+            "id": "ck:grant:0196419b-0000-7000-8000-000000000000",
+            "schema": "ck.schema.capability_grant.v1",
+            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:alice.example",
-            "subject": "did:web:bob.example",
+            "subject": subject,
+            "actions": ["ck.space.write_message"],
+            "resources": [
+                {"kind": "realm", "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001"}
+            ],
+            "issued_at": "2026-01-01T00:00:00Z",
             "expires_at": "2026-12-31T00:00:00Z",
-        });
-        let row = decode_capability_row(&value).expect("should decode");
-        assert_eq!(row.capability_id, "cap-1");
+            "proofs": [],
+        }))
+        .expect("sample grant decodes as SDK Capability")
+    }
+
+    #[test]
+    fn maps_sdk_grant_to_capability_row() {
+        let row = decode_capability_row(&sample_grant(json!("did:web:bob.example")));
+        assert_eq!(
+            row.capability_id,
+            "ck:grant:0196419b-0000-7000-8000-000000000000"
+        );
         assert_eq!(row.action, "ck.space.write_message");
         assert_eq!(row.issuer_did, "did:web:alice.example");
         assert_eq!(row.subject_did, "did:web:bob.example");
+        assert!(row.expires_at.starts_with("2026-12-31"));
+        // The SDK grant carries no per-hop chain projection (only
+        // `parent_grant_id`), so the detail modal renders the
+        // "held directly" empty state.
         assert!(row.chain.is_empty());
     }
 
     #[test]
-    fn decodes_delegation_chain() {
-        let value = json!({
-            "capability_id": "cap-2",
-            "action": "ck.space.write_message",
-            "grantor": "did:web:bob.example",
-            "grantee": "did:web:carol.example",
-            "chain": [
-                {"issuer": "did:web:alice.example", "subject": "did:web:bob.example", "constraints": {"expires_at": "+1h"}},
-                {"issuer": "did:web:bob.example", "subject": "did:web:carol.example", "constraints": {"expires_at": "+30m"}},
-            ],
-        });
-        let row = decode_capability_row(&value).expect("should decode");
-        assert_eq!(row.chain.len(), 2);
-        assert_eq!(row.chain[0].issuer_did, "did:web:alice.example");
-        assert_eq!(row.chain[1].subject_did, "did:web:carol.example");
-    }
-
-    #[test]
-    fn returns_none_when_capability_id_missing() {
-        let value = json!({"action": "ck.space.read"});
-        assert!(decode_capability_row(&value).is_none());
-    }
-
-    #[test]
-    fn fallbacks_handle_grant_id_alias() {
-        let value = json!({"grant_id": "cap-3"});
-        let row = decode_capability_row(&value).expect("should decode");
-        assert_eq!(row.capability_id, "cap-3");
-        assert!(row.action.is_empty());
+    fn selector_subject_renders_as_json() {
+        let row = decode_capability_row(&sample_grant(json!({"kind": "circle", "circle": "ops"})));
+        assert!(row.subject_did.contains("circle"));
     }
 }

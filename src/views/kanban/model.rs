@@ -1667,14 +1667,12 @@ pub(super) fn raw_operation_from_event(
         .or_else(|| json_path_string(Some(event), &["event_id"]))
         .unwrap_or_else(|| format!("remote-{expected_kind}"));
     // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
-    // sender → sender_actor_id)。优先 actor_id / sender_actor_id;`sender`
-    // 已废弃,降到尾部仅作向后兼容容忍服务端旧值。
+    // sender → sender_actor_id,hard_reject)。只读 actor_id /
+    // sender_actor_id;legacy `sender` 不再容忍。
     let actor_id = json_path_string(Some(event), &["actor_id"])
         .or_else(|| json_path_string(Some(event), &["sender_actor_id"]))
         .or_else(|| json_path_string(Some(&body), &["actor_id"]))
         .or_else(|| json_path_string(Some(&body), &["sender_actor_id"]))
-        .or_else(|| json_path_string(Some(event), &["sender"]))
-        .or_else(|| json_path_string(Some(&body), &["sender"]))
         .unwrap_or_default();
     let created_at = json_path_string(Some(event), &["created_at"])
         .or_else(|| json_path_string(Some(&body), &["created_at"]))

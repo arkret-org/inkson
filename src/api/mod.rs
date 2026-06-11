@@ -95,26 +95,24 @@ impl Default for CancellationToken {
 use crate::config::validate_server_url;
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
-    AccountDataSetOutcome, AccountRegisterOutcome, AccountUpdateProfileOutcome,
-    AgentGrantAttachReqBody, AgentGrantDetachResBody, AgentGrantResBody, AgentKeyPairReqBody,
-    AgentKeyPairResBody, AgentLifecycleReqBody, AgentLifecycleResBody, AgentListResBody,
-    AgentProvisionReqBody, AgentResBody, AgentRotateKeyReqBody, AgentRotateKeyResBody,
-    AgentSidecarThreadEnsureReqBody, AgentSidecarThreadEnsureResBody, AuthzCheckOutcome,
+    AccountDataSetOutcome, AuthzCheckOutcome,
     BackfillOutcome, BlobUploadOutcome, ClientSyncOutcome,
     ConsentCellOutcome, ConsentCellsOutcome, ContactOutcome, ContactsOutcome,
     DevLoginOutcome, DeviceMessagesGetOutcome,
-    DeviceMessagesPutOutcome, DeviceTrustOutcome, DidOperationSubmitOutcome,
-    EphemeralSubmitOutcome, GrantList, HealthOutcome, IceConfigOutcome, IceConfigRequestBody,
+    DeviceMessagesPutOutcome, DeviceTrustOutcome,
+    EphemeralSubmitOutcome, GrantList, HealthOutcome,
     IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchOutcome, InvitesOutcome,
-    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutOutcome, MimiGroupInfoOutcome,
+    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutOutcome,
+    MediaIceConfigOutcome, MediaIceConfigRequestBody, MimiGroupInfoOutcome,
     MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome, MimiProviderDirectory,
     MimiProxyDownloadOutcome, MimiReportAbuseOutcome, MimiRequestConsentOutcome,
-    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, MlsRotateOutcome, ModerationReportOutcome,
-    OkOutcome, PolicyCheckOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate,
+    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome,
+    OkOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate,
     RealmPolicyOutcome, ReceiptOutcome, ResolveHandleOutcome, ResolveRealmOutcome,
     SearchActorsOutcome, SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
-    SnapshotHeadState, SolandDirectoryDescribeResBody, SolandEventsDescribeResBody,
-    SpaceCreateOutcome, SubmitEventOutcome, SyncDescribeResBody, TypingOutcome,
+    SolandAccountRegisterOutcome, SolandAccountUpdateProfileOutcome,
+    SolandDirectoryDescribeResBody, SolandModerationReportOutcome,
+    SpaceCreateOutcome, SubmitEventOutcome, SyncDescribeOutcome, TypingOutcome,
     VerifyDeviceOutcome,
 };
 use crate::operation::{
@@ -229,10 +227,10 @@ pub struct CokretApi {
     chime_session_grant_proof: Option<SessionGrantIntrospectionProof>,
     network_state: Arc<RwLock<NetworkState>>,
     cancel_token: Option<CancellationToken>,
-    /// H1 — cached `GET /_cokret/self/events/describe` response. Used so callers
-    /// like `submit_events_batch` can consult `capabilities.batch_submit`
-    /// without re-hitting the network on every batch.
-    events_describe_cache: Arc<OnceCell<SolandEventsDescribeResBody>>,
+    /// Cached `GET /_cokret/self/events/describe` response (spec
+    /// `ServiceDescribe` shape) so repeat callers avoid re-hitting the
+    /// network.
+    events_describe_cache: Arc<OnceCell<cokret_sdk::ServiceDescribe>>,
     /// Cached `GET /_cokret/describe` response used to bind durable
     /// EventProof signatures to this service's trust domain and audience.
     service_describe_cache: Arc<OnceCell<ServerDescription>>,
@@ -398,7 +396,7 @@ impl std::error::Error for AccountSubscribeReconnectAfter {}
 /// True when the server has *definitively* told us the session is dead.
 ///
 /// We require an explicit error envelope code that names session loss
-/// (`auth_expired`, `M_UNKNOWN_TOKEN`, `invalid_token`, `token_expired`)
+/// (`auth_expired`, `unauthenticated`, `invalid_token`, `token_expired`)
 /// on HTTP 401, or a session-grant-specific terminal denial such as
 /// `capability_denied` / `session grant is not active: revoked`.
 ///
@@ -424,7 +422,6 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
                 "auth_expired"
                     | "unauthenticated"
                     | "soft_logged_out"
-                    | "M_UNKNOWN_TOKEN"
                     | "invalid_token"
                     | "token_expired"
             )
@@ -486,11 +483,14 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
     Some(api_error.error.retry_after_ms().unwrap_or(0))
 }
 
-/// `true` when account subscribe rejected the cursor — either expired, invalid,
-/// or with an integrity mismatch — so the SyncEngine knows to demote to
-/// a `after=None` full sync instead of looping on the same broken cursor.
+/// `true` when account subscribe rejected the cursor — expired, invalid,
+/// integrity-mismatched, or unrecognized — so the SyncEngine knows to
+/// demote to a `after=None` full sync instead of looping on the same
+/// broken cursor. Per client-sync.md §2/§12.3, `cursor_expired` /
+/// `cursor_integrity_invalid` / `cursor_unrecognized` all recover by
+/// clearing the local cursor and redoing initial sync.
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
-    use cokret_sdk::error::ERROR_CODE_CURSOR_INTEGRITY_INVALID;
+    use cokret_sdk::error::{ERROR_CODE_CURSOR_INTEGRITY_INVALID, ERROR_CODE_CURSOR_UNRECOGNIZED};
     use cokret_sdk::{ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM};
     error
         .downcast_ref::<CokretApiError>()
@@ -503,9 +503,22 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
                 code,
                 code if code == ERROR_CODE_CURSOR_EXPIRED
                     || code == ERROR_CODE_CURSOR_INTEGRITY_INVALID
+                    || code == ERROR_CODE_CURSOR_UNRECOGNIZED
             ) || (cursor_message
                 && matches!(code, code if code == ERROR_CODE_INVALID_PARAM || code == "invalid_cursor"))
         })
+}
+
+/// `true` for `stale_frontier` — the cursor itself is still valid but the
+/// service frontier lags the requested causal frontier. Per
+/// client-sync.md §4 the client MUST NOT clear the cursor; it should
+/// fetch the current frontier via `account/describe` / `snapshot/head`
+/// (§12.3 step 2) and retry / backfill with the SAME cursor.
+pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
+    use cokret_sdk::error::ERROR_CODE_STALE_FRONTIER;
+    error
+        .downcast_ref::<CokretApiError>()
+        .is_some_and(|api_error| api_error.error.code() == ERROR_CODE_STALE_FRONTIER)
 }
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
@@ -2779,33 +2792,210 @@ fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOu
     }
 }
 
+/// Incremental folder for `ck.self.account.subscribe` NDJSON frames.
+///
+/// YOU-01-010: consumes EVERY frame instead of returning at the first
+/// `delta` — catchup deltas are merged in order, and per client-sync.md
+/// §2.2 **any** frame carrying a `cursor` advances the persisted
+/// high-water mark (delta / catchup_complete / frontier / heartbeat).
+/// Control-frame routing:
+/// - `resync_required` / `unauthorized` → discard the accumulated state
+///   and surface `ReconnectAfter` (resync resets the cursor);
+/// - `dropped` → return what was accumulated (its `cursor` is the resume
+///   point) or `ReconnectAfter` when nothing was accumulated yet;
+/// - `catchup_complete` → the snapshot is complete; streaming readers
+///   stop consuming here instead of waiting for the server to close the
+///   long-lived stream.
+#[derive(Default)]
+struct AccountSubscribeFolder {
+    merged: Option<ClientSyncOutcome>,
+    latest_cursor: Option<String>,
+    done: Option<AccountSubscribeSnapshotOutcome>,
+}
+
+impl AccountSubscribeFolder {
+    /// Feed one frame. Returns `true` when the outcome is decided and the
+    /// caller can stop reading the stream.
+    fn push(&mut self, frame: cokret_sdk::AccountSubscribeFrame) -> bool {
+        if self.done.is_some() {
+            return true;
+        }
+        if let Some(cursor) = frame.cursor.as_deref().filter(|c| !c.trim().is_empty()) {
+            self.latest_cursor = Some(cursor.to_owned());
+        }
+        match frame.kind {
+            cokret_sdk::AccountSubscribeFrameKind::ResyncRequired
+            | cokret_sdk::AccountSubscribeFrameKind::Unauthorized => {
+                self.done = Some(AccountSubscribeSnapshotOutcome::ReconnectAfter {
+                    reconnect_after_ms: frame
+                        .reconnect_after_ms()
+                        .unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS),
+                    reason: frame.reason,
+                    reset_cursor: frame.kind
+                        == cokret_sdk::AccountSubscribeFrameKind::ResyncRequired,
+                });
+                return true;
+            }
+            cokret_sdk::AccountSubscribeFrameKind::Dropped
+            | cokret_sdk::AccountSubscribeFrameKind::CatchupComplete => {
+                // Both close this snapshot scope: whatever was folded is
+                // valid up to `latest_cursor` (the dropped frame's cursor
+                // is the documented resume point; catchup_complete marks
+                // the baseline as complete).
+                return true;
+            }
+            _ => {}
+        }
+        if let Some(delta) = ClientSyncOutcome::from_account_subscribe_frame(frame) {
+            self.merged = Some(match self.merged.take() {
+                None => delta,
+                Some(mut acc) => {
+                    merge_account_subscribe_delta(&mut acc, delta);
+                    acc
+                }
+            });
+        }
+        false
+    }
+
+    fn finish(self) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
+        if let Some(done) = self.done {
+            return Ok(done);
+        }
+        match self.merged {
+            Some(mut response) => {
+                if let Some(cursor) = self.latest_cursor {
+                    response.cursor = cursor;
+                }
+                Ok(AccountSubscribeSnapshotOutcome::Delta(response))
+            }
+            None => anyhow::bail!("account subscribe stream ended before a delta frame"),
+        }
+    }
+}
+
+// Buffered fold over a complete NDJSON body. Production path on wasm32
+// (no chunk reader on the browser-fetch backend); native production goes
+// through `drain_account_subscribe_response`, so this is test-only there.
+#[cfg_attr(not(any(test, target_arch = "wasm32")), allow(dead_code))]
 fn parse_account_subscribe_snapshot_outcome(
     bytes: &[u8],
 ) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
+    let mut folder = AccountSubscribeFolder::default();
     for line in bytes.split(|byte| *byte == b'\n') {
         let trimmed = trim_ascii(line);
         if trimmed.is_empty() {
             continue;
         }
         let frame: cokret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
-        if frame.requires_resubscribe() {
-            let reset_cursor = frame.kind == cokret_sdk::AccountSubscribeFrameKind::ResyncRequired;
-            return Ok(AccountSubscribeSnapshotOutcome::ReconnectAfter {
-                reconnect_after_ms: frame
-                    .reconnect_after_ms()
-                    .unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS),
-                reason: frame.reason,
-                reset_cursor,
-            });
-        }
-        if let Some(response) = ClientSyncOutcome::from_account_subscribe_frame(frame) {
-            return Ok(AccountSubscribeSnapshotOutcome::Delta(response));
+        if folder.push(frame) {
+            break;
         }
     }
-    anyhow::bail!("account subscribe stream ended before a delta frame")
+    folder.finish()
 }
 
-pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeResBody> {
+/// Native streaming reader: consume the account-subscribe NDJSON response
+/// frame by frame and stop as soon as the snapshot scope is decided
+/// (`catchup_complete` / control frame) instead of buffering the whole
+/// body — against a spec-compliant server that keeps the stream open for
+/// realtime push, `Response::bytes()` would block until timeout.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn drain_account_subscribe_response(
+    mut response: reqwest::Response,
+) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
+    let mut folder = AccountSubscribeFolder::default();
+    let mut pending: Vec<u8> = Vec::new();
+    'stream: while let Some(chunk) = response.chunk().await? {
+        pending.extend_from_slice(&chunk);
+        while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+            let mut line: Vec<u8> = pending.drain(..=newline).collect();
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let trimmed = trim_ascii(&line);
+            if trimmed.is_empty() {
+                continue;
+            }
+            let frame: cokret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
+            if folder.push(frame) {
+                break 'stream;
+            }
+        }
+    }
+    // Flush a final unterminated line (server closed without trailing \n).
+    let trimmed = trim_ascii(&pending);
+    if !trimmed.is_empty() {
+        let frame: cokret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
+        folder.push(frame);
+    }
+    folder.finish()
+}
+
+/// Merge a later catchup `delta` into the accumulated snapshot. Realm
+/// entries deep-merge their `timeline.events` (append) so multi-frame
+/// catchup does not drop earlier batches; list-shaped account channels
+/// append; scalar channels take the newest value.
+fn merge_account_subscribe_delta(acc: &mut ClientSyncOutcome, next: ClientSyncOutcome) {
+    for (realm_id, incoming) in next.realms {
+        match acc.realms.entry(realm_id) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(incoming);
+            }
+            std::collections::btree_map::Entry::Occupied(mut slot) => {
+                merge_realm_delta_value(slot.get_mut(), incoming);
+            }
+        }
+    }
+    acc.cursor = next.cursor;
+    acc.left_realms.extend(next.left_realms);
+    acc.to_device.extend(next.to_device);
+    acc.account_data.extend(next.account_data);
+    acc.presence.extend(next.presence);
+    if !next.device_lists.is_null() {
+        acc.device_lists = next.device_lists;
+    }
+    if !next.notifications.is_null() {
+        acc.notifications = next.notifications;
+    }
+    acc.partial = next.partial;
+}
+
+/// Best-effort deep merge of one realm's delta body: `timeline.events`
+/// arrays append, every other key takes the incoming value.
+fn merge_realm_delta_value(current: &mut Value, incoming: Value) {
+    let Value::Object(incoming) = incoming else {
+        *current = incoming;
+        return;
+    };
+    let Value::Object(current_map) = current else {
+        *current = Value::Object(incoming);
+        return;
+    };
+    for (key, value) in incoming {
+        if key == "timeline"
+            && let Some(Value::Object(existing_timeline)) = current_map.get_mut("timeline")
+            && let Value::Object(mut incoming_timeline) = value
+        {
+            if let (Some(Value::Array(existing_events)), Some(Value::Array(new_events))) = (
+                existing_timeline.get_mut("events"),
+                incoming_timeline.remove("events"),
+            ) {
+                existing_events.extend(new_events);
+            }
+            for (timeline_key, timeline_value) in incoming_timeline {
+                existing_timeline.insert(timeline_key, timeline_value);
+            }
+            continue;
+        }
+        current_map.insert(key, value);
+    }
+}
+
+pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeOutcome> {
     Ok(serde_json::from_value(value)?)
 }
 
@@ -3451,6 +3641,29 @@ mod tests {
     }
 
     #[test]
+    fn account_subscribe_fold_consumes_every_catchup_frame() {
+        // YOU-01-010 — multi-frame catchup: both deltas must be folded
+        // (timeline events appended) and the cursor must advance to the
+        // LAST cursor-bearing frame (the catchup_complete), not stop at
+        // the first delta.
+        let folded = parse_account_subscribe_snapshot(
+            br#"{"kind":"delta","cursor":"ck:cursor:1","realms":{"ck:realm:a":{"timeline":{"events":[{"event_id":"ck:event:1"}]}}}}
+{"kind":"delta","cursor":"ck:cursor:2","realms":{"ck:realm:a":{"timeline":{"events":[{"event_id":"ck:event:2"}]}},"ck:realm:b":{"summary":{"title":"B"}}}}
+{"kind":"catchup_complete","cursor":"ck:cursor:3"}
+"#,
+        )
+        .unwrap();
+        assert_eq!(folded.cursor, "ck:cursor:3");
+        assert!(folded.realms.contains_key("ck:realm:b"));
+        let events = folded.realms["ck:realm:a"]["timeline"]["events"]
+            .as_array()
+            .expect("merged timeline events");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["event_id"], "ck:event:1");
+        assert_eq!(events[1]["event_id"], "ck:event:2");
+    }
+
+    #[test]
     fn event_paths_use_v1_query_parameters() {
         let backfill = events_query_path("ck:realm:demo");
         assert_eq!(backfill, "_cokret/self/events?realms=ck%3Arealm%3Ademo");
@@ -3934,7 +4147,6 @@ mod tests {
         for code in [
             "unauthenticated",
             "soft_logged_out",
-            "M_UNKNOWN_TOKEN",
             "invalid_token",
             "token_expired",
         ] {

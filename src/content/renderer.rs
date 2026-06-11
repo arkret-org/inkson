@@ -4,7 +4,7 @@
 //! and the boundaries set by task A3.
 
 use dioxus::prelude::*;
-use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, Tag, html as md_html};
+use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, Tag, TagEnd, html as md_html};
 
 use crate::api::CokretApi;
 use crate::config::LocalConfigStore;
@@ -406,6 +406,26 @@ fn markdown_to_safe_html(src: &str) -> String {
             title,
             id,
         }),
+        // Never emit `<img>` for markdown image syntax. An auto-loading
+        // remote image leaks the reader's IP address, user agent and
+        // read time to the host the sender picked — a read-receipt side
+        // channel that bypasses E2EE. Authenticated `ck:blob:` images
+        // are handled upstream by `parse_markdown_blob_image_line`;
+        // everything that reaches this path is demoted to a plain link
+        // (click-to-open) whose destination goes through the same
+        // scheme allow-list as ordinary links.
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Link {
+            link_type,
+            dest_url: sanitize_link_url(&dest_url),
+            title,
+            id,
+        }),
+        Event::End(TagEnd::Image) => Event::End(TagEnd::Link),
         other => other,
     });
 
@@ -1020,6 +1040,34 @@ mod tests {
         assert!(
             !html.contains("href=\"data:"),
             "data: scheme leaked into href: {html}"
+        );
+        assert!(
+            html.contains("href=\"#\""),
+            "expected neutralised href: {html}"
+        );
+    }
+
+    #[test]
+    fn markdown_to_safe_html_demotes_remote_images_to_links() {
+        // A remote `<img>` would auto-load on render and leak the
+        // reader's IP / read time to the sender-chosen host, so image
+        // syntax must come out as a click-to-open link instead.
+        let html = markdown_to_safe_html("look ![tracker](https://attacker.example/t.png) here");
+        assert!(!html.contains("<img"), "remote <img> leaked: {html}");
+        assert!(
+            html.contains("href=\"https://attacker.example/t.png\""),
+            "expected demoted link: {html}"
+        );
+        assert!(html.contains("tracker"), "alt text lost: {html}");
+    }
+
+    #[test]
+    fn markdown_to_safe_html_neutralises_dangerous_image_schemes() {
+        let html = markdown_to_safe_html("![x](javascript:alert(1))");
+        assert!(!html.contains("<img"), "image tag leaked: {html}");
+        assert!(
+            !html.to_ascii_lowercase().contains("javascript:"),
+            "javascript: scheme leaked: {html}"
         );
         assert!(
             html.contains("href=\"#\""),

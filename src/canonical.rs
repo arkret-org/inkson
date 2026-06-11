@@ -35,6 +35,18 @@ pub fn sha256_digest(bytes: impl AsRef<[u8]>) -> String {
     sdk_sha256_digest(bytes)
 }
 
+/// YOU-05-007: the crate's single lowercase-hex encoder — fixed width per
+/// byte, no separator, matching the SDK's `canonical::sha256_digest` hex
+/// tail style. Previously copied verbatim in `cross_signing`,
+/// `crypto_boundary` and `mls::persistence`.
+pub fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
 /// Helper: digest of a canonical operation/event body for proof binding.
 ///
 /// Equivalent to `canonical_sha256(body)`, but kept as a named entry point so

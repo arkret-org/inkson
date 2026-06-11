@@ -81,13 +81,11 @@ impl CokretApi {
         Ok(Some(record))
     }
 
-    pub async fn rotate_mls_epoch(&self, mls_group_ref: &str) -> anyhow::Result<MlsRotateOutcome> {
-        self.post_json(
-            "_cokret/self/mls/rotate",
-            json!({"mls_group_ref": mls_group_ref}),
-        )
-        .await
-    }
+    // YOU-01-009: the former `rotate_mls_epoch` helper (non-spec
+    // `POST /_cokret/self/mls/rotate` shim) was removed — epoch rotation
+    // is carried by the canonical `ck.mls.commit` event built from a
+    // local `self_update_commit`
+    // (`crate::mls::runtime::force_epoch_rotation_commit`).
 
     // ── MIMI Provider Facade ─────────────────────────────────────
 

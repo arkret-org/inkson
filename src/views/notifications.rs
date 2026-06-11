@@ -630,7 +630,7 @@ fn accept_invite_notification(
             let submit = api
                 .join_realm_from_invite(&accepted_realm_for_api, &account.did, &invite_id)
                 .await?;
-            let read_api = api.clone().with_wait_for(submit.sync_token);
+            let read_api = api.clone().with_wait_for(submit.cursor);
             let sync = read_api.account_subscribe_snapshot(None).await;
             let invite_notifications = read_api
                 .invites()

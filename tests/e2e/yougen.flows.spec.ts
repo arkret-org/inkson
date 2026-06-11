@@ -1615,7 +1615,12 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 
   await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/security");
   await page.getByTestId("rotate-realm-epoch").click();
-  await expect(page.getByTestId("realm-admin-status")).toContainText("rotated to epoch");
+  // YOU-01-009: rotation is now a real local `self_update_commit`
+  // published as `ck.mls.commit`. The e2e fixture has no local MLS group
+  // state for this realm, so the rotate must fail closed with a status
+  // message instead of calling the former non-spec /_cokret/self/mls/rotate
+  // shim.
+  await expect(page.getByTestId("realm-admin-status")).toContainText("rotate failed");
 
   await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/repair");
   await page.getByTestId("archive-realm-button").click();

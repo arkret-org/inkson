@@ -184,24 +184,25 @@ fn yougen_accepts_server_contract_payloads() {
 
     let submit: yougen::models::SubmitEventOutcome = serde_json::from_value(json!({
         "status": "accepted",
-        "event_id": "ck:event:019640ca-0000-7000-8000-000000000000",
-        "canonical_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        "sync_token": "sx:1760000000000",
-        "receipt": {
-            "service_did": "did:web:server.local"
-        }
+        "accepted": ["ck:event:019640ca-0000-7000-8000-000000000000"],
+        "duplicate": [],
+        "rejected": [],
+        "actor_frontier": {},
+        "realm_frontier": {},
+        "cursor": "sx:1760000000000"
     }))
     .unwrap();
     assert_eq!(submit.status, "accepted");
+    assert_eq!(
+        submit.event_id,
+        "ck:event:019640ca-0000-7000-8000-000000000000"
+    );
+    assert_eq!(submit.cursor, "sx:1760000000000");
 
-    let snapshot: yougen::models::SnapshotHeadState = serde_json::from_value(json!({
-        "snapshot_ref": "ck:snapshot:ck:realm:0196419b-0000-7000-8000-000000000000:head",
-        "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        "frontier": {"realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000"},
-        "signature": {"kid": "did:web:server.local#dev", "alg": "none", "sig": ""}
-    }))
-    .unwrap();
-    assert!(snapshot.snapshot_ref.starts_with("ck:snapshot:"));
+    // `SnapshotHeadState` contract check removed: spec resolution
+    // (2026-06-11, renames.json `snapshot_head_returns_manifest`) replaced
+    // the head-pointer DTO with the full `ck.schema.snapshot.v1` manifest;
+    // `CokretApi::snapshot_head` now returns the manifest as raw JSON.
 
     let login: yougen::models::DevLoginOutcome = serde_json::from_value(json!({
         "access_token": "sx_token",
@@ -222,8 +223,23 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(authz.decision, cokret_sdk::model::AuthzDecision::Allow);
 
+    // `GrantList` is the SDK authoritative wire type (soland serialises it
+    // verbatim), so rows must be full `ck.schema.capability_grant.v1`
+    // grants rather than free-form objects.
     let grants: yougen::models::GrantList = serde_json::from_value(json!({
-        "grants": [{"subject": "did:web:alice.example"}],
+        "grants": [{
+            "id": "ck:grant:0196419b-0000-7000-8000-000000000000",
+            "schema": "ck.schema.capability_grant.v1",
+            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "issuer": "did:web:server.local",
+            "subject": "did:web:alice.example",
+            "actions": ["ck.space.write_message"],
+            "resources": [
+                {"kind": "realm", "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001"}
+            ],
+            "issued_at": "2026-04-28T12:00:00Z",
+            "proofs": []
+        }],
         "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "evaluated_at": "2026-04-28T12:00:00Z"
     }))
@@ -295,7 +311,7 @@ fn yougen_accepts_server_contract_payloads() {
         format!("sha256:{}", "ab".repeat(32))
     );
 
-    let report: yougen::models::ModerationReportOutcome = serde_json::from_value(json!({
+    let report: yougen::models::SolandModerationReportOutcome = serde_json::from_value(json!({
         "report_id": "ck:report:1760000000000",
         "status": "queued",
         "routed_to": ["did:web:server.local#moderation"]
@@ -697,13 +713,12 @@ fn bare_401_does_not_count_as_session_loss() {
     // A 401 with an unrelated error code (e.g. rate-limit / policy_denied
     // wrapped at the 401 layer) must also stay transient. Only explicit
     // session-death codes from the spec — auth_expired / unauthenticated /
-    // soft_logged_out / M_UNKNOWN_TOKEN / invalid_token / token_expired —
+    // soft_logged_out / invalid_token / token_expired —
     // should drop the session.
     for code in [
         "auth_expired",
         "unauthenticated",
         "soft_logged_out",
-        "M_UNKNOWN_TOKEN",
         "invalid_token",
         "token_expired",
     ] {

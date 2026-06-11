@@ -495,95 +495,111 @@ pub fn uuid_v7() -> String {
 }
 
 /// Canonical helper constructors used by the current UI.
-pub mod cx_ops {
+pub mod ck_ops {
     use serde_json::{Value, json};
 
-    use super::{
-        Effect, LatticeOp, OperationBuilder, Precondition, Predicate, SemanticRef, trim_realm_id,
-    };
+    use super::{OperationBuilder, trim_realm_id};
 
-    fn did_id(value: &str) -> cokret_sdk::Did {
+    // YOU-02-001: every fallible helper below returns `anyhow::Result`
+    // instead of panicking. The ids these helpers parse ultimately come from
+    // server sync data (bare `String` fields in `models.rs` flow into local
+    // UI state), so a non-canonical id from a buggy or malicious server must
+    // surface as a recoverable error — on wasm a panic kills the whole page.
+
+    fn did_id(value: &str) -> anyhow::Result<cokret_sdk::Did> {
         cokret_sdk::Did::new(value.to_owned())
-            .unwrap_or_else(|err| panic!("invalid DID {value:?}: {err:?}"))
+            .map_err(|err| anyhow::anyhow!("invalid DID {value:?}: {err:?}"))
     }
 
     /// Build a spec `invite_payload` (invite_id-ref anyOf branch) value for
     /// `ck.invite.accept` / `ck.invite.cancel` via the SDK strong type.
-    fn invite_ref_payload_value(invite_id: &str, reason: Option<&str>) -> Value {
+    fn invite_ref_payload_value(invite_id: &str, reason: Option<&str>) -> anyhow::Result<Value> {
         let invite_id_typed = cokret_sdk::InviteId::new(invite_id.to_owned())
-            .unwrap_or_else(|err| panic!("invite_id not canonical {invite_id:?}: {err}"));
+            .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
         let mut payload = cokret_sdk::model::InviteRefPayload::new(invite_id_typed);
         if let Some(reason) = reason {
             payload = payload.with_reason(reason);
         }
         payload
             .to_value()
-            .unwrap_or_else(|err| panic!("invite ref payload: {err}"))
+            .map_err(|err| anyhow::anyhow!("invite ref payload: {err}"))
     }
 
-    fn realm_id_value(value: &str) -> cokret_sdk::RealmId {
+    fn realm_id_value(value: &str) -> anyhow::Result<cokret_sdk::RealmId> {
         cokret_sdk::RealmId::new(value.to_owned())
-            .unwrap_or_else(|err| panic!("invalid realm id {value:?}: {err:?}"))
+            .map_err(|err| anyhow::anyhow!("invalid realm id {value:?}: {err:?}"))
     }
 
-    fn space_id_value(value: &str) -> cokret_sdk::SpaceId {
+    fn space_id_value(value: &str) -> anyhow::Result<cokret_sdk::SpaceId> {
         cokret_sdk::SpaceId::new(value.to_owned())
-            .unwrap_or_else(|err| panic!("invalid space id {value:?}: {err:?}"))
+            .map_err(|err| anyhow::anyhow!("invalid space id {value:?}: {err:?}"))
     }
 
-    fn circle_id_value(value: &str) -> cokret_sdk::CircleId {
+    fn circle_id_value(value: &str) -> anyhow::Result<cokret_sdk::CircleId> {
         cokret_sdk::CircleId::new(value.to_owned())
-            .unwrap_or_else(|err| panic!("invalid circle id {value:?}: {err:?}"))
+            .map_err(|err| anyhow::anyhow!("invalid circle id {value:?}: {err:?}"))
     }
 
-    fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
+    fn flow_id_value(value: &str) -> anyhow::Result<cokret_sdk::FlowId> {
         cokret_sdk::FlowId::new(value.to_owned())
-            .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
+            .map_err(|err| anyhow::anyhow!("invalid flow id {value:?}: {err:?}"))
     }
 
-    fn morph_id_value(value: &str) -> cokret_sdk::MorphId {
+    fn morph_id_value(value: &str) -> anyhow::Result<cokret_sdk::MorphId> {
         cokret_sdk::MorphId::new(value.to_owned())
-            .unwrap_or_else(|err| panic!("invalid morph id {value:?}: {err:?}"))
+            .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))
     }
 
-    fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> Value {
-        result.unwrap_or_else(|err| panic!("{context}: {err}"))
+    fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> anyhow::Result<Value> {
+        result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
     }
 
-    fn object_create_payload_value<T: serde::Serialize>(object: T, context: &str) -> Value {
+    fn object_create_payload_value<T: serde::Serialize>(
+        object: T,
+        context: &str,
+    ) -> anyhow::Result<Value> {
         sdk_payload_value(
             cokret_sdk::ObjectCreatePayload::new(object).to_value(),
             context,
         )
     }
 
-    fn object_patch_payload_value(object_ref: &str, patch: cokret_sdk::Patch) -> Value {
+    fn object_patch_payload_value(
+        object_ref: &str,
+        patch: cokret_sdk::Patch,
+    ) -> anyhow::Result<Value> {
         cokret_sdk::ObjectPatchPayload::for_target(object_ref, patch)
             .and_then(|payload| payload.to_value())
-            .unwrap_or_else(|err| {
-                panic!("invalid object_patch_payload for {object_ref}: {err}");
+            .map_err(|err| {
+                anyhow::anyhow!("invalid object_patch_payload for {object_ref}: {err}")
             })
     }
 
-    fn flow_object_patch_payload_value(flow_id: &str, patch: cokret_sdk::Patch) -> Value {
+    fn flow_object_patch_payload_value(
+        flow_id: &str,
+        patch: cokret_sdk::Patch,
+    ) -> anyhow::Result<Value> {
         object_patch_payload_value(flow_id, patch)
     }
 
-    fn flow_tracks_update_payload_value(flow_id: &str, patch: cokret_sdk::Patch) -> Value {
-        cokret_sdk::FlowPatchPayload::for_flow(flow_id_value(flow_id), patch)
+    fn flow_tracks_update_payload_value(
+        flow_id: &str,
+        patch: cokret_sdk::Patch,
+    ) -> anyhow::Result<Value> {
+        cokret_sdk::FlowPatchPayload::for_flow(flow_id_value(flow_id)?, patch)
             .and_then(|payload| payload.to_value())
-            .unwrap_or_else(|err| {
-                panic!("invalid ck.flow.tracks.update payload for {flow_id}: {err}");
+            .map_err(|err| {
+                anyhow::anyhow!("invalid ck.flow.tracks.update payload for {flow_id}: {err}")
             })
     }
 
-    fn flow_watch_level_value(level: &str) -> cokret_sdk::FlowWatchLevel {
+    fn flow_watch_level_value(level: &str) -> anyhow::Result<cokret_sdk::FlowWatchLevel> {
         match level {
-            "mentions_only" => cokret_sdk::FlowWatchLevel::MentionsOnly,
-            "participating" => cokret_sdk::FlowWatchLevel::Participating,
-            "all" => cokret_sdk::FlowWatchLevel::All,
-            "muted" => cokret_sdk::FlowWatchLevel::Muted,
-            other => panic!("unknown ck.flow.watch.set level {other:?}"),
+            "mentions_only" => Ok(cokret_sdk::FlowWatchLevel::MentionsOnly),
+            "participating" => Ok(cokret_sdk::FlowWatchLevel::Participating),
+            "all" => Ok(cokret_sdk::FlowWatchLevel::All),
+            "muted" => Ok(cokret_sdk::FlowWatchLevel::Muted),
+            other => Err(anyhow::anyhow!("unknown ck.flow.watch.set level {other:?}")),
         }
     }
 
@@ -595,22 +611,22 @@ pub mod cx_ops {
         watcher_actor_id: &str,
         level: Option<&str>,
         level_public: Option<bool>,
-    ) -> Value {
+    ) -> anyhow::Result<Value> {
         let payload = match level {
             Some(level) => cokret_sdk::FlowWatchSetPayload::set(
-                flow_id_value(flow_id),
-                did_id(watcher_actor_id),
-                flow_watch_level_value(level),
+                flow_id_value(flow_id)?,
+                did_id(watcher_actor_id)?,
+                flow_watch_level_value(level)?,
                 level_public,
             ),
             None => cokret_sdk::FlowWatchSetPayload::clear(
-                flow_id_value(flow_id),
-                did_id(watcher_actor_id),
+                flow_id_value(flow_id)?,
+                did_id(watcher_actor_id)?,
             ),
         };
         payload
             .to_value()
-            .unwrap_or_else(|err| panic!("invalid flow_watch_set_payload for {flow_id}: {err}"))
+            .map_err(|err| anyhow::anyhow!("invalid flow_watch_set_payload for {flow_id}: {err}"))
     }
 
     /// Build the canonical `flow_move_payload` body via the SDK strong type.
@@ -624,26 +640,26 @@ pub mod cx_ops {
         rank: &str,
         from_space_id: Option<&str>,
         expected: Option<(Option<&str>, Option<&str>)>,
-    ) -> Value {
+    ) -> anyhow::Result<Value> {
         let mut payload = cokret_sdk::FlowMovePayload::new(
-            space_id_value(board_space_id),
-            flow_id_value(flow_id),
-            space_id_value(target_space_id),
+            space_id_value(board_space_id)?,
+            flow_id_value(flow_id)?,
+            space_id_value(target_space_id)?,
             rank.to_owned(),
         );
         if let Some(from) = from_space_id {
-            payload = payload.with_from_space_id(space_id_value(from));
+            payload = payload.with_from_space_id(space_id_value(from)?);
         }
         if let Some((expected_space, expected_rank)) = expected {
             payload = payload.with_expected_position(cokret_sdk::FlowMoveExpectedPosition {
-                space_id: expected_space.map(space_id_value),
+                space_id: expected_space.map(space_id_value).transpose()?,
                 rank: expected_rank.map(ToOwned::to_owned),
                 relation_id: None,
             });
         }
         payload
             .to_value()
-            .unwrap_or_else(|err| panic!("invalid flow_move_payload for {flow_id}: {err}"))
+            .map_err(|err| anyhow::anyhow!("invalid flow_move_payload for {flow_id}: {err}"))
     }
 
     /// Build the canonical `flow_reorder_payload` body via the SDK strong
@@ -655,11 +671,11 @@ pub mod cx_ops {
         space_id: &str,
         rank: &str,
         expected_rank: Option<&str>,
-    ) -> Value {
+    ) -> anyhow::Result<Value> {
         let mut payload = cokret_sdk::FlowReorderPayload::new(
-            space_id_value(board_space_id),
-            flow_id_value(flow_id),
-            space_id_value(space_id),
+            space_id_value(board_space_id)?,
+            flow_id_value(flow_id)?,
+            space_id_value(space_id)?,
             rank.to_owned(),
         );
         if let Some(expected_rank) = expected_rank {
@@ -670,16 +686,16 @@ pub mod cx_ops {
         }
         payload
             .to_value()
-            .unwrap_or_else(|err| panic!("invalid flow_reorder_payload for {flow_id}: {err}"))
+            .map_err(|err| anyhow::anyhow!("invalid flow_reorder_payload for {flow_id}: {err}"))
     }
 
     /// Build the canonical `object_lifecycle_payload` body via the SDK strong
     /// type. Single truth source `target_ref` (`additionalProperties:false`).
-    fn object_lifecycle_payload_value(target_ref: &str) -> Value {
+    fn object_lifecycle_payload_value(target_ref: &str) -> anyhow::Result<Value> {
         cokret_sdk::ObjectLifecyclePayload::new(target_ref.to_owned())
             .to_value()
-            .unwrap_or_else(|err| {
-                panic!("invalid object_lifecycle_payload for {target_ref}: {err}")
+            .map_err(|err| {
+                anyhow::anyhow!("invalid object_lifecycle_payload for {target_ref}: {err}")
             })
     }
 
@@ -690,32 +706,36 @@ pub mod cx_ops {
     /// the relation id is routed via the operation `target_ref`, and the
     /// extra annotation fields were never spec-legal (they tripped
     /// `schema_violation`).
-    fn relation_create_payload_value(kind: &str, from_ref: &str, to_ref: &str) -> Value {
+    fn relation_create_payload_value(
+        kind: &str,
+        from_ref: &str,
+        to_ref: &str,
+    ) -> anyhow::Result<Value> {
         cokret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
             .to_value()
-            .unwrap_or_else(|err| {
-                panic!("invalid relation_create_payload ({kind} {from_ref}->{to_ref}): {err}");
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "invalid relation_create_payload ({kind} {from_ref}->{to_ref}): {err}"
+                )
             })
     }
 
-    fn patch_set(path: &str, value: Value) -> cokret_sdk::Patch {
+    fn patch_set(path: &str, value: Value) -> anyhow::Result<cokret_sdk::Patch> {
         let mut patch = cokret_sdk::Patch::new();
         patch
             .insert_op(path, cokret_sdk::PatchOp::set(value))
-            .unwrap_or_else(|err| {
-                panic!("invalid ck.patch.v1 path {path:?}: {err}");
-            });
-        patch
+            .map_err(|err| anyhow::anyhow!("invalid ck.patch.v1 path {path:?}: {err}"))?;
+        Ok(patch)
     }
 
-    fn patch_from_value(patch: Value) -> cokret_sdk::Patch {
-        let patch: cokret_sdk::Patch = serde_json::from_value(patch).unwrap_or_else(|err| {
-            panic!("ck.flow.update patch must match ck.patch.v1: {err}");
-        });
-        patch.validate().unwrap_or_else(|err| {
-            panic!("ck.flow.update patch must match ck.patch.v1: {err}");
-        });
-        patch
+    fn patch_from_value(patch: Value) -> anyhow::Result<cokret_sdk::Patch> {
+        let patch: cokret_sdk::Patch = serde_json::from_value(patch).map_err(|err| {
+            anyhow::anyhow!("ck.flow.update patch must match ck.patch.v1: {err}")
+        })?;
+        patch.validate().map_err(|err| {
+            anyhow::anyhow!("ck.flow.update patch must match ck.patch.v1: {err}")
+        })?;
+        Ok(patch)
     }
 
     /// Build a canonical `ck.flow.create` discussion operation with the full
@@ -758,7 +778,7 @@ pub mod cx_ops {
         actor: &str,
         circle_id: &str,
         title: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let display = cokret_sdk::CircleDisplay {
             short_name: title.trim().chars().take(16).collect::<String>(),
             color_token: cokret_sdk::CircleColorToken::Indigo,
@@ -767,16 +787,16 @@ pub mod cx_ops {
             },
         };
         let circle = cokret_sdk::Circle::new(
-            circle_id_value(circle_id),
-            realm_id_value(&trim_realm_id(realm_id)),
+            circle_id_value(circle_id)?,
+            realm_id_value(&trim_realm_id(realm_id))?,
             title.trim(),
             display,
-            did_id(actor),
+            did_id(actor)?,
         );
-        let body = object_create_payload_value(circle, "ck.circle.create payload serialize");
-        OperationBuilder::new(realm_id, actor, "ck.circle.create")
+        let body = object_create_payload_value(circle, "ck.circle.create payload serialize")?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.circle.create")
             .target_ref(circle_id)
-            .body(body)
+            .body(body))
     }
 
     /// Build a `ck.flow.create` operation whose full Flow scope is a
@@ -800,7 +820,7 @@ pub mod cx_ops {
                 "discussion",
                 cokret_sdk::FlowTrackConfig::discussion_primary(),
             );
-        flow.scope_circle_id = Some(circle_id_value(circle_id));
+        flow.scope_circle_id = Some(circle_id_value(circle_id)?);
         let payload = cokret_sdk::ObjectCreatePayload::new(flow)
             .to_value()
             .map_err(|e| anyhow::anyhow!("ck.flow.create payload serialize: {e}"))?;
@@ -817,18 +837,18 @@ pub mod cx_ops {
         private_flow_id: &str,
         public_anchor_ref: &str,
         circle_id: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         // `circle_id` is unused on the wire: relation_create_payload is
         // additionalProperties:false and the private-side scope is already
         // carried by the Circle-scoped Flow itself.
         let _ = circle_id;
-        OperationBuilder::new(realm_id, actor, "ck.relation.create")
+        Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
             .target_ref(private_flow_id)
             .body(relation_create_payload_value(
                 "confidential_discussion_of",
                 private_flow_id,
                 public_anchor_ref,
-            ))
+            )?))
     }
 
     /// Build a `ck.flow.watch.set` operation. Spec:
@@ -853,14 +873,14 @@ pub mod cx_ops {
         flow_id: &str,
         level: Option<&str>,
         level_public: Option<bool>,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         // Strong type: flow_watch_set_payload (additionalProperties:false +
         // allOf forbidding level_public when level is null). The typed
         // constructors keep the clear path (level:null) free of level_public.
-        let payload = flow_watch_set_payload_value(flow_id, target_actor_id, level, level_public);
-        OperationBuilder::new(realm_id, sender_actor, "ck.flow.watch.set")
+        let payload = flow_watch_set_payload_value(flow_id, target_actor_id, level, level_public)?;
+        Ok(OperationBuilder::new(realm_id, sender_actor, "ck.flow.watch.set")
             .target_ref(flow_id)
-            .body(payload)
+            .body(payload))
     }
 
     /// Build a `ck.flow.tracks.update` operation. Spec:
@@ -885,11 +905,11 @@ pub mod cx_ops {
         actor: &str,
         flow_id: &str,
         patch: serde_json::Value,
-    ) -> OperationBuilder {
-        let patch = patch_from_value(patch);
-        OperationBuilder::new(realm_id, actor, "ck.flow.tracks.update")
+    ) -> anyhow::Result<OperationBuilder> {
+        let patch = patch_from_value(patch)?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.tracks.update")
             .target_ref(flow_id)
-            .body(flow_tracks_update_payload_value(flow_id, patch))
+            .body(flow_tracks_update_payload_value(flow_id, patch)?))
     }
 
     /// Convenience wrapper: enable `track` on `flow_id`. Emits the unified
@@ -900,7 +920,7 @@ pub mod cx_ops {
         actor: &str,
         flow_id: &str,
         track: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let key = format!("tracks.{track}.enabled");
         let patch = json!({ key: { "$op": "set", "value": true } });
         flow_tracks_update(realm_id, actor, flow_id, patch)
@@ -912,7 +932,7 @@ pub mod cx_ops {
         actor: &str,
         flow_id: &str,
         track: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let key = format!("tracks.{track}.enabled");
         let patch = json!({ key: { "$op": "set", "value": false } });
         flow_tracks_update(realm_id, actor, flow_id, patch)
@@ -926,7 +946,7 @@ pub mod cx_ops {
         actor: &str,
         flow_id: &str,
         track: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let key = format!("tracks.{track}.is_primary");
         let patch = json!({ key: { "$op": "set", "value": true } });
         flow_tracks_update(realm_id, actor, flow_id, patch)
@@ -946,24 +966,24 @@ pub mod cx_ops {
         title: &str,
         parent_space_id: Option<&str>,
         rank: Option<&str>,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let mut object = cokret_sdk::SpaceCreateObject::new(
-            space_id_value(container_space_id),
-            realm_id_value(&trim_realm_id(realm_id)),
+            space_id_value(container_space_id)?,
+            realm_id_value(&trim_realm_id(realm_id))?,
             kind,
             title,
-            did_id(actor),
+            did_id(actor)?,
         );
         if let Some(parent_space_id) = parent_space_id {
-            object.parent_space_id = Some(space_id_value(parent_space_id));
+            object.parent_space_id = Some(space_id_value(parent_space_id)?);
         }
         if let Some(rank) = rank {
             object.rank = Some(rank.to_owned());
         }
-        let body = object_create_payload_value(object, "ck.space.create payload serialize");
-        OperationBuilder::new(realm_id, actor, "ck.space.create")
+        let body = object_create_payload_value(object, "ck.space.create payload serialize")?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.space.create")
             .target_ref(container_space_id)
-            .body(body)
+            .body(body))
     }
 
     /// Build a `ck.morph.create` for a document Morph.
@@ -973,23 +993,23 @@ pub mod cx_ops {
         morph_id: &str,
         title: &str,
         document_body: serde_json::Value,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let realm_id = trim_realm_id(realm_id);
         let object = cokret_sdk::MorphCreateObject::new(
-            morph_id_value(morph_id),
-            realm_id_value(&realm_id),
+            morph_id_value(morph_id)?,
+            realm_id_value(&realm_id)?,
             "document",
-            did_id(actor),
+            did_id(actor)?,
         )
         .with_title(title)
         .with_facet("documentable", json!({}))
         .with_field("document", document_body);
-        OperationBuilder::new(&realm_id, actor, "ck.morph.create")
+        Ok(OperationBuilder::new(&realm_id, actor, "ck.morph.create")
             .target_ref(morph_id)
             .body(sdk_payload_value(
                 object.to_create_payload_value(),
                 "ck.morph.create document payload serialize",
-            ))
+            )?))
     }
 
     /// Build a `ck.flow.create` for an incident response Flow. The
@@ -1003,12 +1023,12 @@ pub mod cx_ops {
         title: &str,
         status: &str,
         priority: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let realm_id = trim_realm_id(realm_id);
         let object = cokret_sdk::FlowCreateObject::new(
-            flow_id_value(flow_id),
-            realm_id_value(&realm_id),
-            did_id(actor),
+            flow_id_value(flow_id)?,
+            realm_id_value(&realm_id)?,
+            did_id(actor)?,
         )
         .with_metadata_title(title)
         .with_metadata_field("flow_kind", json!("incident"))
@@ -1024,12 +1044,12 @@ pub mod cx_ops {
             "discussion",
             cokret_sdk::FlowTrackConfig::new().with_profile("war_room"),
         );
-        OperationBuilder::new(&realm_id, actor, "ck.flow.create")
+        Ok(OperationBuilder::new(&realm_id, actor, "ck.flow.create")
             .target_ref(flow_id)
             .body(object_create_payload_value(
                 object,
                 "ck.flow.create incident payload serialize",
-            ))
+            )?))
     }
 
     /// Build a `ck.flow.update` for the incident `fields.status` FSM.
@@ -1038,7 +1058,7 @@ pub mod cx_ops {
         actor: &str,
         flow_id: &str,
         status: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         flow_update_patch(
             realm_id,
             actor,
@@ -1057,12 +1077,12 @@ pub mod cx_ops {
         list_space_id: &str,
         title: &str,
         rank: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let realm_id = trim_realm_id(realm_id);
         let object = cokret_sdk::FlowCreateObject::new(
-            flow_id_value(flow_id),
-            realm_id_value(&realm_id),
-            did_id(actor),
+            flow_id_value(flow_id)?,
+            realm_id_value(&realm_id)?,
+            did_id(actor)?,
         )
         .with_metadata_title(title)
         .with_metadata_field("flow_kind", json!("card"))
@@ -1075,12 +1095,12 @@ pub mod cx_ops {
                 .primary()
                 .with_profile("kanban_card"),
         );
-        OperationBuilder::new(&realm_id, actor, "ck.flow.create")
+        Ok(OperationBuilder::new(&realm_id, actor, "ck.flow.create")
             .target_ref(flow_id)
             .body(object_create_payload_value(
                 object,
                 "ck.flow.create kanban card payload serialize",
-            ))
+            )?))
     }
 
     /// Build a `ck.morph.update` carrying a new document body.
@@ -1089,7 +1109,7 @@ pub mod cx_ops {
         actor: &str,
         morph_id: &str,
         document_body: serde_json::Value,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         morph_update_patch(
             realm_id,
             actor,
@@ -1114,7 +1134,7 @@ pub mod cx_ops {
         end: u32,
         body: &str,
         reply_to: Option<&str>,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let realm_id = trim_realm_id(realm_id);
         let discussion_flow_id = realm_id
             .strip_prefix("ck:realm:")
@@ -1131,19 +1151,19 @@ pub mod cx_ops {
             )
             .with_field("morph_id", json!(morph_id));
         let mut payload = cokret_sdk::MessageCreatePayload::with_content(
-            flow_id_value(&discussion_flow_id),
+            flow_id_value(&discussion_flow_id)?,
             "discussion",
-            sdk_payload_value(content.to_value(), "document comment content serialize"),
+            sdk_payload_value(content.to_value(), "document comment content serialize")?,
         );
         if let Some(parent) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
             payload = payload.with_reply_to(parent);
         }
-        OperationBuilder::new(&realm_id, actor, "ck.message.create")
+        Ok(OperationBuilder::new(&realm_id, actor, "ck.message.create")
             .target_ref(morph_id)
             .body(sdk_payload_value(
                 payload.to_value(),
                 "ck.message.create document comment payload serialize",
-            ))
+            )?))
     }
 
     /// Build a Relation linking a document Morph to another object.
@@ -1152,14 +1172,14 @@ pub mod cx_ops {
         actor: &str,
         morph_id: &str,
         target_ref: &str,
-    ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.relation.create")
+    ) -> anyhow::Result<OperationBuilder> {
+        Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
             .target_ref(morph_id)
             .body(relation_create_payload_value(
                 "references",
                 morph_id,
                 target_ref,
-            ))
+            )?))
     }
 
     /// Build a schema-legal `ck.relation.create` event. The Relation id is
@@ -1171,10 +1191,10 @@ pub mod cx_ops {
         kind: &str,
         from_ref: &str,
         to_ref: &str,
-    ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.relation.create")
+    ) -> anyhow::Result<OperationBuilder> {
+        Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
             .target_ref(from_ref)
-            .body(relation_create_payload_value(kind, from_ref, to_ref))
+            .body(relation_create_payload_value(kind, from_ref, to_ref)?))
     }
 
     /// Build a `ck.relation.tombstone` event targeting an existing Relation.
@@ -1193,11 +1213,11 @@ pub mod cx_ops {
         actor: &str,
         flow_id: &str,
         patch: serde_json::Value,
-    ) -> OperationBuilder {
-        let patch = patch_from_value(patch);
-        OperationBuilder::new(realm_id, actor, "ck.flow.update")
+    ) -> anyhow::Result<OperationBuilder> {
+        let patch = patch_from_value(patch)?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.update")
             .target_ref(flow_id)
-            .body(flow_object_patch_payload_value(flow_id, patch))
+            .body(flow_object_patch_payload_value(flow_id, patch)?))
     }
 
     /// Build a `ck.morph.update` patch operation. Mirrors
@@ -1209,49 +1229,17 @@ pub mod cx_ops {
         actor: &str,
         morph_id: &str,
         patch: serde_json::Value,
-    ) -> OperationBuilder {
-        let patch = patch_from_value(patch);
-        OperationBuilder::new(realm_id, actor, "ck.morph.update")
+    ) -> anyhow::Result<OperationBuilder> {
+        let patch = patch_from_value(patch)?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.morph.update")
             .target_ref(morph_id)
-            .body(object_patch_payload_value(morph_id, patch))
+            .body(object_patch_payload_value(morph_id, patch)?))
     }
 
-    /// Build a `ck.policy.update` patch operation. The reducer-side
-    /// integration for ck.policy.* events is not yet wired in soland;
-    /// in the meantime clients can apply policy patches via the
-    /// `PATCH /_soland/self/policies/{policy_id}` admin endpoint (`patch`
-    /// body field). This builder is the future-proof event-stream
-    /// form so clients don't have to wait for that wiring.
-    pub fn policy_update_patch(
-        realm_id: &str,
-        actor: &str,
-        policy_id: &str,
-        patch: serde_json::Value,
-    ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.policy.update")
-            .target_ref(policy_id)
-            .body(json!({
-                "policy_id": policy_id,
-                "patch": patch,
-            }))
-    }
-
-    /// Build a `ck.actor_profile.update` patch operation. Same
-    /// caveat as [`policy_update_patch`]: the reducer-side wiring is
-    /// deferred; the builder keeps client code spec-shape correct.
-    pub fn actor_profile_update_patch(
-        realm_id: &str,
-        actor: &str,
-        actor_profile_id: &str,
-        patch: serde_json::Value,
-    ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.actor_profile.update")
-            .target_ref(actor_profile_id)
-            .body(json!({
-                "actor_profile_id": actor_profile_id,
-                "patch": patch,
-            }))
-    }
+    // YOU-01-011: the former `ck.policy.update` / `ck.actor_profile.update`
+    // builders were removed — neither kind is in the spec
+    // event-kind-registry, and unregistered wire kinds must not be mintable
+    // from client code. Re-add once the kinds are registered via CKP.
 
     /// Build a `ck.message.revise` patch operation. Spec: revise is
     /// supposed to carry `payload.patch` like the other `*.update`
@@ -1282,11 +1270,11 @@ pub mod cx_ops {
         actor: &str,
         realm_id: &str,
         patch: serde_json::Value,
-    ) -> OperationBuilder {
-        let patch = patch_from_value(patch);
-        OperationBuilder::new(envelope_realm_id, actor, "ck.realm.update")
+    ) -> anyhow::Result<OperationBuilder> {
+        let patch = patch_from_value(patch)?;
+        Ok(OperationBuilder::new(envelope_realm_id, actor, "ck.realm.update")
             .target_ref(realm_id)
-            .body(object_patch_payload_value(realm_id, patch))
+            .body(object_patch_payload_value(realm_id, patch)?))
     }
 
     /// Build a `ck.space.update` patch operation for structural Space
@@ -1297,38 +1285,18 @@ pub mod cx_ops {
         actor: &str,
         space_id: &str,
         patch: serde_json::Value,
-    ) -> OperationBuilder {
-        let patch = patch_from_value(patch);
-        OperationBuilder::new(realm_id, actor, "ck.space.update")
+    ) -> anyhow::Result<OperationBuilder> {
+        let patch = patch_from_value(patch)?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.space.update")
             .target_ref(space_id)
-            .body(object_patch_payload_value(space_id, patch))
+            .body(object_patch_payload_value(space_id, patch)?))
     }
 
-    /// Build a `ck.moderation.report.submit` operation. Note: this is
-    /// the event-stream form; today yougen also has a direct HTTP
-    /// path via `api::Client::report_moderation`. Keep both — the
-    /// HTTP path goes through `/_cokret/self/moderation/report` and is
-    /// validated/authorised inline; the event-stream form rides on
-    /// the standard operation submit pipeline.
-    pub fn moderation_report_submit(
-        realm_id: &str,
-        actor: &str,
-        report_id: &str,
-        target_ref: &str,
-        reason: &str,
-        description: Option<&str>,
-        evidence_refs: Vec<String>,
-    ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.moderation.report.submit")
-            .target_ref(report_id)
-            .body(json!({
-                "report_id": report_id,
-                "target_ref": target_ref,
-                "reason": reason,
-                "description": description,
-                "evidence_refs": evidence_refs,
-            }))
-    }
+    // YOU-01-011: the former `ck.moderation.report.submit` builder was
+    // removed — the kind is not in the spec event-kind-registry (the
+    // registered reporting surface is `ck.self.moderation.report` over
+    // the HTTP path via `api::Client::report_moderation`). Re-add only
+    // if an event-stream report kind is registered via CKP.
 
     /// Build a `ck.moderation.appeal.submit` operation. Mirrors the
     /// 4-state moderation appeal FSM. The wire body is the strong SDK
@@ -1385,17 +1353,17 @@ pub mod cx_ops {
         role: Option<&str>,
         invite_delivery_target: cokret_sdk::InviteDeliveryTarget,
         introduction_evidence_digest: &str,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         // Strong `invite_payload` (directed-create anyOf branch). The id /
         // digest strings are parsed into SDK newtypes so malformed wire is a
         // build-time error, and `x_role` is carried via the typed extension
         // map (re-prefixed on serialize).
         let invite_id_typed = cokret_sdk::InviteId::new(invite_id.to_owned())
-            .unwrap_or_else(|err| panic!("invite_id not canonical {invite_id:?}: {err}"));
+            .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
         let invitee_did = cokret_sdk::Did::new(invitee.to_owned())
-            .unwrap_or_else(|err| panic!("invitee not a DID {invitee:?}: {err}"));
+            .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
         let digest = cokret_sdk::Hash::new(introduction_evidence_digest.to_owned())
-            .unwrap_or_else(|err| panic!("introduction_evidence_digest invalid: {err}"));
+            .map_err(|err| anyhow::anyhow!("introduction_evidence_digest invalid: {err}"))?;
         let mut payload = cokret_sdk::model::InviteCreatePayload::new(
             invite_id_typed,
             invitee_did,
@@ -1408,15 +1376,19 @@ pub mod cx_ops {
         }
         let body = payload
             .to_value()
-            .unwrap_or_else(|err| panic!("invite create payload: {err}"));
-        OperationBuilder::new(realm_id, actor, "ck.invite.create").body(body)
+            .map_err(|err| anyhow::anyhow!("invite create payload: {err}"))?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.invite.create").body(body))
     }
 
-    pub fn invite_accept(realm_id: &str, actor: &str, invite_id: &str) -> OperationBuilder {
-        let body = invite_ref_payload_value(invite_id, None);
-        OperationBuilder::new(realm_id, actor, "ck.invite.accept")
+    pub fn invite_accept(
+        realm_id: &str,
+        actor: &str,
+        invite_id: &str,
+    ) -> anyhow::Result<OperationBuilder> {
+        let body = invite_ref_payload_value(invite_id, None)?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.invite.accept")
             .target_ref(invite_id)
-            .body(body)
+            .body(body))
     }
 
     pub fn invite_cancel(
@@ -1424,11 +1396,11 @@ pub mod cx_ops {
         actor: &str,
         invite_id: &str,
         reason: Option<&str>,
-    ) -> OperationBuilder {
-        let body = invite_ref_payload_value(invite_id, reason);
-        OperationBuilder::new(realm_id, actor, "ck.invite.cancel")
+    ) -> anyhow::Result<OperationBuilder> {
+        let body = invite_ref_payload_value(invite_id, reason)?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.invite.cancel")
             .target_ref(invite_id)
-            .body(body)
+            .body(body))
     }
 
     /// Build a `ck.space.archive` operation against a container Space. The
@@ -1465,20 +1437,28 @@ pub mod cx_ops {
     /// `artifacts/schemas/event-payload.schema.json`, which requires
     /// `target_ref`. SDK reducer rejects with
     /// `flow_not_active` when source state is not `active`.
-    pub fn flow_archive(realm_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.flow.archive")
+    pub fn flow_archive(
+        realm_id: &str,
+        actor: &str,
+        flow_id: &str,
+    ) -> anyhow::Result<OperationBuilder> {
+        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.archive")
             .target_ref(flow_id)
-            .body(object_lifecycle_payload_value(flow_id))
+            .body(object_lifecycle_payload_value(flow_id)?))
     }
 
     /// Build a `ck.flow.restore` operation. Reverses [`flow_archive`]
     /// (`archived -> active`). SDK reducer rejects with `flow_not_archived`
     /// when source state is not `archived`. Payload shape mirrors the
     /// archive op (spec `object_lifecycle_payload`).
-    pub fn flow_restore(realm_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.flow.restore")
+    pub fn flow_restore(
+        realm_id: &str,
+        actor: &str,
+        flow_id: &str,
+    ) -> anyhow::Result<OperationBuilder> {
+        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.restore")
             .target_ref(flow_id)
-            .body(object_lifecycle_payload_value(flow_id))
+            .body(object_lifecycle_payload_value(flow_id)?))
     }
 
     // ── Consent (OrSet cell `ck.component.consent.grant.v1`) ─────────
@@ -1607,78 +1587,11 @@ pub mod cx_ops {
             .body(payload.clone())
     }
 
-    // ── Conflict repair (admin-only) ────────────────────────────────
-
-    /// `ck.conflict.repair` event for bottom=expose cells. Admin / moderator
-    /// only — soland's authz reducer rejects submissions without a valid
-    /// `recovery_capability_ref` in the actor's grants.
-    pub fn conflict_repair(
-        realm_id: &str,
-        actor: &str,
-        cell_id: &str,
-        conflict_heads: &[String],
-        recovery_capability_ref: &str,
-        state_witness_ref: &str,
-        inclusion_proof_ref: &str,
-        winner_value: Value,
-    ) -> OperationBuilder {
-        let preconditions = vec![Precondition {
-            cell: cell_id.to_owned(),
-            predicate: Predicate {
-                op: "head_in".to_owned(),
-                value: None,
-                values: Some(conflict_heads.iter().cloned().map(Value::String).collect()),
-                predicate_id: None,
-            },
-        }];
-        let effects = vec![Effect {
-            cell: cell_id.to_owned(),
-            op: LatticeOp {
-                kind: "set".to_owned(),
-                tag: None,
-                value: Some(winner_value.clone()),
-                from: None,
-                to: None,
-                reason: None,
-                issuer_seq: None,
-                element_id: None,
-                predecessor: None,
-            },
-        }];
-        let refs = vec![
-            SemanticRef {
-                id: recovery_capability_ref.to_owned(),
-                role: "authorized_by".to_owned(),
-                critical: true,
-                proof: None,
-            },
-            SemanticRef {
-                id: state_witness_ref.to_owned(),
-                role: "state_witness".to_owned(),
-                critical: true,
-                proof: None,
-            },
-            SemanticRef {
-                id: inclusion_proof_ref.to_owned(),
-                role: "inclusion_proof".to_owned(),
-                critical: true,
-                proof: None,
-            },
-        ];
-        OperationBuilder::new(realm_id, actor, "ck.conflict.repair")
-            .target_ref(cell_id)
-            .body(json!({
-                "cell_id": cell_id,
-                "conflict_heads": conflict_heads,
-                "recovery_capability_ref": recovery_capability_ref,
-                "state_witness_ref": state_witness_ref,
-                "inclusion_proof_ref": inclusion_proof_ref,
-                "winner_value": winner_value,
-            }))
-            .preconditions(preconditions)
-            .effects(effects)
-            .refs(refs)
-    }
+    // YOU-01-011: the former `ck.conflict.repair` builder (admin
+    // conflict-repair Move) was removed — the kind is absent from the
+    // spec event-kind-registry and from the spec text entirely, so the
+    // client must not mint it. Re-add once a repair kind is registered
+    // via CKP.
 
     /// `ck.realm.update` patch event on the organization cell. Mirrors the
     /// Realm organization update Move shape (name /
@@ -1687,11 +1600,11 @@ pub mod cx_ops {
         realm_id: &str,
         actor: &str,
         value: Value,
-    ) -> OperationBuilder {
-        let patch = patch_from_value(value);
-        OperationBuilder::new(realm_id, actor, "ck.realm.update")
+    ) -> anyhow::Result<OperationBuilder> {
+        let patch = patch_from_value(value)?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.realm.update")
             .target_ref(realm_id)
-            .body(object_patch_payload_value(realm_id, patch))
+            .body(object_patch_payload_value(realm_id, patch)?))
     }
 
     /// Legacy flow position update (kanban card position).
@@ -1705,7 +1618,7 @@ pub mod cx_ops {
         actor: &str,
         flow_id: &str,
         position_value: Value,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         flow_update_patch(
             realm_id,
             actor,
@@ -1729,7 +1642,7 @@ pub mod cx_ops {
         flow_id: &str,
         expected_position: Value,
         effect_position: Value,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let position_field = |value: &Value, field: &str| {
             value
                 .get(field)
@@ -1747,17 +1660,17 @@ pub mod cx_ops {
 
         let Some(effect_space) = effect_space else {
             let payload =
-                flow_object_patch_payload_value(flow_id, patch_set("position", effect_position));
-            return OperationBuilder::new(realm_id, actor, "ck.flow.update")
+                flow_object_patch_payload_value(flow_id, patch_set("position", effect_position)?)?;
+            return Ok(OperationBuilder::new(realm_id, actor, "ck.flow.update")
                 .target_ref(flow_id)
-                .body(payload);
+                .body(payload));
         };
         let Some(effect_rank) = effect_rank else {
             let payload =
-                flow_object_patch_payload_value(flow_id, patch_set("position", effect_position));
-            return OperationBuilder::new(realm_id, actor, "ck.flow.update")
+                flow_object_patch_payload_value(flow_id, patch_set("position", effect_position)?)?;
+            return Ok(OperationBuilder::new(realm_id, actor, "ck.flow.update")
                 .target_ref(flow_id)
-                .body(payload);
+                .body(payload));
         };
 
         // Strong types: flow_reorder_payload / flow_move_payload
@@ -1773,10 +1686,10 @@ pub mod cx_ops {
                     &effect_space,
                     &effect_rank,
                     expected_rank.as_deref(),
-                );
-                OperationBuilder::new(realm_id, actor, "ck.flow.reorder")
+                )?;
+                Ok(OperationBuilder::new(realm_id, actor, "ck.flow.reorder")
                     .target_ref(flow_id)
-                    .body(payload)
+                    .body(payload))
             }
             _ => {
                 // expected_position is only emitted when BOTH a prior
@@ -1792,10 +1705,10 @@ pub mod cx_ops {
                     &effect_rank,
                     expected_space.as_deref(),
                     expected,
-                );
-                OperationBuilder::new(realm_id, actor, "ck.flow.move")
+                )?;
+                Ok(OperationBuilder::new(realm_id, actor, "ck.flow.move")
                     .target_ref(flow_id)
-                    .body(payload)
+                    .body(payload))
             }
         }
     }
@@ -2176,13 +2089,13 @@ mod tests {
 
     #[test]
     fn document_morph_create_carries_document_body() {
-        let op = cx_ops::document_morph_create(
+        let op = ck_ops::document_morph_create(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:morph:0196419b-0000-7000-8000-000000000002",
             "Untitled Document",
             json!({"blocks": [{"id": "block-1", "kind": "Heading", "content": "Hi"}]}),
-        )
+        ).expect("builds")
         .build("test_node");
 
         assert_eq!(op.kind, "ck.morph.create");
@@ -2203,7 +2116,7 @@ mod tests {
 
     #[test]
     fn kanban_card_flow_create_carries_position_in_metadata_fields() {
-        let op = cx_ops::kanban_card_flow_create(
+        let op = ck_ops::kanban_card_flow_create(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:flow:0196419b-0000-7000-8000-000000000004",
@@ -2211,7 +2124,7 @@ mod tests {
             "ck:space:0196419b-0000-7000-8000-000000000003",
             "Move-backed card",
             "h1",
-        )
+        ).expect("builds")
         .build("node");
         let flow_schema = spec_schema("flow.schema.json");
 
@@ -2283,7 +2196,7 @@ mod tests {
             governance_binding,
         )
         .unwrap();
-        let op = cx_ops::mls_commit_with_governance(realm_id, "did:web:alice.example", &payload)
+        let op = ck_ops::mls_commit_with_governance(realm_id, "did:web:alice.example", &payload)
             .unwrap()
             .build("node");
 
@@ -2297,12 +2210,12 @@ mod tests {
 
     #[test]
     fn document_morph_update_targets_existing_morph_id() {
-        let op = cx_ops::document_morph_update(
+        let op = ck_ops::document_morph_update(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:morph:0196419b-0000-7000-8000-000000000002",
             json!({"blocks": []}),
-        )
+        ).expect("builds")
         .build("test_node");
 
         assert_eq!(op.kind, "ck.morph.update");
@@ -2318,7 +2231,7 @@ mod tests {
 
     #[test]
     fn document_comment_create_carries_anchor_range() {
-        let op = cx_ops::document_comment_create(
+        let op = ck_ops::document_comment_create(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:morph:0196419b-0000-7000-8000-000000000002",
@@ -2326,7 +2239,7 @@ mod tests {
             9,
             "needs detail",
             None,
-        )
+        ).expect("builds")
         .build("test_node");
 
         assert_eq!(op.kind, "ck.message.create");
@@ -2343,12 +2256,12 @@ mod tests {
     #[test]
     fn incident_status_update_uses_schema_safe_fields_patch() {
         let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
-        let op = cx_ops::incident_status_update(
+        let op = ck_ops::incident_status_update(
             "ck:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
             flow_id,
             "mitigated",
-        )
+        ).expect("builds")
         .build("node");
 
         assert_eq!(op.kind, "ck.flow.update");
@@ -2365,7 +2278,7 @@ mod tests {
 
     #[test]
     fn discussion_flow_create_emits_discussion_track() {
-        let op = cx_ops::discussion_flow_create(
+        let op = ck_ops::discussion_flow_create(
             "ck:realm:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
             "ck:flow:0196419b-0000-7000-8000-000000000001",
@@ -2396,12 +2309,12 @@ mod tests {
     #[test]
     fn flow_tracks_update_primary_uses_is_primary_patch_key() {
         let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000001";
-        let op = cx_ops::flow_tracks_update_set_primary(
+        let op = ck_ops::flow_tracks_update_set_primary(
             "ck:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
             flow_id,
             "discussion",
-        )
+        ).expect("builds")
         .build("node");
         assert_eq!(op.kind, "ck.flow.tracks.update");
         assert_eq!(
@@ -2418,7 +2331,7 @@ mod tests {
     #[test]
     fn flow_update_patch_uses_canonical_payload_patch() {
         let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
-        let op = cx_ops::flow_update_patch(
+        let op = ck_ops::flow_update_patch(
             "ck:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
             flow_id,
@@ -2426,7 +2339,7 @@ mod tests {
                 "title": { "$op": "set", "value": "Launch checklist" },
                 "fields.due_at": { "$op": "set", "value": "2026-05-20" },
             }),
-        )
+        ).expect("builds")
         .build("node");
         assert_eq!(op.kind, "ck.flow.update");
         assert_eq!(op.local_target_ref(), Some(flow_id));
@@ -2445,7 +2358,7 @@ mod tests {
         let list_space_id = "ck:space:0196419b-0000-7000-8000-000000000011";
 
         let events = [
-            cx_ops::flow_update_patch(
+            ck_ops::flow_update_patch(
                 realm_id,
                 actor,
                 flow_id,
@@ -2453,9 +2366,9 @@ mod tests {
                     "title": { "$op": "set", "value": "Launch checklist" },
                     "fields.due_at": { "$op": "set", "value": "2026-05-20" },
                 }),
-            )
+            ).expect("builds")
             .build("node"),
-            cx_ops::flow_position_update(
+            ck_ops::flow_position_update(
                 realm_id,
                 actor,
                 flow_id,
@@ -2465,12 +2378,12 @@ mod tests {
                     "list_space_id": list_space_id,
                     "rank": "U",
                 }),
-            )
+            ).expect("builds")
             .build("node"),
             // Null effect_position triggers the legacy ck.flow.update fallback
             // inside flow_position_cas_update. It still must satisfy
             // object_patch_payload instead of leaking top-level `position`.
-            cx_ops::flow_position_cas_update(
+            ck_ops::flow_position_cas_update(
                 realm_id,
                 actor,
                 "ck.flow.move",
@@ -2478,7 +2391,7 @@ mod tests {
                 flow_id,
                 json!({"list_space_id": list_space_id, "rank": "U"}),
                 Value::Null,
-            )
+            ).expect("builds")
             .build("node"),
         ];
 
@@ -2504,27 +2417,27 @@ mod tests {
         let space_id = "ck:space:0196419b-0000-7000-8000-000000000004";
 
         let events = [
-            cx_ops::flow_tracks_update_set_primary(realm_id, actor, flow_id, "discussion")
+            ck_ops::flow_tracks_update_set_primary(realm_id, actor, flow_id, "discussion").expect("builds")
                 .build("node"),
-            cx_ops::morph_update_patch(
+            ck_ops::morph_update_patch(
                 realm_id,
                 actor,
                 morph_id,
                 json!({ "title": { "$op": "set", "value": "Spec note" } }),
-            )
+            ).expect("builds")
             .build("node"),
-            cx_ops::realm_organization_update(
+            ck_ops::realm_organization_update(
                 realm_id,
                 actor,
                 json!({ "title": { "$op": "set", "value": "Engineering" } }),
-            )
+            ).expect("builds")
             .build("node"),
-            cx_ops::space_update_patch(
+            ck_ops::space_update_patch(
                 realm_id,
                 actor,
                 space_id,
                 json!({ "title": "Roadmap Board", "summary": "Q2 planning" }),
-            )
+            ).expect("builds")
             .build("node"),
         ];
 
@@ -2542,7 +2455,7 @@ mod tests {
 
     #[test]
     fn flow_position_cas_update_emits_canonical_move_payload() {
-        let op = cx_ops::flow_position_cas_update(
+        let op = ck_ops::flow_position_cas_update(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
             "ck.flow.move",
@@ -2556,7 +2469,7 @@ mod tests {
                 "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000040",
                 "rank": "b1"
             }),
-        )
+        ).expect("builds")
         .build("node");
 
         assert_eq!(op.kind, "ck.flow.move");
@@ -2579,7 +2492,7 @@ mod tests {
 
     #[test]
     fn flow_position_cas_update_emits_canonical_reorder_payload() {
-        let op = cx_ops::flow_position_cas_update(
+        let op = ck_ops::flow_position_cas_update(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
             "ck.flow.reorder",
@@ -2593,7 +2506,7 @@ mod tests {
                 "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
                 "rank": "a2"
             }),
-        )
+        ).expect("builds")
         .build("node");
 
         assert_eq!(op.kind, "ck.flow.reorder");
@@ -2613,43 +2526,8 @@ mod tests {
     }
 
     #[test]
-    fn conflict_repair_emits_recovery_preconditions_effects_and_refs() {
-        let heads = vec![
-            "ck:event:0196419b-0000-7000-8000-000000000001".to_owned(),
-            "ck:event:0196419b-0000-7000-8000-000000000002".to_owned(),
-        ];
-        let event = cx_ops::conflict_repair(
-            "ck:realm:test",
-            "did:web:alice.example",
-            "ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card",
-            &heads,
-            "ck:capability:recovery",
-            "ck:snapshot:sha256:witness",
-            "ck:proof:sha256:proof",
-            json!({"list_space_id": "ck:space:list", "rank": "U"}),
-        )
-        .build("node");
-
-        assert_eq!(event.preconditions.len(), 1);
-        assert_eq!(event.preconditions[0].predicate.op, "head_in");
-        assert_eq!(
-            event.preconditions[0].predicate.values.as_ref().unwrap(),
-            &vec![
-                Value::String(heads[0].clone()),
-                Value::String(heads[1].clone())
-            ]
-        );
-        assert_eq!(event.effects.len(), 1);
-        assert_eq!(event.effects[0].op.kind, "set");
-        assert_eq!(event.refs.len(), 3);
-        assert!(event.refs.iter().any(|r| r.role == "authorized_by"));
-        assert!(event.refs.iter().any(|r| r.role == "state_witness"));
-        assert!(event.refs.iter().any(|r| r.role == "inclusion_proof"));
-    }
-
-    #[test]
     fn space_create_emits_canonical_space_object() {
-        let op = cx_ops::space_create(
+        let op = ck_ops::space_create(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
             "ck:space:0196419b-0000-7000-8000-000000000002",
@@ -2657,7 +2535,7 @@ mod tests {
             "To Do",
             Some("ck:space:0196419b-0000-7000-8000-000000000003"),
             Some("U"),
-        )
+        ).expect("builds")
         .build("node");
         assert_eq!(op.kind, "ck.space.create");
         assert_eq!(
@@ -2690,7 +2568,7 @@ mod tests {
     #[test]
     fn spec_space_schema_accepts_client_space_create_payload_shape() {
         let schema = spec_schema("space.schema.json");
-        let op = cx_ops::space_create(
+        let op = ck_ops::space_create(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:space:0196419b-0000-7000-8000-000000000002",
@@ -2698,7 +2576,7 @@ mod tests {
             "To Do",
             Some("ck:space:0196419b-0000-7000-8000-000000000003"),
             Some("U"),
-        )
+        ).expect("builds")
         .build("node");
         let object = &op.payload["object"];
 
@@ -2716,12 +2594,12 @@ mod tests {
     fn spec_patch_schema_accepts_client_flow_tracks_update_payload_shape() {
         let schema = spec_schema("patch.schema.json");
         let ops = patch_schema_ops(&schema);
-        let op = cx_ops::flow_tracks_update_set_primary(
+        let op = ck_ops::flow_tracks_update_set_primary(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:flow:0196419b-0000-7000-8000-000000000004",
             "discussion",
-        )
+        ).expect("builds")
         .build("node");
         let patch = op.payload["patch"].as_object().unwrap();
 
@@ -2741,7 +2619,7 @@ mod tests {
     fn spec_patch_schema_accepts_client_flow_update_payload_shape() {
         let schema = spec_schema("patch.schema.json");
         let ops = patch_schema_ops(&schema);
-        let op = cx_ops::flow_update_patch(
+        let op = ck_ops::flow_update_patch(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:flow:0196419b-0000-7000-8000-000000000004",
@@ -2752,7 +2630,7 @@ mod tests {
                 "metadata.fields.priority": { "$op": "set", "value": "high" },
                 "metadata.fields.due_at": { "$op": "set", "value": "2026-05-20" },
             }),
-        )
+        ).expect("builds")
         .build("node");
         let patch = op.payload["patch"].as_object().unwrap();
 
@@ -2846,7 +2724,7 @@ mod tests {
         };
         let introduction_evidence_digest =
             crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
-        let create = cx_ops::invite_create_structured(
+        let create = ck_ops::invite_create_structured(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             invite_id,
@@ -2854,7 +2732,7 @@ mod tests {
             Some("member"),
             invite_delivery_target.clone(),
             &introduction_evidence_digest,
-        )
+        ).expect("builds")
         .build("node");
         assert_eq!(create.kind, "ck.invite.create");
         assert_eq!(create.payload["invite_id"], invite_id);
@@ -2887,23 +2765,23 @@ mod tests {
         assert!(create.payload.get("x_member_delivery_binding").is_none());
         assert_registered_payload_valid(&create);
 
-        let accept = cx_ops::invite_accept(
+        let accept = ck_ops::invite_accept(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:bob.example",
             invite_id,
-        )
+        ).expect("builds")
         .build("node");
         assert_eq!(accept.kind, "ck.invite.accept");
         assert_eq!(accept.payload["invite_id"], invite_id);
         assert!(accept.payload.get("state").is_none());
         assert_registered_payload_valid(&accept);
 
-        let cancel = cx_ops::invite_cancel(
+        let cancel = ck_ops::invite_cancel(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             invite_id,
             Some("expired"),
-        )
+        ).expect("builds")
         .build("node");
         assert_eq!(cancel.kind, "ck.invite.cancel");
         assert_eq!(cancel.payload["invite_id"], invite_id);
@@ -2915,7 +2793,7 @@ mod tests {
     #[test]
     fn space_lifecycle_helpers_emit_canonical_kinds() {
         let container_space_id = "ck:space:01904100-0000-7000-8000-1fb50799ad42";
-        let archive = cx_ops::realm_archive(
+        let archive = ck_ops::realm_archive(
             "ck:realm:01904100-0000-7000-8000-1fb50799ad40",
             "did:web:alice.example",
             container_space_id,
@@ -2925,7 +2803,7 @@ mod tests {
         assert_eq!(archive.payload["space_id"], container_space_id);
         assert_eq!(archive.local_target_ref(), Some(container_space_id));
 
-        let restore = cx_ops::space_restore(
+        let restore = ck_ops::space_restore(
             "ck:realm:01904100-0000-7000-8000-1fb50799ad40",
             "did:web:alice.example",
             container_space_id,
@@ -2940,7 +2818,7 @@ mod tests {
     fn flow_lifecycle_helpers_emit_canonical_kinds() {
         let flow_id = "ck:flow:01904100-0000-7000-8000-1fb50799ad50";
         let archive =
-            cx_ops::flow_archive("ck:realm:test", "did:web:alice.example", flow_id).build("node");
+            ck_ops::flow_archive("ck:realm:test", "did:web:alice.example", flow_id).expect("builds").build("node");
         assert_eq!(archive.kind, "ck.flow.archive");
         assert_eq!(archive.payload["target_ref"], flow_id);
         assert!(archive.payload.get("flow_id").is_none());
@@ -2948,7 +2826,7 @@ mod tests {
         assert_registered_payload_valid(&archive);
 
         let restore =
-            cx_ops::flow_restore("ck:realm:test", "did:web:alice.example", flow_id).build("node");
+            ck_ops::flow_restore("ck:realm:test", "did:web:alice.example", flow_id).expect("builds").build("node");
         assert_eq!(restore.kind, "ck.flow.restore");
         assert_eq!(restore.payload["target_ref"], flow_id);
         assert!(restore.payload.get("flow_id").is_none());
@@ -2966,7 +2844,7 @@ mod tests {
         let realm = "ck:realm:test";
         let actor = "did:web:alice.example";
 
-        let reg = cx_ops::applet_registration(realm, actor, service_did, "extensions", &["read"])
+        let reg = ck_ops::applet_registration(realm, actor, service_did, "extensions", &["read"])
             .build("node");
         assert_eq!(reg.kind, "ck.applet.registration");
         assert_eq!(reg.payload["service_did"], service_did);
@@ -2974,13 +2852,13 @@ mod tests {
         assert_eq!(reg.payload["capabilities"][0], "read");
         assert_eq!(reg.local_target_ref(), Some(service_did));
 
-        let disc = cx_ops::applet_discovery(realm, actor, service_did, json!({"version": 1}))
+        let disc = ck_ops::applet_discovery(realm, actor, service_did, json!({"version": 1}))
             .build("node");
         assert_eq!(disc.kind, "ck.applet.discovery");
         assert_eq!(disc.payload["manifest"]["version"], 1);
         assert_eq!(disc.local_target_ref(), Some(service_did));
 
-        let start = cx_ops::applet_interop_session_start(
+        let start = ck_ops::applet_interop_session_start(
             realm,
             actor,
             "ck:applet:dummy",
@@ -2992,7 +2870,7 @@ mod tests {
         assert_eq!(start.payload["session_id"], session_id);
         assert_eq!(start.local_target_ref(), Some(session_id));
 
-        let status = cx_ops::applet_interop_session_status(
+        let status = ck_ops::applet_interop_session_status(
             realm,
             actor,
             session_id,
@@ -3003,7 +2881,7 @@ mod tests {
         assert_eq!(status.kind, "ck.applet.interop_session.status");
         assert_eq!(status.payload["status"], "running");
 
-        let err = cx_ops::applet_bridge_error(
+        let err = ck_ops::applet_bridge_error(
             realm,
             actor,
             session_id,
@@ -3023,13 +2901,13 @@ mod tests {
         let realm = "ck:realm:test";
         let actor = "did:web:alice.example";
 
-        let endpoint = cx_ops::agent_endpoint(realm, actor, agent, "ck.agent.v1", &["flow.read"])
+        let endpoint = ck_ops::agent_endpoint(realm, actor, agent, "ck.agent.v1", &["flow.read"])
             .build("node");
         assert_eq!(endpoint.kind, "ck.agent.endpoint");
         assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "ck.agent.v1");
         assert_eq!(endpoint.local_target_ref(), Some(agent));
 
-        let start = cx_ops::agent_interop_session_start(
+        let start = ck_ops::agent_interop_session_start(
             realm,
             actor,
             agent,
@@ -3047,11 +2925,11 @@ mod tests {
         );
 
         let status =
-            cx_ops::agent_interop_session_status(realm, actor, session_id, "thinking", json!({}))
+            ck_ops::agent_interop_session_status(realm, actor, session_id, "thinking", json!({}))
                 .build("node");
         assert_eq!(status.kind, "ck.agent.interop_session.status");
 
-        let result = cx_ops::agent_interop_session_result(
+        let result = ck_ops::agent_interop_session_result(
             realm,
             actor,
             session_id,

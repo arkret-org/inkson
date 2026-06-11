@@ -14,7 +14,7 @@ use crate::components::{HelpTip, SecurityStateBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};
 use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore, MoveSubmissionState};
 use crate::models::SubmitEventOutcome;
-use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, trim_realm_id, uuid_v7};
+use crate::operation::{EventEnvelope, OperationBuilder, ck_ops, trim_realm_id, uuid_v7};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -838,7 +838,7 @@ pub fn ChatPanel(
                                         let create_card = new_channel_create_card();
                                         let flow_id = format!("ck:flow:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
-                                        let op = match cx_ops::discussion_flow_create(
+                                        let op = match ck_ops::discussion_flow_create(
                                             &realm,
                                             &actor,
                                             &flow_id,
@@ -1026,15 +1026,22 @@ pub fn ChatPanel(
                                                                         status_msg.set(crate::i18n::tr("chat.watch_level.pending"));
                                                                         let api_token = token();
                                                                         let wait_for = active_sync_token(sync_cursor());
-                                                                        let watch_op = cx_ops::flow_watch_set(
+                                                                        let watch_op = match ck_ops::flow_watch_set(
                                                                             &realm_for_click,
                                                                             &actor_for_click,
                                                                             &actor_for_click,
                                                                             &flow_id_for_click,
                                                                             Some(watch_level_wire_value(option)),
                                                                             None,
-                                                                        )
-                                                                        .build("yougen");
+                                                                        ) {
+                                                                            Ok(builder) => builder.build("yougen"),
+                                                                            Err(err) => {
+                                                                                tracing::warn!("flow_watch_set build failed: {err:#}");
+                                                                                flow_watch_level.set(prev);
+                                                                                status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
+                                                                                return;
+                                                                            }
+                                                                        };
                                                                         let base = base_for_click.clone();
                                                                         spawn(async move {
                                                                             match authed_api_with_sync(&base, api_token, wait_for) {
@@ -1566,7 +1573,7 @@ pub fn ChatPanel(
                                                         projection.as_ref(),
                                                         &service_did,
                                                     );
-                                                    let op = chat_message_create_operation(
+                                                    let op = match chat_message_create_operation(
                                                         &realm,
                                                         &actor,
                                                         &flow_id,
@@ -1575,7 +1582,22 @@ pub fn ChatPanel(
                                                         &body,
                                                         &mentions,
                                                         reply_to.as_deref(),
-                                                    );
+                                                    ) {
+                                                        Ok(op) => op,
+                                                        Err(error) => {
+                                                            if let Some(found) = messages
+                                                                .write()
+                                                                .iter_mut()
+                                                                .find(|candidate| candidate.id == message_id_for_lookup)
+                                                            {
+                                                                found.pending = false;
+                                                                found.failed = true;
+                                                                found.error = Some(format!("send failed: {error:#}"));
+                                                            }
+                                                            status_msg.set(format!("send failed: {error:#}"));
+                                                            return;
+                                                        }
+                                                    };
                                                     let mention_values_for_store = mentions_to_json(&mentions);
                                                     let realm_for_record = realm.clone();
                                                     let actor_for_retry = actor.clone();
@@ -1832,7 +1854,7 @@ pub fn ChatPanel(
                                                                                                     &actor,
                                                                                                     &poll_id,
                                                                                                     &option_id,
-                                                                                                );
+                                                                                                )?;
                                                                                                 api.submit_event_envelope(&op).await
                                                                                             },
                                                                                         )
@@ -1917,7 +1939,7 @@ pub fn ChatPanel(
                                                                                     &realm,
                                                                                     &actor,
                                                                                     &poll_id,
-                                                                                );
+                                                                                )?;
                                                                                 api.submit_event_envelope(&op).await
                                                                             },
                                                                         )
@@ -2564,11 +2586,17 @@ pub fn ChatPanel(
                                         let actor = actor.clone();
                                         let api_token = token();
                                         let ids_clone = ids.clone();
+                                        let source_id_for_rollback = source_id.clone();
                                         spawn(async move {
                                             // Experimental discussion promote is
                                             // hidden from the default local UI
                                             // until soland's reducer is enabled.
-                                            let _ = crate::views::helpers::with_authed_api(
+                                            // YOU-02-007: stop at the first
+                                            // failed op and roll back the
+                                            // optimistic promoted indicator so
+                                            // a half-applied promote is not
+                                            // presented as success.
+                                            let outcome = crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
@@ -2578,13 +2606,26 @@ pub fn ChatPanel(
                                                         &source_id,
                                                         &ids_clone,
                                                         &title,
-                                                    );
+                                                    )?;
                                                     for op in ops {
-                                                        let _ = api.submit_event_envelope(&op).await;
+                                                        api.submit_event_envelope(&op).await?;
                                                     }
                                                     Ok(())
                                                 },
                                             ).await;
+                                            if let Err(err) = outcome {
+                                                tracing::warn!(
+                                                    "discussion promote failed: {}",
+                                                    err.display()
+                                                );
+                                                promoted_targets
+                                                    .write()
+                                                    .remove(&source_id_for_rollback);
+                                                status_msg.set(format!(
+                                                    "Discussion promote failed: {}",
+                                                    err.display()
+                                                ));
+                                            }
                                         });
                                     }
                                 },
@@ -3142,7 +3183,7 @@ pub fn ChatPanel(
                                                         &flow_id,
                                                         &poll_id_for_op,
                                                         &draft_for_op,
-                                                    );
+                                                    )?;
                                                     api.submit_event_envelope(&op).await
                                                 },
                                             )
@@ -3235,7 +3276,7 @@ pub fn ChatPanel(
                                                         &flow_id,
                                                         &poll_id_for_op,
                                                         &draft_for_op,
-                                                    );
+                                                    )?;
                                                     api.submit_event_envelope(&op).await
                                                 },
                                             )
@@ -3364,7 +3405,7 @@ pub fn ChatPanel(
                                 let channel_kind = channel.kind.clone();
                                 let message_id = local_id.clone();
                                 let reply_to = reply_to_message();
-                                let mut op = chat_message_create_operation(
+                                let mut op = match chat_message_create_operation(
                                     &realm,
                                     &actor,
                                     &flow_id,
@@ -3373,7 +3414,22 @@ pub fn ChatPanel(
                                     &body,
                                     &mentions,
                                     reply_to.as_deref(),
-                                );
+                                ) {
+                                    Ok(op) => op,
+                                    Err(error) => {
+                                        if let Some(found) = messages
+                                            .write()
+                                            .iter_mut()
+                                            .find(|candidate| candidate.id == local_id)
+                                        {
+                                            found.pending = false;
+                                            found.failed = true;
+                                            found.error = Some(format!("send failed: {error:#}"));
+                                        }
+                                        status_msg.set(format!("send failed: {error:#}"));
+                                        return;
+                                    }
+                                };
                                 // G3.Y2 — mention sidecar hashes.
                                 // Decorates the outgoing payload with
                                 // `mention_sidecar_hash: [hex, ...]`
@@ -3573,10 +3629,25 @@ pub fn ChatPanel(
                                 // strict receivers can parse the decrypted payload
                                 // as `application/vnd.cokret.message+json` and the
                                 // decrypt-on-read path round-trips it back to text.
-                                let secure_content_value = sdk_payload_value(
+                                let secure_content_value = match sdk_payload_value(
                                     cokret_sdk::ContentBlock::text(&body).to_value(),
                                     "chat encrypted content block serialize",
-                                );
+                                ) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            format!(
+                                                "Send Secure could not encode message content: {err:#}"
+                                            ),
+                                        );
+                                        return;
+                                    }
+                                };
                                 let secure_content_bytes = match serde_json::to_vec(
                                     &secure_content_value,
                                 ) {
@@ -3774,7 +3845,7 @@ pub fn ChatPanel(
                                             };
                                         // Spec-canonical write path: ck.mls.commit event via ck.events.submit.
                                         let commit_builder =
-                                            match crate::operation::cx_ops::mls_commit_with_governance(
+                                            match crate::operation::ck_ops::mls_commit_with_governance(
                                                 &realm,
                                                 &actor,
                                                 &mls_commit_payload,
@@ -3844,9 +3915,23 @@ pub fn ChatPanel(
                                             return;
                                         }
                                     };
+                                let typed_flow_id = match flow_id_value(&flow_id) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            format!("Send Secure flow id invalid: {err:#}"),
+                                        );
+                                        return;
+                                    }
+                                };
                                 let mut message_payload =
                                     cokret_sdk::MessageCreatePayload::with_encrypted_content(
-                                        flow_id_value(&flow_id),
+                                        typed_flow_id,
                                         "discussion",
                                         encrypted_payload_json,
                                     )
@@ -3858,15 +3943,31 @@ pub fn ChatPanel(
                                 if let Some(reply_to) = reply_to.as_deref() {
                                     message_payload = message_payload.with_reply_to(reply_to);
                                 }
+                                let msg_payload_value = match sdk_payload_value(
+                                    message_payload.to_value(),
+                                    "chat encrypted ck.message.create payload serialize",
+                                ) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            format!(
+                                                "Send Secure payload encode failed: {err:#}"
+                                            ),
+                                        );
+                                        return;
+                                    }
+                                };
                                 let msg_op = OperationBuilder::new(
                                     &realm,
                                     &actor,
                                     "ck.message.create",
                                 )
-                                .body(sdk_payload_value(
-                                    message_payload.to_value(),
-                                    "chat encrypted ck.message.create payload serialize",
-                                ))
+                                .body(msg_payload_value)
                                 .build("yougen");
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
@@ -4128,7 +4229,24 @@ pub fn ChatPanel(
                                                 audit_delivered.clone(),
                                             )
                                             .build("yougen");
-                                            let _ = api.submit_event_envelope(&audit_op).await;
+                                            // YOU-02-007: the receipt is
+                                            // best-effort for delivery, but a
+                                            // silent failure left a gap in the
+                                            // disclosed-audit chain with no
+                                            // trace. Log + surface it so the
+                                            // sender knows the audit row is
+                                            // missing (message itself sent).
+                                            if let Err(err) =
+                                                api.submit_event_envelope(&audit_op).await
+                                            {
+                                                tracing::warn!(
+                                                    "audit RYW receipt for {} failed: {err:#}",
+                                                    resp.event_id
+                                                );
+                                                status_msg.set(format!(
+                                                    "Message sent; audit receipt failed: {err}"
+                                                ));
+                                            }
                                         }
                                         Err(err) => {
                                             let message =
@@ -4369,7 +4487,7 @@ mod tests {
             "hello from chat",
             &[],
             None,
-        );
+        ).expect("builds");
 
         assert_eq!(op.kind, "ck.message.create");
         assert_eq!(
@@ -4415,7 +4533,7 @@ mod tests {
             "ping @here and @carol:example.com",
             &mentions,
             None,
-        );
+        ).expect("builds");
 
         assert_eq!(
             op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
@@ -4440,7 +4558,7 @@ mod tests {
             "reply body",
             &[],
             Some("ck:message:01904100-0000-7000-8000-000000000004"),
-        );
+        ).expect("builds");
 
         assert_eq!(
             op.payload["reply_to"].as_str(),

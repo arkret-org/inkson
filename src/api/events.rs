@@ -106,20 +106,6 @@ impl CokretApi {
         })
     }
 
-    // ── Identity (extended) ─────────────────────────────────────────
-
-    pub async fn submit_did_operation(
-        &self,
-        did: &str,
-        operation: Value,
-    ) -> anyhow::Result<DidOperationSubmitOutcome> {
-        self.post_json(
-            "_cokret/root/identity/submit-did-operation",
-            json!({"did": did, "operation": operation}),
-        )
-        .await
-    }
-
     /// Round 4 (spec a77b995) — `GET /_cokret/self/events/frontier` as the
     /// `account_client` variant. Wire-breaking: the round-4
     /// `account_client` variant carries `peer_role`, `frontier`,
@@ -154,16 +140,17 @@ impl CokretApi {
         Ok(frontier)
     }
 
-    pub async fn events_describe(&self) -> anyhow::Result<SolandEventsDescribeResBody> {
+    /// `GET /_cokret/self/events/describe` — spec binds the response to the
+    /// canonical `ServiceDescribe` shape (OpenAPI `ck.self.events.describe`).
+    /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
+    /// mirror (with its non-spec `capabilities` blob) was removed.
+    pub async fn events_describe(&self) -> anyhow::Result<cokret_sdk::ServiceDescribe> {
         self.get_json("_cokret/self/events/describe").await
     }
 
-    /// H1 — return a cached `events_describe` body. The first call performs
-    /// the round-trip; subsequent calls return the cached reference. The
-    /// `capabilities.batch_submit` flag is read off this body by
-    /// [`Self::submit_events_batch`] to decide whether to send a real
-    /// batch or fall back to per-envelope submits.
-    pub async fn events_describe_cached(&self) -> anyhow::Result<&SolandEventsDescribeResBody> {
+    /// Return a cached `events_describe` body. The first call performs
+    /// the round-trip; subsequent calls return the cached reference.
+    pub async fn events_describe_cached(&self) -> anyhow::Result<&cokret_sdk::ServiceDescribe> {
         self.events_describe_cache
             .get_or_try_init(|| async { self.events_describe().await })
             .await
@@ -174,23 +161,6 @@ impl CokretApi {
     ) -> anyhow::Result<crate::event_signer::EventProofContext> {
         let describe = self.describe_cached().await?;
         Ok(event_proof_context_from_description(describe))
-    }
-
-    /// H1 — read `capabilities.batch_submit` off the cached
-    /// `events_describe`. Conservative default: when the field is absent
-    /// or the cache fetch fails, assume the server does NOT support batch
-    /// and fall back to per-envelope submits. `SolandEventsDescribeResBody`
-    /// surfaces server capabilities under the canonical `capabilities`
-    /// JSON blob on soland.
-    async fn batch_submit_supported(&self) -> bool {
-        let Ok(describe) = self.events_describe_cached().await else {
-            return false;
-        };
-        describe
-            .capabilities
-            .get("batch_submit")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
     }
 
     /// Submit a typed [`EventEnvelope`] over `ck.self.events.submit`. The
@@ -297,30 +267,11 @@ impl CokretApi {
             validate_outgoing_registered_payload(envelope)?;
         }
 
-        // H1 — capability gate. When the server advertises
-        // `capabilities.batch_submit == false` (or has not declared the
-        // capability), fall back to per-envelope `submit_event_envelope`
-        // so a deployment that hasn't wired the batch path still receives
-        // every event. The envelopes are already signed; we just lose the
-        // atomic accept/reject grouping the batch endpoint would give us.
-        if !self.batch_submit_supported().await {
-            // Submit each pre-signed envelope verbatim. We MUST NOT route
-            // through `submit_event_envelope` here: its anchor_ref
-            // auto-stamp would fetch `/_cokret/self/snapshot/head` for a
-            // genesis bootstrap whose Realm does not exist yet (404
-            // not_found) and would also mutate the already-signed
-            // envelope. The caller already stamped anchor_ref + signed in
-            // the atomic sequence the batch path is built around.
-            for envelope in envelopes {
-                self.post_signed_event_envelope(envelope).await?;
-            }
-            return Ok(json!({
-                "status": "accepted",
-                "fallback": "per_envelope",
-                "count": envelopes.len(),
-            }));
-        }
-
+        // YOU-01-016: the former `capabilities.batch_submit` probe (a
+        // non-spec soland capability field) was removed. The batch request
+        // body is one of the three spec-defined `ck.self.events.submit`
+        // shapes (distinguished by JSON shape), so it is sent
+        // unconditionally — no capability negotiation exists in the spec.
         let events_value: Vec<Value> = envelopes
             .iter()
             .map(serde_json::to_value)

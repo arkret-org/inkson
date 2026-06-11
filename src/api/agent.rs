@@ -4,11 +4,11 @@ use super::*;
 
 impl CokretApi {
     // ────────────────────────────────────────────────────────────────
-    // CKP-0008 / CKP-0009 — Personal Agent HTTP surface (11 endpoints
-    // landed in soland P2 aa76b91). Each method here verifies the
-    // cross-project HTTP contract so the wire shape is exercised end
-    // to end even while deeper UI form layouts remain
-    // `// TODO(P3-impl)` stubs.
+    // CKP-0008 / CKP-0009 — Personal Agent HTTP surface. YOU-01-005:
+    // every method below is typed against the SDK's authoritative
+    // wire models (mirrors of `agent-operations.schema.json`); the
+    // former hand-rolled `Agent*ReqBody` / `Agent*ResBody` local
+    // mirrors were removed.
     // ────────────────────────────────────────────────────────────────
 
     /// `POST /_cokret/gate/account/agent-key-pair` — `ck.gate.account.agent_key_pair`.
@@ -16,8 +16,8 @@ impl CokretApi {
     /// principal.
     pub async fn agent_key_pair(
         &self,
-        body: &AgentKeyPairReqBody,
-    ) -> anyhow::Result<AgentKeyPairResBody> {
+        body: &cokret_sdk::AgentKeyPairRequestBody,
+    ) -> anyhow::Result<cokret_sdk::AgentKeyPairOutcome> {
         self.post_json(
             "_cokret/gate/account/agent-key-pair",
             serde_json::to_value(body)?,
@@ -26,24 +26,27 @@ impl CokretApi {
     }
 
     /// `POST /_cokret/self/agents` — `ck.self.agent.provision`. Provisions a new
-    /// personal agent: DID issuance + first agent key authorize +
-    /// controller grant attach in one orchestrated request.
+    /// personal agent principal; the spec outcome is the pairing handle
+    /// (`agent_principal_id` + `pairing_request_id` + `expires_at`).
     pub async fn agent_provision(
         &self,
-        body: &AgentProvisionReqBody,
-    ) -> anyhow::Result<AgentResBody> {
+        body: &cokret_sdk::AgentProvisionRequestBody,
+    ) -> anyhow::Result<cokret_sdk::AgentProvisionOutcome> {
         self.post_json("_cokret/self/agents", serde_json::to_value(body)?)
             .await
     }
 
     /// `GET /_cokret/self/agents` — `ck.self.agent.list`. Returns the
-    /// controller-self list of agents (soland enforces caller binding).
-    pub async fn agent_list(&self) -> anyhow::Result<AgentListResBody> {
+    /// controller-self list of agent views (soland enforces caller binding).
+    pub async fn agent_list(&self) -> anyhow::Result<cokret_sdk::AgentList> {
         self.get_json("_cokret/self/agents").await
     }
 
     /// `GET /_cokret/self/agents/{id}` — `ck.self.agent.get`.
-    pub async fn agent_get(&self, agent_principal_id: &str) -> anyhow::Result<AgentResBody> {
+    pub async fn agent_get(
+        &self,
+        agent_principal_id: &str,
+    ) -> anyhow::Result<cokret_sdk::AgentView> {
         let agent_principal_id = path_component(agent_principal_id);
         self.get_json(&format!("_cokret/self/agents/{agent_principal_id}"))
             .await
@@ -51,12 +54,13 @@ impl CokretApi {
 
     /// `POST /_cokret/self/agents/{id}/pause` — `ck.self.agent.pause` (durable
     /// reducer-input event). Auth Server flushes capability cache with
-    /// reason `agent_paused`.
+    /// reason `agent_paused`. The spec response is
+    /// `operation_status_outcome` (`{ok, status}`).
     pub async fn agent_pause(
         &self,
         agent_principal_id: &str,
-        body: &AgentLifecycleReqBody,
-    ) -> anyhow::Result<AgentLifecycleResBody> {
+        body: &cokret_sdk::AgentPauseRequestBody,
+    ) -> anyhow::Result<cokret_sdk::OperationStatusOutcome> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/pause"),
@@ -69,8 +73,8 @@ impl CokretApi {
     pub async fn agent_resume(
         &self,
         agent_principal_id: &str,
-        body: &AgentLifecycleReqBody,
-    ) -> anyhow::Result<AgentLifecycleResBody> {
+        body: &cokret_sdk::AgentResumeRequestBody,
+    ) -> anyhow::Result<cokret_sdk::OperationStatusOutcome> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/resume"),
@@ -87,8 +91,8 @@ impl CokretApi {
     pub async fn agent_deactivate(
         &self,
         agent_principal_id: &str,
-        body: &AgentLifecycleReqBody,
-    ) -> anyhow::Result<AgentLifecycleResBody> {
+        body: &cokret_sdk::AgentDeactivateRequestBody,
+    ) -> anyhow::Result<cokret_sdk::OperationStatusOutcome> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/deactivate"),
@@ -102,8 +106,8 @@ impl CokretApi {
     pub async fn agent_rotate_key(
         &self,
         agent_principal_id: &str,
-        body: &AgentRotateKeyReqBody,
-    ) -> anyhow::Result<AgentRotateKeyResBody> {
+        body: &cokret_sdk::AgentRotateKeyRequestBody,
+    ) -> anyhow::Result<cokret_sdk::AgentRotateKeyOutcome> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/rotate-key"),
@@ -113,13 +117,13 @@ impl CokretApi {
     }
 
     /// `POST /_cokret/self/agents/{id}/grants` — `ck.self.agent.grant.attach`.
-    /// Attaches a capability grant scoped to the agent. `grant_kind`
-    /// SHOULD be one of the 14 CKP-0008 capability actions.
+    /// Attaches a capability grant scoped to the agent. The spec body
+    /// carries the full grant object under the single `grant` property.
     pub async fn agent_grant_attach(
         &self,
         agent_principal_id: &str,
-        body: &AgentGrantAttachReqBody,
-    ) -> anyhow::Result<AgentGrantResBody> {
+        body: &cokret_sdk::AgentGrantAttachRequestBody,
+    ) -> anyhow::Result<cokret_sdk::AgentGrantAttachOutcome> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/grants"),
@@ -134,7 +138,7 @@ impl CokretApi {
         &self,
         agent_principal_id: &str,
         grant_id: &str,
-    ) -> anyhow::Result<AgentGrantDetachResBody> {
+    ) -> anyhow::Result<cokret_sdk::AgentGrantDetachOutcome> {
         let agent_principal_id = path_component(agent_principal_id);
         let grant_id = path_component(grant_id);
         self.delete_json(&format!(
@@ -181,23 +185,20 @@ impl CokretApi {
     pub async fn agent_sidecar_thread_ensure(
         &self,
         agent_principal_id: &str,
-        body: &AgentSidecarThreadEnsureReqBody,
-    ) -> anyhow::Result<AgentSidecarThreadEnsureResBody> {
-        let mut body = body.clone();
-        if body.agent_principal_id.trim().is_empty() {
-            body.agent_principal_id = agent_principal_id.to_owned();
-        } else if body.agent_principal_id.trim() != agent_principal_id.trim() {
+        body: &cokret_sdk::AgentSidecarThreadEnsureRequestBody,
+    ) -> anyhow::Result<cokret_sdk::AgentSidecarThreadEnsureOutcome> {
+        if body.agent_principal_id.as_str().trim() != agent_principal_id.trim() {
             anyhow::bail!("agent_principal_id path argument does not match request body");
         }
-        if body.realm_id.trim().is_empty() {
+        if body.realm_id.as_str().trim().is_empty() {
             anyhow::bail!("realm_id is required");
         }
-        if body.controller_principal_id.trim().is_empty() {
+        if body.controller_principal_id.as_str().trim().is_empty() {
             anyhow::bail!("controller_principal_id is required");
         }
         self.post_json(
             "_cokret/self/agent-sidecar-threads:ensure",
-            serde_json::to_value(&body)?,
+            serde_json::to_value(body)?,
         )
         .await
     }

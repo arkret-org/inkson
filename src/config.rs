@@ -301,6 +301,143 @@ impl ProfileSwitchEvent {
     }
 }
 
+/// SecureKeyStore key for the principal-server session bearer of
+/// `account_did`. Mirrors the `coauth.refresh_token.<actor_id>` /
+/// `coauth.access_token.<actor_id>` naming used by
+/// `LocalStateStore::set_oidc_tokens_with_secure_store`. Like those
+/// keys, the namespace is per-DID — two profiles for the same DID on
+/// different servers share one slot (the active one wins), the same
+/// pre-existing limitation the refresh_token convention has.
+fn session_token_secret_key(account_did: &str) -> String {
+    format!("coauth.session_token.{account_did}")
+}
+
+/// Process-wide secure store handle used to keep `session_token` out
+/// of the plaintext `config.json` / `profiles.json` / localStorage
+/// blobs. Unit tests run against a process-local in-memory store so
+/// they stay hermetic (no OS keyring access) — same precedent as
+/// `auth_dpop::ensure_device_key`.
+fn config_secure_store() -> std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore> {
+    #[cfg(not(test))]
+    {
+        crate::secure_key_store::default_secure_key_store("yougen")
+    }
+    #[cfg(test)]
+    {
+        use std::sync::{Arc, OnceLock};
+        static TEST_STORE: OnceLock<Arc<dyn crate::secure_key_store::SecureKeyStore>> =
+            OnceLock::new();
+        TEST_STORE
+            .get_or_init(|| Arc::new(crate::secure_key_store::MemorySecureKeyStore::new()))
+            .clone()
+    }
+}
+
+/// In-process read-through cache so the hot `LocalConfigStore::load()`
+/// path doesn't hit the OS keyring / localStorage AEAD unwrap on every
+/// call. `None` values negative-cache "no bearer stored" for the DID.
+fn session_token_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, Option<String>>>
+{
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Move `session_token` into the SecureKeyStore. Returns `true` when
+/// the on-disk copy can be redacted (the secret is durably in the
+/// store, or there is nothing to store). Returns `false` when the
+/// secure store rejected the write — the caller falls back to the
+/// legacy plaintext persistence so a keyring-less environment doesn't
+/// get logged out on every restart (mirrors the
+/// `plaintext_identity_seed_fallback` philosophy: degrade loudly, not
+/// silently into data loss).
+fn persist_session_token_secret(account_did: &str, session_token: &str) -> bool {
+    if account_did.is_empty() {
+        // No namespace to key the secret under; only an empty token is
+        // "safe" to drop from the persisted blob.
+        return session_token.is_empty();
+    }
+    let store = config_secure_store();
+    let key = session_token_secret_key(account_did);
+    if session_token.is_empty() {
+        // Logout / token clear — drop the secure-store copy too.
+        let _ = store.delete_secret(&key);
+        if let Ok(mut cache) = session_token_cache().lock() {
+            cache.insert(account_did.to_owned(), None);
+        }
+        return true;
+    }
+    match store.store_secret(&key, session_token) {
+        Ok(()) => {
+            if let Ok(mut cache) = session_token_cache().lock() {
+                cache.insert(account_did.to_owned(), Some(session_token.to_owned()));
+            }
+            true
+        }
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "secure_key_store session_token write failed; falling back to plaintext config persistence",
+            );
+            false
+        }
+    }
+}
+
+/// Companion read: the session bearer for `account_did`, from the
+/// in-process cache first, then the SecureKeyStore.
+fn restore_session_token_secret(account_did: &str) -> Option<String> {
+    if account_did.is_empty() {
+        return None;
+    }
+    if let Ok(cache) = session_token_cache().lock()
+        && let Some(entry) = cache.get(account_did)
+    {
+        return entry.clone();
+    }
+    let store = config_secure_store();
+    let result = match store.get_secret(&session_token_secret_key(account_did)) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "secure_key_store session_token read failed; config loaded without bearer",
+            );
+            // Don't negative-cache a transient backend error.
+            return None;
+        }
+    };
+    if let Ok(mut cache) = session_token_cache().lock() {
+        cache.insert(account_did.to_owned(), result.clone());
+    }
+    result
+}
+
+/// Build the copy of `config` that is allowed to touch the plaintext
+/// persistence layer: the `session_token` is moved into the
+/// SecureKeyStore and blanked. When the secure store is unavailable
+/// the plaintext token is kept (logged) so degraded environments keep
+/// working.
+fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
+    let mut redacted = config.clone();
+    if persist_session_token_secret(&redacted.account_did, &redacted.session_token) {
+        redacted.session_token = String::new();
+    }
+    redacted
+}
+
+/// Profile-store analogue of [`redact_config_for_disk`].
+fn redact_profiles_for_disk(profiles: &MultiProfileConfig) -> MultiProfileConfig {
+    let mut redacted = profiles.clone();
+    for profile in &mut redacted.profiles {
+        if persist_session_token_secret(&profile.account_did, &profile.session_token) {
+            profile.session_token = String::new();
+        }
+    }
+    redacted
+}
+
 pub fn new_device_id() -> String {
     format!("{DEVICE_ID_PREFIX}{}", uuid_v7())
 }
@@ -391,9 +528,31 @@ impl LocalConfigStore {
     pub fn load(&self) -> ClientConfig {
         self.cached
             .clone()
-            .or_else(|| self.read_persisted_config())
+            .or_else(|| {
+                self.read_persisted_config()
+                    .map(|config| self.rehydrate_config(config))
+            })
             .unwrap_or_default()
             .normalized()
+    }
+
+    /// Reattach the session bearer to a config freshly read from the
+    /// plaintext persistence layer. A legacy blob that still carries
+    /// the token in plaintext gets read-repaired: the token is moved
+    /// into the SecureKeyStore and the redacted blob is rewritten.
+    fn rehydrate_config(&self, mut config: ClientConfig) -> ClientConfig {
+        if config.account_did.is_empty() {
+            return config;
+        }
+        if config.session_token.is_empty() {
+            if let Some(token) = restore_session_token_secret(&config.account_did) {
+                config.session_token = token;
+            }
+        } else {
+            // Legacy plaintext config — migrate the bearer off disk.
+            let _ = self.write_persisted_config(&config);
+        }
+        config
     }
 
     pub fn save(&mut self, config: ClientConfig) {
@@ -438,14 +597,39 @@ impl LocalConfigStore {
         if let Some(v2) = self.read_persisted_profiles()
             && !v2.profiles.is_empty()
         {
-            return v2;
+            return self.rehydrate_profiles(v2);
         }
         MultiProfileConfig::from_legacy(self.load())
     }
 
+    /// Profile-store analogue of [`Self::rehydrate_config`]: reattach
+    /// each profile's bearer from the SecureKeyStore and read-repair
+    /// legacy blobs that still hold tokens in plaintext.
+    fn rehydrate_profiles(&self, mut profiles: MultiProfileConfig) -> MultiProfileConfig {
+        let mut needs_migration = false;
+        for profile in &mut profiles.profiles {
+            if profile.account_did.is_empty() {
+                continue;
+            }
+            if profile.session_token.is_empty() {
+                if let Some(token) = restore_session_token_secret(&profile.account_did) {
+                    profile.session_token = token;
+                }
+            } else {
+                needs_migration = true;
+            }
+        }
+        if needs_migration {
+            // Legacy plaintext blob — migrate the bearers off disk.
+            let _ = self.write_persisted_profiles(&profiles);
+        }
+        profiles
+    }
+
     /// P3B.4 — persist the multi-profile config. The legacy v1 blob is
     /// left untouched for one release so a downgrade still has a
-    /// readable config.
+    /// readable config. Session bearers are moved into the
+    /// SecureKeyStore; the plaintext blob only carries redacted rows.
     pub fn save_profiles(&mut self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
         self.write_persisted_profiles(profiles)
     }
@@ -461,8 +645,14 @@ impl LocalConfigStore {
         serde_json::from_slice(&bytes).ok()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Persist the profiles blob with every `session_token` moved into
+    /// the SecureKeyStore (see [`redact_profiles_for_disk`]).
     fn write_persisted_profiles(&self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
+        self.write_profiles_blob(&redact_profiles_for_disk(profiles))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_profiles_blob(&self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
         let path = self.profiles_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -479,7 +669,7 @@ impl LocalConfigStore {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn write_persisted_profiles(&self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
+    fn write_profiles_blob(&self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
         let Some(storage) = browser_storage() else {
             return Ok(());
         };
@@ -502,8 +692,16 @@ impl LocalConfigStore {
             .and_then(|json| serde_json::from_str(&json).ok())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Persist the config blob with the `session_token` moved into the
+    /// SecureKeyStore (see [`redact_config_for_disk`]). The plaintext
+    /// `config.json` / localStorage blob never carries the bearer when
+    /// a secure backend is available.
     fn write_persisted_config(&self, config: &ClientConfig) -> anyhow::Result<()> {
+        self.write_config_blob(&redact_config_for_disk(config))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_config_blob(&self, config: &ClientConfig) -> anyhow::Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -512,7 +710,7 @@ impl LocalConfigStore {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn write_persisted_config(&self, config: &ClientConfig) -> anyhow::Result<()> {
+    fn write_config_blob(&self, config: &ClientConfig) -> anyhow::Result<()> {
         let Some(storage) = browser_storage() else {
             return Ok(());
         };
@@ -803,6 +1001,101 @@ mod tests {
         let loaded = reader.load_profiles();
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.profiles[0].account_did, "did:web:alice.example");
+    }
+
+    // --- session_token SecureKeyStore redaction --------------------------
+
+    #[test]
+    fn session_token_is_redacted_from_disk_blob() {
+        let path = temp_config_path("redacted");
+        let mut store = LocalConfigStore::with_path(path.clone());
+        store.save_fields(
+            "https://redacted.example".to_owned(),
+            "did:web:redacted.example".to_owned(),
+            "ck:device:01964137-0000-7000-8000-00000000000c".to_owned(),
+            "sx_secret_bearer".to_owned(),
+        );
+
+        // The plaintext blob MUST NOT contain the bearer.
+        let raw = fs::read_to_string(&path).expect("config blob");
+        assert!(
+            !raw.contains("sx_secret_bearer"),
+            "bearer leaked into plaintext config blob: {raw}"
+        );
+
+        // A fresh store instance reattaches it from the secure store.
+        let reader = LocalConfigStore::with_path(path);
+        assert_eq!(reader.load().session_token, "sx_secret_bearer");
+    }
+
+    #[test]
+    fn legacy_plaintext_session_token_migrates_on_load() {
+        let path = temp_config_path("legacy-migrate");
+        // Simulate a pre-migration config.json with the bearer in
+        // plaintext (written via the raw blob writer).
+        let legacy = ClientConfig::from_fields(
+            "https://legacy.example",
+            "did:web:legacy.example",
+            "ck:device:01964137-0000-7000-8000-00000000000d",
+            "sx_legacy_bearer",
+        );
+        fs::write(&path, serde_json::to_vec_pretty(&legacy).expect("json")).expect("seed blob");
+
+        let store = LocalConfigStore::with_path(path.clone());
+        // First load still sees the token (read-repair keeps it live).
+        assert_eq!(store.load().session_token, "sx_legacy_bearer");
+        // ... but the on-disk blob has been rewritten without it.
+        let raw = fs::read_to_string(&path).expect("config blob");
+        assert!(
+            !raw.contains("sx_legacy_bearer"),
+            "legacy bearer still on disk after read-repair: {raw}"
+        );
+        // Subsequent loads keep working off the secure store.
+        let reader = LocalConfigStore::with_path(path);
+        assert_eq!(reader.load().session_token, "sx_legacy_bearer");
+    }
+
+    #[test]
+    fn profiles_blob_redacts_session_tokens() {
+        // Own subdirectory — `profiles_path()` derives `profiles.json`
+        // next to the config path, which would collide with other
+        // tests' blobs in the shared temp dir.
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yougen-profiles-redacted-{stamp}"));
+        let path = dir.join("config.json");
+        let mut store = LocalConfigStore::with_path(path.clone());
+
+        let mut multi = MultiProfileConfig::default();
+        multi.upsert_and_activate(AccountProfile::new(
+            "https://cokret.example",
+            "did:web:profile-redacted.example",
+            "ck:device:01964137-0000-7000-8000-00000000000e",
+            "sx_profile_bearer",
+        ));
+        store.save_profiles(&multi).expect("write profiles");
+
+        let profiles_raw =
+            fs::read_to_string(path.with_file_name("profiles.json")).expect("profiles blob");
+        assert!(
+            !profiles_raw.contains("sx_profile_bearer"),
+            "bearer leaked into plaintext profiles blob: {profiles_raw}"
+        );
+
+        // A fresh store reattaches the bearer per profile.
+        let reader = LocalConfigStore::with_path(path);
+        let loaded = reader.load_profiles();
+        assert_eq!(loaded.profiles.len(), 1);
+        assert_eq!(loaded.profiles[0].session_token, "sx_profile_bearer");
+        assert_eq!(
+            loaded
+                .active_as_client_config()
+                .expect("active config")
+                .session_token,
+            "sx_profile_bearer"
+        );
     }
 
     fn temp_config_path(name: &str) -> PathBuf {

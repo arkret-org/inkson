@@ -2,18 +2,9 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-fn non_empty_string(value: Option<&Value>) -> Option<String> {
-    value?
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| non_empty_string(value.get(*key)))
-}
+// YOU-05-008: shared "first non-empty string under candidate keys" helper
+// lives in `crate::realm_tree`.
+use crate::realm_tree::string_field;
 
 fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
     keys.iter().find_map(|key| value.get(*key)?.as_bool())

@@ -735,6 +735,55 @@ pub fn commit_account_mls_secret_rotation(
     Ok(())
 }
 
+/// YOU-01-009 — operator-forced MLS epoch rotation via a real
+/// `self_update_commit`, replacing the former non-spec
+/// `POST /_cokret/self/mls/rotate` HTTP shim. Restores the Realm group
+/// from the local snapshot, performs a self-update commit, and returns
+/// the commit envelope plus the encrypted POST-commit snapshot. The
+/// caller MUST submit the matching `ck.mls.commit` event and persist the
+/// returned snapshot ONLY after the server accepts it (persist-on-accept,
+/// same contract as the kanban encrypted-write path).
+pub fn force_epoch_rotation_commit(
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<
+    (
+        cokret_sdk::MlsCommitEnvelope,
+        crate::mls::persistence::MlsSnapshotEnvelope,
+    ),
+    MlsRuntimeError,
+> {
+    let snapshot = state_store
+        .mls_snapshot_for(realm_id)
+        .ok_or(MlsRuntimeError::MissingWelcome)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let commit_envelope = group
+        .self_update_commit()
+        .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    let serialized_state = serde_json::to_vec(&post_state)
+        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    let new_envelope = crate::mls::persistence::encrypt_state(
+        realm_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized_state,
+        &secret,
+        &salt,
+    );
+    Ok((commit_envelope, new_envelope))
+}
+
 pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
     // Spec form is `{ messages: [ { kind, content, … } ] }`
     // (`DeviceMessagesGetOutcome` / `DeviceMessageEnvelope`); the discriminator
@@ -1302,13 +1351,8 @@ mod tests {
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;
 
-    fn temp_state_store(name: &str) -> crate::local_state::LocalStateStore {
-        let path = std::env::temp_dir().join(format!(
-            "yougen-mls-runtime-{name}-{}.json",
-            crate::operation::uuid_v7()
-        ));
-        crate::local_state::LocalStateStore::with_path(path)
-    }
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    use crate::local_state::isolated_store_for_tests as temp_state_store;
 
     #[test]
     fn reaction_routing_tag_is_deterministic_and_wire_shaped() {
@@ -2282,13 +2326,8 @@ mod welcome_outcome_tests {
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;
 
-    fn temp_state_store(name: &str) -> crate::local_state::LocalStateStore {
-        let path = std::env::temp_dir().join(format!(
-            "yougen-mls-welcome-{name}-{}.json",
-            crate::operation::uuid_v7()
-        ));
-        crate::local_state::LocalStateStore::with_path(path)
-    }
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    use crate::local_state::isolated_store_for_tests as temp_state_store;
 
     #[test]
     fn empty_welcome_set_reports_no_work() {

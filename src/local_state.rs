@@ -1382,16 +1382,9 @@ fn realm_tree_projection_value_is_mls_encrypted(body: &Value) -> bool {
         value.trim().to_ascii_lowercase().replace(['-', ' '], "_")
     }
 
-    fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
-        keys.iter().find_map(|key| {
-            value
-                .get(*key)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
-    }
+    // YOU-05-008: shared "first non-empty string under candidate keys"
+    // helper lives in `crate::realm_tree`.
+    use crate::realm_tree::string_field;
 
     let null = Value::Null;
     let summary = body.get("summary").unwrap_or(&null);
@@ -3123,42 +3116,48 @@ impl LocalStateStore {
         self.load().oidc_tokens
     }
 
-    /// Persist a fresh OIDC token bundle (or clear via `None`). The refresh
-    /// credential is not serialised to `state.json`; callers that know the
-    /// actor DID should use [`Self::set_oidc_tokens_with_secure_store`] so
-    /// the token lands in SecureKeyStore instead.
+    /// Persist a fresh OIDC token bundle (or clear via `None`). Neither
+    /// the refresh credential nor the access token is serialised to
+    /// `state.json` — both are bearer secrets and MUST NOT land in the
+    /// plaintext persistence layer. Callers that know the actor DID
+    /// MUST use [`Self::set_oidc_tokens_with_secure_store`] so the
+    /// tokens land in SecureKeyStore instead; this plain variant only
+    /// keeps the non-secret bundle metadata (expiry, audience, ...).
     pub fn set_oidc_tokens(&mut self, bundle: Option<OidcTokenBundle>) {
         self.ensure_cached_loaded();
         self.cached.oidc_tokens = bundle.map(|mut bundle| {
             bundle.refresh_token = None;
+            bundle.access_token = String::new();
             bundle
         });
         let _ = self.flush();
     }
 
     /// Persist a fresh OIDC token bundle and
-    /// **migrate the refresh_token field into the supplied
-    /// `SecureKeyStore`** so the disk-backed `state.json` does not
-    /// hold the refresh credential in plaintext. Returns the bundle
-    /// that ended up serialised (the `refresh_token` field is wiped to
-    /// `None` post-secure-store-write so a corrupt-restore can't leak).
+    /// **migrate the refresh_token and access_token fields into the
+    /// supplied `SecureKeyStore`** so the disk-backed `state.json` does
+    /// not hold either bearer credential in plaintext. Returns the
+    /// bundle that ended up serialised (the `refresh_token` field is
+    /// wiped to `None` and `access_token` to the empty string
+    /// post-secure-store-write so a corrupt-restore can't leak).
     ///
-    /// The secure-store key is `coauth.refresh_token.<actor_id>` so a
-    /// device that has signed in as multiple actors keeps them
-    /// isolated. Callers SHOULD use [`load_oidc_tokens_with_secure_store`]
-    /// to reattach the refresh_token at boot before passing the bundle
-    /// into the OIDC refresh poller.
+    /// The secure-store keys are `coauth.refresh_token.<actor_id>` and
+    /// `coauth.access_token.<actor_id>` so a device that has signed in
+    /// as multiple actors keeps them isolated. Callers SHOULD use
+    /// [`load_oidc_tokens_with_secure_store`] to reattach the tokens at
+    /// boot before passing the bundle into the OIDC refresh poller.
     pub fn set_oidc_tokens_with_secure_store(
         &mut self,
         bundle: Option<OidcTokenBundle>,
         actor_id: &str,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> Option<OidcTokenBundle> {
-        let key = format!("coauth.refresh_token.{actor_id}");
+        let refresh_key = format!("coauth.refresh_token.{actor_id}");
+        let access_key = format!("coauth.access_token.{actor_id}");
         let stripped = match bundle {
             Some(mut bundle) => {
                 if let Some(refresh) = bundle.refresh_token.take()
-                    && let Err(error) = secure_store.store_secret(&key, &refresh)
+                    && let Err(error) = secure_store.store_secret(&refresh_key, &refresh)
                 {
                     tracing::warn!(
                         ?error,
@@ -3166,14 +3165,31 @@ impl LocalStateStore {
                         "secure_key_store refresh_token write failed; bundle persisted without refresh_token (next refresh poll will fall back to re-login)",
                     );
                 }
+                if !bundle.access_token.is_empty() {
+                    let access = std::mem::take(&mut bundle.access_token);
+                    if let Err(error) = secure_store.store_secret(&access_key, &access) {
+                        tracing::warn!(
+                            ?error,
+                            actor = actor_id,
+                            "secure_key_store access_token write failed; bundle persisted without access_token (next use will re-mint via refresh)",
+                        );
+                    }
+                }
                 Some(bundle)
             }
             None => {
-                if let Err(error) = secure_store.delete_secret(&key) {
+                if let Err(error) = secure_store.delete_secret(&refresh_key) {
                     tracing::debug!(
                         ?error,
                         actor = actor_id,
                         "secure_key_store refresh_token delete on bundle-clear failed (likely already missing)",
+                    );
+                }
+                if let Err(error) = secure_store.delete_secret(&access_key) {
+                    tracing::debug!(
+                        ?error,
+                        actor = actor_id,
+                        "secure_key_store access_token delete on bundle-clear failed (likely already missing)",
                     );
                 }
                 None
@@ -3187,10 +3203,10 @@ impl LocalStateStore {
 
     /// Companion to
     /// [`set_oidc_tokens_with_secure_store`]. Reads the bundle from
-    /// state.json and reattaches the `refresh_token` from the secure
-    /// store under the per-actor key. Returns `None` when no bundle
-    /// has been persisted yet (same shape as
-    /// [`Self::oidc_tokens`]).
+    /// state.json and reattaches the `refresh_token` and
+    /// `access_token` from the secure store under the per-actor keys.
+    /// Returns `None` when no bundle has been persisted yet (same
+    /// shape as [`Self::oidc_tokens`]).
     pub fn load_oidc_tokens_with_secure_store(
         &self,
         actor_id: &str,
@@ -3207,6 +3223,20 @@ impl LocalStateStore {
                         ?error,
                         actor = actor_id,
                         "secure_key_store refresh_token read failed; bundle returned without refresh_token",
+                    );
+                }
+            }
+        }
+        if bundle.access_token.is_empty() {
+            let key = format!("coauth.access_token.{actor_id}");
+            match secure_store.get_secret(&key) {
+                Ok(Some(value)) => bundle.access_token = value,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        actor = actor_id,
+                        "secure_key_store access_token read failed; bundle returned without access_token",
                     );
                 }
             }
@@ -3235,24 +3265,6 @@ impl LocalStateStore {
             grant.session_expires_at = session_expires_at;
             grant.stored_at = Utc::now();
             let _ = self.flush();
-        }
-    }
-
-    /// True when a persisted access_token exists AND has not yet expired
-    /// (per `expires_at_unix`). Used by the API client boot path to decide
-    /// whether to refresh before issuing requests.
-    pub fn oidc_access_token_valid(&self) -> bool {
-        let Some(bundle) = self.oidc_tokens() else {
-            return false;
-        };
-        if bundle.access_token.is_empty() {
-            return false;
-        }
-        match bundle.expires_at_unix {
-            // 30s skew window so a token that's about to expire is
-            // refreshed proactively rather than dying mid-request.
-            Some(expires) => Utc::now().timestamp() + 30 < expires,
-            None => true,
         }
     }
 
@@ -3766,11 +3778,38 @@ fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
     }
 }
 
-fn default_flow_id_for_realm(realm_id: &str) -> String {
+/// YOU-05-009: the `ck:realm:<suffix>` → `ck:flow:<suffix>` main-flow id
+/// derivation is a protocol mapping rule that affects event addressing.
+/// This is the crate's single authoritative copy — do NOT re-derive it
+/// locally; a divergent copy writes events to the wrong flow.
+pub(crate) fn default_flow_id_for_realm(realm_id: &str) -> String {
     realm_id
         .strip_prefix("ck:realm:")
         .map(|suffix| format!("ck:flow:{suffix}"))
         .unwrap_or_else(|| realm_id.to_owned())
+}
+
+/// YOU-05-010: shared test fixture — build a `LocalStateStore` rooted at a
+/// unique temp file so tests never read or pollute the developer's real
+/// `state.json` (or the `YOUGEN_STATE_PATH` override). On wasm32 the
+/// default store is memory-only and therefore already hermetic. The `tag`
+/// keeps any leftover temp file attributable to the test that created it;
+/// uniqueness comes from the uuid_v7 suffix.
+#[cfg(test)]
+pub(crate) fn isolated_store_for_tests(tag: &str) -> LocalStateStore {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let path = std::env::temp_dir().join(format!(
+            "yougen-test-{tag}-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        LocalStateStore::with_path(path)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = tag;
+        LocalStateStore::default()
+    }
 }
 
 fn new_read_cursor_id() -> String {
@@ -4709,13 +4748,14 @@ mod tests {
     }
 
     /// `set_oidc_tokens_with_secure_store`
-    /// MUST move the `refresh_token` out of the disk-backed
-    /// `state.json` into the supplied `SecureKeyStore` keyed by
-    /// `coauth.refresh_token.<actor_id>`. The companion `load_*`
-    /// helper reads it back. The on-disk JSON MUST NOT contain the
-    /// refresh_token after the migration.
+    /// MUST move the `refresh_token` AND the `access_token` out of the
+    /// disk-backed `state.json` into the supplied `SecureKeyStore`
+    /// keyed by `coauth.refresh_token.<actor_id>` /
+    /// `coauth.access_token.<actor_id>`. The companion `load_*`
+    /// helper reads them back. The on-disk JSON MUST NOT contain
+    /// either bearer credential after the migration.
     #[test]
-    fn refresh_token_migrates_into_secure_key_store_and_round_trips() {
+    fn oidc_tokens_migrate_into_secure_key_store_and_round_trip() {
         use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
         let path = temp_state_path("h3-refresh-token");
         let mut store = LocalStateStore::with_path(path.clone());
@@ -4735,34 +4775,46 @@ mod tests {
         let stripped = store
             .set_oidc_tokens_with_secure_store(Some(bundle), actor, &secure)
             .expect("bundle persisted");
-        // Post-migration: in-state bundle MUST NOT carry the refresh
-        // token any more (the secure store is the new authority).
+        // Post-migration: in-state bundle MUST NOT carry either bearer
+        // credential any more (the secure store is the new authority).
         assert!(stripped.refresh_token.is_none());
+        assert!(stripped.access_token.is_empty());
 
         // The disk-backed bundle agrees.
         let on_disk = store.oidc_tokens().expect("bundle still on disk");
         assert!(on_disk.refresh_token.is_none());
-        assert_eq!(on_disk.access_token, "atok");
+        assert!(on_disk.access_token.is_empty());
 
-        // Secure store holds the secret under the per-actor key.
+        // Secure store holds the secrets under the per-actor keys.
         let secret = secure
             .get_secret(&format!("coauth.refresh_token.{actor}"))
             .expect("read ok")
             .expect("secret present");
         assert_eq!(secret, "rtok-secret");
+        let access = secure
+            .get_secret(&format!("coauth.access_token.{actor}"))
+            .expect("read ok")
+            .expect("access secret present");
+        assert_eq!(access, "atok");
 
-        // Load helper reattaches the refresh_token from the store.
+        // Load helper reattaches both tokens from the store.
         let reattached = store
             .load_oidc_tokens_with_secure_store(actor, &secure)
             .expect("bundle visible");
         assert_eq!(reattached.refresh_token.as_deref(), Some("rtok-secret"));
         assert_eq!(reattached.access_token, "atok");
 
-        // Clearing the bundle deletes the secure-store entry too.
+        // Clearing the bundle deletes the secure-store entries too.
         store.set_oidc_tokens_with_secure_store(None, actor, &secure);
         assert!(
             secure
                 .get_secret(&format!("coauth.refresh_token.{actor}"))
+                .expect("read ok after clear")
+                .is_none()
+        );
+        assert!(
+            secure
+                .get_secret(&format!("coauth.access_token.{actor}"))
                 .expect("read ok after clear")
                 .is_none()
         );
@@ -4960,9 +5012,9 @@ mod tests {
             state.oidc_tokens.is_some(),
             "OIDC tokens must survive — login flow owns them",
         );
-        assert_eq!(
-            state.oidc_tokens.as_ref().unwrap().access_token,
-            bundle.access_token,
+        assert!(
+            state.oidc_tokens.as_ref().unwrap().access_token.is_empty(),
+            "access_token must not be serialised to state.json",
         );
         assert!(
             state.oidc_tokens.as_ref().unwrap().refresh_token.is_none(),

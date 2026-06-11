@@ -397,28 +397,9 @@ fn terminal_session_grant_message(message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::path::PathBuf;
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn isolated_store(tag: &str) -> LocalStateStore {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path: PathBuf =
-            std::env::temp_dir().join(format!("yougen-session-refresh-{tag}-{stamp}.json"));
-        LocalStateStore::with_path(path)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn isolated_store(_tag: &str) -> LocalStateStore {
-        LocalStateStore::default()
-    }
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    use crate::local_state::isolated_store_for_tests as isolated_store;
 
     fn grant_with_session_expiry(session_secs: i64, grant_secs: i64) -> PersistedSessionGrant {
         let now = Utc::now();

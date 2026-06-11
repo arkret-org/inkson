@@ -467,16 +467,8 @@ async fn web_subtle_aes_gcm(
     Ok(out)
 }
 
-// Tiny hex helper so Debug doesn't pull in another crate. Lower-case,
-// fixed-width per byte, no separator — matches the SDK's
-// `canonical::sha256_digest` style.
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
-}
+// YOU-05-007: shared lowercase-hex encoder lives in `crate::canonical`.
+use crate::canonical::hex_encode;
 
 #[cfg(test)]
 mod tests {

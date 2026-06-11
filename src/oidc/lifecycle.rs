@@ -28,10 +28,8 @@ use crate::coauth::{CoauthApi, OidcTokenResponse};
 use crate::local_state::{LocalStateStore, OidcTokenBundle};
 
 /// Window before the access-token's `expires_at_unix` at which the
-/// background polling triggers a refresh. Mirrors the
-/// `LocalStateStore::oidc_access_token_valid` 30s skew but uses a
-/// 60s window so the refresh actually happens *before* the token
-/// dies mid-request.
+/// background polling triggers a refresh. A 60s window means the
+/// refresh actually happens *before* the token dies mid-request.
 pub const REFRESH_SKEW_SECS: i64 = 60;
 
 /// Recommended polling interval for `dioxus::use_future` /
@@ -354,34 +352,11 @@ pub fn extract_status_code(error: &anyhow::Error) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::path::PathBuf;
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
-
-    /// Build a hermetic `LocalStateStore` rooted at a unique temp file.
-    /// Necessary because `LocalStateStore::default()` resolves to the
-    /// developer's `state.json` under `$LOCALAPPDATA/yougen/` (or the
-    /// `YOUGEN_STATE_PATH` override) and would otherwise leak whatever
-    /// pre-existing OIDC bundle the dev session has persisted into the
-    /// `evaluate_refresh_policy` decisions under test.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn isolated_store(tag: &str) -> LocalStateStore {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path: PathBuf =
-            std::env::temp_dir().join(format!("yougen-oidc-lifecycle-{tag}-{stamp}.json"));
-        LocalStateStore::with_path(path)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn isolated_store(_tag: &str) -> LocalStateStore {
-        LocalStateStore::default()
-    }
+    // YOU-05-010: shared hermetic state-store fixture from `local_state` —
+    // keeps pre-existing dev OIDC bundles out of the
+    // `evaluate_refresh_policy` decisions under test.
+    use crate::local_state::isolated_store_for_tests as isolated_store;
 
     fn fresh_bundle(expires_in: i64) -> OidcTokenBundle {
         OidcTokenBundle {

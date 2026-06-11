@@ -1425,13 +1425,8 @@ mod tests {
         .unwrap()
     }
 
-    fn temp_state_store(name: &str) -> crate::local_state::LocalStateStore {
-        let path = std::env::temp_dir().join(format!(
-            "yougen-mls-account-recovery-{name}-{}.json",
-            crate::operation::uuid_v7()
-        ));
-        crate::local_state::LocalStateStore::with_path(path)
-    }
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    use crate::local_state::isolated_store_for_tests as temp_state_store;
 
     fn history_envelope(
         realm_id: &str,

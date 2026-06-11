@@ -1,12 +1,12 @@
 //! First end-to-end UI consent-flow PoC.
 //!
 //! Wires a single user-facing button — "Grant consent" — to the
-//! Event Envelope write path (`operation::cx_ops` + `ck.self.events.submit`).
+//! Event Envelope write path (`operation::ck_ops` + `ck.self.events.submit`).
 //! The flow is:
 //!
 //! 1. user types `consent_id` + `tag` in the form;
 //! 2. on click, build a `ck.consent.grant` event envelope via
-//!    [`crate::operation::cx_ops::consent_grant`];
+//!    [`crate::operation::ck_ops::consent_grant`];
 //! 3. sign with the per-device ed25519 key persisted in `local_state` (yougen does not yet have OS
 //!    keychain / WebAuthn / HSM key management — see `TODO(secure-key-store-handoff)` below);
 //! 4. POST to soland via [`crate::api::CokretApi::submit_event_envelope`];
@@ -32,7 +32,7 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 // NOTE: build_signed_consent_grant / build_signed_consent_revoke /
 // build_signed_consent_revoke_v1 / format_submit_response and their
 // helpers have been removed — the consent demo card now builds
-// ck.consent.{grant,revoke} events via cx_ops::consent_grant / consent_revoke
+// ck.consent.{grant,revoke} events via ck_ops::consent_grant / consent_revoke
 // and submits them through ck.events.submit. The original Move-based
 // helpers + their wire-shape tests are preserved in git history.
 
@@ -107,7 +107,7 @@ pub fn ConsentGrantDemoCard(
                             status.set("Account identity unavailable; sign in first".to_owned());
                             return;
                         }
-                        let envelope = crate::operation::cx_ops::consent_grant(
+                        let envelope = crate::operation::ck_ops::consent_grant(
                             &realm_val,
                             &actor_id,
                             &consent_val,
@@ -160,7 +160,7 @@ pub fn ConsentGrantDemoCard(
                             status.set("Account identity unavailable; sign in first".to_owned());
                             return;
                         }
-                        let envelope = crate::operation::cx_ops::consent_revoke(
+                        let envelope = crate::operation::ck_ops::consent_revoke(
                             &realm_val,
                             &actor_id,
                             &consent_val,
@@ -421,7 +421,7 @@ pub fn RevokeAllConsentCard(
                                 spawn(async move {
                                     let mut succeeded = 0usize;
                                     for scope in &scopes {
-                                        let envelope = crate::operation::cx_ops::consent_revoke(
+                                        let envelope = crate::operation::ck_ops::consent_revoke(
                                             &realm_val,
                                             &actor_id,
                                             &consent_val,

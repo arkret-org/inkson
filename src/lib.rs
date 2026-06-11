@@ -78,8 +78,13 @@ pub mod move_builder;
 pub mod notification_rules;
 pub mod object_address;
 pub mod objects;
-pub mod offline;
-pub mod offline_queue;
+// YOU-02-008: the former `offline` / `offline_queue` modules (P3B.5
+// offline write queue + drain worker) were removed — the entire chain
+// (enqueue helpers, drain worker, pending badge) had zero production
+// call sites, and the replay path posted raw bodies without auth /
+// DPoP / event signing, so it could never have drained successfully
+// against authenticated endpoints. Re-add only together with real
+// wiring (enqueue on send failure, authed replay, app-shell drain).
 pub mod oidc;
 pub mod operation;
 pub mod passkey_prf;

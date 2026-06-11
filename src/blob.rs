@@ -31,8 +31,6 @@ use cokret_sdk::blob_aead::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::operation::OperationBuilder;
-
 /// MLS exporter content-key length (XChaCha20-Poly1305 key).
 pub const MLS_ATTACHMENT_KEY_LEN: usize = 32;
 /// Ciphertext is opaque octet-stream on the wire; the plaintext media type is
@@ -199,57 +197,10 @@ pub fn encrypt_mls_asset(
     )
 }
 
-/// Build a `ck.blob.register` event body describing an authenticated media
-/// upload. Pairs with a server-side `ck.self.blob.upload` to make the blob
-/// retrievable through the durable event chain.
-pub fn build_blob_register(
-    realm_id: &str,
-    actor: &str,
-    blob_id: &str,
-    metadata: &MediaMetadata,
-) -> anyhow::Result<OperationBuilder> {
-    let metadata_value = serde_json::to_value(metadata)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.blob.register")
-        .target_ref(blob_id)
-        .body(json!({
-            "blob_id": blob_id,
-            "metadata": metadata_value,
-        })))
-}
-
-/// Build a `ck.blob.revoke` event — revokes prior download grants for the
-/// referenced blob without deleting the underlying bytes.
-pub fn build_blob_revoke(
-    realm_id: &str,
-    actor: &str,
-    blob_id: &str,
-    reason: Option<&str>,
-) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.blob.revoke")
-        .target_ref(blob_id)
-        .body(json!({
-            "blob_id": blob_id,
-            "reason": reason,
-        }))
-}
-
-/// Build a `ck.blob.grant` event — authenticated download grant for a blob.
-/// `scope` indicates whether the grant covers the blob object or an
-/// attachment reference (matches the SDK's [`DownloadGrantScope`]).
-pub fn build_blob_grant(
-    realm_id: &str,
-    actor: &str,
-    blob_id: &str,
-    grant: &AuthenticatedDownloadGrant,
-) -> anyhow::Result<OperationBuilder> {
-    let grant_value = serde_json::to_value(grant)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.blob.grant")
-        .target_ref(blob_id)
-        .body(json!({
-            "blob_id": blob_id,
-            "grant": grant_value,
-        })))
-}
+// YOU-01-011: the former `ck.blob.register` / `ck.blob.revoke` /
+// `ck.blob.grant` event builders were removed — none of those kinds is in
+// the spec event-kind-registry, and unregistered wire kinds must not be
+// mintable from client code. Re-add once the kinds are registered via CKP.
 
 /// Wrap a [`MediaMetadata`] reference in the canonical event payload shape
 /// used by `ck.message.create` attachments. Useful for building chat /
@@ -278,19 +229,6 @@ mod tests {
         assert!(a.starts_with("ck:blob:sha256:"));
         // sha256 hex length is 64.
         assert_eq!(a.len(), "ck:blob:sha256:".len() + 64);
-    }
-
-    #[test]
-    fn blob_revoke_emits_canonical_kind() {
-        let op = build_blob_revoke(
-            "ck:realm:s1",
-            "did:web:alice",
-            "ck:blob:sha256:dead",
-            Some("uploaded in error"),
-        )
-        .build("node");
-        assert_eq!(op.kind, "ck.blob.revoke");
-        assert_eq!(op.payload["reason"], "uploaded in error");
     }
 
     fn test_key_ref() -> KeyRefObject {

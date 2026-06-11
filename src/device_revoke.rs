@@ -46,7 +46,7 @@ pub enum DeviceRevokeStep {
     LocalRevoke,
     /// Write the revocation proof into the actor event chain.
     /// canonical event = `ck.device.revoke`.
-    CxDeviceRevoked,
+    DeviceRevoked,
     /// Rotate the account MLS snapshot secret and publish fresh key backups
     /// before any future encrypted history is uploaded under the old secret.
     RotateAccountMlsSecret,
@@ -79,7 +79,7 @@ impl DeviceRevokeStep {
     pub fn canonical_event_kind(&self) -> Option<&'static str> {
         match self {
             Self::LocalRevoke => None,
-            Self::CxDeviceRevoked => Some("ck.device.revoke"),
+            Self::DeviceRevoked => Some("ck.device.revoke"),
             Self::RotateAccountMlsSecret => None,
             Self::MlsProposeRemove { .. } => Some("ck.mls.proposal"),
             Self::MlsCommit { .. } => Some("ck.mls.commit"),
@@ -94,7 +94,7 @@ impl DeviceRevokeStep {
     pub fn description(&self) -> String {
         match self {
             Self::LocalRevoke => "Mark revoked in local DeviceManager + E2eeManager".to_owned(),
-            Self::CxDeviceRevoked => "Write ck.device.revoke to the actor event chain".to_owned(),
+            Self::DeviceRevoked => "Write ck.device.revoke to the actor event chain".to_owned(),
             Self::RotateAccountMlsSecret => {
                 "Rotate the account MLS history secret and rewrap latest backups".to_owned()
             }
@@ -142,7 +142,7 @@ impl DeviceRevokePlan {
     ) -> Self {
         let mut steps: Vec<DeviceRevokeStep> = Vec::new();
         steps.push(DeviceRevokeStep::LocalRevoke);
-        steps.push(DeviceRevokeStep::CxDeviceRevoked);
+        steps.push(DeviceRevokeStep::DeviceRevoked);
         steps.push(DeviceRevokeStep::RotateAccountMlsSecret);
         for group_id in affected_groups {
             steps.push(DeviceRevokeStep::MlsProposeRemove {
@@ -555,7 +555,7 @@ mod tests {
     fn plan_starts_with_local_revoke_then_canonical_event() {
         let p = sample_plan();
         assert_eq!(p.steps[0], DeviceRevokeStep::LocalRevoke);
-        assert_eq!(p.steps[1], DeviceRevokeStep::CxDeviceRevoked);
+        assert_eq!(p.steps[1], DeviceRevokeStep::DeviceRevoked);
         assert_eq!(p.steps[2], DeviceRevokeStep::RotateAccountMlsSecret);
     }
 
@@ -649,7 +649,7 @@ mod tests {
     #[test]
     fn empty_groups_still_emits_terminal_steps() {
         let p = DeviceRevokePlan::build("did:web:b", "ck:device:01a", &[], &BTreeMap::new());
-        // 5 steps: LocalRevoke, CxDeviceRevoked, RotateAccountMlsSecret,
+        // 5 steps: LocalRevoke, DeviceRevoked, RotateAccountMlsSecret,
         // InvalidateKeyPackages, UnregisterPushToken.
         assert_eq!(p.steps.len(), 5);
         assert_eq!(p.affected_group_count(), 0);
@@ -670,7 +670,7 @@ impl DeviceRevokeStep {
     fn all_variants() -> Vec<Self> {
         vec![
             Self::LocalRevoke,
-            Self::CxDeviceRevoked,
+            Self::DeviceRevoked,
             Self::RotateAccountMlsSecret,
             Self::MlsProposeRemove {
                 group_id: "g".into(),

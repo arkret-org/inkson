@@ -495,13 +495,8 @@ fn is_protocol_device_id(value: &str) -> bool {
         })
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
-}
+// YOU-05-007: shared lowercase-hex encoder lives in `crate::canonical`.
+use crate::canonical::hex_encode;
 
 fn hex_decode(hex: &str) -> Option<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {

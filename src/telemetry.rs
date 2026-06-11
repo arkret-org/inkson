@@ -243,23 +243,10 @@ pub fn emit_user_action_log(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::path::PathBuf;
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
-
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn isolated_store(tag: &str) -> LocalStateStore {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path: PathBuf =
-            std::env::temp_dir().join(format!("yougen-telemetry-{tag}-{stamp}.json"));
-        LocalStateStore::with_path(path)
-    }
+    use crate::local_state::isolated_store_for_tests as isolated_store;
 
     #[test]
     fn outcome_labels_match_sodmin_wire_shape() {

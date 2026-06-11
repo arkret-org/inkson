@@ -1906,22 +1906,62 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
             guard.insert(key.to_owned(), value.to_owned());
         }
+        // YOU-02-009: the async IndexedDB put below can lose a page-unload
+        // race while dependent state (e.g. the MLS snapshot this secret
+        // decrypts) is persisted *synchronously* to localStorage — leaving a
+        // snapshot on disk whose decryption key never landed. Close the
+        // ordering gap by synchronously writing an AEAD-wrapped fallback
+        // copy to localStorage first. The mirror is transient: it is
+        // removed once the IndexedDB put succeeds, and the boot-time H6
+        // migration sweeps any unload-race survivor back into IndexedDB.
+        // Ed25519 signing seeds stay IndexedDB-only (H6 fail-closed).
+        let mirrored = if is_wasm_ed25519_seed_key(key) {
+            false
+        } else {
+            // Re-open the fallback per write so its wrapping seed is
+            // guaranteed to exist in localStorage at mirror time (the H6
+            // migration prunes the seed after each boot sweep).
+            match LocalStorageSecureKeyStore::new(&self.service_name)
+                .and_then(|fallback| fallback.store_secret(key, value))
+            {
+                Ok(()) => true,
+                Err(err) => {
+                    tracing::warn!(?err, key=%key, "localStorage unload-race mirror failed");
+                    false
+                }
+            }
+        };
         // Fire-and-forget persistence. Failures are logged; the cache
         // already has the new value so subsequent reads succeed even
-        // if the write loses out to a page-unload race.
+        // if the write loses out to a page-unload race (in which case
+        // the localStorage mirror above is the recovery copy).
         //
         // Reuse the cached `IdbDatabase` handle instead of opening a
         // fresh one per write.
         let key_for_async = key.to_owned();
         let value_for_async = value.to_owned();
+        let service_name_for_async = self.service_name.clone();
         let crypto_key = self.crypto_key.clone();
         let db = self.db.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            if let Err(err) =
-                Self::persist_entry_value(&db.0, &crypto_key.0, &key_for_async, &value_for_async)
-                    .await
+            match Self::persist_entry_value(&db.0, &crypto_key.0, &key_for_async, &value_for_async)
+                .await
             {
-                tracing::warn!(?err, key=%key_for_async, "indexedDB persist failed");
+                Ok(()) => {
+                    // Durable in IndexedDB — drop the transient
+                    // localStorage mirror so secrets do not linger in
+                    // the weaker tier (H6 threat model).
+                    if mirrored
+                        && let Ok(fallback) =
+                            LocalStorageSecureKeyStore::new(&service_name_for_async)
+                        && let Err(err) = fallback.delete_secret(&key_for_async)
+                    {
+                        tracing::warn!(?err, key=%key_for_async, "mirror cleanup failed");
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(?err, key=%key_for_async, "indexedDB persist failed");
+                }
             }
         });
         Ok(())
@@ -1942,6 +1982,14 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 .lock()
                 .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
             guard.remove(key);
+        }
+        // YOU-02-009: also drop any transient localStorage mirror left by
+        // `store_secret` so a deleted secret cannot be resurrected by the
+        // boot-time migration sweep.
+        if let Ok(fallback) = LocalStorageSecureKeyStore::new(&self.service_name)
+            && let Err(err) = fallback.delete_secret(key)
+        {
+            tracing::warn!(?err, key=%key, "localStorage mirror delete failed");
         }
         // Reuse the cached `IdbDatabase` handle for the spawned delete.
         let key_for_async = key.to_owned();

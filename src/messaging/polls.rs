@@ -372,13 +372,16 @@ fn poll_options_from_content(content: &Value) -> Vec<PollOption> {
         .unwrap_or_default()
 }
 
-fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> Value {
-    result.unwrap_or_else(|err| panic!("{context}: {err}"))
+// YOU-02-001: these helpers return `Result` instead of panicking — the
+// realm/flow ids they parse come from server-synced UI state, and a
+// non-canonical id must not abort the client (wasm panic = blank page).
+fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> anyhow::Result<Value> {
+    result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
 }
 
-fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
+fn flow_id_value(value: &str) -> anyhow::Result<cokret_sdk::FlowId> {
     cokret_sdk::FlowId::new(value.to_owned())
-        .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
+        .map_err(|err| anyhow::anyhow!("invalid flow id {value:?}: {err:?}"))
 }
 
 /// Build the `ck.content.poll.create` envelope for the wire.
@@ -388,7 +391,7 @@ pub fn build_poll_create_op(
     flow_id: &str,
     poll_id: &str,
     draft: &PollDraft,
-) -> EventEnvelope {
+) -> anyhow::Result<EventEnvelope> {
     let options: Vec<Value> = draft
         .options
         .iter()
@@ -402,9 +405,9 @@ pub fn build_poll_create_op(
         .with_field("options", Value::Array(options))
         .with_field("max_selections", json!(draft.max_selections.max(1)));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(flow_id),
+        flow_id_value(flow_id)?,
         "discussion",
-        sdk_payload_value(content.to_value(), "poll create content serialize"),
+        sdk_payload_value(content.to_value(), "poll create content serialize")?,
     )
     .with_message_id(poll_id);
     let mut envelope = OperationBuilder::new(realm_id, actor, "ck.message.create")
@@ -412,12 +415,12 @@ pub fn build_poll_create_op(
         .body(sdk_payload_value(
             payload.to_value(),
             "poll ck.message.create payload serialize",
-        ))
+        )?)
         .build("yougen");
     let message_ref = envelope.event_id.replacen("ck:event:", "ck:message:", 1);
     envelope.payload["message_id"] = json!(message_ref);
     envelope.payload["content"]["message_id"] = json!(message_ref);
-    envelope
+    Ok(envelope)
 }
 
 /// Build the `ck.content.poll.response` envelope for a single-select
@@ -428,42 +431,46 @@ pub fn build_poll_vote_op(
     actor: &str,
     poll_id: &str,
     option_id: &str,
-) -> EventEnvelope {
+) -> anyhow::Result<EventEnvelope> {
     let flow_id = flow_id_from_realm_id(realm_id);
     let content = cokret_sdk::ContentBlock::new("ck.content.poll.response", "poll response")
         .with_field("poll_id", json!(poll_id))
         .with_field("choice", json!(option_id));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(&flow_id),
+        flow_id_value(&flow_id)?,
         "discussion",
-        sdk_payload_value(content.to_value(), "poll vote content serialize"),
+        sdk_payload_value(content.to_value(), "poll vote content serialize")?,
     );
-    OperationBuilder::new(realm_id, actor, "ck.message.create")
+    Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(poll_id)
         .body(sdk_payload_value(
             payload.to_value(),
             "poll vote ck.message.create payload serialize",
-        ))
-        .build("yougen")
+        )?)
+        .build("yougen"))
 }
 
 /// Build the `ck.content.poll.close` envelope.
-pub fn build_poll_close_op(realm_id: &str, actor: &str, poll_id: &str) -> EventEnvelope {
+pub fn build_poll_close_op(
+    realm_id: &str,
+    actor: &str,
+    poll_id: &str,
+) -> anyhow::Result<EventEnvelope> {
     let flow_id = flow_id_from_realm_id(realm_id);
     let content = cokret_sdk::ContentBlock::new("ck.content.poll.close", "poll closed")
         .with_field("poll_id", json!(poll_id));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(&flow_id),
+        flow_id_value(&flow_id)?,
         "discussion",
-        sdk_payload_value(content.to_value(), "poll close content serialize"),
+        sdk_payload_value(content.to_value(), "poll close content serialize")?,
     );
-    OperationBuilder::new(realm_id, actor, "ck.message.create")
+    Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(poll_id)
         .body(sdk_payload_value(
             payload.to_value(),
             "poll close ck.message.create payload serialize",
-        ))
-        .build("yougen")
+        )?)
+        .build("yougen"))
 }
 
 /// Generate a fresh poll id (`poll-<uuid>`).
@@ -552,7 +559,8 @@ mod tests {
             "ck:flow:01904100-0000-7000-8000-000000000011",
             "poll-x",
             &draft,
-        );
+        )
+        .expect("builds");
         assert_eq!(op.kind, "ck.message.create");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("encrypted").is_none());

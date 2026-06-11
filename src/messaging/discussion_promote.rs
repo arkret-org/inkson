@@ -12,7 +12,7 @@
 //! the wire builders covered by unit tests while the soland reducer is
 //! completed.
 
-use crate::operation::{EventEnvelope, cx_ops, uuid_v7};
+use crate::operation::{EventEnvelope, ck_ops, uuid_v7};
 
 /// Whether the local UI should expose the discussion promote modal.
 pub fn discussion_promote_enabled() -> bool {
@@ -72,8 +72,8 @@ pub fn build_discussion_circle_create_op(
     actor: &str,
     ids: &PromoteIds,
     title: &str,
-) -> EventEnvelope {
-    cx_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title).build("yougen")
+) -> anyhow::Result<EventEnvelope> {
+    Ok(ck_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?.build("yougen"))
 }
 
 /// Build the `ck.flow.create` envelope for the new private discussion Flow.
@@ -82,16 +82,15 @@ pub fn build_discussion_flow_create_op(
     actor: &str,
     ids: &PromoteIds,
     title: &str,
-) -> EventEnvelope {
-    cx_ops::scoped_discussion_flow_create(
+) -> anyhow::Result<EventEnvelope> {
+    Ok(ck_ops::scoped_discussion_flow_create(
         realm_id,
         actor,
         &ids.discussion_flow_id,
         &ids.circle_id,
         title,
-    )
-    .expect("valid scoped discussion flow create")
-    .build("yougen")
+    )?
+    .build("yougen"))
 }
 
 /// Build the `ck.relation.create` envelope that links the private Flow back
@@ -101,15 +100,15 @@ pub fn build_confidential_discussion_relation_op(
     actor: &str,
     source_id: &str,
     ids: &PromoteIds,
-) -> EventEnvelope {
-    cx_ops::confidential_discussion_relation_create(
+) -> anyhow::Result<EventEnvelope> {
+    Ok(ck_ops::confidential_discussion_relation_create(
         realm_id,
         actor,
         &ids.discussion_flow_id,
         source_id,
         &ids.circle_id,
-    )
-    .build("yougen")
+    )?
+    .build("yougen"))
 }
 
 /// Convenience helper that bundles the promote envelopes in submit order.
@@ -119,12 +118,12 @@ pub fn build_promote_ops(
     source_id: &str,
     ids: &PromoteIds,
     title: &str,
-) -> Vec<EventEnvelope> {
-    vec![
-        build_discussion_circle_create_op(realm_id, actor, ids, title),
-        build_discussion_flow_create_op(realm_id, actor, ids, title),
-        build_confidential_discussion_relation_op(realm_id, actor, source_id, ids),
-    ]
+) -> anyhow::Result<Vec<EventEnvelope>> {
+    Ok(vec![
+        build_discussion_circle_create_op(realm_id, actor, ids, title)?,
+        build_discussion_flow_create_op(realm_id, actor, ids, title)?,
+        build_confidential_discussion_relation_op(realm_id, actor, source_id, ids)?,
+    ])
 }
 
 #[cfg(test)]
@@ -161,7 +160,8 @@ mod tests {
             "ck:flow:0196419b-0000-7000-8000-000000000003",
             &ids,
             "Private discussion",
-        );
+        )
+        .expect("promote ops build");
         assert_eq!(ops.len(), 3);
         assert_eq!(ops[0].kind, "ck.circle.create");
         assert_eq!(ops[1].kind, "ck.flow.create");

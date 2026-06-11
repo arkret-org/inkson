@@ -135,16 +135,9 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
     })
 }
 
-fn string_field(result: &Value, fields: &[&str]) -> Option<String> {
-    fields.iter().find_map(|field| {
-        result
-            .get(*field)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    })
-}
+// YOU-05-008: shared "first non-empty string under candidate keys" helper
+// lives in `crate::realm_tree`.
+use crate::realm_tree::string_field;
 
 #[component]
 pub fn GlobalSearchPanel(

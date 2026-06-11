@@ -27,8 +27,15 @@ pub struct LogoutOutcome {
     pub revoked: bool,
 }
 
+/// Mirror of soland's product-face `SolandAccountRegisterOutcome` wire shape
+/// (`POST /_soland/self/account/register`, `GET /_soland/self/account/me`).
+/// Named with the `Soland` prefix because the SDK core
+/// `AccountRegisterOutcome` (`api.rs`) has a different, principal-centric
+/// shape (`principal_id` / `state` / `devices` / handle-claim fields);
+/// sharing the SDK name would mislead readers into expecting the same wire
+/// contract.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AccountRegisterOutcome {
+pub struct SolandAccountRegisterOutcome {
     pub did: String,
     pub handle: String,
     pub display_name: Option<String>,
@@ -36,11 +43,14 @@ pub struct AccountRegisterOutcome {
 }
 
 /// A4b — response shape for `POST /_soland/self/account/profile`. Mirrors
-/// soland's `AccountUpdateProfileOutcome` wire shape so the settings UI can
-/// reconcile its local cache with whatever the server actually stored
-/// (the server normalises empty strings to `None`).
+/// soland's product-face `SolandAccountUpdateProfileOutcome` wire shape so
+/// the settings UI can reconcile its local cache with whatever the server
+/// actually stored (the server normalises empty strings to `None`). Named
+/// with the `Soland` prefix because the SDK core
+/// `AccountUpdateProfileOutcome` has a different shape
+/// (`{ profile: ActorProfile }`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AccountUpdateProfileOutcome {
+pub struct SolandAccountUpdateProfileOutcome {
     pub did: String,
     pub handle: String,
     #[serde(default)]
@@ -417,8 +427,12 @@ pub use cokret_sdk::model::{
     IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
+/// `ck.self.account.describe` response (lenient local read of the spec
+/// `ServiceDescribe` body; `frontier` is an authenticated extension field
+/// whose shape is deployment-defined, hence `Value`). Follows the local
+/// `*Outcome` DTO suffix convention (YOU-04-001).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SyncDescribeResBody {
+pub struct SyncDescribeOutcome {
     pub service_did: String,
     #[serde(default)]
     pub supported_sync_profiles: Vec<String>,
@@ -663,23 +677,19 @@ mod tests {
             "ck:event:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(outcome.status, "accepted");
-        assert_eq!(outcome.sync_token, "sx:cursor-1");
+        assert_eq!(outcome.cursor, "sx:cursor-1");
     }
 
     #[test]
-    fn submit_event_outcome_decodes_legacy_flat_wire() {
+    fn submit_event_outcome_rejects_legacy_flat_wire() {
+        // renames.json rejection policy: the legacy flat `{event_id,
+        // sync_token, …}` shape MUST NOT decode — canonical-only parser.
         let value = serde_json::json!({
             "event_id": "ck:event:legacy",
             "status": "accepted",
             "sync_token": "sx:legacy",
-            "canonical_digest": "sha256:abc",
-            "receipt": {"k": "v"},
         });
-        let outcome: super::SubmitEventOutcome = serde_json::from_value(value).unwrap();
-        assert_eq!(outcome.event_id, "ck:event:legacy");
-        assert_eq!(outcome.sync_token, "sx:legacy");
-        assert_eq!(outcome.canonical_digest.as_deref(), Some("sha256:abc"));
-        assert_eq!(outcome.receipt, serde_json::json!({"k": "v"}));
+        assert!(serde_json::from_value::<super::SubmitEventOutcome>(value).is_err());
     }
 
     #[test]
@@ -695,7 +705,7 @@ mod tests {
         let outcome: super::SubmitEventOutcome = serde_json::from_value(value).unwrap();
         assert_eq!(outcome.event_id, "ck:event:e2e");
         assert_eq!(outcome.status, "duplicate");
-        assert_eq!(outcome.sync_token, "");
+        assert_eq!(outcome.cursor, "");
     }
 
     fn preview(
@@ -841,25 +851,21 @@ pub struct BackfillOutcome {
     pub limited: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SnapshotHeadState {
-    pub snapshot_ref: String,
-    pub state_digest: String,
-    #[serde(default)]
-    pub frontier: Value,
-    #[serde(default)]
-    pub signature: Value,
-}
+// The yougen-local `SnapshotHeadState` mirror was deleted with the
+// 2026-06-11 spec resolution (`renames.json` migration group
+// `snapshot_head_returns_manifest`, hard_reject): `ck.self.snapshot.head`
+// now returns the full signed `ck.schema.snapshot.v1` manifest, and the
+// old head-pointer DTO (`snapshot_ref` / `state_digest` / `frontier` /
+// `signature`) MUST NOT appear on current wire. See
+// `api::CokretApi::snapshot_head`.
 
 pub use cokret_sdk::model::AuthzCheckOutcome;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GrantList {
-    #[serde(default)]
-    pub grants: Vec<Value>,
-    pub state_digest: Option<String>,
-    pub evaluated_at: String,
-}
+/// `ck.self.authz.get_effective_grants` response. soland serialises the SDK
+/// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
+/// decodes the same authoritative wire contract instead of a weakly-typed
+/// local mirror.
+pub use cokret_sdk::model::GrantList;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InvitesOutcome {
@@ -883,8 +889,16 @@ pub use cokret_sdk::model::{
 
 pub use cokret_sdk::model::BlobUploadOutcome;
 
+/// Mirror of soland's `SolandModerationReportOutcome` wire shape for
+/// `POST /_cokret/self/moderation/report`. Named with the `Soland` prefix
+/// because the SDK core `ModerationReportOutcome` is stricter
+/// (`routed_to: Vec<Did>`, scalar DIDs only per
+/// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`),
+/// while soland currently emits fragment-bearing routing targets
+/// (`did:...#moderation`) and a `queued` status outside the spec enum —
+/// the strict SDK type would fail to decode that wire.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ModerationReportOutcome {
+pub struct SolandModerationReportOutcome {
     pub report_id: String,
     pub status: String,
     #[serde(default)]
@@ -985,35 +999,16 @@ impl ResolveHandleOutcome {
     }
 }
 
-/// Structured mention node embedded in message body. Spec b56cab1
+/// Structured mention node embedded in message body. Spec
 /// `models/flow-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
 ///
-/// R3.2 wire-breaking: `subject_id` (principal DID) is the ONLY
-/// authoritative field — actor attribution, authorization, resolution
-/// and render lookup all key off it. `handle_at_time` /
-/// `display_name_at_time` / `mention_text_original` are compose-time
-/// audit metadata ONLY and MUST NOT be used as the current display value.
-/// The old `subject` / `handle` / `display_snapshot` fields are gone.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Mention {
-    /// Principal DID of the mentioned subject (authoritative).
-    pub subject_id: String,
-    /// Audit-only snapshot of the subject's display name at compose time.
-    // R26: canonical field order per spec `models/flow-and-message.md §9.4`
-    // places `display_name_at_time` before `handle_at_time`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name_at_time: Option<String>,
-    /// Audit-only snapshot of the canonical `<localpart>:<domain>` handle
-    /// at compose time. Never the current display value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub handle_at_time: Option<String>,
-    /// The original string the user typed (e.g. `@alice:acme.com`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mention_text_original: Option<String>,
-    /// When the handle was resolved. Audit metadata.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved_at: Option<String>,
-}
+/// YOU-05-006: the former hand-rolled weakly-typed mirror (all-`String`
+/// fields) duplicated the SDK's authoritative strongly-typed model
+/// (`Did` / `Handle` / `DateTime<Utc>`) and had already drifted in field
+/// declaration order. Re-export the SDK type; `subject_id` (principal
+/// DID) remains the ONLY authoritative field — the `*_at_time` fields
+/// are compose-time audit metadata only.
+pub use cokret_sdk::model::Mention;
 
 /// Per-Realm delivery binding surfaced to the member detail view.
 /// Mirrors `member_delivery_binding` from `event-payload.schema.json`.
@@ -1078,96 +1073,39 @@ pub struct VerifyDeviceOutcome {
     pub trust_state: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MlsRotateOutcome {
-    pub ok: bool,
-    pub epoch: u64,
-    pub mls_group_ref: String,
-}
-
-// ── Policy Check ─────────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PolicyCheckOutcome {
-    pub decision: String,
-    #[serde(default)]
-    pub obligations: Vec<Value>,
-    #[serde(default)]
-    pub reason: Option<String>,
-    pub signed_decision: Option<Value>,
-}
-
-// ── Identity (extended) ──────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DidOperationSubmitOutcome {
-    pub ok: bool,
-    pub operation_id: String,
-    pub status: String,
-}
-
-/// soland's events `describe` wire body. Named distinctly from the SDK
-/// core `cokret_sdk::model::EventsDescribeOutcome` (which has a different
-/// field set: supported_event_schemas/supported_reducer_profiles/...)
-/// because this soland surface emits a different shape; sharing the SDK
-/// name would mislead readers into expecting the same wire contract.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SolandEventsDescribeResBody {
-    pub service_did: String,
-    #[serde(default)]
-    pub supported_profiles: Vec<String>,
-    #[serde(default)]
-    pub frontier: Value,
-    #[serde(default)]
-    pub registry: Value,
-    #[serde(default)]
-    pub schema_profile: Option<String>,
-    #[serde(default)]
-    pub reducer_profile: Option<String>,
-    #[serde(default)]
-    pub capabilities: Value,
-}
-
 /// `ck.self.events.submit` response.
 ///
-/// soland (head 37ce729 / SDK drift) now returns the canonical
-/// `EventsSubmitOutcome` wire shape — `{status, accepted[], duplicate[],
-/// cursor, …}` — with **no** top-level `event_id` / `sync_token`. The
-/// yougen-facing API (callers read `.event_id` / `.sync_token` / `.status`)
-/// predates that rename, so we keep the flat surface and fold the wire shape
-/// into it on deserialize via [`EventsSubmitWire`]:
-///   * `event_id`   ← first `accepted` (else first `duplicate`)
-///   * `sync_token` ← `cursor`
-///   * `status`     ← the `accepted` / `duplicate` / `partial` discriminant
+/// Decodes **only** the canonical `EventsSubmitOutcome` wire shape —
+/// `{status, accepted[], duplicate[], rejected[], actor_frontier,
+/// realm_frontier, cursor}` (spec
+/// `service-operation-dtos.schema.json#/$defs/EventsSubmitOutcome`,
+/// required: `status`, `accepted`). The yougen-facing flat surface is
+/// folded from it on deserialize via [`EventsSubmitWire`]:
+///   * `event_id` ← first `accepted` (else first `duplicate`)
+///   * `cursor`   ← `cursor` (read-your-writes barrier)
+///   * `status`   ← the `accepted` / `duplicate` / `partial` discriminant
 ///
-/// The mirror is intentionally **lenient** (plain `String` ids, every field
-/// `#[serde(default)]`, and a fallback to the legacy flat fields) so it
-/// decodes both the real soland response and the legacy `{event_id,
-/// sync_token, …}` shape some test mocks still emit — and never trips the
-/// strict `EventId` validator on synthetic fixture ids.
+/// Per renames.json rejection policy, the legacy flat
+/// `{event_id, sync_token, …}` shape is NOT tolerated — mocks must emit
+/// the canonical shape. Ids stay plain `String`s so synthetic fixture ids
+/// do not trip the strict `EventId` validator.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "EventsSubmitWire")]
 pub struct SubmitEventOutcome {
     pub event_id: String,
     pub status: String,
     #[serde(default)]
-    pub canonical_digest: Option<String>,
-    #[serde(default)]
-    pub sync_token: String,
-    #[serde(default)]
-    pub received_at: Option<String>,
+    pub cursor: String,
     #[serde(default)]
     pub receipt: Value,
 }
 
-/// Lenient deserialization mirror for both the current soland
-/// `EventsSubmitOutcome` wire shape and the legacy flat shape. See
-/// [`SubmitEventOutcome`].
+/// Deserialization mirror for the canonical `EventsSubmitOutcome` wire
+/// shape. See [`SubmitEventOutcome`]. `status` and `accepted` are required
+/// per spec; the rest defaults.
 #[derive(Deserialize)]
 struct EventsSubmitWire {
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
+    status: String,
     accepted: Vec<String>,
     #[serde(default)]
     duplicate: Vec<String>,
@@ -1179,17 +1117,6 @@ struct EventsSubmitWire {
     realm_frontier: Value,
     #[serde(default)]
     cursor: Option<String>,
-    // Legacy flat-shape fallbacks (old soland / contract mocks).
-    #[serde(default)]
-    event_id: Option<String>,
-    #[serde(default)]
-    sync_token: Option<String>,
-    #[serde(default)]
-    canonical_digest: Option<String>,
-    #[serde(default)]
-    received_at: Option<String>,
-    #[serde(default)]
-    receipt: Value,
 }
 
 impl From<EventsSubmitWire> for SubmitEventOutcome {
@@ -1199,33 +1126,18 @@ impl From<EventsSubmitWire> for SubmitEventOutcome {
             .first()
             .cloned()
             .or_else(|| wire.duplicate.first().cloned())
-            .or(wire.event_id)
             .unwrap_or_default();
-        let status = wire.status.unwrap_or_else(|| {
-            if wire.duplicate.is_empty() {
-                "accepted".to_owned()
-            } else {
-                "duplicate".to_owned()
-            }
+        let receipt = serde_json::json!({
+            "accepted": wire.accepted,
+            "duplicate": wire.duplicate,
+            "rejected": wire.rejected,
+            "actor_frontier": wire.actor_frontier,
+            "realm_frontier": wire.realm_frontier,
         });
-        let sync_token = wire.cursor.or(wire.sync_token).unwrap_or_default();
-        let receipt = if wire.receipt.is_null() {
-            serde_json::json!({
-                "accepted": wire.accepted,
-                "duplicate": wire.duplicate,
-                "rejected": wire.rejected,
-                "actor_frontier": wire.actor_frontier,
-                "realm_frontier": wire.realm_frontier,
-            })
-        } else {
-            wire.receipt
-        };
         Self {
             event_id,
-            status,
-            canonical_digest: wire.canonical_digest,
-            sync_token,
-            received_at: wire.received_at,
+            status: wire.status,
+            cursor: wire.cursor.unwrap_or_default(),
             receipt,
         }
     }
@@ -1248,38 +1160,15 @@ pub struct EphemeralSubmitOutcome {
 
 // ── Media ────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IceConfigOutcome {
-    pub realm_id: String,
-    pub call_id: String,
-    pub actor_id: String,
-    pub device_id: String,
-    #[serde(default)]
-    pub ice_servers: Vec<IceServer>,
-    pub ttl_seconds: u64,
-    pub refresh_lead_seconds: u64,
-    pub issued_at: String,
-    pub signature: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IceServer {
-    pub urls: Vec<String>,
-    #[serde(default)]
-    pub username: Option<String>,
-    #[serde(default)]
-    pub credential: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IceConfigRequestBody {
-    pub realm_id: String,
-    pub call_id: String,
-    pub actor_id: String,
-    pub device_id: String,
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub context: Value,
-}
+// YOU-05-004: the hand-rolled `IceConfigOutcome` / `IceServer` /
+// `IceConfigRequestBody` mirrors drifted from the SDK wire types (missing
+// `expires_at` / `force_turn`, `ttl_seconds: u64` vs the authoritative
+// `u32`) and bypassed the TURN credential privacy guard. Re-export the
+// SDK's authoritative types instead. When the WebRTC surface is wired up,
+// each `ice_servers` entry MUST be parsed through `cokret_sdk::IceServer`
+// and pass `IceServer::validate_credential_privacy()` (rejects TURN
+// usernames embedding cross-Realm stable DIDs, B-14).
+pub use cokret_sdk::model::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 
 // WebRTC call signaling/recording no longer round-trips through bespoke
 // `/_cokret/self/webrtc/*` outcomes: signaling is a `ck.call.signal`
@@ -1418,159 +1307,13 @@ pub struct MimiProxyDownloadOutcome {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// CKP-0008 / CKP-0009 — Personal Agent HTTP wire types (spec head
-// 37ce729 / SDK 4d5a1af / soland P2 aa76b91).
+// CKP-0008 / CKP-0009 — Personal Agent HTTP wire types.
 //
-// These mirror soland's `AgentProvisionReqBody` / `AgentResBody` /
-// `AgentListResBody` / `AgentLifecycleReqBody` / `AgentLifecycleResBody`
-// / `AgentRotateKeyReqBody` / `AgentRotateKeyResBody` /
-// `AgentGrantAttachReqBody` / `AgentGrantResBody` /
-// `AgentGrantDetachResBody` / `AgentSidecarThreadEnsureReqBody` /
-// `AgentSidecarThreadEnsureResBody` / `AgentKeyPairReqBody` /
-// `AgentKeyPairResBody`. Soland's reducer-side semantics are still
-// `TODO(P2-impl)` stubs, so yougen treats the response payloads
-// permissively (most fields are optional/defaulted) — the wire contract
-// for the 11 endpoints is what we want pinned here.
-//
-// TODO(P3-impl): once soland's reducer stamps `actor_kind` and the
-// projection lands, tighten these into typed sub-shapes.
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentKeyPairReqBody {
-    pub agent_principal_id: String,
-    pub verification_method: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_attestation: Option<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentKeyPairResBody {
-    pub ok: bool,
-    pub agent_principal_id: String,
-    pub verification_method: String,
-    pub authorized_at: String,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentProvisionReqBody {
-    pub display_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_did: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub initial_grants: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentResBody {
-    pub agent_principal_id: String,
-    pub controller_did: String,
-    pub agent_id: String,
-    pub display_name: String,
-    pub state: String,
-    pub created_at: String,
-    pub updated_at: String,
-    #[serde(default)]
-    pub grants: Vec<Value>,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentListResBody {
-    #[serde(default)]
-    pub agents: Vec<AgentResBody>,
-    #[serde(default)]
-    pub next_cursor: Option<String>,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentLifecycleReqBody {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentLifecycleResBody {
-    pub ok: bool,
-    pub agent_principal_id: String,
-    pub state: String,
-    pub status_changed_at: String,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentRotateKeyReqBody {
-    pub new_verification_method: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub previous_key_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentRotateKeyResBody {
-    pub ok: bool,
-    pub agent_principal_id: String,
-    pub authorized_verification_method: String,
-    #[serde(default)]
-    pub revoked_verification_method: Option<String>,
-    pub at: String,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentGrantAttachReqBody {
-    pub grant_kind: String,
-    #[serde(rename = "agent_key_scope")]
-    pub scope: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentGrantResBody {
-    pub ok: bool,
-    pub agent_principal_id: String,
-    pub grant_id: String,
-    pub grant_kind: String,
-    #[serde(rename = "agent_key_scope")]
-    pub scope: Value,
-    pub state: String,
-    pub created_at: String,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentGrantDetachResBody {
-    pub ok: bool,
-    pub agent_principal_id: String,
-    pub grant_id: String,
-    pub detached_at: String,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-/// `ck.self.agent.sidecar_thread.ensure` request schema.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentSidecarThreadEnsureReqBody {
-    pub realm_id: String,
-    pub controller_principal_id: String,
-    pub agent_principal_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentSidecarThreadEnsureResBody {
-    pub ok: bool,
-    pub private_circle_id: String,
-    pub private_flow_id: String,
-    pub private_relation_id: String,
-    #[serde(default)]
-    pub pending_member_reconciliations: Vec<Value>,
-}
+// YOU-01-005: the former hand-rolled `Agent*ReqBody` / `Agent*ResBody`
+// mirrors drifted from `agent-operations.schema.json` (extra required
+// fields, non-spec `todos`, wrong outcome shapes) and were removed. The
+// agent surface now uses the SDK's authoritative types
+// (`cokret_sdk::AgentKeyPairRequestBody` / `AgentProvisionOutcome` /
+// `AgentList` / `AgentView` / `AgentRotateKeyOutcome` /
+// `AgentGrantAttachOutcome` / `AgentSidecarThreadEnsureOutcome` / ...)
+// directly in `api::agent` and `views::agents`.

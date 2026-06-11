@@ -131,7 +131,7 @@ pub enum View {
     /// Agent endpoint + interop_session monitor.
     /// Spec `extensions/agent-integration.md`. Writes `ck.agent.endpoint` /
     /// `ck.agent.interop_session.{start,status,result}` via
-    /// `crate::operation::cx_ops::agent_*` builders.
+    /// `crate::operation::ck_ops::agent_*` builders.
     Agents,
     /// A6.1 — global cross-Space message search panel. Triggered by
     /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by

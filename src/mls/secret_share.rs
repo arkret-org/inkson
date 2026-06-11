@@ -388,12 +388,11 @@ fn secret_plaintext(secret: &str, secret_version: u32, request_id: &str) -> Resu
         .map_err(|err| anyhow!("canonicalize secret-share plaintext: {err}"))
 }
 
+/// YOU-05-008: required-field wrapper over the shared
+/// `crate::realm_tree::string_field` helper (trims and rejects empty
+/// values), erroring instead of returning `None`.
 fn string_field(value: &Value, field: &str) -> Result<String> {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .map(str::to_owned)
+    crate::realm_tree::string_field(value, &[field])
         .ok_or_else(|| anyhow!("missing or empty field {field:?}"))
 }
 

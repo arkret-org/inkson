@@ -89,10 +89,15 @@ impl CokretApi {
 
     // ── Media ───────────────────────────────────────────────────────
 
+    /// `POST /_cokret/self/rtc/ice-config` using the SDK's authoritative
+    /// wire types (YOU-05-004). NB: when the WebRTC surface consumes the
+    /// outcome, each `ice_servers` entry MUST be parsed through
+    /// `cokret_sdk::IceServer` and pass
+    /// `IceServer::validate_credential_privacy()` before use.
     pub async fn ice_config(
         &self,
-        request: &IceConfigRequestBody,
-    ) -> anyhow::Result<IceConfigOutcome> {
+        request: &MediaIceConfigRequestBody,
+    ) -> anyhow::Result<MediaIceConfigOutcome> {
         self.post_json(
             "_cokret/self/rtc/ice-config",
             serde_json::to_value(request)?,

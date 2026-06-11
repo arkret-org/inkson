@@ -339,17 +339,35 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
 
     if (url.pathname === "/_cokret/self/events/describe") {
+      // Spec ck.self.events.describe -> canonical ServiceDescribe shape
+      // (17 required fields; yougen decodes the SDK ServerDescription).
       return json(route, {
         service_did: "did:web:server.local",
-        schema_profiles: ["ck.schema.core.v1"],
-        reducer_profiles: ["ck.reducer.v1"],
-        supported_event_types: [
-          "ck.flow.create",
-          "ck.flow.move",
-          "ck.flow.tracks.update",
-          "ck.message.create",
-        ],
-        frontier: ["ck:event:e2e"],
+        trust_domain: "ck:trust_domain:server.local",
+        service_type: "principal_server",
+        protocol_version: "1.0",
+        supported_profiles: ["ck.profile.core_event_store.v1"],
+        supported_operations: ["ck.self.events.submit", "ck.self.events.describe"],
+        supported_bindings: [{ kind: "http_json" }],
+        supported_features: [],
+        auth_metadata: {
+          mode: "development",
+          supported_auth_methods: ["oauth2_bearer_introspection"],
+        },
+        limits: { storage: "memory" },
+        rate_limit_policy: { writes_per_minute: 120 },
+        plaintext_visibility: {
+          default: "e2ee",
+          allowed_services: ["did:web:server.local"],
+        },
+        implemented_features: [],
+        claimed_profiles: [],
+        verified_profiles: [],
+        experimental_features: [],
+        compat_surfaces: [],
+        development_mode: true,
+        // Strict typed EventId — must be a canonical ck:event:<uuidv7>.
+        frontier: ["ck:event:0196419b-0000-7000-8000-00000000e2e0"],
       });
     }
 
@@ -466,7 +484,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       }
       // soland (head 37ce729) returns the canonical EventsSubmitOutcome wire
       // shape: {status, accepted[], cursor} — no top-level event_id/sync_token.
-      // yougen folds accepted[0] -> event_id and cursor -> sync_token.
+      // yougen folds accepted[0] -> event_id and keeps cursor as-is.
       return json(route, {
         status: "accepted",
         accepted: body.event_id ? [body.event_id] : [],
@@ -633,10 +651,6 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname === "/_soland/gate/auth/logout") {
       return json(route, { ok: true });
-    }
-
-    if (url.pathname === "/_cokret/self/mls/rotate") {
-      return json(route, { ok: true, epoch: 2, mls_group_ref: DEMO_REALM });
     }
 
     if (url.pathname === "/_cokret/self/account/subscribe") {
@@ -914,14 +928,6 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         receipts: [],
         method_evidence: { mode: "development_local" },
       });
-    }
-
-    if (url.pathname === "/_cokret/root/identity/submit-did-operation") {
-      return json(route, {
-        ok: true,
-        operation_id: "ck:didop:e2e",
-        status: "accepted",
-      }, 202);
     }
 
     if (url.pathname === "/_cokret/self/account/describe") {

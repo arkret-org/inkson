@@ -890,7 +890,7 @@ pub(super) fn upsert_participant(
 /// mention / sender rows can render an agent badge.
 ///
 /// Reads the agent DID from `payload.body.agent_id` (per
-/// `crate::operation::cx_ops::agent_endpoint`). Returns an empty Vec
+/// `crate::operation::ck_ops::agent_endpoint`). Returns an empty Vec
 /// when no agent endpoints are registered.
 pub(super) fn agent_ids_from_raw_operations(
     raw_operations: &[crate::local_state::RawOperationRecord],
@@ -1269,13 +1269,19 @@ pub(super) fn schema_message_id_or_new(value: &str) -> String {
     }
 }
 
-pub(super) fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> Value {
-    result.unwrap_or_else(|err| panic!("{context}: {err}"))
+// YOU-02-001: these helpers return `Result` instead of panicking — the
+// realm/flow ids they parse come from server-synced UI state, and a
+// non-canonical id must not abort the client (wasm panic = blank page).
+pub(super) fn sdk_payload_value(
+    result: cokret_sdk::Result<Value>,
+    context: &str,
+) -> anyhow::Result<Value> {
+    result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
 }
 
-pub(super) fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
+pub(super) fn flow_id_value(value: &str) -> anyhow::Result<cokret_sdk::FlowId> {
     cokret_sdk::FlowId::new(value.to_owned())
-        .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
+        .map_err(|err| anyhow::anyhow!("invalid flow id {value:?}: {err:?}"))
 }
 
 pub(super) fn chat_message_create_operation(
@@ -1287,7 +1293,7 @@ pub(super) fn chat_message_create_operation(
     body: &str,
     mentions: &[StructuredMention],
     reply_to: Option<&str>,
-) -> crate::operation::EventEnvelope {
+) -> anyhow::Result<crate::operation::EventEnvelope> {
     let audience_mention_values = audience_mentions_to_json(mentions);
     let mut content = cokret_sdk::ContentBlock::text(body);
     if !audience_mention_values.is_empty() {
@@ -1297,21 +1303,21 @@ pub(super) fn chat_message_create_operation(
     // (artifacts/registry/forbidden-wire-fields.json, hard_reject). v1 uses
     // `track_name` — a display-only timeline segment identifier — instead.
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(flow_id),
+        flow_id_value(flow_id)?,
         "discussion",
-        sdk_payload_value(content.to_value(), "chat message content serialize"),
+        sdk_payload_value(content.to_value(), "chat message content serialize")?,
     )
     .with_message_id(message_id);
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
         payload = payload.with_reply_to(reply_to);
     }
-    OperationBuilder::new(realm_id, actor, "ck.message.create")
+    Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(flow_id)
         .body(sdk_payload_value(
             payload.to_value(),
             "chat ck.message.create payload serialize",
-        ))
-        .build("yougen")
+        )?)
+        .build("yougen"))
 }
 
 pub(super) fn chat_send_error_message(error: &anyhow::Error) -> String {
@@ -1741,22 +1747,16 @@ pub(super) fn chat_message_from_event_with_sidecar(
         sender: first_string_in_candidates(
             &candidates,
             // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
-            // sender → sender_actor_id)。优先读 actor_id / sender_actor_id;
-            // `sender` / `sender_id` / `actor` 已废弃,仅作向后兼容容忍服务端旧值。
-            &[
-                "actor_id",
-                "sender_actor_id",
-                "sender",
-                "sender_id",
-                "actor",
-            ],
+            // sender → sender_actor_id,hard_reject)。只读 actor_id /
+            // sender_actor_id;legacy `sender` / `sender_id` / `actor` 不再容忍。
+            &["actor_id", "sender_actor_id"],
         )
         .unwrap_or("did:web:unknown")
         .to_owned(),
         body,
         timestamp: short_message_time(first_string_in_candidates(
             &candidates,
-            &["created_at", "timestamp", "origin_server_ts"],
+            &["created_at"],
         )),
         flow_id,
         reply_to: first_string_in_candidates(&candidates, &["reply_to", "thread_id"])
@@ -1817,14 +1817,10 @@ pub(super) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
         {
             let actor = first_string_in_candidates(
                 &candidates,
-                // actor_id 优先(canonical),sender* / actor 仅作向后兼容(已废弃)。
-                &[
-                    "actor_id",
-                    "sender_actor_id",
-                    "sender",
-                    "sender_id",
-                    "actor",
-                ],
+                // 只读 canonical `actor_id` / `sender_actor_id`(spec
+                // forbidden-wire-fields: sender → sender_actor_id,
+                // hard_reject);legacy `sender`/`sender_id`/`actor` 不再容忍。
+                &["actor_id", "sender_actor_id"],
             )
             .unwrap_or("did:web:unknown");
             if let Some(index) = by_poll_id.get(&poll_id).copied() {

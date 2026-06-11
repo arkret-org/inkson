@@ -90,7 +90,7 @@ impl CokretApi {
         handle: &str,
         display_name: Option<&str>,
         device_id: Option<&str>,
-    ) -> anyhow::Result<AccountRegisterOutcome> {
+    ) -> anyhow::Result<SolandAccountRegisterOutcome> {
         self.post_json(
             "_soland/self/account/register",
             json!({
@@ -103,7 +103,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn account_me(&self) -> anyhow::Result<AccountRegisterOutcome> {
+    pub async fn account_me(&self) -> anyhow::Result<SolandAccountRegisterOutcome> {
         self.get_json("_soland/self/account/me").await
     }
 
@@ -124,7 +124,7 @@ impl CokretApi {
         display_name: Option<&str>,
         bio: Option<&str>,
         avatar_url: Option<&str>,
-    ) -> anyhow::Result<AccountUpdateProfileOutcome> {
+    ) -> anyhow::Result<SolandAccountUpdateProfileOutcome> {
         self.post_json(
             "_soland/self/account/profile",
             json!({
@@ -491,13 +491,15 @@ impl CokretApi {
         Ok((account.did, lookup.realm_id))
     }
 
-    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeResBody> {
+    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeOutcome> {
         self.get_json("_cokret/self/account/describe").await
     }
 
     /// `ck.self.account.subscribe` snapshot fold. The server returns NDJSON frames;
-    /// this consumes the first `delta` frame and keeps the rest of the app on
-    /// the existing folded `ClientSyncOutcome` projection path.
+    /// this consumes EVERY frame of the response (merging catchup deltas and
+    /// advancing the cursor to the last cursor-bearing frame per
+    /// client-sync.md §2.2) and keeps the rest of the app on the existing
+    /// folded `ClientSyncOutcome` projection path.
     pub async fn account_subscribe_snapshot(
         &self,
         after: Option<&str>,
@@ -541,15 +543,30 @@ impl CokretApi {
             .send_with_retry(self.prepare_request(request), Method::GET, true)
             .await?;
         let status = response.status();
-        let bytes = response.bytes().await?;
         if !status.is_success() {
+            let bytes = response.bytes().await?;
             return Err(CokretApiError {
                 status,
                 error: decode_cokret_error(status, &bytes),
             }
             .into());
         }
-        parse_account_subscribe_snapshot_outcome(&bytes)
+        // YOU-01-010 — native reads the NDJSON stream frame by frame and
+        // returns at `catchup_complete` / control frames, so a
+        // spec-compliant server that keeps the stream open for realtime
+        // push does not stall the client until timeout. wasm32 stays on
+        // the buffered read (reqwest's browser-fetch backend exposes no
+        // chunk reader; a web-sys ReadableStream frame reader is the
+        // remaining gap).
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            super::drain_account_subscribe_response(response).await
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let bytes = response.bytes().await?;
+            parse_account_subscribe_snapshot_outcome(&bytes)
+        }
     }
 
     pub async fn list_notifications(&self) -> anyhow::Result<Value> {
