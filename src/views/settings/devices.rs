@@ -12,16 +12,12 @@
 //!   then rotates the account MLS history secret and rewraps local `mls_history` backups.
 //!
 //! The pair flow on `/settings/devices/pair` carries:
-//! - `pair-device-start-button` — generates a one-time pairing payload by calling `POST
-//!   /_cokret/self/devices/pairing-challenge`. The spec-level account pairing surface is `POST
-//!   /_cokret/gate/account/device-pair`; the local soland device endpoints below are still scaffold
-//!   wiring that must be reconciled before conformance.
+//! - `pair-device-start-button` — generates a new-device pairing request payload.
 //! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with the encoded payload mirrored as
 //!   plain text in `pair-device-secret` so e2e harnesses that don't OCR can read it directly.
 //! - `pair-device-status` — feedback area.
-//! - `accept-pairing-input` / `accept-pairing-button` / `accept-pairing-status` — receiving-device
-//!   side: paste payload, generate a NEW DPoP key for this device (via
-//!   `auth_dpop::ensure_device_key`), then POST to coauth's pairing endpoint.
+//! - `accept-pairing-input` / `accept-pairing-button` / `accept-pairing-status` — existing-device
+//!   side: paste or scan the new-device request and approve through the spec account pairing route.
 //!
 //! Spec references:
 //! - `crypto-media/device-lifecycle.md` §2.1 (5-step pairing), §2.2 (revoke), §5.1–§5.2
@@ -32,9 +28,8 @@
 //!
 //! - `GET /_cokret/self/account/viewer` — implemented (soland)
 //! - `POST /_cokret/self/devices/{device_id}/revoke` — implemented (soland)
-//! - `POST /_cokret/self/devices/pairing-challenge` — scaffold (soland)
-//! - `POST /_cokret/self/devices/authorize-pairing` — scaffold (soland)
-//! - `POST /_cokret/gate/account/device-pair` — spec-level target for device pairing.
+//! - `POST /_cokret/gate/account/device-pair` — spec-level device pairing.
+//! - `POST /_soland/self/devices/*` — legacy local scaffold compatibility.
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -109,22 +104,31 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
     (current, rows)
 }
 
-/// Build the QR / paste payload a sibling device consumes. The
-/// payload carries the DID we want to bind the new device to, a fresh
-/// pubkey placeholder (filled by the sibling device after it
-/// generates its own DPoP key), a one-time nonce, and a timestamp so
-/// the receiver can reject replays.
-///
-/// TODO(G3.Y1-followup): when soland's
-/// `POST /_cokret/self/devices/pairing-challenge` returns a server-signed
-/// challenge token, embed that instead of the locally-generated
-/// `uuid_v7()` nonce. The current scaffold accepts any nonce.
-fn build_pair_payload(account_did: &str, current_device_id: &str, nonce: &str) -> String {
+/// Build the QR / paste payload an already-authorized device approves.
+/// The new device owns `requesting_device_id` and its local key material;
+/// the existing device turns this payload into `ck.gate.account.device_pair`.
+fn build_pair_payload(
+    account_did: &str,
+    requesting_device_id: &str,
+    public_key_material: &str,
+    pairing_code: &str,
+    challenge_signature: &str,
+) -> String {
     let payload = json!({
-        "schema": "ck.device.pair.intent.v1",
+        "schema": "ck.device.pair.request.v1",
         "account_did": account_did,
-        "issuing_device_id": current_device_id,
-        "nonce": nonce,
+        "pairing_code": pairing_code,
+        "new_device_pubkey": {
+            "kty": "OKP",
+            "kid": requesting_device_id,
+            "alg": "EdDSA",
+            "key": public_key_material,
+        },
+        "challenge_signature": challenge_signature,
+        "display_name": "New device",
+        "device_metadata": {
+            "platform": "browser",
+        },
         "issued_at": chrono::Utc::now().to_rfc3339(),
     });
     payload.to_string()
@@ -270,7 +274,6 @@ pub fn SettingsDevicesPanel(
             if pair_mode {
                 {render_pair_flow(
                     account_did,
-                    device_id,
                     base_url,
                     token,
                     state_store,
@@ -809,7 +812,6 @@ fn render_rename_modal(
 #[allow(clippy::too_many_arguments)]
 fn render_pair_flow(
     account_did: Signal<String>,
-    device_id: Signal<String>,
     base_url: Signal<String>,
     token: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
@@ -819,7 +821,6 @@ fn render_pair_flow(
     mut accept_status: Signal<String>,
 ) -> Element {
     let actor_id = account_did();
-    let local_device_id = device_id();
     let payload_value = pair_payload();
     let status_value = pair_status();
 
@@ -863,49 +864,34 @@ fn render_pair_flow(
                     disabled: actor_id.trim().is_empty(),
                     onclick: move |_| {
                         let actor = account_did();
-                        let device = device_id();
-                        let base = base_url();
-                        let api_token = token();
                         if actor.trim().is_empty() {
                             pair_status.set("No active session. Sign in first.".to_owned());
                             return;
                         }
-                        let nonce = uuid_v7();
-                        let payload = build_pair_payload(&actor, &device, &nonce);
-                        pair_payload.set(payload.clone());
-                        pair_status.set("Generated pairing intent. Asking soland for a server-signed challenge…".to_owned());
-                        spawn(async move {
-                            let challenge_body = json!({
-                                "nonce": nonce,
-                                "intent": "add_sibling_device",
-                            });
-                            // TODO(G3.Y1-followup): the soland scaffold
-                            // currently returns the challenge with a
-                            // `proof_envelope` placeholder. When
-                            // `ck.device.authorize` includes the
-                            // cross_signing_binding (spec
-                            // crypto-media/device-lifecycle.md §5.2),
-                            // fold that binding into the QR payload so
-                            // the sibling device can verify before
-                            // calling `authorize-pairing`.
-                            match with_authed_api(&base, api_token, |api| async move {
-                                api.device_pairing_challenge(challenge_body).await
-                            })
-                            .await
-                            {
-                                Ok(value) => {
-                                    pair_status.set(format!(
-                                        "Challenge minted. Display the QR or paste payload below. Server response: {value}"
-                                    ));
-                                }
-                                Err(err) => {
-                                    pair_status.set(format!(
-                                        "Pairing challenge endpoint failed: {} (using local-only payload)",
-                                        err.display()
-                                    ));
-                                }
+                        let public_key_material = match ensure_device_key(&mut state_store.write())
+                        {
+                            Ok(handle) => handle.jkt().to_owned(),
+                            Err(err) => {
+                                pair_status.set(format!(
+                                    "Generating this device key failed: {err}"
+                                ));
+                                return;
                             }
-                        });
+                        };
+                        let requesting_device_id = format!("ck:device:{}", uuid_v7());
+                        let pairing_code = uuid_v7().replace('-', "");
+                        let challenge_signature = uuid_v7().replace('-', "");
+                        let payload = build_pair_payload(
+                            &actor,
+                            &requesting_device_id,
+                            &public_key_material,
+                            &pairing_code,
+                            &challenge_signature,
+                        );
+                        pair_payload.set(payload.clone());
+                        pair_status.set(format!(
+                            "Pairing request generated for {requesting_device_id}. Display the QR or paste payload below."
+                        ));
                     },
                     "Start pairing"
                 }
@@ -955,8 +941,8 @@ fn render_pair_flow(
                 span { "for new sibling" }
             }
             p { class: "muted",
-                "If this device is the new sibling, paste the payload from the existing device below. We will mint a fresh device DPoP key for this browser context before POSTing to "
-                code { "/_cokret/self/devices/authorize-pairing" }
+                "On an already-authorized device, paste the new-device request below and approve it through "
+                code { "/_cokret/gate/account/device-pair" }
                 "."
             }
             Textarea {
@@ -977,62 +963,84 @@ fn render_pair_flow(
                             accept_status.set("Paste a payload first.".to_owned());
                             return;
                         }
-                        // Generate or load the local device DPoP key
-                        // before sending the authorize-pairing request
-                        // so the sibling identity already has a
-                        // persisted JWK thumbprint by the time the
-                        // server responds.
-                        let jkt = match ensure_device_key(&mut state_store.write()) {
-                            Ok(handle) => handle.jkt().to_owned(),
+                        let request_payload: Value = match serde_json::from_str(&payload) {
+                            Ok(value) => value,
                             Err(err) => {
-                                accept_status.set(format!(
-                                    "Generating DPoP key failed: {err}"
-                                ));
+                                accept_status.set(format!("Pairing payload is not valid JSON: {err}"));
                                 return;
                             }
                         };
-                        let actor = account_did();
-                        let local_device = if local_device_id.is_empty() {
-                            // Mint a deterministic-enough placeholder
-                            // until coauth issues a real device_id.
-                            format!("dev-pending-{}", uuid_v7())
-                        } else {
-                            local_device_id.clone()
+                        let pairing_code = match request_payload
+                            .get("pairing_code")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                        {
+                            Some(value) => value.to_owned(),
+                            None => {
+                                accept_status.set("Pairing payload is missing pairing_code.".to_owned());
+                                return;
+                            }
                         };
+                        let new_device_pubkey = match request_payload.get("new_device_pubkey") {
+                            Some(Value::Object(_)) => request_payload["new_device_pubkey"].clone(),
+                            _ => {
+                                accept_status.set("Pairing payload is missing new_device_pubkey.".to_owned());
+                                return;
+                            }
+                        };
+                        let challenge_signature = match request_payload
+                            .get("challenge_signature")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                        {
+                            Some(value) => value.to_owned(),
+                            None => {
+                                accept_status.set("Pairing payload is missing challenge_signature.".to_owned());
+                                return;
+                            }
+                        };
+                        let display_name = request_payload
+                            .get("display_name")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToOwned::to_owned);
+                        let device_metadata = request_payload
+                            .get("device_metadata")
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
                         let base = base_url();
                         let api_token = token();
                         accept_status.set(format!(
-                            "Authorising sibling pairing with DPoP jkt={jkt}…"
+                            "Approving sibling device pairing…"
                         ));
                         spawn(async move {
-                            // TODO(G3.Y1-followup): the body shape
-                            // here is a placeholder. Once the spec-level
-                            // `POST /_cokret/gate/account/device-pair`
-                            // path is wired end to end, the device should
-                            // mint a DPoP proof against that endpoint, not
-                            // call soland directly.
-                            let body = json!({
-                                "payload": payload,
-                                "device_id": local_device,
-                                "account_did": actor,
-                                "dpop_jkt": jkt,
-                                // spec crypto-media/device-lifecycle.md §5.2 — cross_signing_binding goes here
-                                // once the SDK exposes the helper.
-                                "cross_signing_binding": null,
+                            let mut body = json!({
+                                "pairing_code": pairing_code,
+                                "new_device_pubkey": new_device_pubkey,
+                                "challenge_signature": challenge_signature,
+                                "device_metadata": device_metadata,
                             });
+                            if let Some(display_name) = display_name
+                                && let Some(object) = body.as_object_mut()
+                            {
+                                object.insert("display_name".to_owned(), json!(display_name));
+                            }
                             match with_authed_api(&base, api_token, |api| async move {
-                                api.authorize_device_pairing(body).await
+                                api.account_device_pair(body).await
                             })
                             .await
                             {
                                 Ok(value) => {
                                     accept_status.set(format!(
-                                        "Sibling pairing authorised. Server response: {value}"
+                                        "Sibling device paired. Server response: {value}"
                                     ));
                                 }
                                 Err(err) => {
                                     accept_status.set(format!(
-                                        "authorize-pairing failed: {}",
+                                        "device-pair failed: {}",
                                         err.display()
                                     ));
                                 }
@@ -1110,12 +1118,20 @@ mod tests {
 
     #[test]
     fn pair_payload_carries_required_fields() {
-        let raw = build_pair_payload("did:web:alice", "device-1", "abc-123");
+        let raw = build_pair_payload(
+            "did:web:alice",
+            "device-1",
+            "abc-123",
+            "pairing-code",
+            "challenge-signature",
+        );
         let parsed: Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(parsed["schema"], "ck.device.pair.intent.v1");
+        assert_eq!(parsed["schema"], "ck.device.pair.request.v1");
         assert_eq!(parsed["account_did"], "did:web:alice");
-        assert_eq!(parsed["issuing_device_id"], "device-1");
-        assert_eq!(parsed["nonce"], "abc-123");
+        assert_eq!(parsed["pairing_code"], "pairing-code");
+        assert_eq!(parsed["new_device_pubkey"]["kid"], "device-1");
+        assert_eq!(parsed["new_device_pubkey"]["key"], "abc-123");
+        assert_eq!(parsed["challenge_signature"], "challenge-signature");
         assert!(parsed["issued_at"].as_str().is_some());
     }
 

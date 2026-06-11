@@ -83,6 +83,18 @@ export function mockCokretContract(req) {
     return json({ backups: [] });
   }
 
+  if (method === "POST" && path === "/_cokret/gate/account/device-pair") {
+    const deviceId = body.new_device_pubkey?.kid ?? "ck:device:01964137-0000-7000-8000-0000000000b2";
+    return json({
+      device_id: deviceId,
+      authorized_event_ref: "ck:event:01964137-0000-7000-8000-00000000d001",
+      device_grant: {
+        status: "active",
+      },
+      key_backup_hint: {},
+    });
+  }
+
   if (method === "POST" && path === "/_cokret/self/devices/pairing-challenge") {
     const deviceId = body.device_id ?? "dev_yougen";
     return json({
@@ -129,6 +141,7 @@ export function canonicalPath(path) {
     "/account/me": "/_soland/self/account/me",
     "/directory/search-realms": "/_cokret/find/directory/search-realms",
     "/keys/backups": "/_cokret/self/keys/backups",
+    "/gate/account/device-pair": "/_cokret/gate/account/device-pair",
     "/devices/pairing-challenge": "/_cokret/self/devices/pairing-challenge",
     "/ephemeral": "/_cokret/self/ephemeral",
   };

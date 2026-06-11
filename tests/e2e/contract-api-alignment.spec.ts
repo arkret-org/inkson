@@ -50,6 +50,21 @@ const PROBES: Probe[] = [
   },
   { label: "keys_backups", method: "GET", path: "/_cokret/self/keys/backups" },
   {
+    label: "account_device_pair",
+    method: "POST",
+    path: "/_cokret/gate/account/device-pair",
+    body: {
+      pairing_code: "pairing-code",
+      new_device_pubkey: {
+        kty: "OKP",
+        kid: "ck:device:01964137-0000-7000-8000-0000000000b2",
+        alg: "EdDSA",
+        key: "emtleQ",
+      },
+      challenge_signature: "c2ln",
+    },
+  },
+  {
     label: "devices_pairing_challenge",
     method: "POST",
     path: "/_cokret/self/devices/pairing-challenge",
@@ -94,6 +109,7 @@ const CONTRACT_REQUIRED: Record<string, string[]> = {
   ],
   directory_search_realms: ["results"],
   keys_backups: ["backups"],
+  account_device_pair: ["device_id", "authorized_event_ref"],
   devices_pairing_challenge: ["challenge_id", "device_id", "expires_at"],
   ephemeral_typing: ["accepted", "kind", "realm_id"],
 };

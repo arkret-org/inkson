@@ -118,6 +118,36 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("sas-match-button")).toBeVisible();
   });
 
+  test("device pairing: existing device approves new-device request through account gate", async ({
+    page,
+  }) => {
+    await page.goto("/settings/devices/pair", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await expect(page.getByTestId("pair-device-card")).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId("pair-device-start-button").click();
+    await expect(page.getByTestId("pair-device-secret")).toHaveValue(/ck\.device\.pair\.request\.v1/, {
+      timeout: 30_000,
+    });
+    const payload = await page.getByTestId("pair-device-secret").inputValue();
+    await page.getByTestId("accept-pairing-input").fill(payload);
+
+    const requestPromise = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return url.pathname === "/_cokret/gate/account/device-pair" && request.method() === "POST";
+    });
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/_cokret/gate/account/device-pair";
+    });
+    await page.getByTestId("accept-pairing-button").click();
+    const [request, response] = await Promise.all([requestPromise, responsePromise]);
+    expect(response.ok()).toBeTruthy();
+    const body = request.postDataJSON();
+    expect(body.pairing_code).toBeTruthy();
+    expect(body.new_device_pubkey.kid).toMatch(/^ck:device:/);
+    expect(body.challenge_signature).toBeTruthy();
+    await expect(page.getByTestId("accept-pairing-status")).toContainText("Sibling device paired");
+  });
+
   test("cross-signing: Run setup submits ck.cross_signing.publish into the principal control Realm", async ({
     page,
   }) => {

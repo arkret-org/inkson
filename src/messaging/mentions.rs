@@ -22,6 +22,28 @@ use sha2::{Digest, Sha256};
 pub struct MentionCandidate {
     pub did: String,
     pub display_name: String,
+    #[serde(default)]
+    pub insert_label: String,
+    #[serde(default)]
+    pub subtitle: String,
+    #[serde(default)]
+    pub is_agent: bool,
+    #[serde(default)]
+    pub controller_subject_id: String,
+    #[serde(default)]
+    pub controller_handle_at_time: String,
+    #[serde(default)]
+    pub agent_slug_at_time: String,
+}
+
+impl MentionCandidate {
+    pub fn insert_label(&self) -> &str {
+        if self.insert_label.trim().is_empty() {
+            &self.display_name
+        } else {
+            &self.insert_label
+        }
+    }
 }
 
 /// Composer-side state for the @mention picker.
@@ -70,6 +92,8 @@ impl MentionPickerState {
                     true
                 } else {
                     c.display_name.to_ascii_lowercase().contains(&q)
+                        || c.insert_label.to_ascii_lowercase().contains(&q)
+                        || c.subtitle.to_ascii_lowercase().contains(&q)
                         || c.did.to_ascii_lowercase().contains(&q)
                 }
             })
@@ -151,6 +175,12 @@ mod tests {
         MentionCandidate {
             did: "did:web:alice.example".into(),
             display_name: "Alice".into(),
+            insert_label: String::new(),
+            subtitle: String::new(),
+            is_agent: false,
+            controller_subject_id: String::new(),
+            controller_handle_at_time: String::new(),
+            agent_slug_at_time: String::new(),
         }
     }
 
@@ -158,6 +188,12 @@ mod tests {
         MentionCandidate {
             did: "did:web:bob.example".into(),
             display_name: "Bob".into(),
+            insert_label: String::new(),
+            subtitle: String::new(),
+            is_agent: false,
+            controller_subject_id: String::new(),
+            controller_handle_at_time: String::new(),
+            agent_slug_at_time: String::new(),
         }
     }
 
@@ -169,6 +205,29 @@ mod tests {
         let filtered = state.filter(&candidates);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].did, "did:web:alice.example");
+    }
+
+    #[test]
+    fn picker_filters_agent_candidates_by_selector_label() {
+        let mut state = MentionPickerState::new();
+        state.set_query("summary".into());
+        let candidates = vec![
+            alice(),
+            MentionCandidate {
+                did: "did:web:agents.example:summary".into(),
+                display_name: "Summary Assistant".into(),
+                insert_label: "alice:example.com/summary".into(),
+                subtitle: "agent of alice:example.com".into(),
+                is_agent: true,
+                controller_subject_id: "did:web:example.com:users:alice".into(),
+                controller_handle_at_time: "alice:example.com".into(),
+                agent_slug_at_time: "summary".into(),
+            },
+        ];
+        let filtered = state.filter(&candidates);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].did, "did:web:agents.example:summary");
+        assert_eq!(filtered[0].insert_label(), "alice:example.com/summary");
     }
 
     #[test]

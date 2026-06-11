@@ -516,6 +516,22 @@
   font-weight: 600;
 }
 
+.mention-suggestion-subtitle {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.mention-chip-subtitle {
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
 .discussion-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1279,6 +1295,24 @@
   background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
 }
 
+.participant-row.agent,
+.participant-agent-row {
+  background: color-mix(in srgb, var(--accent-2, #6f42c1) 8%, transparent);
+}
+
+.participant-agent-group {
+  display: grid;
+  gap: 4px;
+}
+
+.participant-agent-children {
+  display: grid;
+  gap: 4px;
+  margin-left: 20px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
 .participant-avatar {
   width: 30px;
   height: 30px;
@@ -1298,6 +1332,17 @@
 .participant-did {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.participant-agent-subline,
+.participant-agent-selector {
+  overflow-wrap: anywhere;
+}
+
+.agent-owner-label {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .participant-badges {

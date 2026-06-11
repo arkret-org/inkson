@@ -1120,6 +1120,32 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, { one_time_keys: {}, failures: {} });
     }
 
+    if (url.pathname === "/_cokret/self/account/viewer" && route.request().method() === "GET") {
+      return json(route, {
+        principal_id: "did:web:alice.example",
+        state: "active",
+        devices: [
+          {
+            device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
+            status: "active",
+            display_name: "Current device",
+            authorized_at: "2026-04-28T12:00:00Z",
+          },
+        ],
+      });
+    }
+
+    if (url.pathname === "/_cokret/gate/account/device-pair" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      const deviceId = body.new_device_pubkey?.kid ?? "ck:device:01964137-0000-7000-8000-0000000000b2";
+      return json(route, {
+        device_id: deviceId,
+        authorized_event_ref: "ck:event:01964137-0000-7000-8000-00000000d001",
+        device_grant: { status: "active" },
+        key_backup_hint: {},
+      });
+    }
+
     if (url.pathname === "/_cokret/self/device_messages" && route.request().method() === "GET") {
       return json(route, { messages: [], ack_token: "mock-device-messages-ack", next_cursor: "ck:cursor:devmsg-1", has_more: false, limited: false });
     }

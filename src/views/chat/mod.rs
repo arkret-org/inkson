@@ -165,6 +165,109 @@ fn render_message_body(body: &str, mentions: &[StructuredMention], base_url: &st
         }
     }
 }
+
+#[component]
+fn DiscussionParticipantRow(
+    participant: SpaceParticipant,
+    participants: Vec<SpaceParticipant>,
+    display_label: String,
+    nested_agent: bool,
+) -> Element {
+    let participant_did_attr = participant.did.clone();
+    let participant_did_label = short_protocol_id(&participant_did_attr);
+    let binding_host = participant
+        .did
+        .strip_prefix("did:web:")
+        .map(|rest| rest.split(':').next().unwrap_or(rest).to_owned());
+    let owner_label = agent_controller_label(&participant, &participants);
+    let selector_label = agent_selector_label(&participant);
+    let controller_did_attr = participant
+        .agent_metadata
+        .as_ref()
+        .map(|metadata| metadata.controller_did.clone())
+        .unwrap_or_default();
+    let row_class = if participant.is_self {
+        "contact-row participant-row self"
+    } else if nested_agent {
+        "contact-row participant-row participant-agent-row"
+    } else if participant.is_agent {
+        "contact-row participant-row agent"
+    } else {
+        "contact-row participant-row"
+    };
+    let avatar_icon = if participant.is_agent { "bot" } else { "user" };
+
+    rsx! {
+        div {
+            class: "{row_class}",
+            "data-testid": if nested_agent { "discussion-agent-row" } else { "discussion-user-row" },
+            "data-agent-controller-did": "{controller_did_attr}",
+            span { class: "participant-avatar", UiIcon { name: avatar_icon.to_owned() } }
+            div { class: "participant-main",
+                strong {
+                    class: "mono participant-did",
+                    title: "{participant_did_attr}",
+                    "{display_label}"
+                    if !participant.is_agent {
+                        if let Some(host) = binding_host.as_ref() {
+                            span { class: "binding-context",
+                                "data-testid": "binding-context",
+                                {crate::i18n::tr("chat.binding_context.separator")}
+                                span { class: "binding-context-host", "{host}" }
+                            }
+                        }
+                    }
+                }
+                if let Some(owner) = owner_label.as_ref() {
+                    div {
+                        class: "muted participant-agent-subline",
+                        "data-testid": "participant-agent-owner",
+                        "agent of {owner}"
+                    }
+                }
+                if let Some(selector) = selector_label.as_ref() {
+                    div {
+                        class: "mono muted participant-agent-selector",
+                        "data-testid": "participant-agent-selector",
+                        "@{selector}"
+                    }
+                }
+                div { class: "participant-badges",
+                    if participant.is_self {
+                        span { class: "badge participant-badge self", {crate::i18n::tr("chat.you_badge")} }
+                    }
+                    if participant.is_agent {
+                        span {
+                            class: "badge member-badge member-badge-agent",
+                            "data-testid": "member-badge-agent",
+                            title: "Automated member (bot)",
+                            "\u{1f916} "
+                            {crate::i18n::tr("member.badge.agent")}
+                        }
+                    }
+                    span {
+                        class: match participant.role {
+                            SpaceParticipantRole::Owner => "badge participant-badge admin",
+                            SpaceParticipantRole::Admin => "badge participant-badge admin",
+                            SpaceParticipantRole::Member => "badge participant-badge member",
+                        },
+                        "{participant.role.label()}"
+                    }
+                }
+                details { class: "binding-context-details",
+                    summary { class: "muted", {crate::i18n::tr("chat.binding_context.details")} }
+                    div { class: "mono muted", title: "{participant_did_attr}",
+                        "{participant_did_label}"
+                    }
+                    if let Some(selector) = selector_label.clone() {
+                        div { class: "mono muted", "@{selector}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn ChatPanel(
     base_url: String,
@@ -451,11 +554,16 @@ pub fn ChatPanel(
     // Source of truth is the local store's `ck.agent.endpoint` raw
     // operations (same projection the Agents panel reads from).
     {
-        let agent_ids = agent_ids_from_raw_operations(
+        let mut agent_metadata = agent_metadata_from_raw_operations(
             &state_store.read().load().raw_operations,
             &selected_realm_id,
         );
-        annotate_agent_participants(&mut participants, &agent_ids);
+        merge_agent_metadata_maps(
+            &mut agent_metadata,
+            agent_metadata_from_mentions(&all_messages_snapshot),
+        );
+        upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
+        annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }
     let participants_for_messages = participants.clone();
     let account_display_label = account_display_name();
@@ -1449,9 +1557,19 @@ pub fn ChatPanel(
                                 div { class: "msg-head",
                                     span { class: "name", "{sender_display_label(&msg.sender, &account_did, &account_display_label, &participants_for_messages)}" }
                                     {
-                                        let sender_is_agent = participants_for_messages
+                                        let sender_participant = participants_for_messages
                                             .iter()
-                                            .any(|p| p.did == msg.sender && p.is_agent);
+                                            .find(|p| p.did == msg.sender);
+                                        let sender_is_agent = sender_participant
+                                            .map(|participant| participant.is_agent)
+                                            .unwrap_or(false);
+                                        let sender_agent_owner = sender_participant
+                                            .and_then(|participant| {
+                                                agent_controller_label(
+                                                    participant,
+                                                    &participants_for_messages,
+                                                )
+                                            });
                                         rsx! {
                                             if sender_is_agent {
                                                 span {
@@ -1460,6 +1578,13 @@ pub fn ChatPanel(
                                                     title: "Automated member (bot)",
                                                     "\u{1f916} "
                                                     {crate::i18n::tr("member.badge.agent")}
+                                                }
+                                            }
+                                            if let Some(owner_label) = sender_agent_owner {
+                                                span {
+                                                    class: "agent-owner-label",
+                                                    "data-testid": "message-agent-owner",
+                                                    "agent of {owner_label}"
                                                 }
                                             }
                                         }
@@ -2400,80 +2525,59 @@ pub fn ChatPanel(
                     }
                     div { class: "discussion-detail-section",
                         div { class: "discussion-subhead", span { "Space users" } }
-                        for participant in participants {
-                            // F-REMARK-FANOUT-1: prefer the actor-private
-                            // ContactRemark.local_name (sync'd via
-                            // ck.contacts.actor.<did> account_data) over
-                            // the raw DID. The DID stays in the `title`
-                            // attribute so it's still copy-pasteable for
-                            // verification / debugging.
+                        for row in participant_roster_rows(&participants) {
                             {
-                                let participant_display = crate::views::helpers::display_name_for_did(
-                                    &state_store.read(),
-                                    &participant.did,
-                                );
-                                let participant_did_attr = participant.did.clone();
-                                let participant_did_label = short_protocol_id(&participant_did_attr);
-                                // T7.3: derive binding context host
-                                // (e.g. `acme.example`) from the DID
-                                // method/host so the row reads as
-                                // `Alice @ acme.example` rather than
-                                // dropping the raw service DID into the
-                                // visible list. The full DID is still
-                                // available in the title attribute and
-                                // an expandable details row.
-                                let binding_host = participant
-                                    .did
-                                    .strip_prefix("did:web:")
-                                    .map(|rest| rest.split(':').next().unwrap_or(rest).to_owned());
-                                rsx! {
-                            div {
-                                class: if participant.is_self { "contact-row participant-row self" } else { "contact-row participant-row" },
-                                "data-testid": "discussion-user-row",
-                                span { class: "participant-avatar", UiIcon { name: "user" } }
-                                div { class: "participant-main",
-                                    strong {
-                                        class: "mono participant-did",
-                                        title: "{participant_did_attr}",
-                                        "{participant_display}"
-                                        if let Some(host) = binding_host.as_ref() {
-                                            span { class: "binding-context",
-                                                "data-testid": "binding-context",
-                                                {crate::i18n::tr("chat.binding_context.separator")}
-                                                span { class: "binding-context-host", "{host}" }
+                                match row {
+                                    ParticipantRosterRow::Participant(participant) => {
+                                        let display_label = participant_roster_display_label(
+                                            &state_store.read(),
+                                            &participant,
+                                        );
+                                        rsx! {
+                                            DiscussionParticipantRow {
+                                                participant,
+                                                participants: participants_for_messages.clone(),
+                                                display_label,
+                                                nested_agent: false,
                                             }
                                         }
                                     }
-                                    div { class: "participant-badges",
-                                        if participant.is_self {
-                                            span { class: "badge participant-badge self", {crate::i18n::tr("chat.you_badge")} }
-                                        }
-                                        if participant.is_agent {
-                                            span {
-                                                class: "badge member-badge member-badge-agent",
-                                                "data-testid": "member-badge-agent",
-                                                title: "Automated member (bot)",
-                                                "\u{1f916} "
-                                                {crate::i18n::tr("member.badge.agent")}
+                                    ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
+                                        let display_label = participant_roster_display_label(
+                                            &state_store.read(),
+                                            &controller,
+                                        );
+                                        rsx! {
+                                            div {
+                                                class: "participant-agent-group",
+                                                "data-testid": "participant-agent-group",
+                                                DiscussionParticipantRow {
+                                                    participant: controller,
+                                                    participants: participants_for_messages.clone(),
+                                                    display_label,
+                                                    nested_agent: false,
+                                                }
+                                                div { class: "participant-agent-children",
+                                                    for agent in agents {
+                                                        {
+                                                            let display_label = participant_roster_display_label(
+                                                                &state_store.read(),
+                                                                &agent,
+                                                            );
+                                                            rsx! {
+                                                                DiscussionParticipantRow {
+                                                                    participant: agent,
+                                                                    participants: participants_for_messages.clone(),
+                                                                    display_label,
+                                                                    nested_agent: true,
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
-                                        span {
-                                            class: match participant.role {
-                                                SpaceParticipantRole::Owner => "badge participant-badge admin",
-                                                SpaceParticipantRole::Admin => "badge participant-badge admin",
-                                                SpaceParticipantRole::Member => "badge participant-badge member",
-                                            },
-                                            "{participant.role.label()}"
-                                        }
                                     }
-                                    details { class: "binding-context-details",
-                                        summary { class: "muted", {crate::i18n::tr("chat.binding_context.details")} }
-                                        div { class: "mono muted", title: "{participant_did_attr}",
-                                            "{participant_did_label}"
-                                        }
-                                    }
-                                }
-                            }
                                 }
                             }
                         }
@@ -3003,7 +3107,10 @@ pub fn ChatPanel(
                                 class: "mention-chip",
                                 "data-testid": "mention-chip",
                                 "data-mention-did": "{chip.did}",
-                                span { "@{chip.display_name}" }
+                                span { "@{chip.insert_label()}" }
+                                if !chip.subtitle.is_empty() {
+                                    span { class: "mention-chip-subtitle", "{chip.subtitle}" }
+                                }
                                 Button {
                                     variant: ButtonVariant::Secondary,
                                     r#type: "button",
@@ -3041,14 +3148,7 @@ pub fn ChatPanel(
                                 let candidates: Vec<crate::messaging::mentions::MentionCandidate> =
                                     participants_for_messages
                                         .iter()
-                                        .filter_map(|p| {
-                                            mention_label_for_participant(p).map(|display_name| {
-                                                crate::messaging::mentions::MentionCandidate {
-                                                    did: p.did.clone(),
-                                                    display_name,
-                                                }
-                                            })
-                                        })
+                                        .filter_map(|p| mention_candidate_for_participant(p, &participants_for_messages))
                                         .collect();
                                 // `filter` borrows from `candidates`, not from the
                                 // picker state, so we run it under the read guard and
@@ -3076,7 +3176,7 @@ pub fn ChatPanel(
                                                             class: "mention-suggestion",
                                                             "data-testid": "mention-suggestion",
                                                             "data-mention-did": "{candidate.did}",
-                                                            title: "@{candidate.display_name}",
+                                                            title: "@{candidate.insert_label()}",
                                                             onclick: {
                                                                 let candidate = candidate.clone();
                                                                 move |_| {
@@ -3096,17 +3196,30 @@ pub fn ChatPanel(
                                                                             .to_owned();
                                                                         let needs_space = !trimmed.is_empty()
                                                                             && !trimmed.ends_with(' ');
+                                                                        let insert_label = candidate.insert_label();
                                                                         chat_draft.set(format!(
                                                                             "{trimmed}{}@{} ",
                                                                             if needs_space { " " } else { "" },
-                                                                            candidate.display_name,
+                                                                            insert_label,
                                                                         ));
                                                                     }
                                                                     mention_picker_state.write().close();
                                                                 }
                                                             },
                                                             span { class: "mention-suggestion-name",
-                                                                "@{candidate.display_name}"
+                                                                "@{candidate.insert_label()}"
+                                                            }
+                                                            if !candidate.subtitle.is_empty() {
+                                                                span { class: "mention-suggestion-subtitle",
+                                                                    "{candidate.subtitle}"
+                                                                }
+                                                            }
+                                                            if candidate.is_agent {
+                                                                span {
+                                                                    class: "badge member-badge member-badge-agent",
+                                                                    "data-testid": "mention-suggestion-agent-badge",
+                                                                    {crate::i18n::tr("member.badge.agent")}
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -3397,9 +3510,13 @@ pub fn ChatPanel(
                                     let picker = mention_picker_state.read().inserted.clone();
                                     for chip in picker {
                                         if !mentions.iter().any(|m| m.target == chip.did) {
-                                            let parsed_handle = crate::identity_handle::parse_user_handle(
-                                                &chip.display_name,
-                                            );
+                                            let insert_label = chip.insert_label().to_owned();
+                                            let parsed_handle =
+                                                (!chip.is_agent).then(|| {
+                                                    crate::identity_handle::parse_user_handle(
+                                                        &insert_label,
+                                                    )
+                                                }).flatten();
                                             // R3.2: `target` is the authoritative
                                             // subject_id (principal DID). The handle /
                                             // display strings are compose-time audit
@@ -3407,18 +3524,17 @@ pub fn ChatPanel(
                                             mentions.push(crate::views::helpers::StructuredMention {
                                                 kind: "actor".to_owned(),
                                                 target: chip.did.clone(),
-                                                token: format!("@{}", chip.display_name),
+                                                token: format!("@{insert_label}"),
                                                 display_name_at_time: chip.display_name.clone(),
                                                 handle_at_time: parsed_handle
                                                     .map(|h| h.handle)
                                                     .unwrap_or_default(),
-                                                controller_subject_id: String::new(),
-                                                controller_handle_at_time: String::new(),
-                                                agent_slug_at_time: String::new(),
-                                                mention_text_original: format!(
-                                                    "@{}",
-                                                    chip.display_name
-                                                ),
+                                                controller_subject_id: chip.controller_subject_id.clone(),
+                                                controller_handle_at_time: chip
+                                                    .controller_handle_at_time
+                                                    .clone(),
+                                                agent_slug_at_time: chip.agent_slug_at_time.clone(),
+                                                mention_text_original: format!("@{insert_label}"),
                                                 resolved_at: String::new(),
                                             });
                                         }
@@ -4909,6 +5025,7 @@ mod tests {
             role: SpaceParticipantRole::Member,
             is_self: false,
             is_agent: false,
+            agent_metadata: None,
         }];
 
         assert_eq!(
@@ -4941,6 +5058,7 @@ mod tests {
             role: SpaceParticipantRole::Member,
             is_self: true,
             is_agent: false,
+            agent_metadata: None,
         }];
 
         assert_eq!(
@@ -4964,6 +5082,7 @@ mod tests {
             role: SpaceParticipantRole::Member,
             is_self: false,
             is_agent: false,
+            agent_metadata: None,
         }];
 
         assert_eq!(
@@ -5049,6 +5168,7 @@ mod tests {
             role: SpaceParticipantRole::Member,
             is_self: false,
             is_agent: false,
+            agent_metadata: None,
         };
 
         assert_eq!(
@@ -5067,6 +5187,7 @@ mod tests {
             role: SpaceParticipantRole::Member,
             is_self: false,
             is_agent: false,
+            agent_metadata: None,
         };
 
         assert!(mention_label_for_participant(&participant).is_none());
@@ -5141,6 +5262,7 @@ mod tests {
                 role: SpaceParticipantRole::Owner,
                 is_self: true,
                 is_agent: false,
+                agent_metadata: None,
             },
             SpaceParticipant {
                 did: "did:web:bob.example".to_owned(),
@@ -5150,6 +5272,7 @@ mod tests {
                 role: SpaceParticipantRole::Member,
                 is_self: false,
                 is_agent: false,
+                agent_metadata: None,
             },
             SpaceParticipant {
                 did: "did:web:researcher-agent.example".to_owned(),
@@ -5159,6 +5282,7 @@ mod tests {
                 role: SpaceParticipantRole::Member,
                 is_self: false,
                 is_agent: false,
+                agent_metadata: None,
             },
         ];
 
@@ -5223,6 +5347,159 @@ mod tests {
             agent_ids,
             vec!["did:web:researcher-agent.example".to_owned()]
         );
+    }
+
+    #[test]
+    fn agent_metadata_from_raw_operations_reads_controller_scoped_selector_fields() {
+        use chrono::Utc;
+
+        use crate::local_state::RawOperationRecord;
+
+        let records = vec![RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ck:realm:demo".to_owned()),
+            received_at: Utc::now(),
+            payload: json!({
+                "kind": "ck.agent.endpoint",
+                "actor_id": "did:web:example.com:users:alice",
+                "payload": {
+                    "agent_id": "did:web:agents.example:summary",
+                    "display_name": "Summary Assistant",
+                    "agent_slug": "summary",
+                    "controller_handle": "alice:example.com"
+                }
+            }),
+        }];
+
+        let metadata = agent_metadata_from_raw_operations(&records, "ck:realm:demo");
+        let summary = metadata
+            .get("did:web:agents.example:summary")
+            .expect("agent metadata");
+        assert_eq!(summary.controller_did, "did:web:example.com:users:alice");
+        assert_eq!(summary.controller_handle, "alice:example.com");
+        assert_eq!(summary.agent_slug, "summary");
+        assert_eq!(summary.display_name, "Summary Assistant");
+    }
+
+    #[test]
+    fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
+        let messages = vec![ChatMessage {
+            realm_id: "ck:realm:demo".to_owned(),
+            id: "ck:event:1".to_owned(),
+            sender: "did:web:example.com:users:bob".to_owned(),
+            body: "@alice:example.com/summary".to_owned(),
+            timestamp: "10:00".to_owned(),
+            flow_id: "ck:flow:demo".to_owned(),
+            reply_to: None,
+            reactions: Vec::new(),
+            redacted: false,
+            edited: false,
+            revisions: Vec::new(),
+            pending: false,
+            failed: false,
+            error: None,
+            mentions: vec![StructuredMention {
+                kind: "actor".to_owned(),
+                target: "did:web:agents.example:summary".to_owned(),
+                token: "@alice:example.com/summary".to_owned(),
+                display_name_at_time: "Summary Assistant".to_owned(),
+                handle_at_time: String::new(),
+                controller_subject_id: "did:web:example.com:users:alice".to_owned(),
+                controller_handle_at_time: "alice:example.com".to_owned(),
+                agent_slug_at_time: "summary".to_owned(),
+                mention_text_original: "@alice:example.com/summary".to_owned(),
+                resolved_at: "2026-06-12T00:00:00.000Z".to_owned(),
+            }],
+            crypto_state: MessageCryptoState::Plaintext,
+        }];
+
+        let metadata = agent_metadata_from_mentions(&messages);
+        let summary = metadata
+            .get("did:web:agents.example:summary")
+            .expect("agent metadata");
+        assert_eq!(summary.controller_did, "did:web:example.com:users:alice");
+        assert_eq!(summary.controller_handle, "alice:example.com");
+        assert_eq!(summary.agent_slug, "summary");
+        assert_eq!(summary.display_name, "Summary Assistant");
+    }
+
+    #[test]
+    fn participant_roster_rows_groups_agents_under_visible_controller() {
+        let controller = SpaceParticipant {
+            did: "did:web:example.com:users:alice".to_owned(),
+            display_name: Some("Alice".to_owned()),
+            handle_label: Some("alice:example.com".to_owned()),
+            display_name_rank: 0,
+            role: SpaceParticipantRole::Owner,
+            is_self: true,
+            is_agent: false,
+            agent_metadata: None,
+        };
+        let agent = SpaceParticipant {
+            did: "did:web:agents.example:summary".to_owned(),
+            display_name: Some("Summary Assistant".to_owned()),
+            handle_label: None,
+            display_name_rank: 1,
+            role: SpaceParticipantRole::Member,
+            is_self: false,
+            is_agent: true,
+            agent_metadata: Some(AgentParticipantMetadata {
+                controller_did: controller.did.clone(),
+                controller_handle: "alice:example.com".to_owned(),
+                agent_slug: "summary".to_owned(),
+                display_name: "Summary Assistant".to_owned(),
+            }),
+        };
+        let rows = participant_roster_rows(&[controller.clone(), agent.clone()]);
+        assert_eq!(rows.len(), 1);
+        match &rows[0] {
+            ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
+                assert_eq!(controller.did, "did:web:example.com:users:alice");
+                assert_eq!(agents.len(), 1);
+                assert_eq!(agents[0].did, "did:web:agents.example:summary");
+            }
+            ParticipantRosterRow::Participant(_) => panic!("expected grouped controller row"),
+        }
+    }
+
+    #[test]
+    fn mention_candidate_for_agent_uses_controller_scoped_selector() {
+        let controller = SpaceParticipant {
+            did: "did:web:example.com:users:alice".to_owned(),
+            display_name: Some("Alice".to_owned()),
+            handle_label: Some("alice:example.com".to_owned()),
+            display_name_rank: 0,
+            role: SpaceParticipantRole::Owner,
+            is_self: true,
+            is_agent: false,
+            agent_metadata: None,
+        };
+        let agent = SpaceParticipant {
+            did: "did:web:agents.example:summary".to_owned(),
+            display_name: Some("Summary Assistant".to_owned()),
+            handle_label: None,
+            display_name_rank: 1,
+            role: SpaceParticipantRole::Member,
+            is_self: false,
+            is_agent: true,
+            agent_metadata: Some(AgentParticipantMetadata {
+                controller_did: controller.did.clone(),
+                controller_handle: "alice:example.com".to_owned(),
+                agent_slug: "summary".to_owned(),
+                display_name: "Summary Assistant".to_owned(),
+            }),
+        };
+        let participants = vec![controller, agent.clone()];
+        let candidate = mention_candidate_for_participant(&agent, &participants)
+            .expect("agent mention candidate");
+        assert_eq!(candidate.display_name, "Summary Assistant");
+        assert_eq!(candidate.insert_label(), "alice:example.com/summary");
+        assert_eq!(
+            candidate.controller_subject_id,
+            "did:web:example.com:users:alice"
+        );
+        assert_eq!(candidate.controller_handle_at_time, "alice:example.com");
+        assert_eq!(candidate.agent_slug_at_time, "summary");
     }
 
     #[test]

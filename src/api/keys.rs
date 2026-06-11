@@ -319,21 +319,23 @@ impl CokretApi {
         self.get_json("_cokret/self/account/viewer").await
     }
 
-    /// G3.Y1 — request a short-lived pairing challenge from soland.
-    /// `POST /_cokret/self/devices/pairing-challenge`. The current device is
-    /// the one calling; the response carries an opaque challenge that
-    /// the new sibling device folds into its QR payload before
-    /// soliciting [`authorize_device_pairing`].
+    /// Request a short-lived legacy pairing challenge from soland's local
+    /// scaffold. New device pairing should prefer [`account_device_pair`].
     pub async fn device_pairing_challenge(&self, body: Value) -> anyhow::Result<Value> {
-        self.post_json("_cokret/self/devices/pairing-challenge", body)
+        self.post_json("_soland/self/devices/pairing-challenge", body)
             .await
     }
 
-    /// G3.Y1 — finalize device pairing. The current device authorises
-    /// the sibling device payload from the QR scan and registers it in
-    /// soland's device inventory. `POST /_cokret/self/devices/authorize-pairing`.
+    /// Finalize legacy local scaffold pairing. New device pairing should
+    /// prefer [`account_device_pair`].
     pub async fn authorize_device_pairing(&self, body: Value) -> anyhow::Result<Value> {
-        self.post_json("_cokret/self/devices/authorize-pairing", body)
+        self.post_json("_soland/self/devices/authorize-pairing", body)
+            .await
+    }
+
+    /// Pair a new sibling device through the spec account-auth gate.
+    pub async fn account_device_pair(&self, body: Value) -> anyhow::Result<Value> {
+        self.post_json("_cokret/gate/account/device-pair", body)
             .await
     }
 
