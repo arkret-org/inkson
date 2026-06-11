@@ -540,7 +540,7 @@ pub fn build_passphrase_kdf_backup_body(
 
     let ctx = VaultSealContext {
         backup_id,
-        actor_id: actor_id,
+        actor_id,
         device_id,
         backup_class: class.as_str(),
         subdomain,

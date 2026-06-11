@@ -336,8 +336,8 @@ fn config_secure_store() -> std::sync::Arc<dyn crate::secure_key_store::SecureKe
 /// In-process read-through cache so the hot `LocalConfigStore::load()`
 /// path doesn't hit the OS keyring / localStorage AEAD unwrap on every
 /// call. `None` values negative-cache "no bearer stored" for the DID.
-fn session_token_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, Option<String>>>
-{
+fn session_token_cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, Option<String>>> {
     static CACHE: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
     > = std::sync::OnceLock::new();

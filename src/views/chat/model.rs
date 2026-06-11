@@ -1754,10 +1754,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
         .unwrap_or("did:web:unknown")
         .to_owned(),
         body,
-        timestamp: short_message_time(first_string_in_candidates(
-            &candidates,
-            &["created_at"],
-        )),
+        timestamp: short_message_time(first_string_in_candidates(&candidates, &["created_at"])),
         flow_id,
         reply_to: first_string_in_candidates(&candidates, &["reply_to", "thread_id"])
             .map(ToOwned::to_owned),

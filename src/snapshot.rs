@@ -1,309 +1,220 @@
-//! Snapshot bootstrap helpers — verify chunk integrity against the SDK's
-//! Merkle-rooted snapshot model before trusting it.
-//!
-//! Spec: `conformance/snapshot-schema.md`. The Principal Server advertises
-//! `/sync/snapshot-head` plus chunk URLs; the client MUST verify the manifest's
-//! Merkle root and each chunk's content hash before applying. This module is a
-//! thin orchestration layer that delegates verification to
-//! `cokret_sdk::verify_snapshot_chunks`.
+use chrono::{DateTime, Duration, Utc};
 
-use cokret_sdk::{ReducerSnapshotManifest, verify_snapshot_chunks};
+use crate::api::CokretApi;
+use crate::local_state::LocalStateStore;
 
-/// Round 4 (spec a77b995) — outcome of consuming a
-/// [`cokret_sdk::SnapshotBootstrap`] envelope carried alongside a
-/// `ck.self.events.query` response. The receiver validates the envelope's
-/// structural fields (`signature`, `state_digest`, `snapshot_frontier`,
-/// per-chunk digests) BEFORE applying any chunk bytes. Any failure
-/// returns [`SnapshotBootstrapOutcome::FallBackFullSync`] so the
-/// caller falls back to a full `/sync` rebuild rather than trust a
-/// partially-validated snapshot.
-///
-/// The internal chunked-import path is still
-/// `TODO(round4-snapshot-bootstrap-import)`. The wire shape MUST parse
-/// here so producer / consumer services can negotiate the new envelope
-/// shape; chunk-fetch + integrity-check + apply lives in the follow-up.
-#[derive(Clone, Debug, PartialEq)]
-pub enum SnapshotBootstrapOutcome {
-    /// All envelope-level invariants held (signature present,
-    /// state_digest non-empty, snapshot_frontier non-empty, every chunk
-    /// has a digest + fetch_ref). The caller may proceed to the
-    /// per-chunk fetch + verify step.
-    AcceptedHeader {
-        chunk_count: usize,
-        state_digest: String,
-    },
-    /// Some structural invariant failed. The caller MUST drop the
-    /// bootstrap envelope and fall back to a full sync.
-    FallBackFullSync(String),
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotFallbackReason {
+    pub code: String,
+    pub message: String,
 }
 
-/// Round 4 — validate the structural fields of a
-/// [`cokret_sdk::SnapshotBootstrap`] envelope. Returns
-/// [`SnapshotBootstrapOutcome::AcceptedHeader`] only when every
-/// required field is populated; any miss → fall back to full sync.
-///
-/// TODO(round4-snapshot-bootstrap-import): once the receiver gains the
-/// chunked-import pipeline (per-chunk fetch + digest re-verify +
-/// reducer apply), call this helper from the import entry point and
-/// proceed to chunk fetching when accepted.
-pub fn consume_snapshot_bootstrap(
-    bootstrap: &cokret_sdk::SnapshotBootstrap,
-) -> SnapshotBootstrapOutcome {
-    if bootstrap.signature.alg.trim().is_empty()
-        || bootstrap.signature.verification_method.trim().is_empty()
-        || bootstrap.signature.jws.trim().is_empty()
-        || bootstrap
-            .signature
-            .payload_digest
-            .as_str()
-            .trim()
-            .is_empty()
-    {
-        return SnapshotBootstrapOutcome::FallBackFullSync(
-            "snapshot_bootstrap.signature is incomplete".to_owned(),
-        );
+impl SnapshotFallbackReason {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
     }
-    if let Err(err) = bootstrap.validate_signature_binding() {
-        return SnapshotBootstrapOutcome::FallBackFullSync(format!(
-            "snapshot_bootstrap.signature binding failed: {err}"
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(cokret_sdk::ERROR_CODE_SNAPSHOT_UNAVAILABLE, message)
+    }
+
+    pub fn from_validation(error: cokret_sdk::SnapshotValidationError) -> Self {
+        Self::new(error.code.as_str(), error.message)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SnapshotTrustState {
+    LowerTrust,
+    Verified,
+    Degraded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotBootstrapResult {
+    pub manifest_id: String,
+    pub item_count: usize,
+    pub chunk_count: usize,
+    pub source_event_ids: Vec<String>,
+    pub trust_state: SnapshotTrustState,
+}
+
+pub async fn download_verify_and_apply_snapshot<R>(
+    api: &CokretApi,
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    service_did: &cokret_sdk::Did,
+    resolver: &R,
+    now: DateTime<Utc>,
+) -> Result<SnapshotBootstrapResult, SnapshotFallbackReason>
+where
+    R: cokret_sdk::DidResolver + ?Sized,
+{
+    let manifest = match api.snapshot_head(realm_id).await {
+        Ok(Some(manifest)) => manifest,
+        Ok(None) => {
+            return Err(SnapshotFallbackReason::unavailable(
+                "snapshot head unavailable; falling back to event replay",
+            ));
+        }
+        Err(error) => {
+            return Err(SnapshotFallbackReason::unavailable(format!(
+                "snapshot head failed: {error}"
+            )));
+        }
+    };
+
+    let mut chunks = Vec::with_capacity(manifest.chunks.len());
+    for descriptor in &manifest.chunks {
+        let chunk = api
+            .download_snapshot_chunk_verified(descriptor)
+            .await
+            .map_err(|error| {
+                SnapshotFallbackReason::new(
+                    cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
+                    format!("snapshot chunk download failed: {error}"),
+                )
+            })?;
+        chunks.push(chunk);
+    }
+
+    let result = verify_snapshot_package(&manifest, &chunks, service_did, resolver, now)?;
+    store
+        .apply_snapshot_chunks(&manifest, &chunks, result.trust_state.clone())
+        .map_err(|error| {
+            SnapshotFallbackReason::new(
+                cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
+                format!("snapshot import failed: {error}"),
+            )
+        })?;
+    Ok(result)
+}
+
+pub fn verify_snapshot_package<R>(
+    manifest: &cokret_sdk::SnapshotManifest,
+    chunks: &[cokret_sdk::SnapshotChunkPayload],
+    service_did: &cokret_sdk::Did,
+    resolver: &R,
+    now: DateTime<Utc>,
+) -> Result<SnapshotBootstrapResult, SnapshotFallbackReason>
+where
+    R: cokret_sdk::DidResolver + ?Sized,
+{
+    verify_snapshot_signature_and_authority(manifest, service_did, resolver, now)?;
+    let report = cokret_sdk::verify_snapshot_manifest(
+        manifest,
+        chunks,
+        &cokret_sdk::SnapshotVerifyOptions::standard(now, cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1),
+    )
+    .map_err(SnapshotFallbackReason::from_validation)?;
+    let trust_state = match manifest.security_class {
+        cokret_sdk::SnapshotSecurityClass::Standard => SnapshotTrustState::LowerTrust,
+        cokret_sdk::SnapshotSecurityClass::HighAssurance => SnapshotTrustState::Verified,
+    };
+    Ok(SnapshotBootstrapResult {
+        manifest_id: manifest.id.to_string(),
+        item_count: report.item_count,
+        chunk_count: report.chunk_count,
+        source_event_ids: report
+            .source_event_ids
+            .into_iter()
+            .map(|event_id| event_id.to_string())
+            .collect(),
+        trust_state,
+    })
+}
+
+pub fn verify_snapshot_signature_and_authority<R>(
+    manifest: &cokret_sdk::SnapshotManifest,
+    service_did: &cokret_sdk::Did,
+    resolver: &R,
+    now: DateTime<Utc>,
+) -> Result<(), SnapshotFallbackReason>
+where
+    R: cokret_sdk::DidResolver + ?Sized,
+{
+    if &manifest.created_by != service_did {
+        return Err(SnapshotFallbackReason::new(
+            cokret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+            "snapshot created_by does not match the principal server service_did",
         ));
     }
-    if bootstrap.state_digest.as_str().trim().is_empty() {
-        return SnapshotBootstrapOutcome::FallBackFullSync(
-            "snapshot_bootstrap.state_digest is empty".to_owned(),
-        );
+    if manifest.authority_binding.issuer != manifest.created_by {
+        return Err(SnapshotFallbackReason::new(
+            cokret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+            "snapshot authority_binding.issuer does not match created_by",
+        ));
     }
-    if bootstrap.snapshot_frontier.is_empty() {
-        return SnapshotBootstrapOutcome::FallBackFullSync(
-            "snapshot_bootstrap.snapshot_frontier is empty".to_owned(),
-        );
-    }
-    for (index, chunk) in bootstrap.chunks.iter().enumerate() {
-        if chunk.chunk_id.trim().is_empty() {
-            return SnapshotBootstrapOutcome::FallBackFullSync(format!(
-                "snapshot_bootstrap.chunks[{index}].chunk_id is empty"
-            ));
-        }
-        if chunk.digest.as_str().trim().is_empty() {
-            return SnapshotBootstrapOutcome::FallBackFullSync(format!(
-                "snapshot_bootstrap.chunks[{index}].digest is empty"
-            ));
-        }
-        if chunk.fetch_ref.trim().is_empty() {
-            return SnapshotBootstrapOutcome::FallBackFullSync(format!(
-                "snapshot_bootstrap.chunks[{index}].fetch_ref is empty"
-            ));
-        }
-    }
-    SnapshotBootstrapOutcome::AcceptedHeader {
-        chunk_count: bootstrap.chunks.len(),
-        state_digest: bootstrap.state_digest.as_str().to_owned(),
-    }
+
+    let canonical_bytes = manifest.signature_payload_bytes().map_err(|error| {
+        SnapshotFallbackReason::new(
+            cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
+            format!("snapshot manifest canonicalization failed: {error}"),
+        )
+    })?;
+    let expected_digest = manifest.expected_signature_digest().map_err(|error| {
+        SnapshotFallbackReason::new(
+            cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
+            format!("snapshot signature digest failed: {error}"),
+        )
+    })?;
+    let proof = manifest.signature_as_proof();
+    let mut context = cokret_sdk::signatures::ProofVerificationContext::new(
+        manifest.created_by.clone(),
+        expected_digest,
+    );
+    context.now = now;
+    context.replay_window = snapshot_replay_window(manifest.security_class.clone());
+    cokret_sdk::verify_canonical_proof_with_did_resolver(
+        &canonical_bytes,
+        &proof,
+        &manifest.created_by,
+        &context,
+        resolver,
+    )
+    .map_err(|error| {
+        SnapshotFallbackReason::new(
+            cokret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+            format!("snapshot signature verification failed: {error}"),
+        )
+    })?;
+    Ok(())
 }
 
-/// Outcome of a snapshot verification round.
-#[derive(Debug)]
-pub enum SnapshotVerifyResult {
-    /// All chunks matched their declared content hash and the manifest's
-    /// `merkle_root` reconciled with the recomputed root.
-    Verified {
-        manifest_chunks: usize,
-        total_bytes: usize,
-    },
-    /// One or more chunks failed verification. The error message names the
-    /// first offending chunk for diagnostics.
-    Mismatch(String),
-}
-
-/// Verify a snapshot manifest against the chunks fetched from the Principal
-/// Server. Chunk bytes are passed in manifest order (`index = 0..N`).
-///
-/// Returns [`SnapshotVerifyResult::Mismatch`] if any chunk content hash does
-/// not match its manifest entry, or if the recomputed root diverges from the
-/// declared root.
-pub fn verify_snapshot(
-    manifest: &ReducerSnapshotManifest,
-    chunks: impl IntoIterator<Item = Vec<u8>>,
-) -> SnapshotVerifyResult {
-    let chunk_vec: Vec<Vec<u8>> = chunks.into_iter().collect();
-    let total_bytes: usize = chunk_vec.iter().map(|b| b.len()).sum();
-    let manifest_chunks = chunk_vec.len();
-
-    match verify_snapshot_chunks(manifest, chunk_vec.iter().map(|b| b.as_slice())) {
-        Ok(()) => SnapshotVerifyResult::Verified {
-            manifest_chunks,
-            total_bytes,
-        },
-        Err(e) => SnapshotVerifyResult::Mismatch(format!("{e:?}")),
+fn snapshot_replay_window(security_class: cokret_sdk::SnapshotSecurityClass) -> Duration {
+    match security_class {
+        cokret_sdk::SnapshotSecurityClass::Standard => {
+            Duration::milliseconds(cokret_sdk::SNAPSHOT_V1_STANDARD_MAX_ACCEPTANCE_AGE_MS)
+        }
+        cokret_sdk::SnapshotSecurityClass::HighAssurance => {
+            Duration::milliseconds(cokret_sdk::SNAPSHOT_V1_HIGH_ASSURANCE_MAX_ACCEPTANCE_AGE_MS)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
-    use cokret_sdk::identifiers::RealmId;
-    use cokret_sdk::{
-        EventId, Hash, SnapshotBootstrap, SnapshotBootstrapChunk, SnapshotBootstrapSignature,
-        SnapshotChunkManifest, canonical,
-    };
-
     use super::*;
 
-    fn empty_manifest() -> ReducerSnapshotManifest {
-        ReducerSnapshotManifest {
-            schema: cokret_sdk::REDUCER_SNAPSHOT_SCHEMA.to_owned(),
-            reducer_profile: cokret_sdk::REDUCER_SNAPSHOT_PROFILE.to_owned(),
-            realm_id: RealmId::new("ck:realm:01964137-0000-7000-8000-000000000000".to_owned())
-                .unwrap(),
-            frontier: Vec::new(),
-            state_digest: canonical::sha256_digest(b"empty"),
-            merkle_root: canonical::sha256_digest(b"empty"),
-            chunk_count: 0,
-            chunks: Vec::new(),
-            created_at: Utc::now(),
-            signatures: Vec::new(),
-        }
-    }
-
-    fn test_hash(byte: char) -> Hash {
-        Hash::new(format!("sha256:{}", byte.to_string().repeat(64))).unwrap()
-    }
-
-    fn valid_bootstrap() -> SnapshotBootstrap {
-        let mut bootstrap = SnapshotBootstrap {
-            signature: SnapshotBootstrapSignature {
-                alg: "EdDSA".to_owned(),
-                verification_method: "did:web:alice.example#device".to_owned(),
-                payload_digest: test_hash('0'),
-                created_at: Utc::now(),
-                jws: "header..signature".to_owned(),
-            },
-            state_digest: test_hash('1'),
-            snapshot_frontier: vec![
-                EventId::new("ck:event:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
-            ],
-            chunks: vec![SnapshotBootstrapChunk {
-                chunk_id: "chunk-0".to_owned(),
-                digest: test_hash('2'),
-                size_bytes: 128,
-                fetch_ref: "ck:blob:snapshot-chunk-0".to_owned(),
-            }],
-        };
-        bootstrap.signature.payload_digest = bootstrap.signing_payload_digest().unwrap();
-        bootstrap
+    #[test]
+    fn fallback_reason_preserves_registry_code() {
+        let reason =
+            SnapshotFallbackReason::from_validation(cokret_sdk::SnapshotValidationError::new(
+                cokret_sdk::SnapshotValidationCode::DigestMismatch,
+                "chunk digest mismatch",
+            ));
+        assert_eq!(reason.code, cokret_sdk::ERROR_CODE_DIGEST_MISMATCH);
+        assert!(reason.message.contains("digest"));
     }
 
     #[test]
-    fn snapshot_bootstrap_header_accepts_bound_signature() {
-        let outcome = consume_snapshot_bootstrap(&valid_bootstrap());
+    fn standard_snapshot_is_lower_trust_until_replayed() {
         assert_eq!(
-            outcome,
-            SnapshotBootstrapOutcome::AcceptedHeader {
-                chunk_count: 1,
-                state_digest: test_hash('1').as_str().to_owned(),
-            }
+            snapshot_replay_window(cokret_sdk::SnapshotSecurityClass::Standard),
+            Duration::milliseconds(cokret_sdk::SNAPSHOT_V1_STANDARD_MAX_ACCEPTANCE_AGE_MS)
         );
-    }
-
-    #[test]
-    fn snapshot_bootstrap_header_rejects_partial_signature() {
-        let mut bootstrap = valid_bootstrap();
-        bootstrap.signature.jws.clear();
-        let outcome = consume_snapshot_bootstrap(&bootstrap);
-        assert!(matches!(
-            outcome,
-            SnapshotBootstrapOutcome::FallBackFullSync(reason)
-                if reason.contains("signature is incomplete")
-        ));
-    }
-
-    #[test]
-    fn snapshot_bootstrap_header_rejects_signature_digest_drift() {
-        let mut bootstrap = valid_bootstrap();
-        bootstrap.signature.payload_digest = test_hash('3');
-        let outcome = consume_snapshot_bootstrap(&bootstrap);
-        assert!(matches!(
-            outcome,
-            SnapshotBootstrapOutcome::FallBackFullSync(reason)
-                if reason.contains("signature binding failed")
-        ));
-    }
-
-    #[test]
-    fn empty_manifest_verifies_with_no_chunks() {
-        let manifest = empty_manifest();
-        match verify_snapshot(&manifest, std::iter::empty()) {
-            SnapshotVerifyResult::Verified {
-                manifest_chunks,
-                total_bytes,
-            } => {
-                assert_eq!(manifest_chunks, 0);
-                assert_eq!(total_bytes, 0);
-            }
-            SnapshotVerifyResult::Mismatch(e) => panic!("empty manifest failed: {e}"),
-        }
-    }
-
-    #[test]
-    fn mismatched_chunk_bytes_are_rejected() {
-        let bytes = b"hello world".to_vec();
-        let chunk = SnapshotChunkManifest {
-            index: 0,
-            digest: canonical::sha256_digest(b"different"),
-            byte_len: bytes.len(),
-        };
-        let mut manifest = empty_manifest();
-        manifest.chunk_count = 1;
-        manifest.chunks = vec![chunk];
-
-        match verify_snapshot(&manifest, std::iter::once(bytes)) {
-            SnapshotVerifyResult::Mismatch(_) => {}
-            SnapshotVerifyResult::Verified { .. } => {
-                panic!("verifier accepted a chunk whose bytes do not match the declared digest")
-            }
-        }
-    }
-
-    #[test]
-    fn matching_chunk_bytes_pass() {
-        let bytes = b"hello world".to_vec();
-        let chunk = SnapshotChunkManifest {
-            index: 0,
-            digest: canonical::sha256_digest(&bytes),
-            byte_len: bytes.len(),
-        };
-        let mut manifest = empty_manifest();
-        manifest.chunk_count = 1;
-        manifest.chunks = vec![chunk];
-
-        match verify_snapshot(&manifest, std::iter::once(bytes)) {
-            SnapshotVerifyResult::Verified {
-                manifest_chunks,
-                total_bytes,
-            } => {
-                assert_eq!(manifest_chunks, 1);
-                assert_eq!(total_bytes, 11);
-            }
-            SnapshotVerifyResult::Mismatch(e) => panic!("verifier rejected a valid chunk: {e}"),
-        }
-    }
-
-    #[test]
-    fn chunk_count_mismatch_is_rejected() {
-        let mut manifest = empty_manifest();
-        manifest.chunk_count = 1;
-        manifest.chunks = vec![SnapshotChunkManifest {
-            index: 0,
-            digest: canonical::sha256_digest(b"x"),
-            byte_len: 1,
-        }];
-
-        // Supplying zero chunks against a one-chunk manifest must fail.
-        match verify_snapshot(&manifest, std::iter::empty()) {
-            SnapshotVerifyResult::Mismatch(_) => {}
-            SnapshotVerifyResult::Verified { .. } => {
-                panic!("verifier accepted zero chunks against a one-chunk manifest")
-            }
-        }
     }
 }

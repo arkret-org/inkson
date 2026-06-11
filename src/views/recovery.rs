@@ -1,18 +1,18 @@
 //! Recovery surface — Recovery Key (24 words) + restore-from-backup, with
 //! Social Recovery tucked behind an "Advanced" fold.
 //!
-//! - **Recovery Key (24 words)**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic.
-//!   This is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and
-//!   therefore the `MlsUnlockPrompt` restore path) only accepts this 24-word format, so
-//!   generating the key also wraps the account MLS secret behind it and uploads that backup
-//!   (see `upload_recovery_key_account_backup`). The mnemonic plaintext only lives in memory
-//!   between Generate and the user's Copy interaction; only a SHA-256 fingerprint plus rotation
-//!   timestamp are persisted via `LocalStateStore::save_private_data` — the words themselves are
-//!   never uploaded.
-//! - **Restore from backup**: lists the server-side `ck.schema.key_backup.v1` ciphertext
-//!   envelopes and decrypts them on-device with the 24-word Recovery Key. Envelopes sealed by
-//!   the removed vault-passphrase flows are legacy garbage: they can still be listed and
-//!   deleted, but no longer decrypted.
+//! - **Recovery Key (24 words)**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. This
+//!   is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and therefore
+//!   the `MlsUnlockPrompt` restore path) only accepts this 24-word format, so generating the key
+//!   also wraps the account MLS secret behind it and uploads that backup (see
+//!   `upload_recovery_key_account_backup`). The mnemonic plaintext only lives in memory between
+//!   Generate and the user's Copy interaction; only a SHA-256 fingerprint plus rotation timestamp
+//!   are persisted via `LocalStateStore::save_private_data` — the words themselves are never
+//!   uploaded.
+//! - **Restore from backup**: lists the server-side `ck.schema.key_backup.v1` ciphertext envelopes
+//!   and decrypts them on-device with the 24-word Recovery Key. Envelopes sealed by the removed
+//!   vault-passphrase flows are legacy garbage: they can still be listed and deleted, but no longer
+//!   decrypted.
 //! - **Social Recovery** (advanced, local bookkeeping only): guardian list + Shamir threshold +
 //!   last-rehearsal timestamp persisted as JSON under the same private_data store.
 //!

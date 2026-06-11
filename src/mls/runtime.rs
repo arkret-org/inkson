@@ -1349,10 +1349,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::secure_key_store::MemorySecureKeyStore;
-
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     use crate::local_state::isolated_store_for_tests as temp_state_store;
+    use crate::secure_key_store::MemorySecureKeyStore;
 
     #[test]
     fn reaction_routing_tag_is_deterministic_and_wire_shaped() {
@@ -2324,10 +2323,9 @@ mod welcome_outcome_tests {
     use serde_json::json;
 
     use super::*;
-    use crate::secure_key_store::MemorySecureKeyStore;
-
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     use crate::local_state::isolated_store_for_tests as temp_state_store;
+    use crate::secure_key_store::MemorySecureKeyStore;
 
     #[test]
     fn empty_welcome_set_reports_no_work() {

@@ -21,12 +21,12 @@
 //! SDK's [`EncryptedAttachmentEnvelope`], whose serde shape is exactly
 //! `blob.schema.json#/$defs/encrypted_attachment`.
 
+use cokret_sdk::blob_aead::{
+    self, DEFAULT_SEGMENT_SIZE, EncryptedAttachmentEnvelope, StreamEncryptParams,
+};
 pub use cokret_sdk::{
     Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, EncryptedAttachment, KeyRefObject,
     MediaMetadata, Thumbnail, safe_content_disposition, safe_content_type,
-};
-use cokret_sdk::blob_aead::{
-    self, EncryptedAttachmentEnvelope, StreamEncryptParams, DEFAULT_SEGMENT_SIZE,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -108,26 +108,26 @@ fn encrypt_asset(
     media_type: &str,
     force_whole_file: bool,
 ) -> anyhow::Result<EncryptedClientAsset> {
-    let (ciphertext, envelope) = if !force_whole_file && plaintext.len() > STREAM_ATTACHMENT_THRESHOLD
-    {
-        let params = StreamEncryptParams {
-            key_ref: key_ref.clone(),
-            epoch,
-            media_type: media_type.to_owned(),
-            segment_size: DEFAULT_SEGMENT_SIZE,
+    let (ciphertext, envelope) =
+        if !force_whole_file && plaintext.len() > STREAM_ATTACHMENT_THRESHOLD {
+            let params = StreamEncryptParams {
+                key_ref: key_ref.clone(),
+                epoch,
+                media_type: media_type.to_owned(),
+                segment_size: DEFAULT_SEGMENT_SIZE,
+            };
+            blob_aead::encrypt_stream(plaintext, content_key, &params)
+                .map_err(|err| anyhow::anyhow!("stream attachment encrypt: {err}"))?
+        } else {
+            blob_aead::encrypt_whole_file(
+                plaintext,
+                content_key,
+                key_ref.clone(),
+                epoch,
+                media_type.to_owned(),
+            )
+            .map_err(|err| anyhow::anyhow!("whole-file attachment encrypt: {err}"))?
         };
-        blob_aead::encrypt_stream(plaintext, content_key, &params)
-            .map_err(|err| anyhow::anyhow!("stream attachment encrypt: {err}"))?
-    } else {
-        blob_aead::encrypt_whole_file(
-            plaintext,
-            content_key,
-            key_ref.clone(),
-            epoch,
-            media_type.to_owned(),
-        )
-        .map_err(|err| anyhow::anyhow!("whole-file attachment encrypt: {err}"))?
-    };
     Ok(finish_asset(ciphertext, envelope))
 }
 
@@ -214,10 +214,11 @@ pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use cokret_sdk::blob_aead::{
         SCHEME_STREAM, SCHEME_WHOLE_FILE, decrypt_stream, decrypt_whole_file,
     };
+
+    use super::*;
 
     #[test]
     fn blob_typed_id_is_content_addressed() {
@@ -242,14 +243,7 @@ mod tests {
     fn small_attachment_uses_whole_file_and_roundtrips() {
         let key = [7u8; MLS_ATTACHMENT_KEY_LEN];
         let plaintext = b"plain cat png bytes";
-        let asset = encrypt_mls_asset(
-            plaintext,
-            &key,
-            42,
-            test_key_ref(),
-            "image/png",
-        )
-        .unwrap();
+        let asset = encrypt_mls_asset(plaintext, &key, 42, test_key_ref(), "image/png").unwrap();
 
         assert_ne!(asset.ciphertext.as_slice(), plaintext.as_slice());
         assert_eq!(asset.envelope.scheme, SCHEME_WHOLE_FILE);
@@ -274,14 +268,7 @@ mod tests {
         let plaintext: Vec<u8> = (0..(STREAM_ATTACHMENT_THRESHOLD + 1024))
             .map(|i| (i % 251) as u8)
             .collect();
-        let asset = encrypt_mls_asset(
-            &plaintext,
-            &key,
-            9,
-            test_key_ref(),
-            "video/mp4",
-        )
-        .unwrap();
+        let asset = encrypt_mls_asset(&plaintext, &key, 9, test_key_ref(), "video/mp4").unwrap();
 
         assert_eq!(asset.envelope.scheme, SCHEME_STREAM);
         assert_eq!(asset.envelope.segment_size, Some(DEFAULT_SEGMENT_SIZE));
@@ -325,7 +312,8 @@ mod tests {
         // ciphertext-only metadata: the wire transport media type is opaque,
         // but the envelope records the plaintext media type for the receiver.
         assert_eq!(thumbnail.envelope.media_type, "image/jpeg");
-        let recovered = decrypt_whole_file(&thumbnail.ciphertext, &thumbnail.envelope, &key).unwrap();
+        let recovered =
+            decrypt_whole_file(&thumbnail.ciphertext, &thumbnail.envelope, &key).unwrap();
         assert_eq!(recovered, thumb);
     }
 

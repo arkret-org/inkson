@@ -10,17 +10,15 @@
 //! (epoch advance) so a fresh device can recover up-to-date epoch material.
 //!
 //! Wire shape (soland-audited):
-//! - `PUT /_cokret/self/keys/backups/{backup_id}`, `backup_class="mls_history"`,
-//!   wrapped under the named `secret_storage` key
-//!   `mls_group_secrets_backup_key` (built by
+//! - `PUT /_cokret/self/keys/backups/{backup_id}`, `backup_class="mls_history"`, wrapped under the
+//!   named `secret_storage` key `mls_group_secrets_backup_key` (built by
 //!   [`crate::mls::persistence::MlsSnapshotEnvelope::to_key_backup_body`]).
-//! - One SERIES per Realm, extended via the successor chain
-//!   (`series_seq` strictly +1, `supersedes` + `supersedes_digest`) instead of
-//!   minting a fresh series per upload — restore then reads ONLY the series
-//!   tail per Realm, respecting soland's per-principal 24h full-ciphertext
-//!   download quota (default 64).
-//! - The tail envelope folds the Realm's complete recoverable group state, so
-//!   no per-epoch envelope pile-up is needed.
+//! - One SERIES per Realm, extended via the successor chain (`series_seq` strictly +1, `supersedes`
+//!   + `supersedes_digest`) instead of minting a fresh series per upload — restore then reads ONLY
+//!   the series tail per Realm, respecting soland's per-principal 24h full-ciphertext download
+//!   quota (default 64).
+//! - The tail envelope folds the Realm's complete recoverable group state, so no per-epoch envelope
+//!   pile-up is needed.
 //!
 //! Job mechanics mirror the sidecar backup job (digest dedupe, debounce,
 //! min-interval, single-flight) and add exponential-backoff retries plus a
@@ -445,11 +443,7 @@ fn finish_mls_history_backup_job_failure(key: &str, error: &str) -> bool {
 
 async fn upload_mls_history_backup_job_snapshot(
     job: MlsHistoryBackupJob,
-) -> anyhow::Result<(
-    String,
-    crate::mls::persistence::MlsSnapshotEnvelope,
-    Value,
-)> {
+) -> anyhow::Result<(String, crate::mls::persistence::MlsSnapshotEnvelope, Value)> {
     let snapshot = job
         .latest_snapshot
         .clone()

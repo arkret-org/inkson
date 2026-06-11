@@ -26,11 +26,10 @@
 //! - `key-backup-last-backup-at` — created_at of the account-secret backup
 //! - `key-backup-recovery-key-fp` — local Recovery Key fingerprint (never the words)
 //! - `key-backup-setup-link` — link to `/settings/recovery` when disabled
-//! - `key-backup-history-pending` — Realms whose newest MLS epoch material
-//!   still awaits its continuous `mls_history` upload ("0" when drained)
+//! - `key-backup-history-pending` — Realms whose newest MLS epoch material still awaits its
+//!   continuous `mls_history` upload ("0" when drained)
 //! - `key-backup-history-last-uploaded-at` — last successful continuous upload
-//! - `key-backup-history-error` — last continuous-upload failure (only rendered
-//!   after a failure)
+//! - `key-backup-history-error` — last continuous-upload failure (only rendered after a failure)
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -47,7 +46,9 @@ enum KeyBackupStatus {
     Loading,
     /// Server holds an `mls_account_secret` backup; `created_at` of that
     /// backup (RFC-3339) when present.
-    Enabled { last_backup_at: String },
+    Enabled {
+        last_backup_at: String,
+    },
     Disabled,
     /// Could not reach the server; carries the display error.
     Error(String),
@@ -88,8 +89,7 @@ pub fn SettingsSecurityPanel(
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut status = use_signal(|| KeyBackupStatus::Loading);
-    let mut history_status =
-        use_signal(crate::components::mls_history_backup_status);
+    let mut history_status = use_signal(crate::components::mls_history_backup_status);
 
     // Lightweight poll of the continuous mls_history backup job state (a
     // plain static job table — no server round-trip). Keeps the panel live
@@ -117,9 +117,11 @@ pub fn SettingsSecurityPanel(
             status.set(KeyBackupStatus::Disabled);
             return;
         }
-        match with_authed_api(&base, session, |api| async move {
-            api.list_key_backups().await
-        })
+        match with_authed_api(
+            &base,
+            session,
+            |api| async move { api.list_key_backups().await },
+        )
         .await
         {
             Ok(payload) => status.set(resolve_key_backup_status(&payload)),

@@ -324,6 +324,18 @@ pub fn DashboardPanel(
                                         let has_remark = remark
                                             .as_ref()
                                             .is_some_and(|r| !r.local_name.trim().is_empty());
+                                        let snapshot_status = if node.kind == crate::models::RealmTreeNodeKind::Realm {
+                                            state_store.read().snapshot_sync_status(&node.id)
+                                        } else {
+                                            None
+                                        };
+                                        let snapshot_badge = snapshot_status.as_ref().and_then(|status| {
+                                            match status.trust_state {
+                                                crate::snapshot::SnapshotTrustState::LowerTrust => Some("lower-trust"),
+                                                crate::snapshot::SnapshotTrustState::Degraded => Some("degraded"),
+                                                crate::snapshot::SnapshotTrustState::Verified => None,
+                                            }
+                                        });
                                         let kind_label = projection_kind_label(node.kind);
                                         rsx! {
                                         Link {
@@ -350,6 +362,13 @@ pub fn DashboardPanel(
                                                     class: "pill muted xs",
                                                     "data-testid": "dashboard-realm-tree-realm-remark-badge",
                                                     "备注"
+                                                }
+                                            }
+                                            if let Some(snapshot_badge) = snapshot_badge {
+                                                span {
+                                                    class: "pill muted xs",
+                                                    "data-testid": "dashboard-realm-tree-snapshot-badge",
+                                                    "{snapshot_badge}"
                                                 }
                                             }
                                             span { class: "pill muted xs", "{kind_label}" }

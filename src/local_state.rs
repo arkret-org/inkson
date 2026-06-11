@@ -934,12 +934,25 @@ impl LocalAnchorView {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotSyncStatus {
+    pub manifest_id: String,
+    pub trust_state: crate::snapshot::SnapshotTrustState,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub source_event_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     pub raw_operations: Vec<RawOperationRecord>,
     #[serde(default)]
     pub realm_lifecycle_state: BTreeMap<String, RealmLifecycleState>,
     pub realm_tree_projections: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
     pub drafts: BTreeMap<String, String>,
     pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
     #[serde(default)]
@@ -1307,6 +1320,7 @@ impl Default for ClientLocalState {
             raw_operations: Vec::new(),
             realm_lifecycle_state: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
+            snapshot_sync: BTreeMap::new(),
             drafts: BTreeMap::new(),
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
@@ -1673,6 +1687,85 @@ impl LocalStateStore {
             .realm_tree_projections
             .insert(projection_id, projection);
         let _ = self.flush();
+    }
+
+    pub fn apply_snapshot_chunks(
+        &mut self,
+        manifest: &cokret_sdk::SnapshotManifest,
+        chunks: &[cokret_sdk::SnapshotChunkPayload],
+        trust_state: crate::snapshot::SnapshotTrustState,
+    ) -> anyhow::Result<()> {
+        let report = cokret_sdk::verify_snapshot_manifest(
+            manifest,
+            chunks,
+            &cokret_sdk::SnapshotVerifyOptions::standard(
+                Utc::now(),
+                cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+            ),
+        )
+        .map_err(|error| anyhow::anyhow!("{}: {}", error.code.as_str(), error.message))?;
+
+        let mut projections = Vec::new();
+        let mut encrypted_messages = Vec::new();
+        for chunk in chunks {
+            for item in &chunk.items {
+                if item.id.trim().is_empty() {
+                    anyhow::bail!("snapshot item id must not be empty");
+                }
+                projections.push((item.id.clone(), item.object.clone()));
+                if let Some(payload) = snapshot_item_encrypted_payload(item) {
+                    encrypted_messages.push((item.id.clone(), payload));
+                }
+            }
+        }
+
+        let status = SnapshotSyncStatus {
+            manifest_id: manifest.id.to_string(),
+            trust_state,
+            updated_at: Utc::now(),
+            source_event_ids: report
+                .source_event_ids
+                .into_iter()
+                .map(|event_id| event_id.to_string())
+                .collect(),
+            degraded_reason: None,
+        };
+        let realm_id = manifest.realm_id.to_string();
+
+        self.batch(|store| {
+            for (projection_id, projection) in projections {
+                store.save_realm_tree_projection(projection_id, projection);
+            }
+            for (message_id, payload) in encrypted_messages {
+                store.preserve_encrypted_message(message_id, payload);
+            }
+            store.ensure_cached_loaded();
+            store.cached.snapshot_sync.insert(realm_id, status);
+            store.flush_pending.set(true);
+        });
+        Ok(())
+    }
+
+    pub fn mark_snapshot_degraded(
+        &mut self,
+        realm_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        let status = SnapshotSyncStatus {
+            manifest_id: String::new(),
+            trust_state: crate::snapshot::SnapshotTrustState::Degraded,
+            updated_at: Utc::now(),
+            source_event_ids: Vec::new(),
+            degraded_reason: Some(reason.into()),
+        };
+        self.cached.snapshot_sync.insert(realm_id, status);
+        let _ = self.flush();
+    }
+
+    pub fn snapshot_sync_status(&self, realm_id: &str) -> Option<SnapshotSyncStatus> {
+        self.load().snapshot_sync.get(realm_id).cloned()
     }
 
     /// R3.1 MID-2 — record inlined `ck.member.identity.update` event
@@ -3685,10 +3778,7 @@ impl LocalStateStore {
                 // YOU-02-002: preserve the corrupt blob under a sibling key
                 // rather than silently dropping it back to defaults.
                 if let Some(storage) = browser_storage() {
-                    let _ = storage.set_item(
-                        &format!("{LOCAL_STATE_STORAGE_KEY}.corrupt"),
-                        &json,
-                    );
+                    let _ = storage.set_item(&format!("{LOCAL_STATE_STORAGE_KEY}.corrupt"), &json);
                 }
                 let message = format!(
                     "local state in localStorage was unreadable ({error}); preserved a copy and started from defaults"
@@ -3964,6 +4054,22 @@ fn plaintext_identity_seed_fallback_allowed() -> bool {
                 .ok()
                 .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
     }
+}
+
+fn snapshot_item_encrypted_payload(
+    item: &cokret_sdk::SnapshotMaterializedItem,
+) -> Option<EncryptedPayload> {
+    let schema = item
+        .object
+        .get("schema")
+        .or_else(|| item.object.get("type"))
+        .and_then(Value::as_str);
+    let is_envelope = item.kind == "ck.schema.encrypted_envelope.v1"
+        || schema == Some("ck.schema.encrypted_envelope.v1");
+    if !is_envelope {
+        return None;
+    }
+    serde_json::from_value(item.object.clone()).ok()
 }
 
 #[cfg(test)]
@@ -4869,6 +4975,152 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("yougen-state-{name}-{stamp}.json"))
+    }
+
+    fn snapshot_event_id(suffix: &str) -> cokret_sdk::EventId {
+        cokret_sdk::EventId::new(format!("ck:event:01904100-0000-7000-8000-{suffix}")).unwrap()
+    }
+
+    fn snapshot_hash(seed: u8) -> cokret_sdk::Hash {
+        cokret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
+    }
+
+    fn snapshot_manifest_for_items(
+        items: Vec<cokret_sdk::SnapshotMaterializedItem>,
+    ) -> (
+        cokret_sdk::SnapshotManifest,
+        Vec<cokret_sdk::SnapshotChunkPayload>,
+    ) {
+        let snapshot_id =
+            cokret_sdk::SnapshotId::new("ck:snapshot:01904100-0000-7000-8000-0000000000aa")
+                .unwrap();
+        let realm_id =
+            cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-0000000000aa").unwrap();
+        let service_did = cokret_sdk::Did::new("did:web:server.example").unwrap();
+        let state_digest = cokret_sdk::state_digest_from_items(&items).unwrap();
+        let built = cokret_sdk::build_snapshot_chunks(
+            &snapshot_id,
+            cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+            items,
+            4096,
+        )
+        .unwrap();
+        let chunk_payloads = built
+            .iter()
+            .map(|chunk| chunk.payload.clone())
+            .collect::<Vec<_>>();
+        let chunks = built
+            .into_iter()
+            .map(|chunk| chunk.descriptor)
+            .collect::<Vec<_>>();
+        let created_at = Utc::now();
+        let mut manifest = cokret_sdk::SnapshotManifest {
+            id: snapshot_id,
+            realm_id,
+            reducer_profile: cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
+            schema_profile_refs: vec!["ck.profile.core_event_store.v1".to_owned()],
+            state_digest,
+            frontier: cokret_sdk::SnapshotFrontier {
+                event_ids: vec![snapshot_event_id("0000000000a2")],
+                timeline_hlc: cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            },
+            event_set_commitment: cokret_sdk::EventSetCommitment {
+                algorithm: cokret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
+                root: snapshot_hash(9),
+                covered_event_count: 2,
+                covered_frontier: vec![snapshot_event_id("0000000000a2")],
+                actor_seq_ranges: Vec::new(),
+            },
+            chunks,
+            security_class: cokret_sdk::SnapshotSecurityClass::Standard,
+            verification_hints: None,
+            created_by: service_did.clone(),
+            created_at,
+            authority_binding: cokret_sdk::AuthorityBinding {
+                issuer: service_did,
+                authority_kind: cokret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
+                auth_state_digest: snapshot_hash(1),
+                auth_frontier: vec![snapshot_event_id("0000000000a2")],
+                checked_at: created_at,
+                witness_attestations: Vec::new(),
+            },
+            signature: cokret_sdk::DetachedJwsProof::eddsa(
+                "did:web:server.example#snapshot".to_owned(),
+                snapshot_hash(2),
+                created_at,
+                "header..signature".to_owned(),
+            ),
+        };
+        manifest.signature.payload_digest = manifest.expected_signature_digest().unwrap();
+        (manifest, chunk_payloads)
+    }
+
+    #[test]
+    fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
+        let path = temp_state_path("snapshot-apply");
+        let mut store = LocalStateStore::with_path(path.clone());
+        let message_id = "ck:message:01904100-0000-7000-8000-0000000000a1";
+        let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000aa";
+        let encrypted_message = json!({
+            "schema": "ck.schema.encrypted_envelope.v1",
+            "scheme": "mls-rfc9420",
+            "group_id": realm_id,
+            "epoch": 1,
+            "content_type": "application/vnd.cokret.message+json",
+            "ciphertext": "AA",
+            "payload_digest": format!("sha256:{}", "ab".repeat(32)),
+            "key_ref": {
+                "algorithm": "mls-rfc9420",
+                "group_state_ref": format!("{realm_id}:1")
+            }
+        });
+        let items = vec![
+            cokret_sdk::SnapshotMaterializedItem {
+                kind: "ck.schema.encrypted_envelope.v1".to_owned(),
+                id: message_id.to_owned(),
+                object: encrypted_message.clone(),
+                source_event_id: snapshot_event_id("0000000000a1"),
+            },
+            cokret_sdk::SnapshotMaterializedItem {
+                kind: "realm".to_owned(),
+                id: realm_id.to_owned(),
+                object: json!({
+                    "id": realm_id,
+                    "title": "Snapshot Realm"
+                }),
+                source_event_id: snapshot_event_id("0000000000a2"),
+            },
+        ];
+        let (manifest, chunks) = snapshot_manifest_for_items(items);
+
+        store
+            .apply_snapshot_chunks(
+                &manifest,
+                &chunks,
+                crate::snapshot::SnapshotTrustState::LowerTrust,
+            )
+            .unwrap();
+
+        let loaded = store.load();
+        assert_eq!(
+            loaded.realm_tree_projections.get(message_id),
+            Some(&encrypted_message)
+        );
+        let status = loaded.snapshot_sync.get(realm_id).unwrap();
+        assert_eq!(status.manifest_id, manifest.id.to_string());
+        assert_eq!(
+            status.trust_state,
+            crate::snapshot::SnapshotTrustState::LowerTrust
+        );
+        assert_eq!(status.source_event_ids.len(), 2);
+        assert_eq!(store.pending_encrypted_count(), 1);
+
+        let reader = LocalStateStore::with_path(path);
+        assert_eq!(reader.pending_encrypted_count(), 1);
+        assert_eq!(
+            reader.snapshot_sync_status(realm_id).unwrap().trust_state,
+            crate::snapshot::SnapshotTrustState::LowerTrust
+        );
     }
 
     #[test]

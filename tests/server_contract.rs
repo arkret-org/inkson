@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use chrono::Utc;
 use reqwest::StatusCode;
 use serde_json::json;
 use yougen::account_data::{
@@ -16,6 +17,79 @@ use yougen::models::ServerDescriptionExt;
 use yougen::operation::OperationBuilder;
 use yougen::push::validate_blind_wakeup_payload;
 use yougen::telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line};
+
+fn snapshot_contract_event_id(suffix: &str) -> cokret_sdk::EventId {
+    cokret_sdk::EventId::new(format!("ck:event:01904100-0000-7000-8000-{suffix}")).unwrap()
+}
+
+fn snapshot_contract_hash(seed: u8) -> cokret_sdk::Hash {
+    cokret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
+}
+
+fn snapshot_contract_manifest_payload() -> serde_json::Value {
+    let snapshot_id =
+        cokret_sdk::SnapshotId::new("ck:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
+    let realm_id =
+        cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-0000000000cc").unwrap();
+    let service_did = cokret_sdk::Did::new("did:web:server.local").unwrap();
+    let items = vec![cokret_sdk::SnapshotMaterializedItem {
+        kind: "realm".to_owned(),
+        id: realm_id.to_string(),
+        object: json!({
+            "id": realm_id.to_string(),
+            "title": "Contract Snapshot Realm"
+        }),
+        source_event_id: snapshot_contract_event_id("0000000000c1"),
+    }];
+    let state_digest = cokret_sdk::state_digest_from_items(&items).unwrap();
+    let built = cokret_sdk::build_snapshot_chunks(
+        &snapshot_id,
+        cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+        items,
+        4096,
+    )
+    .unwrap();
+    let created_at = Utc::now();
+    let mut manifest = cokret_sdk::SnapshotManifest {
+        id: snapshot_id,
+        realm_id,
+        reducer_profile: cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
+        schema_profile_refs: vec!["ck.profile.core_event_store.v1".to_owned()],
+        state_digest,
+        frontier: cokret_sdk::SnapshotFrontier {
+            event_ids: vec![snapshot_contract_event_id("0000000000c1")],
+            timeline_hlc: cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+        },
+        event_set_commitment: cokret_sdk::EventSetCommitment {
+            algorithm: cokret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
+            root: snapshot_contract_hash(9),
+            covered_event_count: 1,
+            covered_frontier: vec![snapshot_contract_event_id("0000000000c1")],
+            actor_seq_ranges: Vec::new(),
+        },
+        chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),
+        security_class: cokret_sdk::SnapshotSecurityClass::Standard,
+        verification_hints: None,
+        created_by: service_did.clone(),
+        created_at,
+        authority_binding: cokret_sdk::AuthorityBinding {
+            issuer: service_did,
+            authority_kind: cokret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
+            auth_state_digest: snapshot_contract_hash(1),
+            auth_frontier: vec![snapshot_contract_event_id("0000000000c1")],
+            checked_at: created_at,
+            witness_attestations: Vec::new(),
+        },
+        signature: cokret_sdk::DetachedJwsProof::eddsa(
+            "did:web:server.local#snapshot".to_owned(),
+            snapshot_contract_hash(2),
+            created_at,
+            "header..signature".to_owned(),
+        ),
+    };
+    manifest.signature.payload_digest = manifest.expected_signature_digest().unwrap();
+    serde_json::to_value(manifest).unwrap()
+}
 
 #[test]
 fn yougen_accepts_server_contract_payloads() {
@@ -199,10 +273,29 @@ fn yougen_accepts_server_contract_payloads() {
     );
     assert_eq!(submit.cursor, "sx:1760000000000");
 
-    // `SnapshotHeadState` contract check removed: spec resolution
-    // (2026-06-11, renames.json `snapshot_head_returns_manifest`) replaced
-    // the head-pointer DTO with the full `ck.schema.snapshot.v1` manifest;
-    // `CokretApi::snapshot_head` now returns the manifest as raw JSON.
+    let snapshot_head: cokret_sdk::SnapshotManifest =
+        serde_json::from_value(snapshot_contract_manifest_payload()).unwrap();
+    assert_eq!(
+        snapshot_head.reducer_profile,
+        cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1
+    );
+    assert_eq!(snapshot_head.created_by.as_str(), "did:web:server.local");
+    assert!(
+        snapshot_head
+            .signature
+            .payload_digest
+            .as_str()
+            .starts_with("sha256:")
+    );
+    assert!(
+        serde_json::from_value::<cokret_sdk::SnapshotManifest>(json!({
+            "anchor": "ck:anchor:sha256:00",
+            "chunk_count": 1,
+            "merkle_root": format!("sha256:{}", "00".repeat(32)),
+            "generator_proof": {}
+        }))
+        .is_err()
+    );
 
     let login: yougen::models::DevLoginOutcome = serde_json::from_value(json!({
         "access_token": "sx_token",

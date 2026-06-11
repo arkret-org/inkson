@@ -180,9 +180,8 @@ pub async fn upload_actor_private_file(
     media_type: &str,
     plaintext: Vec<u8>,
 ) -> anyhow::Result<FileTransferUploadResult> {
-    let prepared = prepare_actor_private_file(
-        crypto, actor_id, device_id, filename, media_type, plaintext,
-    )?;
+    let prepared =
+        prepare_actor_private_file(crypto, actor_id, device_id, filename, media_type, plaintext)?;
     let account_data_key = prepared.account_data_key.clone();
     // Auto-dispatch: large ciphertexts take the resumable (tus) binding
     // when the server advertises it in /_cokret/describe, with automatic

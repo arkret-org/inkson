@@ -378,9 +378,9 @@ mod tests {
     use ed25519_dalek::pkcs8::EncodePrivateKey as _;
 
     use super::*;
+    use crate::local_state::PersistedSessionGrant;
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     use crate::local_state::isolated_store_for_tests as isolated_store;
-    use crate::local_state::PersistedSessionGrant;
     use crate::push::{FcmPushTokenProvider, PushTokenProvider};
 
     /// Test-only token source that hands back a fixed real-looking

@@ -6849,18 +6849,15 @@ fn dispatch_card_detail_update(
         snapshot: mls_new_snapshot,
     } = mls_events;
 
-    let op = match crate::operation::ck_ops::flow_update_patch(
-        &realm_id,
-        &actor_id,
-        &current.id,
-        patch,
-    ) {
-        Ok(builder) => builder.build("yougen"),
-        Err(err) => {
-            board_status.set(format!("cannot update card: {err:#}"));
-            return false;
-        }
-    };
+    let op =
+        match crate::operation::ck_ops::flow_update_patch(&realm_id, &actor_id, &current.id, patch)
+        {
+            Ok(builder) => builder.build("yougen"),
+            Err(err) => {
+                board_status.set(format!("cannot update card: {err:#}"));
+                return false;
+            }
+        };
     // R4: feed the guard the three-state security signal. An explicit
     // per-card `security_encrypted` flag (`Some`) wins; otherwise fall back to
     // the scope three-state so an unknown projection fails closed.
@@ -9514,7 +9511,8 @@ mod tests {
             json!({
                 "body": {"$op": "set", "value": "private description"},
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
 
         assert!(kanban_event_carries_plaintext_private_content(&event));
@@ -9538,7 +9536,8 @@ mod tests {
             json!({
                 "body": {"$op": "set", "value": "private description"},
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
         assert!(kanban_event_carries_plaintext_private_content(
             &private_update
@@ -9565,7 +9564,8 @@ mod tests {
             "Roadmap",
             None,
             None,
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
         assert!(
             kanban_plaintext_block_reason(None, &board_create).is_none(),
@@ -9592,7 +9592,8 @@ mod tests {
             json!({
                 "synthesis": {"$op": "set", "value": encrypted_payload},
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
 
         assert!(!kanban_event_carries_plaintext_private_content(&event));
@@ -9837,7 +9838,8 @@ mod tests {
                 "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000002",
                 "rank": "U",
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
 
         assert_eq!(event.kind, "ck.flow.update");
@@ -9855,7 +9857,8 @@ mod tests {
             "ck:space:0196419b-0000-7000-8000-000000000002",
             "private card title",
             "U",
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
         let space = crate::operation::ck_ops::space_create(
             TEST_REALM_ID,
@@ -9865,7 +9868,8 @@ mod tests {
             "private list title",
             Some("ck:space:0196419b-0000-7000-8000-000000000001"),
             Some("U"),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
 
         assert!(kanban_plaintext_block_reason(Some(true), &flow).is_none());
@@ -9888,7 +9892,8 @@ mod tests {
             "ZZTEST board title",
             None,
             None,
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
         assert_eq!(board.kind, "ck.space.create");
         assert!(
@@ -9904,7 +9909,8 @@ mod tests {
             "Todos list title",
             Some("ck:space:0196419b-0000-7000-8000-00000000aa01"),
             Some("r001"),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
         assert_eq!(list.kind, "ck.space.create");
         assert!(
@@ -9920,7 +9926,8 @@ mod tests {
             json!({
                 "body": {"$op": "set", "value": "private description"},
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
         assert!(
             kanban_plaintext_block_reason(Some(true), &private_update).is_some(),
@@ -9937,7 +9944,8 @@ mod tests {
             json!({
                 "summary": {"$op": "set", "value": "metadata summary"},
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("yougen");
 
         assert!(!kanban_event_carries_plaintext_private_content(&event));
@@ -10481,7 +10489,8 @@ mod tests {
                 "did:web:acme.example:users:alice",
                 flow_id,
                 json!({"synthesis": {"$op": "set", "value": "demo synthesis"}}),
-            ).expect("builds")
+            )
+            .expect("builds")
             .build("yougen");
             assert_eq!(event.kind, "ck.flow.update");
             assert_eq!(event.local_target_ref(), Some(flow_id));

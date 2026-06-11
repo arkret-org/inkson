@@ -184,9 +184,8 @@ pub struct ContactsOutcome {
 /// the required `schema`/`subject_id`, typed enums, and the trust lists, so
 /// a GET→edit→SET cycle preserves fields the U4 form does not touch.
 pub use cokret_sdk::model::{
-    DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy,
-    INVITE_RECEIVE_POLICY_SCHEMA, InviteReceiveAction, InviteReceivePolicy,
-    UnknownInviteAction,
+    DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy, INVITE_RECEIVE_POLICY_SCHEMA,
+    InviteReceiveAction, InviteReceivePolicy, UnknownInviteAction,
 };
 
 /// Build the recommended default `invite_receive_policy` for `subject_id`,
@@ -198,8 +197,9 @@ pub use cokret_sdk::model::{
 pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
     InviteReceivePolicy {
         schema: INVITE_RECEIVE_POLICY_SCHEMA.to_owned(),
-        subject_id: cokret_sdk::Did::new(subject_id)
-            .unwrap_or_else(|_| cokret_sdk::Did::new("did:web:unknown").expect("valid placeholder did")),
+        subject_id: cokret_sdk::Did::new(subject_id).unwrap_or_else(|_| {
+            cokret_sdk::Did::new("did:web:unknown").expect("valid placeholder did")
+        }),
         allowed_introduction_kinds: vec![
             "consent_grant".to_owned(),
             "locator_ref".to_owned(),
@@ -323,6 +323,7 @@ pub const PROFILE_CORE_EVENT_STORE: &str = "ck.profile.core_event_store.v1";
 pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ck.profile.principal_server_events_api.v1";
 pub const OP_EVENTS_DESCRIBE: &str = "ck.self.events.describe";
 pub const OP_EVENTS_SUBMIT: &str = "ck.self.events.submit";
+pub const OP_SNAPSHOT_HEAD: &str = "ck.self.snapshot.head";
 
 /// Yougen-side convenience methods over the SDK's [`ServerDescription`].
 ///
@@ -845,6 +846,8 @@ mod tests {
 pub struct BackfillOutcome {
     #[serde(default)]
     pub events: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_bootstrap: Option<Value>,
     pub prev_cursor: Option<String>,
     pub next_cursor: Option<String>,
     #[serde(default)]
@@ -860,7 +863,6 @@ pub struct BackfillOutcome {
 // `api::CokretApi::snapshot_head`.
 
 pub use cokret_sdk::model::AuthzCheckOutcome;
-
 /// `ck.self.authz.get_effective_grants` response. soland serialises the SDK
 /// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
 /// decodes the same authoritative wire contract instead of a weakly-typed
@@ -883,11 +885,9 @@ pub struct PushRegisterOutcome {
 }
 
 pub use cokret_sdk::model::{
-    DeviceMessageEnvelope, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, KeysClaimOutcome,
-    KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
+    BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome,
+    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
 };
-
-pub use cokret_sdk::model::BlobUploadOutcome;
 
 /// Mirror of soland's `SolandModerationReportOutcome` wire shape for
 /// `POST /_cokret/self/moderation/report`. Named with the `Soland` prefix

@@ -550,7 +550,10 @@ pub mod ck_ops {
             .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))
     }
 
-    fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> anyhow::Result<Value> {
+    fn sdk_payload_value(
+        result: cokret_sdk::Result<Value>,
+        context: &str,
+    ) -> anyhow::Result<Value> {
         result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
     }
 
@@ -570,9 +573,7 @@ pub mod ck_ops {
     ) -> anyhow::Result<Value> {
         cokret_sdk::ObjectPatchPayload::for_target(object_ref, patch)
             .and_then(|payload| payload.to_value())
-            .map_err(|err| {
-                anyhow::anyhow!("invalid object_patch_payload for {object_ref}: {err}")
-            })
+            .map_err(|err| anyhow::anyhow!("invalid object_patch_payload for {object_ref}: {err}"))
     }
 
     fn flow_object_patch_payload_value(
@@ -729,12 +730,11 @@ pub mod ck_ops {
     }
 
     fn patch_from_value(patch: Value) -> anyhow::Result<cokret_sdk::Patch> {
-        let patch: cokret_sdk::Patch = serde_json::from_value(patch).map_err(|err| {
-            anyhow::anyhow!("ck.flow.update patch must match ck.patch.v1: {err}")
-        })?;
-        patch.validate().map_err(|err| {
-            anyhow::anyhow!("ck.flow.update patch must match ck.patch.v1: {err}")
-        })?;
+        let patch: cokret_sdk::Patch = serde_json::from_value(patch)
+            .map_err(|err| anyhow::anyhow!("ck.flow.update patch must match ck.patch.v1: {err}"))?;
+        patch
+            .validate()
+            .map_err(|err| anyhow::anyhow!("ck.flow.update patch must match ck.patch.v1: {err}"))?;
         Ok(patch)
     }
 
@@ -878,9 +878,11 @@ pub mod ck_ops {
         // allOf forbidding level_public when level is null). The typed
         // constructors keep the clear path (level:null) free of level_public.
         let payload = flow_watch_set_payload_value(flow_id, target_actor_id, level, level_public)?;
-        Ok(OperationBuilder::new(realm_id, sender_actor, "ck.flow.watch.set")
-            .target_ref(flow_id)
-            .body(payload))
+        Ok(
+            OperationBuilder::new(realm_id, sender_actor, "ck.flow.watch.set")
+                .target_ref(flow_id)
+                .body(payload),
+        )
     }
 
     /// Build a `ck.flow.tracks.update` operation. Spec:
@@ -907,9 +909,11 @@ pub mod ck_ops {
         patch: serde_json::Value,
     ) -> anyhow::Result<OperationBuilder> {
         let patch = patch_from_value(patch)?;
-        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.tracks.update")
-            .target_ref(flow_id)
-            .body(flow_tracks_update_payload_value(flow_id, patch)?))
+        Ok(
+            OperationBuilder::new(realm_id, actor, "ck.flow.tracks.update")
+                .target_ref(flow_id)
+                .body(flow_tracks_update_payload_value(flow_id, patch)?),
+        )
     }
 
     /// Convenience wrapper: enable `track` on `flow_id`. Emits the unified
@@ -1272,9 +1276,11 @@ pub mod ck_ops {
         patch: serde_json::Value,
     ) -> anyhow::Result<OperationBuilder> {
         let patch = patch_from_value(patch)?;
-        Ok(OperationBuilder::new(envelope_realm_id, actor, "ck.realm.update")
-            .target_ref(realm_id)
-            .body(object_patch_payload_value(realm_id, patch)?))
+        Ok(
+            OperationBuilder::new(envelope_realm_id, actor, "ck.realm.update")
+                .target_ref(realm_id)
+                .body(object_patch_payload_value(realm_id, patch)?),
+        )
     }
 
     /// Build a `ck.space.update` patch operation for structural Space
@@ -2095,7 +2101,8 @@ mod tests {
             "ck:morph:0196419b-0000-7000-8000-000000000002",
             "Untitled Document",
             json!({"blocks": [{"id": "block-1", "kind": "Heading", "content": "Hi"}]}),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("test_node");
 
         assert_eq!(op.kind, "ck.morph.create");
@@ -2124,7 +2131,8 @@ mod tests {
             "ck:space:0196419b-0000-7000-8000-000000000003",
             "Move-backed card",
             "h1",
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         let flow_schema = spec_schema("flow.schema.json");
 
@@ -2215,7 +2223,8 @@ mod tests {
             "did:web:alice.example",
             "ck:morph:0196419b-0000-7000-8000-000000000002",
             json!({"blocks": []}),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("test_node");
 
         assert_eq!(op.kind, "ck.morph.update");
@@ -2239,7 +2248,8 @@ mod tests {
             9,
             "needs detail",
             None,
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("test_node");
 
         assert_eq!(op.kind, "ck.message.create");
@@ -2261,7 +2271,8 @@ mod tests {
             "did:web:alice.example",
             flow_id,
             "mitigated",
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
 
         assert_eq!(op.kind, "ck.flow.update");
@@ -2314,7 +2325,8 @@ mod tests {
             "did:web:alice.example",
             flow_id,
             "discussion",
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         assert_eq!(op.kind, "ck.flow.tracks.update");
         assert_eq!(
@@ -2339,7 +2351,8 @@ mod tests {
                 "title": { "$op": "set", "value": "Launch checklist" },
                 "fields.due_at": { "$op": "set", "value": "2026-05-20" },
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         assert_eq!(op.kind, "ck.flow.update");
         assert_eq!(op.local_target_ref(), Some(flow_id));
@@ -2366,7 +2379,8 @@ mod tests {
                     "title": { "$op": "set", "value": "Launch checklist" },
                     "fields.due_at": { "$op": "set", "value": "2026-05-20" },
                 }),
-            ).expect("builds")
+            )
+            .expect("builds")
             .build("node"),
             ck_ops::flow_position_update(
                 realm_id,
@@ -2378,7 +2392,8 @@ mod tests {
                     "list_space_id": list_space_id,
                     "rank": "U",
                 }),
-            ).expect("builds")
+            )
+            .expect("builds")
             .build("node"),
             // Null effect_position triggers the legacy ck.flow.update fallback
             // inside flow_position_cas_update. It still must satisfy
@@ -2391,7 +2406,8 @@ mod tests {
                 flow_id,
                 json!({"list_space_id": list_space_id, "rank": "U"}),
                 Value::Null,
-            ).expect("builds")
+            )
+            .expect("builds")
             .build("node"),
         ];
 
@@ -2417,27 +2433,31 @@ mod tests {
         let space_id = "ck:space:0196419b-0000-7000-8000-000000000004";
 
         let events = [
-            ck_ops::flow_tracks_update_set_primary(realm_id, actor, flow_id, "discussion").expect("builds")
+            ck_ops::flow_tracks_update_set_primary(realm_id, actor, flow_id, "discussion")
+                .expect("builds")
                 .build("node"),
             ck_ops::morph_update_patch(
                 realm_id,
                 actor,
                 morph_id,
                 json!({ "title": { "$op": "set", "value": "Spec note" } }),
-            ).expect("builds")
+            )
+            .expect("builds")
             .build("node"),
             ck_ops::realm_organization_update(
                 realm_id,
                 actor,
                 json!({ "title": { "$op": "set", "value": "Engineering" } }),
-            ).expect("builds")
+            )
+            .expect("builds")
             .build("node"),
             ck_ops::space_update_patch(
                 realm_id,
                 actor,
                 space_id,
                 json!({ "title": "Roadmap Board", "summary": "Q2 planning" }),
-            ).expect("builds")
+            )
+            .expect("builds")
             .build("node"),
         ];
 
@@ -2469,7 +2489,8 @@ mod tests {
                 "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000040",
                 "rank": "b1"
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
 
         assert_eq!(op.kind, "ck.flow.move");
@@ -2506,7 +2527,8 @@ mod tests {
                 "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
                 "rank": "a2"
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
 
         assert_eq!(op.kind, "ck.flow.reorder");
@@ -2535,7 +2557,8 @@ mod tests {
             "To Do",
             Some("ck:space:0196419b-0000-7000-8000-000000000003"),
             Some("U"),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         assert_eq!(op.kind, "ck.space.create");
         assert_eq!(
@@ -2576,7 +2599,8 @@ mod tests {
             "To Do",
             Some("ck:space:0196419b-0000-7000-8000-000000000003"),
             Some("U"),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         let object = &op.payload["object"];
 
@@ -2599,7 +2623,8 @@ mod tests {
             "did:web:alice.example",
             "ck:flow:0196419b-0000-7000-8000-000000000004",
             "discussion",
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         let patch = op.payload["patch"].as_object().unwrap();
 
@@ -2630,7 +2655,8 @@ mod tests {
                 "metadata.fields.priority": { "$op": "set", "value": "high" },
                 "metadata.fields.due_at": { "$op": "set", "value": "2026-05-20" },
             }),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         let patch = op.payload["patch"].as_object().unwrap();
 
@@ -2732,7 +2758,8 @@ mod tests {
             Some("member"),
             invite_delivery_target.clone(),
             &introduction_evidence_digest,
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         assert_eq!(create.kind, "ck.invite.create");
         assert_eq!(create.payload["invite_id"], invite_id);
@@ -2769,7 +2796,8 @@ mod tests {
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:bob.example",
             invite_id,
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         assert_eq!(accept.kind, "ck.invite.accept");
         assert_eq!(accept.payload["invite_id"], invite_id);
@@ -2781,7 +2809,8 @@ mod tests {
             "did:web:alice.example",
             invite_id,
             Some("expired"),
-        ).expect("builds")
+        )
+        .expect("builds")
         .build("node");
         assert_eq!(cancel.kind, "ck.invite.cancel");
         assert_eq!(cancel.payload["invite_id"], invite_id);
@@ -2817,16 +2846,18 @@ mod tests {
     #[test]
     fn flow_lifecycle_helpers_emit_canonical_kinds() {
         let flow_id = "ck:flow:01904100-0000-7000-8000-1fb50799ad50";
-        let archive =
-            ck_ops::flow_archive("ck:realm:test", "did:web:alice.example", flow_id).expect("builds").build("node");
+        let archive = ck_ops::flow_archive("ck:realm:test", "did:web:alice.example", flow_id)
+            .expect("builds")
+            .build("node");
         assert_eq!(archive.kind, "ck.flow.archive");
         assert_eq!(archive.payload["target_ref"], flow_id);
         assert!(archive.payload.get("flow_id").is_none());
         assert_eq!(archive.local_target_ref(), Some(flow_id));
         assert_registered_payload_valid(&archive);
 
-        let restore =
-            ck_ops::flow_restore("ck:realm:test", "did:web:alice.example", flow_id).expect("builds").build("node");
+        let restore = ck_ops::flow_restore("ck:realm:test", "did:web:alice.example", flow_id)
+            .expect("builds")
+            .build("node");
         assert_eq!(restore.kind, "ck.flow.restore");
         assert_eq!(restore.payload["target_ref"], flow_id);
         assert!(restore.payload.get("flow_id").is_none());

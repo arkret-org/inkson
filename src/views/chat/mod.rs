@@ -4487,7 +4487,8 @@ mod tests {
             "hello from chat",
             &[],
             None,
-        ).expect("builds");
+        )
+        .expect("builds");
 
         assert_eq!(op.kind, "ck.message.create");
         assert_eq!(
@@ -4533,7 +4534,8 @@ mod tests {
             "ping @here and @carol:example.com",
             &mentions,
             None,
-        ).expect("builds");
+        )
+        .expect("builds");
 
         assert_eq!(
             op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
@@ -4558,7 +4560,8 @@ mod tests {
             "reply body",
             &[],
             Some("ck:message:01904100-0000-7000-8000-000000000004"),
-        ).expect("builds");
+        )
+        .expect("builds");
 
         assert_eq!(
             op.payload["reply_to"].as_str(),

@@ -193,6 +193,37 @@ impl CokretApi {
             .await
     }
 
+    pub async fn download_blob_verified(
+        &self,
+        descriptor: &cokret_sdk::SnapshotChunkDescriptor,
+    ) -> anyhow::Result<Vec<u8>> {
+        let blob_ref = query_component(canonical_blob_ref(descriptor.chunk_ref.as_str()));
+        let request = self.http.get(self.endpoint(&format!(
+            "_cokret/self/blob/get?blob_ref={blob_ref}&purpose=download"
+        ))?);
+        let bytes = self
+            .send_bytes(self.prepare_request(request), Method::GET)
+            .await?;
+        if bytes.len() as u64 > descriptor.size_bytes {
+            anyhow::bail!(
+                "{}: snapshot chunk response exceeded declared size",
+                cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str()
+            );
+        }
+        cokret_sdk::verify_snapshot_chunk_bytes(descriptor, &bytes)
+            .map_err(snapshot_validation_error)?;
+        Ok(bytes)
+    }
+
+    pub async fn download_snapshot_chunk_verified(
+        &self,
+        descriptor: &cokret_sdk::SnapshotChunkDescriptor,
+    ) -> anyhow::Result<cokret_sdk::SnapshotChunkPayload> {
+        let bytes = self.download_blob_verified(descriptor).await?;
+        cokret_sdk::parse_verified_snapshot_chunk_bytes(descriptor, &bytes)
+            .map_err(snapshot_validation_error)
+    }
+
     pub async fn get_file_transfer_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         let blob_ref = query_component(canonical_blob_ref(blob_ref));
         let request = self.http.get(self.endpoint(&format!(
@@ -212,9 +243,9 @@ impl CokretApi {
     ///
     /// Scheme dispatch:
     /// - `ck.blob.whole_file_aead.v1` → [`decrypt_whole_file`].
-    /// - `ck.blob.stream_aead.v1` → incremental [`StreamDecryptor`] fed the
-    ///   segments of the downloaded ciphertext, so every §3.3.6 sequencing /
-    ///   integrity check runs before plaintext is released.
+    /// - `ck.blob.stream_aead.v1` → incremental [`StreamDecryptor`] fed the segments of the
+    ///   downloaded ciphertext, so every §3.3.6 sequencing / integrity check runs before plaintext
+    ///   is released.
     /// - any other scheme → fail closed.
     ///
     /// Minimal implementation: the ciphertext is fetched with a single whole
@@ -280,9 +311,11 @@ impl CokretApi {
                 Ok(plaintext)
             }
             // Unknown / unsupported scheme: fail closed, never attempt a decrypt.
-            other => Err(anyhow::anyhow!(
-                "unsupported_attachment_scheme: {other}"
-            )),
+            other => Err(anyhow::anyhow!("unsupported_attachment_scheme: {other}")),
         }
     }
+}
+
+fn snapshot_validation_error(error: cokret_sdk::SnapshotValidationError) -> anyhow::Error {
+    anyhow::anyhow!("{}: {}", error.code.as_str(), error.message)
 }

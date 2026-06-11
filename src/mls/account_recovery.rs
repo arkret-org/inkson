@@ -572,8 +572,7 @@ pub fn restore_mls_history_with_passphrase_from_payload(
     // previous incomplete bootstrap may have generated a stale/random secret,
     // which would make every history restore fail with a secret mismatch.
     let has_local_secret =
-        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id)
-            .is_ok();
+        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id).is_ok();
     if let Some(secret_body) = select_mls_account_secret_backup(list_payload) {
         // Fail closed against series rollback / withholding: the selected tail
         // must sit at the end of a complete, digest-linked chain back to genesis
@@ -1070,8 +1069,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     keep.push(account_backup_id.clone());
     keep.extend(history_backup_ids.iter().cloned());
     let superseded = select_superseded_backup_ids(&list_payload, &keep);
-    let (deleted_superseded_backup_ids, _failed) =
-        delete_backups(api, actor_id, &superseded).await;
+    let (deleted_superseded_backup_ids, _failed) = delete_backups(api, actor_id, &superseded).await;
 
     Ok(MlsAccountSecretRotationUpload {
         rotation,
@@ -1182,8 +1180,7 @@ pub async fn upload_mls_private_plaintext_backup(
     device_id: &str,
     sidecar_json: &[u8],
 ) -> Result<String> {
-    let previous_backup =
-        fetch_mls_private_plaintext_backup_body(api, actor_id, device_id).await?;
+    let previous_backup = fetch_mls_private_plaintext_backup_body(api, actor_id, device_id).await?;
     let (backup_id, _) = upload_mls_private_plaintext_backup_with_previous(
         api,
         secure_store,
@@ -2019,8 +2016,7 @@ mod tests {
         b0["backup_id"] = serde_json::json!("ck:backup:b0");
         // Non-history classes must never be selected as history tails.
         let account = wrap();
-        let payload =
-            serde_json::json!({ "backups": [a0, a1.clone(), b0.clone(), account] });
+        let payload = serde_json::json!({ "backups": [a0, a1.clone(), b0.clone(), account] });
 
         // Per-Realm chaining target: realm a -> highest-seq link a1; realm b
         // -> its genesis; unknown realm -> none.

@@ -399,11 +399,7 @@ pub(crate) fn mark_mls_recovery_backup_configured(
         "backup_id": backup_id,
         "configured_at": chrono::Utc::now().to_rfc3339(),
     });
-    state_store.save_private_data(
-        actor_id,
-        MLS_RECOVERY_BACKUP_STATE_KEY,
-        payload.to_string(),
-    );
+    state_store.save_private_data(actor_id, MLS_RECOVERY_BACKUP_STATE_KEY, payload.to_string());
 }
 
 /// X11.2 — context-provided handle to the app-root `needs_mls_backup`

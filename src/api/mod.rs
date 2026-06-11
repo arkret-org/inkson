@@ -95,25 +95,21 @@ impl Default for CancellationToken {
 use crate::config::validate_server_url;
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
-    AccountDataSetOutcome, AuthzCheckOutcome,
-    BackfillOutcome, BlobUploadOutcome, ClientSyncOutcome,
-    ConsentCellOutcome, ConsentCellsOutcome, ContactOutcome, ContactsOutcome,
-    DevLoginOutcome, DeviceMessagesGetOutcome,
-    DeviceMessagesPutOutcome, DeviceTrustOutcome,
-    EphemeralSubmitOutcome, GrantList, HealthOutcome,
-    IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchOutcome, InvitesOutcome,
-    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutOutcome,
-    MediaIceConfigOutcome, MediaIceConfigRequestBody, MimiGroupInfoOutcome,
-    MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome, MimiProviderDirectory,
-    MimiProxyDownloadOutcome, MimiReportAbuseOutcome, MimiRequestConsentOutcome,
-    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome,
-    OkOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate,
-    RealmPolicyOutcome, ReceiptOutcome, ResolveHandleOutcome, ResolveRealmOutcome,
-    SearchActorsOutcome, SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
+    AccountDataSetOutcome, AuthzCheckOutcome, BackfillOutcome, BlobUploadOutcome,
+    ClientSyncOutcome, ConsentCellOutcome, ConsentCellsOutcome, ContactOutcome, ContactsOutcome,
+    DevLoginOutcome, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustOutcome,
+    EphemeralSubmitOutcome, GrantList, HealthOutcome, IdentityDescribeOutcome,
+    IdentityResolveOutcome, IndexSearchOutcome, InvitesOutcome, KeysClaimOutcome, KeysQueryOutcome,
+    KeysUploadOutcome, LogoutOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody,
+    MimiGroupInfoOutcome, MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome,
+    MimiProviderDirectory, MimiProxyDownloadOutcome, MimiReportAbuseOutcome,
+    MimiRequestConsentOutcome, MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, OP_SNAPSHOT_HEAD,
+    OkOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate, RealmPolicyOutcome,
+    ReceiptOutcome, ResolveHandleOutcome, ResolveRealmOutcome, SearchActorsOutcome,
+    SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
     SolandAccountRegisterOutcome, SolandAccountUpdateProfileOutcome,
-    SolandDirectoryDescribeResBody, SolandModerationReportOutcome,
-    SpaceCreateOutcome, SubmitEventOutcome, SyncDescribeOutcome, TypingOutcome,
-    VerifyDeviceOutcome,
+    SolandDirectoryDescribeResBody, SolandModerationReportOutcome, SpaceCreateOutcome,
+    SubmitEventOutcome, SyncDescribeOutcome, TypingOutcome, VerifyDeviceOutcome,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
@@ -519,6 +515,23 @@ pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| api_error.error.code() == ERROR_CODE_STALE_FRONTIER)
+}
+
+pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<CokretApiError>()
+        .is_some_and(|api_error| {
+            let code = api_error.error.code();
+            api_error.status == StatusCode::NOT_FOUND
+                || matches!(
+                    code,
+                    "not_implemented"
+                        | "snapshot_unavailable"
+                        | "not_found"
+                        | "unrecognized_endpoint"
+                        | "unsupported_feature"
+                )
+        })
 }
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
@@ -2799,13 +2812,12 @@ fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOu
 /// §2.2 **any** frame carrying a `cursor` advances the persisted
 /// high-water mark (delta / catchup_complete / frontier / heartbeat).
 /// Control-frame routing:
-/// - `resync_required` / `unauthorized` → discard the accumulated state
-///   and surface `ReconnectAfter` (resync resets the cursor);
-/// - `dropped` → return what was accumulated (its `cursor` is the resume
-///   point) or `ReconnectAfter` when nothing was accumulated yet;
-/// - `catchup_complete` → the snapshot is complete; streaming readers
-///   stop consuming here instead of waiting for the server to close the
-///   long-lived stream.
+/// - `resync_required` / `unauthorized` → discard the accumulated state and surface
+///   `ReconnectAfter` (resync resets the cursor);
+/// - `dropped` → return what was accumulated (its `cursor` is the resume point) or `ReconnectAfter`
+///   when nothing was accumulated yet;
+/// - `catchup_complete` → the snapshot is complete; streaming readers stop consuming here instead
+///   of waiting for the server to close the long-lived stream.
 #[derive(Default)]
 struct AccountSubscribeFolder {
     merged: Option<ClientSyncOutcome>,

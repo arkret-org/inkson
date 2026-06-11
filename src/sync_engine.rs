@@ -414,6 +414,35 @@ async fn run_iteration(
                     "stale_frontier recovery: account/describe failed"
                 );
             }
+            let selected_realm_id = ctx.selected_realm_id.read().clone();
+            if !selected_realm_id.is_empty() {
+                match api.snapshot_head(&selected_realm_id).await {
+                    Ok(Some(manifest)) => {
+                        tracing::debug!(
+                            realm_id = %selected_realm_id,
+                            snapshot_id = %manifest.id,
+                            "stale_frontier recovery: snapshot head available for replay fallback"
+                        );
+                    }
+                    Ok(None) => {
+                        ctx.state_store.write().mark_snapshot_degraded(
+                            selected_realm_id.clone(),
+                            "snapshot head unavailable after stale_frontier",
+                        );
+                    }
+                    Err(snapshot_error) => {
+                        tracing::debug!(
+                            ?snapshot_error,
+                            realm_id = %selected_realm_id,
+                            "stale_frontier recovery: snapshot head probe failed"
+                        );
+                        ctx.state_store.write().mark_snapshot_degraded(
+                            selected_realm_id.clone(),
+                            format!("snapshot head probe failed: {snapshot_error}"),
+                        );
+                    }
+                }
+            }
             let mut last_error = ctx.last_error;
             last_error.set(Some(format!("sync_engine: {error}")));
             IterationOutcome::StaleFrontier

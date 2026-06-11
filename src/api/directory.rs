@@ -238,17 +238,30 @@ impl CokretApi {
         .await
     }
 
-    /// `ck.self.snapshot.head`. Spec resolution (2026-06-11,
-    /// `renames.json` migration group `snapshot_head_returns_manifest`):
-    /// the response is the full signed `ck.schema.snapshot.v1` manifest
-    /// (`service-surface.md` §5.2); the legacy `SnapshotHeadState` pointer
-    /// DTO is hard-rejected on current wire. The manifest is returned as
-    /// raw JSON until the SDK grows a typed wire manifest. soland
-    /// currently does not declare this operation and fails closed with
-    /// `not_implemented`.
-    pub async fn snapshot_head(&self, realm_id: &str) -> anyhow::Result<Value> {
-        self.get_json(&format!("_cokret/self/snapshot/head?realm_id={realm_id}"))
-            .await
+    /// `ck.self.snapshot.head`.
+    ///
+    /// Snapshot bootstrap is an acceleration layer. If the server does not
+    /// advertise or serve the operation, callers silently fall back to event
+    /// replay.
+    pub async fn snapshot_head(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<Option<cokret_sdk::SnapshotManifest>> {
+        let describe = self.describe_cached().await?;
+        if !describe.supports_operation(OP_SNAPSHOT_HEAD) {
+            return Ok(None);
+        }
+        let realm_id = query_component(realm_id);
+        let result = self
+            .get_json::<cokret_sdk::SnapshotManifest>(&format!(
+                "_cokret/self/snapshot/head?realm_id={realm_id}"
+            ))
+            .await;
+        match result {
+            Ok(manifest) => Ok(Some(manifest)),
+            Err(error) if is_snapshot_unavailable_error(&error) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     // ── Identity & Directory ────────────────────────────────────────

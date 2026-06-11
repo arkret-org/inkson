@@ -557,8 +557,7 @@ impl CokretApi {
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
-            crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?
-                .build("yougen");
+            crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?.build("yougen");
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::model::RealmJoinMethod::InviteAccept)?;
@@ -756,11 +755,11 @@ impl CokretApi {
     /// `not_implemented` on the operation, so the post-decode branch is
     /// unreachable against current servers either way.
     pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
-        let manifest = self.snapshot_head(realm_id).await?;
-        let manifest_id = manifest
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let manifest_id = self
+            .snapshot_head(realm_id)
+            .await?
+            .map(|manifest| manifest.id.to_string())
+            .unwrap_or_else(|| "unavailable".to_owned());
         anyhow::bail!(
             "ck.self.snapshot.head for {realm_id} returned snapshot manifest `{manifest_id}`, \
              which carries no anchor head \u{2014} cannot stamp anchor_ref"

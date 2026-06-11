@@ -2144,10 +2144,7 @@ pub fn RouterView() -> Element {
         route.clone()
     };
     let show_recovery_setup_prompt = has_session
-        && !matches!(
-            &content_route,
-            Route::Recovery | Route::SettingsRecovery
-        )
+        && !matches!(&content_route, Route::Recovery | Route::SettingsRecovery)
         && recovery_setup_prompt_required(&state_store.read(), &account_did());
 
     rsx! {
@@ -6948,9 +6945,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     continue;
                                 }
                                 if let Some(actor_id) =
-                                    crate::account_data::actor_id_from_contact_remark_key(
-                                        data_type,
-                                    )
+                                    crate::account_data::actor_id_from_contact_remark_key(data_type)
                                 {
                                     let Some(content) = entry.get("content") else {
                                         continue;
