@@ -117,6 +117,18 @@ const CONTRACT_REQUIRED: Record<string, string[]> = {
 test.describe("mockCokretApi ↔ mockCokretContract alignment @contract-parity", () => {
   test.beforeEach(async ({ page }) => {
     await mockCokretApi(page);
+    await page.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.startsWith("/_cokret/") || url.pathname.startsWith("/_soland/")) {
+        await route.fallback();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: '<!doctype html><main data-testid="client-shell">mock shell</main>',
+      });
+    });
     await page.addInitScript(() => {
       if (localStorage.getItem("yougen.config.v1")) {
         return;

@@ -23,6 +23,20 @@ function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
 }
 
+async function dismissBlockingDialog(page: import("@playwright/test").Page) {
+  const dialog = page.getByRole("dialog").last();
+  await dialog.waitFor({ state: "visible", timeout: 1_000 }).catch(() => undefined);
+  if (!(await dialog.isVisible().catch(() => false))) {
+    return;
+  }
+  const dismiss = dialog.getByRole("button", { name: "Dismiss" });
+  if ((await dismiss.count()) === 0) {
+    return;
+  }
+  await dismiss.click();
+  await expect(dialog).toBeHidden({ timeout: 5_000 });
+}
+
 test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
     await mockCokretApi(page);
@@ -122,6 +136,7 @@ test.describe("feature coverage placeholders", () => {
     page,
   }) => {
     await page.goto("/settings/devices/pair", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await dismissBlockingDialog(page);
     await expect(page.getByTestId("pair-device-card")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("pair-device-start-button").click();
     await expect(page.getByTestId("pair-device-secret")).toHaveValue(/ck\.device\.pair\.request\.v1/, {
