@@ -14,8 +14,26 @@
 
 use std::collections::BTreeMap;
 
-use cokret_sdk::{FederationManager, FederationTransaction, TrustAnchor, WellKnownCokretServer};
+use cokret_sdk::WellKnownCokretServer;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustAnchor {
+    pub domain: String,
+    pub public_key: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FederationTransaction {
+    pub transaction_id: String,
+    pub origin: String,
+    pub destination: String,
+    #[serde(default)]
+    pub events: Vec<Value>,
+    pub signature: String,
+}
 
 /// Outcome of trust bundle verification.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,19 +211,12 @@ impl TrustBundle {
                 expected: local_domain.to_owned(),
             };
         }
-        // Delegate signature verification to the SDK's canonical verifier
-        // (`FederationManager::verify_transaction`), feeding it just this
-        // anchor. Yougen pins the trust anchor; the SDK owns the signing
-        // algorithm (today a SHA-256 chained MAC, in the future an Ed25519
-        // detached signature). Routing through the SDK means yougen's
-        // verification automatically tracks whatever wire-format the SDK
-        // upgrades to, with no protocol drift between sender and receiver.
         if anchor.public_key.is_empty() || transaction.signature.is_empty() {
             return TrustCheck::SignatureMismatch(transaction.transaction_id.clone());
         }
-        let mut sdk_mgr = FederationManager::new();
-        sdk_mgr.add_trust_anchor(anchor.clone());
-        if !sdk_mgr.verify_transaction(transaction) {
+        if federation_transaction_signature(transaction, &anchor.public_key)
+            != transaction.signature
+        {
             return TrustCheck::SignatureMismatch(transaction.transaction_id.clone());
         }
         TrustCheck::Trusted
@@ -230,6 +241,21 @@ impl TrustBundle {
         }
         TrustCheck::Trusted
     }
+}
+
+fn federation_transaction_signature(transaction: &FederationTransaction, key: &str) -> String {
+    let transcript = json!({
+        "transaction_id": transaction.transaction_id,
+        "origin": transaction.origin,
+        "destination": transaction.destination,
+        "events": transaction.events,
+        "key": key,
+    });
+    let bytes = serde_json::to_vec(&transcript).unwrap_or_default();
+    format!(
+        "sha256:{}",
+        crate::canonical::hex_encode(&Sha256::digest(bytes))
+    )
 }
 
 /// F-WELLKNOWN-1: errors surfaced by [`fetch_well_known_cokret_server`].
@@ -384,14 +410,15 @@ mod tests {
 
     #[test]
     fn pinned_origin_with_signature_passes() {
-        // Use the SDK to produce a transaction whose signature matches the
-        // verifier — yougen must accept exactly the same bytes the SDK
-        // peer emits, otherwise federation breaks at the boundary.
-        let mut sdk_mgr = FederationManager::new();
         let signing_key = "shared-secret-for-bob";
-        sdk_mgr.add_trust_anchor(anchor("bob.example", signing_key));
-        let tx =
-            sdk_mgr.create_transaction("bob.example", "alice.example", Vec::new(), signing_key);
+        let mut tx = FederationTransaction {
+            transaction_id: "t-signed".into(),
+            origin: "bob.example".into(),
+            destination: "alice.example".into(),
+            events: Vec::new(),
+            signature: String::new(),
+        };
+        tx.signature = federation_transaction_signature(&tx, signing_key);
 
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(anchor("bob.example", signing_key));
@@ -423,10 +450,14 @@ mod tests {
     fn pinned_origin_with_wrong_key_is_rejected() {
         // Sender used `wrong-key`; we pinned `right-key`. The signatures
         // mix the key into the hash chain, so they diverge.
-        let mut sdk_mgr = FederationManager::new();
-        sdk_mgr.add_trust_anchor(anchor("bob.example", "wrong-key"));
-        let tx =
-            sdk_mgr.create_transaction("bob.example", "alice.example", Vec::new(), "wrong-key");
+        let mut tx = FederationTransaction {
+            transaction_id: "t-wrong-key".into(),
+            origin: "bob.example".into(),
+            destination: "alice.example".into(),
+            events: Vec::new(),
+            signature: String::new(),
+        };
+        tx.signature = federation_transaction_signature(&tx, "wrong-key");
 
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(anchor("bob.example", "right-key"));

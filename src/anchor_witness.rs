@@ -185,9 +185,8 @@ pub fn verify_witness_chain(
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::TrustAnchor;
-
     use super::*;
+    use crate::federation::TrustAnchor;
 
     fn anchor(domain: &str, key: &str) -> TrustAnchor {
         TrustAnchor {

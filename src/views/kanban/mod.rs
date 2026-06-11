@@ -10374,8 +10374,8 @@ mod tests {
     #[test]
     fn locate_flow_position_finds_present_flow_with_rank() {
         use cokret_sdk::{
-            CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionPosition,
-            CollectionProjectionOutcome, ViewId, ViewKind, ViewRenderer,
+            CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionOutcome,
+            CollectionProjectionPosition, ViewId, ViewKind, ViewRenderer,
         };
         let projection = CollectionProjectionOutcome {
             kind: ViewKind::Collection,
