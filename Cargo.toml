@@ -250,7 +250,7 @@ web-sys = {workspace = true,features = [
 # focus-trap eval closure (`FnOnce called more than once` -> CLOSURE_DTORS
 # out-of-bounds -> wasm heap corruption). See the fork branch for the full note.
 jsonschema = {workspace = true,default-features = false,features = ["resolve-file"]}
-rand_core = {workspace = true,features = ["std"]}
+rand_core = {workspace = true}
 regex = {workspace = true}
 walkdir = {workspace = true}
 [patch."https://github.com/DioxusLabs/components"]
