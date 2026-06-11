@@ -2,7 +2,7 @@
 name = "yougen"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.96"
 description = "Dioxus desktop and web Cokret v1 reference client"
 license = "Apache-2.0"
 repository = "https://github.com/cokret/yougen"
@@ -52,77 +52,77 @@ mobile-android = []
 mobile-ios = []
 
 [dependencies]
-anyhow = "1.0.100"
-base64 = "0.22"
-bip39 = "2.2.2"
-chime = { version = "0.3.0", path = "../chime", features = ["http"] }
-chrono = { version = "0.4.42", features = ["serde"] }
-dioxus-router = "0.7.9"
-getrandom = { version = "0.3.4", features = ["wasm_js"] }
 # Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
 # crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and cokret-core →
 # cokret-identifiers). On `wasm32-unknown-unknown` that 0.2.x dep needs the
 # `js` feature so it routes RNG through Web Crypto; this alias is the only
 # place in the workspace that turns it on. NOT used via `use getrandom_02`
 # anywhere in src/ — do not remove without re-checking the wasm build.
-getrandom_02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
-image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-sha2 = "0.10"
 # R31: derive `std::error::Error` + `Display` for the crate's `*Error`
 # enums via `#[derive(thiserror::Error)]` instead of hand-rolled impls.
 # Pure derive-macro crate, zero runtime, wasm-friendly. Pinned to the
 # same major as the workspace SDK (`thiserror = "2.0.17"`).
-thiserror = "2"
-url = "2.5.7"
 # Event-proof signing. ed25519-dalek for the Ed25519 detached-JWS
 # signatures produced by `event_signer`; bs58 to encode public keys as
 # did:key multibase (`z<base58btc(0xed01 || pubkey32)>`) in
 # `move_builder::encode_ed25519_did_key_multibase`. Production deploys
 # integrate OS keychain / WebAuthn / HSM via the `secure_key_store` path.
-ed25519-dalek = { version = "2.1.1", features = ["pem", "pkcs8"] }
-bs58 = "0.5.1"
-tracing = "0.1"
 # QR rendering for device-verification handoff. SVG output keeps the
 # crate pure-Rust with no image / font dependencies.
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # Recovery flow (R-recovery-001): real Argon2id passphrase stretching +
 # XChaCha20-Poly1305 AEAD for the Encrypted Cloud Vault upload. Both crates
 # are pure-Rust, no_std-friendly and build cleanly under wasm32; the same
 # pin is used for the ciphertext digest's sha256 (already in `sha2`).
-argon2 = "0.5"
-chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 # key-management.md §7.5: backup AEAD key / nonce key / commitment key are HKDF
 # subkeys of the Argon2id root, and the passphrase_kdf nonce is HMAC-SHA256 over
 # a canonical transcript. Both pulled in transitively by the crypto stack; made
 # direct here for the spec-conformant key-backup crypto.
-hkdf = "0.12"
-hmac = "0.12"
 # encryption-and-audit.md §2.9: the v2 reaction routing tag HMACs over the
 # NFC-normalised canonical emoji bytes, so the chosen-emoji privacy property
 # holds regardless of the sender's input normalisation form.
-unicode-normalization = "0.1"
 # key-management.md §7.5.2: `recipient_method=recovery_public_key` backups are
 # HPKE base-mode (DHKEM(X25519,HKDF-SHA256) + HKDF-SHA256 + ChaCha20Poly1305).
 # hpke-rs (RustCrypto backend) is the audited RFC 9180 impl and builds on wasm.
-hpke-rs = "0.6"
-hpke-rs-crypto = "0.6"
-hpke-rs-rust-crypto = "0.6"
 # Phase A.6 #1: zero plaintext-secret bytes on drop / overwrite for the
 # in-memory secure key store. The crate is already in the dependency graph
 # transitively (via ed25519-dalek / chacha20poly1305 / openmls); making it
 # a direct dep lets `MemorySecureKeyStore` reach for `Zeroize` /
 # `ZeroizeOnDrop` without an indirect import path.
-zeroize = { version = "1.8", features = ["derive"] }
 # A3 (round 28): markdown rendering for the timeline/chat content
 # renderer. pulldown-cmark is pure-Rust, no_std-friendly, and known to
 # build cleanly under wasm32-unknown-unknown. Raw-HTML pass-through is
 # left disabled (default) so untrusted message bodies cannot inject
 # arbitrary tags via `dangerous_inner_html`.
-pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
-dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
-dioxus-icons = { version = "0.1.0", default-features = false }
+anyhow = {workspace = true}
+argon2 = {workspace = true}
+base64 = {workspace = true}
+bip39 = {workspace = true}
+bs58 = {workspace = true}
+chacha20poly1305 = {workspace = true,default-features = false,features = ["alloc"]}
+chime = {workspace = true,features = ["http"]}
+chrono = {workspace = true,features = ["serde"]}
+dioxus-icons = {workspace = true,default-features = false}
+dioxus-primitives = {workspace = true,default-features = false}
+dioxus-router = {workspace = true}
+ed25519-dalek = {workspace = true,features = ["pem", "pkcs8"]}
+getrandom = {workspace = true,features = ["wasm_js"]}
+getrandom_02 = {workspace = true,features = ["js"]}
+hkdf = {workspace = true}
+hmac = {workspace = true}
+hpke-rs = {workspace = true}
+hpke-rs-crypto = {workspace = true}
+hpke-rs-rust-crypto = {workspace = true}
+image = {workspace = true,default-features = false,features = ["gif", "jpeg", "png", "webp"]}
+pulldown-cmark = {workspace = true,default-features = false,features = ["html"]}
+qrcode = {workspace = true,default-features = false,features = ["svg"]}
+serde = {workspace = true,features = ["derive"]}
+serde_json = {workspace = true}
+sha2 = {workspace = true}
+thiserror = {workspace = true}
+tracing = {workspace = true}
+unicode-normalization = {workspace = true}
+url = {workspace = true}
+zeroize = {workspace = true,features = ["derive"]}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # T5.2 (2026-05-20): `signer` feature enabled so `event_signer` can pull
@@ -130,8 +130,6 @@ dioxus-icons = { version = "0.1.0", default-features = false }
 # `RealEd25519` proof-mode path. Without it the SDK signatures module is
 # canonical-bytes-only and the active-write signing path has nothing to
 # call into.
-cokret-sdk = { package = "cokret", version = "0.3.0", path = "../cokret-rust-sdk/crates/sdk", features = ["full-surface", "signer"] }
-dioxus = { version = "0.7.9", features = ["desktop", "web"] }
 # C33.2: OS-keychain handoff for `secure_key_store::KeyringSecureKeyStore`.
 # Routes to macOS Keychain Services / freedesktop Secret Service / Windows
 # Credential Manager via the platform-feature flags on stable native
@@ -142,24 +140,26 @@ dioxus = { version = "0.7.9", features = ["desktop", "web"] }
 # `keyring-core` (the 4.x `keyring` crate itself is now a CLI / sample
 # wrapper without the classic `Entry` type). 3.6 stays the supported
 # library surface for direct programmatic access.
-keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "linux-native"] }
 # F-OS-NOTIFY-1 (2026-05-19): native desktop notifications. `notify-rust`
 # bridges to macOS Notification Center, Linux freedesktop notifications,
 # and Windows Toast notifications behind a single API. Skipped on the
 # wasm32 build because browsers expose their own notification API
 # directly through Dioxus / `web-sys`.
-notify-rust = "4.11"
 # YOU-01-007: `multipart` is required because the spec binds
 # `POST /_cokret/self/blob/upload` to multipart/form-data
 # (blob_upload_request_body), not a raw octet-stream body.
-reqwest = { version = "0.12.24", features = ["json", "multipart", "rustls-tls", "stream"], default-features = false }
 # CKP-0007 P3B.8.1 — opt-in crash telemetry. The Sentry client is
 # initialised only when both the user-facing CrashTelemetryPrefs
 # toggle is on AND a build-time `SENTRY_DSN` env var is set; an
 # empty DSN logs a debug message and skips init silently per
 # `src/telemetry.rs::sentry_init`. Wasm builds skip the dep entirely.
-sentry = { version = "0.48.1", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
-tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
+cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
+dioxus = {workspace = true,features = ["desktop", "web"]}
+keyring = {workspace = true,features = ["apple-native", "windows-native", "linux-native"]}
+notify-rust = {workspace = true}
+reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "rustls-tls", "stream"]}
+sentry = {workspace = true,default-features = false,features = ["backtrace", "contexts", "panic", "reqwest", "rustls"]}
+tokio = {workspace = true,features = ["macros", "rt-multi-thread", "sync", "time"]}
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # C36.1 (2026-05-10): wasm32 needs the same surface as native because the app
@@ -174,10 +174,6 @@ tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "
 # `LocalStorageSecureKeyStore` / `IndexedDbSecureKeyStore` instead of the
 # OS keychain, with the documented "browser has no symmetric-secret tier"
 # warning.
-cokret-sdk = { package = "cokret", version = "0.3.0", path = "../cokret-rust-sdk/crates/sdk", features = ["full-surface", "signer"] }
-dioxus = { version = "0.7.9", features = ["web"] }
-reqwest = { version = "0.12.24", features = ["json", "multipart", "stream"], default-features = false }
-tokio = { version = "1.48.0", features = ["macros", "rt", "sync", "time"] }
 # Round 26 (A3): web-sys feature flags expanded so the WebPushTokenProvider
 # can drive `navigator.serviceWorker.register` + `pushManager.subscribe(...)`
 # end-to-end. The Crypto/SubtleCrypto features back the R5 WebCryptoBoundary
@@ -185,7 +181,19 @@ tokio = { version = "1.48.0", features = ["macros", "rt", "sync", "time"] }
 # implementation while signing material stays in Rust (the SDK's
 # MoveSigner / ed25519-dalek path is process-local and never leaves the
 # wasm linear memory boundary).
-web-sys = { version = "0.3.82", features = [
+# `tokio::time` is unsupported on wasm32-unknown-unknown — it calls
+# `std::time::Instant::now()` and panics with "time not implemented on this
+# platform". `gloo-timers` routes through `setTimeout` instead, which is what
+# `sleep_for` uses for HTTP retry backoff in the wasm build.
+cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
+dioxus = {workspace = true,features = ["web"]}
+gloo-timers = {workspace = true,features = ["futures"]}
+js-sys = {workspace = true}
+reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "stream"]}
+tokio = {workspace = true,features = ["macros", "rt", "sync", "time"]}
+wasm-bindgen = {workspace = true}
+wasm-bindgen-futures = {workspace = true}
+web-sys = {workspace = true,features = [
     "Storage",
     "Window",
     "CssStyleDeclaration",
@@ -223,15 +231,7 @@ web-sys = { version = "0.3.82", features = [
     "IdbVersionChangeEvent",
     "Event",
     "DomException",
-] }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-# `tokio::time` is unsupported on wasm32-unknown-unknown — it calls
-# `std::time::Instant::now()` and panics with "time not implemented on this
-# platform". `gloo-timers` routes through `setTimeout` instead, which is what
-# `sleep_for` uses for HTTP retry backoff in the wasm build.
-gloo-timers = { version = "0.3", features = ["futures"] }
+]}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # Stream J conformance gates (`tests/conformance_gates.rs`,
@@ -240,10 +240,6 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 # `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 # Pinned to the same version cotest uses so a registry/resource bump
 # lands in one place.
-jsonschema = { version = "0.46.4", default-features = false, features = ["resolve-file"] }
-walkdir = "2.5"
-regex = "1.11"
-rand_core = { version = "0.6", features = ["std"] }
 
 # cokret fork of DioxusLabs/components, branched off the same revision cargo
 # already resolved. The only delta is an idempotency guard in
@@ -253,6 +249,10 @@ rand_core = { version = "0.6", features = ["std"] }
 # `SyntaxError: 'FocusTrap' has already been declared`, corrupting the dialog
 # focus-trap eval closure (`FnOnce called more than once` -> CLOSURE_DTORS
 # out-of-bounds -> wasm heap corruption). See the fork branch for the full note.
+jsonschema = {workspace = true,default-features = false,features = ["resolve-file"]}
+rand_core = {workspace = true,features = ["std"]}
+regex = {workspace = true}
+walkdir = {workspace = true}
 [patch."https://github.com/DioxusLabs/components"]
 dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", branch = "cokret/focus-trap-idempotent" }
 
@@ -277,3 +277,54 @@ dioxus-core-types = { git = "https://github.com/cokret/dioxus", branch = "cokret
 generational-box  = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
 subsecond         = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
 subsecond-types   = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
+
+[workspace]
+resolver = "3"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+argon2 = "0.5"
+base64 = "0.22"
+bip39 = "2.2.2"
+bs58 = "0.5.1"
+chacha20poly1305 = {version = "0.10",default-features = false}
+chime = {version = "0.3.0",path = "../chime"}
+chrono = "0.4.45"
+cokret-sdk = {package = "cokret",version = "0.3.0",path = "../cokret-rust-sdk/crates/sdk"}
+dioxus = "0.7.9"
+dioxus-icons = {version = "0.1.0",default-features = false}
+dioxus-primitives = {version = "0.0.1",git = "https://github.com/DioxusLabs/components",default-features = false}
+dioxus-router = "0.7.9"
+ed25519-dalek = "2.2.0"
+getrandom = "0.4.2"
+getrandom_02 = {package = "getrandom",version = "0.2.17"}
+gloo-timers = "0.4"
+hkdf = "0.13"
+hmac = "0.13"
+hpke-rs = "0.6"
+hpke-rs-crypto = "0.6"
+hpke-rs-rust-crypto = "0.6"
+image = {version = "0.25.10",default-features = false}
+js-sys = "0.3"
+jsonschema = {version = "0.46.5",default-features = false}
+keyring = "4.0.1"
+notify-rust = "4.17"
+pulldown-cmark = {version = "0.13",default-features = false}
+qrcode = {version = "0.14",default-features = false}
+rand_core = "0.10"
+regex = "1.12"
+reqwest = {version = "0.13.4",default-features = false}
+sentry = {version = "0.48.2",default-features = false}
+serde = "1.0.228"
+serde_json = "1.0.150"
+sha2 = "0.11"
+thiserror = "2"
+tokio = "1.52.3"
+tracing = "0.1"
+unicode-normalization = "0.1"
+url = "2.5.8"
+walkdir = "2.5"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3.100"
+zeroize = "1.8"
