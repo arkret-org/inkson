@@ -253,8 +253,9 @@ jsonschema = {workspace = true,default-features = false,features = ["resolve-fil
 rand_core = {workspace = true}
 regex = {workspace = true}
 walkdir = {workspace = true}
+# rev 钉死,升级时手工 bump。
 [patch."https://github.com/DioxusLabs/components"]
-dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", branch = "cokret/focus-trap-idempotent" }
+dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", rev = "3510aeee2d14f0ca2c11682c9b826650cb557d2f" }
 
 # cokret fork of DioxusLabs/dioxus, branched off the v0.7.9 tag. The only delta
 # is `Callback::__point_to` in `packages/core/src/events.rs`: upstream 0.7.9
@@ -271,12 +272,13 @@ dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", branc
 # crate would exist under two sources and `GenerationalBox<T>` would mismatch
 # across the registry `dioxus-signals`/`dioxus-web` and the patched core.
 # See https://github.com/cokret/dioxus/commit/e59f9f24a5c27c9303cd61edd0452b44161374ab
+# rev 钉死,升级时手工 bump。
 [patch.crates-io]
-dioxus-core       = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
-dioxus-core-types = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
-generational-box  = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
-subsecond         = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
-subsecond-types   = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
+dioxus-core       = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+dioxus-core-types = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+generational-box  = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+subsecond         = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+subsecond-types   = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
 
 [workspace]
 resolver = "3"

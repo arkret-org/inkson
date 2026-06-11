@@ -7,7 +7,7 @@ impl CokretApi {
         target_ref: &str,
         report_reason_code: &str,
         reporter: &str,
-    ) -> anyhow::Result<SolandModerationReportOutcome> {
+    ) -> anyhow::Result<ModerationReportOutcome> {
         let realm = cokret_sdk::RealmId::new(realm_id)
             .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
         let reporter_did = cokret_sdk::Did::new(reporter.to_owned())

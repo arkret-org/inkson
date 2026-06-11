@@ -905,15 +905,12 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, { events, next_cursor: null, frontier: {} });
     }
 
-    if (url.pathname === "/_cokret/self/snapshot/head") {
-      return json(route, {
-        snapshot_ref: `ck:snapshot:${DEMO_REALM}:head`,
-        state_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        frontier: { realm_id: DEMO_REALM },
-        signature: { alg: "none" },
-      });
-    }
-
+    // NB: no `/_cokret/self/snapshot/head` route. The mock's describe does
+    // not advertise `ck.self.snapshot.head`, so the client falls back to
+    // event replay before issuing the request. The current wire shape is the
+    // full signed `ck.schema.snapshot.v1` manifest (self-id field `id`); the
+    // legacy `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
+    // reintroduced here.
     if (url.pathname === "/_cokret/root/identity/describe") {
       return json(route, {
         service_did: "did:web:server.local",

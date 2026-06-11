@@ -1,25 +1,31 @@
-//! Hybrid Logical Clock (HLC) per cokret-spec section 6.4.
+//! Hybrid Logical Clock (HLC) per cokret-spec section 6.4 — thin wrapper
+//! over `cokret_sdk::hlc`.
 //!
 //! Format: `<physical_hex_12>-<logical_hex_4>-<node_hex_8>`
 //! - 48-bit millisecond timestamp (12 hex chars)
 //! - 16-bit logical counter (4 hex chars)
-//! - 32-bit node hash (8 hex chars; SHA-256 prefix, see [`hash_node_id`])
+//! - 32-bit node hash (8 hex chars)
 //!
-//! The node-id derivation MUST stay byte-compatible with the SDK's
-//! `cokret_sdk::hlc::HlcGenerator::compute_node_id` (SHA-256 of the node
-//! identifier string, big-endian first 4 bytes encoded as 8 lowercase
-//! hex chars). The cross-impl test `hash_node_id_matches_sdk_compute_node_id`
-//! at the bottom of this file pins both implementations against each
-//! other; if it ever drifts, downstream HLCs become wire-incompatible
-//! with anything the SDK produced from the same DID.
+//! All HLC kernel responsibilities are delegated to the SDK:
+//! - format validation / parsing: `validate_hlc_format` / `parse_hlc`,
+//! - encode + overflow semantics: `cokret_sdk::Hlc::new`,
+//! - node-id derivation: `HlcGenerator::compute_node_id` (`encoding.md` §7,
+//!   `SHA256("cokret-hlc-v1" || realm_id || device_id || secret)[0:4]`),
+//!   reached through generator construction because the helper is private.
+//!
+//! The only local responsibility left is injecting the physical clock
+//! through `crate::clock`: the SDK generator's advancing entry points
+//! (`generate` / `generate_with_remote` / `HlcGenerator::new`) read
+//! `std::time::SystemTime::now()`, which panics on wasm32-unknown-unknown,
+//! so this wrapper mints values via the clock-free constructor
+//! `HlcGenerator::with_initial_time` + `current()`.
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use cokret_sdk::Hlc as SdkHlc;
-use cokret_sdk::hlc::{parse_hlc, validate_hlc_format};
+use cokret_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// A Hybrid Logical Clock timestamp.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -32,22 +38,29 @@ pub struct Hlc {
     pub node_id: u32,
 }
 
+/// Build an SDK generator pinned to the given physical time.
+///
+/// Node-id derivation is the SDK's `compute_node_id` (`encoding.md` §7); it
+/// is private, so generator construction is the supported way to run it.
+/// yougen carries a single process-wide node identifier, which maps onto the
+/// `device_id` slot with empty realm/secret — full §7 Realm-scoped secret
+/// wiring is a separate work item; the node segment stays an opaque,
+/// SDK-derived pseudonymous hash either way.
+fn sdk_generator_at(node_id: &str, physical_ms: u64) -> HlcGenerator {
+    HlcGenerator::with_initial_time("", node_id, &[], physical_ms)
+}
+
 impl Hlc {
     /// Create a new HLC with the current wall-clock time.
     ///
-    /// Uses the same wire format and node-id derivation as the SDK, but
-    /// reads the clock through `crate::clock` so the wasm build does not
-    /// call `std::time::SystemTime::now()`.
+    /// Minting is delegated to the SDK generator; the clock is read through
+    /// `crate::clock` (and injected via `with_initial_time`) so the wasm
+    /// build never touches `std::time::SystemTime::now()`.
     pub fn now(node_id: &str) -> Self {
-        let node_segment = node_id_hex(node_id);
-        let candidate = format!(
-            "{:012x}-{:04x}-{}",
-            crate::clock::now_unix_ms().min(0xffffffffffff),
-            0,
-            node_segment
-        );
+        let minted = sdk_generator_at(node_id, crate::clock::now_unix_ms().min(0xffffffffffff))
+            .current();
         let parts =
-            parse_hlc(&candidate).expect("locally formatted HLC string is parseable by parse_hlc");
+            parse_hlc(minted.as_str()).expect("SDK-minted HLC string is parseable by parse_hlc");
         Self {
             physical_ms: parts.physical_ms,
             logical: parts.logical,
@@ -70,9 +83,8 @@ impl Hlc {
     /// Format validation is delegated to the SDK's `validate_hlc_format` /
     /// `parse_hlc`, which enforce the strict v1 wire form
     /// (`^[0-9a-f]{12}-[0-9a-f]{4}-[0-9a-f]{8}$` — lowercase hex, fixed
-    /// widths). This replaces yougen's hand-rolled length checks, so a string
-    /// that is upper-case or wrong-width is rejected here exactly as the SDK
-    /// would reject it on the wire.
+    /// widths), so a string that is upper-case or wrong-width is rejected
+    /// here exactly as the SDK would reject it on the wire.
     pub fn parse(s: &str) -> Result<Self, HlcError> {
         validate_hlc_format(s).map_err(|_| HlcError::InvalidFormat(s.to_owned()))?;
         let parts = parse_hlc(s).map_err(|_| HlcError::InvalidFormat(s.to_owned()))?;
@@ -91,7 +103,7 @@ impl Hlc {
     /// via [`Self::try_encode`]: the candidate string is validated by
     /// `cokret_sdk::Hlc::new`, which rejects out-of-range components (e.g. a
     /// logical counter that does not fit the 4-hex field) instead of silently
-    /// truncating it the way yougen's old hand-rolled `format!` did.
+    /// truncating it.
     ///
     /// Every `Hlc` minted through [`Self::now`] / [`Self::from_parts`] /
     /// [`Self::parse`] in this crate carries spec-valid components, so this
@@ -105,8 +117,8 @@ impl Hlc {
 
     /// Fallible encode: returns the canonical hex string, or an error if the
     /// components do not fit the SDK's strict v1 wire format (e.g. a logical
-    /// counter wider than 4 hex digits). This is the SDK's overflow behaviour,
-    /// replacing yougen's old silent `logical.min(0xffff)` truncation.
+    /// counter wider than 4 hex digits). This is the SDK's overflow
+    /// behaviour — no silent truncation.
     pub fn try_encode(&self) -> Result<String, HlcError> {
         let candidate = format!(
             "{:012x}-{:04x}-{:08x}",
@@ -126,25 +138,6 @@ impl fmt::Display for Hlc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.encode())
     }
-}
-
-/// Hash a node identifier string to the 32-bit value used by [`Hlc`]'s
-/// `node_id` segment.
-///
-/// Uses the SDK's documented node-id derivation (SHA-256(`node_id`), first
-/// 4 bytes as 8 lowercase hex chars) without constructing `HlcGenerator`,
-/// whose wall-clock read is not available on wasm32-unknown-unknown.
-pub fn hash_node_id(node_id: &str) -> u32 {
-    u32::from_str_radix(&node_id_hex(node_id), 16)
-        .expect("node-id segment is 8 lowercase hex chars")
-}
-
-fn node_id_hex(identifier: &str) -> String {
-    let hash = Sha256::digest(identifier.as_bytes());
-    hash[0..4]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 /// A global monotonic sequence counter for operation ordering.
@@ -208,9 +201,8 @@ mod tests {
 
     #[test]
     fn encode_rejects_logical_overflow_instead_of_truncating() {
-        // The old hand-rolled `encode` did `logical.min(0xffff)`, silently
-        // truncating any logical counter that overflowed the 4-hex field.
-        // The SDK-backed encoder reports the overflow instead.
+        // The SDK-backed encoder reports a logical counter that overflows
+        // the 4-hex field instead of silently truncating it.
         let overflowing = Hlc::from_parts(0x0001_8ef0_1234, 0x0001_0000, 0xdead_beef);
         assert!(
             overflowing.try_encode().is_err(),
@@ -231,35 +223,23 @@ mod tests {
     }
 
     #[test]
-    fn hash_node_id_is_deterministic() {
-        assert_eq!(hash_node_id("device_1"), hash_node_id("device_1"));
-        assert_ne!(hash_node_id("device_1"), hash_node_id("device_2"));
+    fn now_node_segment_is_deterministic_per_identifier() {
+        // The node segment comes from the SDK's `compute_node_id` derivation
+        // (via generator construction): stable for the same identifier,
+        // distinct across identifiers.
+        let a1 = Hlc::now("device_1");
+        let a2 = Hlc::now("device_1");
+        let b = Hlc::now("device_2");
+        assert_eq!(a1.node_id, a2.node_id);
+        assert_ne!(a1.node_id, b.node_id);
     }
 
-    /// Pin yougen's `hash_node_id` to the same byte output as the SDK's
-    /// `HlcGenerator::compute_node_id`. The SDK's helper produces the
-    /// 8-hex-char node segment by SHA-256(input)[..4] formatted as
-    /// `{:02x}{:02x}{:02x}{:02x}`. Encoding our `u32` as `{:08x}` must
-    /// produce the same 8 chars; otherwise HLCs minted by yougen and
-    /// the SDK for the same DID disagree on the node segment.
     #[test]
-    fn hash_node_id_matches_sdk_compute_node_id() {
-        use sha2::{Digest, Sha256};
-        for input in [
-            "did:web:alice.example.com",
-            "did:web:bob.example.com",
-            "yougen",
-            "",
-            "01970e589d21-0001-a13f9c2e",
-        ] {
-            let digest = Sha256::digest(input.as_bytes());
-            let sdk_node: String = digest[0..4].iter().map(|b| format!("{:02x}", b)).collect();
-            let yougen_node = format!("{:08x}", hash_node_id(input));
-            assert_eq!(
-                yougen_node, sdk_node,
-                "node-id encoding diverged from SDK for {input:?}",
-            );
-        }
+    fn now_round_trips_through_sdk_wire_format() {
+        let hlc = Hlc::now("device_1");
+        let encoded = hlc.encode();
+        assert!(validate_hlc_format(&encoded).is_ok());
+        assert_eq!(Hlc::parse(&encoded).unwrap(), hlc);
     }
 
     #[test]

@@ -58,16 +58,54 @@ fn CardMarkdownEditor(
         let token = token.clone();
         let realm_id = realm_id.clone();
         move || {
-            if let Some(script) = toast_editor_bootstrap_script(
-                &host_id,
-                &fallback_id,
-                &value,
-                &base_url,
-                &token,
-                &realm_id,
-            ) {
-                let _ = document::eval(&script);
-            }
+            let Some(script) = toast_editor_bootstrap_script(&host_id, &fallback_id, &value)
+            else {
+                return;
+            };
+            // YOU-06-002: the editor JS only extracts file bytes and hands
+            // them to Rust over the eval channel; the upload itself runs
+            // through the canonical `CokretApi` pipeline (auth headers,
+            // retry/backoff, error-envelope decoding) instead of a JS
+            // `fetch` that hand-rolls the wire.
+            let mut eval = document::eval(&script);
+            let base_url = base_url.clone();
+            let token = token.clone();
+            let realm_id = realm_id.clone();
+            spawn(async move {
+                loop {
+                    let request: Value = match eval.recv().await {
+                        Ok(request) => request,
+                        Err(_) => break,
+                    };
+                    match request.get("kind").and_then(Value::as_str) {
+                        Some("upload") => {}
+                        // The JS side releases this bridge (editor torn
+                        // down, bootstrap superseded, or fallback mode).
+                        Some("dispose") => break,
+                        _ => continue,
+                    }
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    let reply = match toast_editor_upload_via_api(
+                        &base_url,
+                        token.clone(),
+                        &realm_id,
+                        &request,
+                    )
+                    .await
+                    {
+                        Ok((blob_ref, media_type)) => json!({
+                            "id": id,
+                            "ok": true,
+                            "blob_ref": blob_ref,
+                            "media_type": media_type,
+                        }),
+                        Err(error) => json!({"id": id, "ok": false, "error": error}),
+                    };
+                    if eval.send(reply).is_err() {
+                        break;
+                    }
+                }
+            });
         }
     });
 
@@ -125,21 +163,58 @@ fn CardDetailEditActions(
     }
 }
 
-fn toast_editor_bootstrap_script(
-    host_id: &str,
-    fallback_id: &str,
-    value: &str,
+/// Decode one `uploadImage` bridge request from the Toast editor JS and run
+/// it through the canonical Rust blob pipeline
+/// (`CokretApi::upload_blob_bytes_scoped`, multipart/form-data per
+/// YOU-01-007), so authorization, retry/backoff and spec error-envelope
+/// decoding stay owned by the network layer. Returns
+/// `(blob_ref, media_type)` for the editor to build its markdown target.
+async fn toast_editor_upload_via_api(
     base_url: &str,
-    token: &str,
+    token: String,
     realm_id: &str,
-) -> Option<String> {
+    request: &Value,
+) -> Result<(String, Option<String>), String> {
+    use base64::Engine as _;
+    let content_base64 = request
+        .get("content_base64")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "upload request missing content_base64".to_owned())?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(content_base64)
+        .map_err(|error| format!("invalid base64 content: {error}"))?;
+    if bytes.is_empty() {
+        return Err("upload request carries no bytes".to_owned());
+    }
+    let media_type = request
+        .get("media_type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|media_type| !media_type.is_empty())
+        .unwrap_or("application/octet-stream")
+        .to_owned();
+    let filename = request
+        .get("filename")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|filename| !filename.is_empty())
+        .map(ToOwned::to_owned);
+    let realm_id = realm_id.trim();
+    let realm_id = (!realm_id.is_empty()).then(|| realm_id.to_owned());
+    let outcome = with_authed_api(base_url, token, move |api| async move {
+        api.upload_blob_bytes_scoped(bytes, &media_type, realm_id.as_deref(), filename.as_deref())
+            .await
+    })
+    .await
+    .map_err(|error| error.display())?;
+    Ok((outcome.blob_ref.to_string(), outcome.media_type))
+}
+
+fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) -> Option<String> {
     let config = serde_json::to_string(&json!({
         "hostId": host_id,
         "fallbackId": fallback_id,
         "value": value,
-        "baseUrl": base_url,
-        "token": token,
-        "realmId": realm_id,
         "scriptUrl": TOAST_EDITOR_SCRIPT_URL,
         "cssUrl": TOAST_EDITOR_CSS_URL,
     }))
@@ -147,15 +222,23 @@ fn toast_editor_bootstrap_script(
     Some(format!(
         r##"(async () => {{
     const config = {config};
+    // Tell the Rust side of this eval channel it is not needed (editor
+    // unavailable, bootstrap superseded, or fallback mode) so its upload
+    // bridge task ends instead of waiting forever.
+    const releaseBridge = () => {{
+        try {{ dioxus.send({{ kind: "dispose" }}); }} catch (_) {{}}
+    }};
     const host = document.getElementById(config.hostId);
     const fallback = document.getElementById(config.fallbackId);
     if (!host || !fallback) {{
+        releaseBridge();
         return;
     }}
 
     const registry = window.__yougenToastEditors || (window.__yougenToastEditors = new Map());
     const existing = registry.get(config.hostId);
     if (existing && host.childElementCount > 0) {{
+        releaseBridge();
         return;
     }}
 
@@ -198,16 +281,19 @@ fn toast_editor_bootstrap_script(
     }} catch (error) {{
         console.warn("[yougen] Toast UI Editor unavailable; using textarea fallback", error);
         fallback.classList.remove("toast-fallback-hidden");
+        releaseBridge();
         return;
     }}
 
     if (!window.toastui || !window.toastui.Editor) {{
         fallback.classList.remove("toast-fallback-hidden");
+        releaseBridge();
         return;
     }}
 
     if (existing) {{
-        try {{ existing.destroy(); }} catch (_) {{}}
+        try {{ existing.dispose(); }} catch (_) {{}}
+        try {{ existing.editor.destroy(); }} catch (_) {{}}
         registry.delete(config.hostId);
     }}
 
@@ -226,49 +312,59 @@ fn toast_editor_bootstrap_script(
         fallback.dispatchEvent(event);
     }};
 
+    // YOU-06-002: JS never talks to the protocol endpoint itself. It only
+    // extracts the picked file's bytes and hands them to Rust over the
+    // bidirectional eval channel; the upload runs through the canonical
+    // `CokretApi::upload_blob_bytes_scoped` pipeline and Rust sends the
+    // typed `BlobUploadOutcome` fields back for the markdown insert.
+    let nextUploadId = 1;
+    const pendingUploads = new Map();
+
+    (async () => {{
+        for (;;) {{
+            let reply;
+            try {{ reply = await dioxus.recv(); }} catch (_) {{ break; }}
+            if (!reply || typeof reply !== "object") {{
+                continue;
+            }}
+            const resolve = pendingUploads.get(reply.id);
+            if (resolve) {{
+                pendingUploads.delete(reply.id);
+                resolve(reply);
+            }}
+        }}
+    }})();
+
     const uploadImage = async (blob, callback) => {{
         try {{
-            const base = (config.baseUrl || window.location.origin).replace(/\/+$/, "");
-            const headers = {{}};
-            if (config.token) {{
-                headers.authorization = `Bearer ${{config.token}}`;
-            }}
             const safeName = (blob.name || "")
                 .split(/[\\/]/)
                 .pop()
                 .replace(/[^A-Za-z0-9._-]+/g, "_")
                 .replace(/^[._-]+|[._-]+$/g, "")
                 .slice(0, 128);
-            // YOU-01-007: spec blob_upload_request_body is
-            // multipart/form-data — content + size_bytes (+ optional
-            // realm_id / media_type / filename). The browser sets the
-            // multipart boundary content-type itself.
-            const mediaType = blob.type || "application/octet-stream";
-            const form = new FormData();
-            form.append("content", blob, safeName || "upload.bin");
-            form.append("size_bytes", String(blob.size));
-            form.append("media_type", mediaType);
-            if (config.realmId) {{
-                form.append("realm_id", config.realmId);
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            let binary = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) {{
+                binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
             }}
-            if (safeName) {{
-                form.append("filename", safeName);
-            }}
-            const response = await fetch(`${{base}}/_cokret/self/blob/upload`, {{
-                method: "POST",
-                headers,
-                body: form
+            const id = nextUploadId++;
+            const reply = new Promise((resolve) => pendingUploads.set(id, resolve));
+            dioxus.send({{
+                kind: "upload",
+                id,
+                filename: safeName,
+                media_type: blob.type || "application/octet-stream",
+                content_base64: btoa(binary)
             }});
-            if (!response.ok) {{
-                throw new Error(`upload failed: ${{response.status}}`);
+            const outcome = await reply;
+            if (!outcome.ok) {{
+                throw new Error(outcome.error || "upload failed");
             }}
-            const body = await response.json();
-            const blobRef = body.blob_ref || body.blobRef || body.blob_id;
-            if (!blobRef) {{
-                throw new Error("upload response missing blob_ref");
-            }}
-            const markdownMediaType = blob.type || body.media_type || "image/png";
-            const markdownTarget = blobRef.includes("#") ? blobRef : `${{blobRef}}#${{markdownMediaType}}`;
+            const markdownMediaType = blob.type || outcome.media_type || "image/png";
+            const markdownTarget = outcome.blob_ref.includes("#")
+                ? outcome.blob_ref
+                : `${{outcome.blob_ref}}#${{markdownMediaType}}`;
             callback(markdownTarget, blob.name || "image");
         }} catch (error) {{
             console.warn("[yougen] image upload failed", error);
@@ -297,7 +393,7 @@ fn toast_editor_bootstrap_script(
     }});
 
     editor.on("change", () => sync(editor));
-    registry.set(config.hostId, editor);
+    registry.set(config.hostId, {{ editor, dispose: releaseBridge }});
 }})();"##
     ))
 }

@@ -47,7 +47,8 @@ pub struct CirclePanelProps {
 
 /// One row in the member list. Stays a small struct so the parent route
 /// can build it from either a synchronous projection or an async
-/// `/_cokret/self/circles/:id/members` fetch.
+/// product-plane `/_soland/self/circles/:id/members` fetch(CKP-0014
+/// 落地后迁 `/_cokret`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CircleMemberRow {
     pub actor_id: String,

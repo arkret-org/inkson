@@ -368,8 +368,9 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(device_send.ok);
 
+    // SDK 形:to-device 队列字段为 `messages`(非旧 `events`)。
     let device_receive: yougen::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
-        "events": [],
+        "messages": [],
         "next_cursor": "ck:cursor:device-messages",
         "limited": false
     }))
@@ -404,13 +405,16 @@ fn yougen_accepts_server_contract_payloads() {
         format!("sha256:{}", "ab".repeat(32))
     );
 
-    let report: yougen::models::SolandModerationReportOutcome = serde_json::from_value(json!({
+    // SDK spec 形:status `submitted`、routed_to 为纯 DID 数组(无 fragment)。
+    let report: yougen::models::ModerationReportOutcome = serde_json::from_value(json!({
         "report_id": "ck:report:1760000000000",
-        "status": "queued",
-        "routed_to": ["did:web:server.local#moderation"]
+        "status": "submitted",
+        "routed_to": ["did:web:server.local"]
     }))
     .unwrap();
-    assert_eq!(report.status, "queued");
+    assert_eq!(report.status, "submitted");
+    assert_eq!(report.routed_to.len(), 1);
+    assert_eq!(report.routed_to[0].as_str(), "did:web:server.local");
 
     let error = decode_cokret_error(
         StatusCode::CONFLICT,

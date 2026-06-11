@@ -890,21 +890,11 @@ pub use cokret_sdk::model::{
     KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
 };
 
-/// Mirror of soland's `SolandModerationReportOutcome` wire shape for
-/// `POST /_cokret/self/moderation/report`. Named with the `Soland` prefix
-/// because the SDK core `ModerationReportOutcome` is stricter
-/// (`routed_to: Vec<Did>`, scalar DIDs only per
-/// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`),
-/// while soland currently emits fragment-bearing routing targets
-/// (`did:...#moderation`) and a `queued` status outside the spec enum —
-/// the strict SDK type would fail to decode that wire.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SolandModerationReportOutcome {
-    pub report_id: String,
-    pub status: String,
-    #[serde(default)]
-    pub routed_to: Vec<String>,
-}
+/// `POST /_cokret/self/moderation/report` response. soland emits the SDK
+/// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
+/// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
+/// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
+pub use cokret_sdk::model::ModerationReportOutcome;
 
 // ── Directory ───────────────────────────────────────────────────
 

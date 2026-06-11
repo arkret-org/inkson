@@ -104,13 +104,13 @@ use crate::models::{
     MediaIceConfigOutcome, MediaIceConfigRequestBody, MimiGroupInfoOutcome,
     MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome, MimiProviderDirectory,
     MimiProxyDownloadOutcome, MimiReportAbuseOutcome, MimiRequestConsentOutcome,
-    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, OP_SNAPSHOT_HEAD, OkOutcome,
-    PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate, RealmPolicyOutcome,
+    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, ModerationReportOutcome, OP_SNAPSHOT_HEAD,
+    OkOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate, RealmPolicyOutcome,
     ReceiptOutcome, ResolveHandleOutcome, ResolveRealmOutcome, SearchActorsOutcome,
     SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
     SolandAccountRegisterOutcome, SolandAccountUpdateProfileOutcome,
-    SolandDirectoryDescribeResBody, SolandModerationReportOutcome, SpaceCreateOutcome,
-    SubmitEventOutcome, SyncDescribeOutcome, TypingOutcome, VerifyDeviceOutcome,
+    SolandDirectoryDescribeResBody, SpaceCreateOutcome, SubmitEventOutcome, SyncDescribeOutcome,
+    TypingOutcome, VerifyDeviceOutcome,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,

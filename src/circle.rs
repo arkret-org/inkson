@@ -108,8 +108,9 @@ impl CircleSummary {
     }
 }
 
-/// Decode one Circle projection row (as returned by
-/// `GET /_cokret/self/circles` / `/circles/{id}`) into a
+/// Decode one Circle projection row (as returned by the product-plane
+/// `GET /_soland/self/circles` / `/circles/{id}`; CKP-0014 落地后迁
+/// `/_cokret`) into a
 /// [`CircleSummary`]. Tolerant of the symbol being either a bare glyph
 /// string or the canonical `{ "glyph": "shield" }` object, and of the
 /// display fields living either at the row root or nested under
@@ -166,7 +167,8 @@ pub fn circle_summary_from_json(value: &serde_json::Value) -> Option<CircleSumma
     })
 }
 
-/// Decode the `GET /_cokret/self/circles?realm_id=…` directory response
+/// Decode the product-plane `GET /_soland/self/circles?realm_id=…`
+/// (CKP-0014 落地后迁 `/_cokret`) directory response
 /// into a list of [`CircleSummary`]. Accepts either a bare JSON array or
 /// an object wrapping the rows under `circles` / `items`.
 pub fn circle_summaries_from_json(value: &serde_json::Value) -> Vec<CircleSummary> {
@@ -181,7 +183,8 @@ pub fn circle_summaries_from_json(value: &serde_json::Value) -> Vec<CircleSummar
 }
 
 /// Decode a Circle's member roster (the `members` collection on the
-/// `GET /_cokret/self/circles/{id}` response) into `(actor_id, role)`
+/// product-plane `GET /_soland/self/circles/{id}` response; CKP-0014
+/// 落地后迁 `/_cokret`) into `(actor_id, role)`
 /// pairs. The view layer wraps these into its own row struct so this
 /// model module stays free of any UI dependency.
 pub fn circle_members_from_json(value: &serde_json::Value) -> Vec<(String, String)> {
