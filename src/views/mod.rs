@@ -44,11 +44,6 @@ pub mod chat;
 /// archive / scope-rotate controls). Rendered at `/circles/:circle_id`
 /// (route added by the follow-up commit that wires it into the router).
 pub mod circle;
-/// First end-to-end UI Move-flow PoC.
-/// "Grant consent" button under settings → Privacy that builds + signs +
-/// POSTs a `ck.consent.grant` Move via the move_builder + api::submit_move
-/// pipeline.
-pub mod consent_demo;
 pub mod contacts;
 pub mod dashboard;
 /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the

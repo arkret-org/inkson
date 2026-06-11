@@ -1,7 +1,7 @@
 /**
  * Feature coverage anchors — pin the visible protocol surface that
- * `claude-design/` and `_todos.md` list, end-to-end against the mocked
- * Cokret server.
+ * the checked-in protocol specs describe, end-to-end against the
+ * mocked Cokret server.
  *
  * Each test makes a single concrete claim about a stable UI surface
  * (panel data-testid + key control). The deeper protocol flow (full
@@ -49,7 +49,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Board / Flow / ck.flow.move drag conflict ----
-  // claude-design: desktop/board.html
+  // UI surface: board
   // spec: overview/current-model.md §4, models/views.md §6
   test("board: drag flow across lists writes ck.flow.move", async ({ page }) => {
     // The drag-drop pipeline is exercised end-to-end by
@@ -78,7 +78,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Flow detail · embedded discussion ----
-  // claude-design: desktop/flow-detail.html
+  // UI surface: flow detail
   // spec: overview/current-model.md §3
   test("card detail drawer embeds the discussion composer", async ({ page }) => {
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
@@ -97,7 +97,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Identity / Device — three independent concerns ----
-  // claude-design: desktop/devices.html, desktop/verify-device.html
+  // UI surface: devices and verify-device
   // spec: crypto-media/devices-and-auth.md §1.2
   test("device verification: SAS match writes ck.device.authorize + ck.device.cross_sign", async ({ page }) => {
     // pin the SAS verification UI surface. The
@@ -224,7 +224,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Recovery — three layers ----
-  // claude-design: desktop/recovery.html
+  // UI surface: recovery
   // spec: crypto-media/devices-and-auth.md §4
   test("recovery: encrypted vault rekey rewrites cipher blob client-side", async ({ page }) => {
     // D1 — formerly skipped. The recovery view stretches the passphrase
@@ -299,7 +299,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Discoverability ≠ Join Rule ≠ History ----
-  // claude-design: desktop/directory.html
+  // UI surface: directory
   // spec: discovery/discovery-directory.md §2
   test("directory: invite_only realm hides existence from search", async ({ page }) => {
     // The keyword-search path must respect
@@ -352,7 +352,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Capability approval workflow ----
-  // claude-design: desktop/realm-admin.html
+  // UI surface: realm admin
   // spec: authz/capabilities.md
   test("realm-admin: capability grant and revoke live under security", async ({ page }) => {
     await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/security", {
@@ -366,7 +366,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Audit — projection origin / conflict trail ----
-  // claude-design: desktop/audit.html
+  // UI surface: audit
   // spec: sync/operations-sync.md
   test("audit: conflict trail shows winner + superseded events", async ({ page }) => {
     // the audit view exposes three counted
@@ -383,7 +383,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Applet / Agent / Portal Space ----
-  // claude-design: desktop/applets.html
+  // UI surface: applets
   // spec: extensions/applet-integration.md
   test("applets: register new applet writes signed ck.applet.registration", async ({ page }) => {
     // The applet surface is compiled for unit coverage but hidden in
@@ -406,7 +406,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- WebRTC call ----
-  // claude-design: desktop/call.html
+  // UI surface: call
   // spec: crypto-media/webrtc-signaling.md
   test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({ page }) => {
     // yougen ships the call SIGNALING surface
@@ -423,7 +423,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Push gateway masking ----
-  // claude-design: desktop/inbox.html, mobile/inbox.html
+  // UI surface: inbox
   // spec: discovery/push-notifications.md, crypto-media/devices-and-auth.md §5
   test("push gateway only ships background_sync_needed payload", async ({ page }) => {
     // the push-register payload yougen sends to

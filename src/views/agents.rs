@@ -1177,7 +1177,7 @@ pub fn PersonalAgentAdminPanel(
                     span { class: "badge", "CKP-0008 / CKP-0009" }
                 }
                 div { class: "muted",
-                    "Provision and operate native personal agents. Each button below maps 1:1 to a soland P2 endpoint; deeper form layouts are TODO(P3-impl) stubs while the reducer projection lands."
+                    "Provision and operate native personal agents. Each button below maps 1:1 to a soland P2 endpoint; detailed controls remain preview surfaces while the reducer projection lands."
                 }
                 if !last_op_status().is_empty() {
                     div { class: "muted", "data-testid": "agent-admin-last-op", "{last_op_status}" }
@@ -2034,17 +2034,17 @@ pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
             div { class: "metric-grid",
                 div { class: "metric",
                     strong { "Device list" }
-                    span { class: "badge amber", "TODO(P3-impl)" }
+                    span { class: "badge amber", "Pending" }
                     div { class: "muted", "Awaiting soland sidecar projection" }
                 }
                 div { class: "metric",
                     strong { "Agent runtime endpoint" }
-                    span { class: "badge amber", "TODO(P3-impl)" }
+                    span { class: "badge amber", "Pending" }
                     div { class: "muted", "Awaiting ck.agent.endpoint resolution" }
                 }
                 div { class: "metric",
                     strong { "Last action_approve nonce" }
-                    span { class: "badge amber", "TODO(P3-impl)" }
+                    span { class: "badge amber", "Pending" }
                     div { class: "muted", "Awaiting action_request stream" }
                 }
             }

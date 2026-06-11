@@ -205,9 +205,8 @@ fn raw_operation_kind(payload: &Value) -> Option<&str> {
 /// `state.json` storage is retained only for tests and explicitly enabled
 /// development fallback.
 ///
-/// This replaces the deterministic `[42; 32]` demo seed used by every Move
-/// builder caller (`consent_demo::demo_signing_key`,
-/// `realm_admin::build_signed_*`, etc.). Fresh installs generate via
+/// This replaces the deterministic `[42; 32]` demo seed used by older Move
+/// builder prototypes. Fresh installs generate via
 /// `getrandom::fill` on first access; existing dev installs that still
 /// hold a `[42; 32]` cache are simply broken - they regenerate the next
 /// time the store is loaded with no record present (Cokret v1 protocol is

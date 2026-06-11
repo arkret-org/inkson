@@ -157,7 +157,7 @@ cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 keyring = {workspace = true,features = ["apple-native", "windows-native", "linux-native"]}
 notify-rust = {workspace = true}
-reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "rustls-tls", "stream"]}
+reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "rustls", "stream"]}
 sentry = {workspace = true,default-features = false,features = ["backtrace", "contexts", "panic", "reqwest", "rustls"]}
 tokio = {workspace = true,features = ["macros", "rt-multi-thread", "sync", "time"]}
 

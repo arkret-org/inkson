@@ -3509,19 +3509,6 @@ pub fn SettingsPanel(
                     }
                 }
 
-                        // ── Consent grant event PoC ────
-                        // First user-facing button on the anchored cell pipeline. Builds a
-                        // ck.consent.grant event, signs with a deterministic demo ed25519 key
-                        // (TODO real-key-management), and submits it through ck.events.submit.
-                        if crate::views::agents::agents_enabled() {
-                            crate::views::consent_demo::ConsentGrantDemoCard {
-                                base_url,
-                                token,
-                                state_store,
-                                account_did,
-                            }
-                        }
-
                         }
                     }
 
