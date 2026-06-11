@@ -11,7 +11,9 @@
 use std::path::PathBuf;
 
 use serde_json::Value;
-use yougen::canonical::{canonical_json_bytes, canonical_json_string, canonical_sha256};
+use yougen::canonical::{
+    canonical_json_bytes, canonical_json_string, canonical_sha256, hex_encode,
+};
 
 fn fixture_path(name: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -32,7 +34,7 @@ fn fixture_path(name: &str) -> PathBuf {
 fn canonical_sha256_of_str(bytes: &str) -> String {
     use sha2::{Digest, Sha256};
     let h = Sha256::digest(bytes.as_bytes());
-    format!("sha256:{h:x}")
+    format!("sha256:{}", hex_encode(&h))
 }
 
 fn load_fixture(name: &str) -> Value {

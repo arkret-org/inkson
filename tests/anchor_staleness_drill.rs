@@ -34,6 +34,7 @@ use ed25519_dalek::SigningKey;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use yougen::api;
+use yougen::canonical::hex_encode;
 use yougen::operation::EventEnvelope;
 
 const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
@@ -63,7 +64,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
     hasher.update(envelope.kind.as_bytes());
     hasher.update(b":anchor_staleness_drill");
     let digest = hasher.finalize();
-    envelope.anchor_ref = Some(format!("ck:anchor:sha256:{:x}", digest));
+    envelope.anchor_ref = Some(format!("ck:anchor:sha256:{}", hex_encode(&digest)));
 
     let signer_did = TEST_actor_id;
     let key_id = format!("{signer_did}#device");

@@ -244,7 +244,7 @@ pub fn VerifyDevicePanel(
                     }
                     let messages = match crate::views::helpers::with_authed_api(
                         &base,
-                        api_token,
+                        api_token.clone(),
                         |api| async move { api.receive_device_messages().await },
                     )
                     .await

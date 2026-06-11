@@ -191,9 +191,8 @@ impl TrustBundle {
     }
 
     /// Verify a [`FederationTransaction`] against this bundle. Checks origin
-    /// pinning + destination matching. Signature verification is delegated to
-    /// the SDK's `FederationManager` (the active service DID's public key is
-    /// the trust anchor we pinned).
+    /// pinning + destination matching, then verifies the local federation
+    /// transcript against the pinned anchor key.
     pub fn verify_transaction(
         &self,
         local_domain: &str,
@@ -587,11 +586,9 @@ mod tests {
     #[test]
     fn reverify_promotes_transactions_whose_origin_was_pinned_after_quarantine() {
         let mut bundle = TrustBundle::new();
-        // Build a signed transaction the SDK can verify.
-        let mut sdk_mgr = FederationManager::new();
-        sdk_mgr.add_trust_anchor(anchor("bob.example", "shared-key"));
-        let tx =
-            sdk_mgr.create_transaction("bob.example", "alice.example", Vec::new(), "shared-key");
+        // Build a transaction signed with the local federation transcript.
+        let mut tx = unpinned_tx();
+        tx.signature = federation_transaction_signature(&tx, "shared-key");
 
         // Initially, bob.example isn't pinned → quarantine.
         bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));

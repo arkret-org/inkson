@@ -351,7 +351,11 @@ mod tests {
         EventEnvelope {
             event_id: "ck:event:1".to_owned(),
             kind: kind.to_owned(),
+            effective_scope: None,
             actor_id: "did:web:alice".to_owned(),
+            executed_by: None,
+            authorization_ref: None,
+            actor_kind: None,
             actor_seq: 1,
             realm_id: "ck:realm:1".to_owned(),
             created_at: "2026-05-19T00:00:00Z".to_owned(),

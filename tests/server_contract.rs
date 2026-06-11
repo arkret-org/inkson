@@ -250,9 +250,9 @@ fn yougen_accepts_server_contract_payloads() {
         }]
     }))
     .unwrap();
-    assert_eq!(resolved.join_rule, "public");
+    assert_eq!(resolved.join_rule, Some(cokret_sdk::JoinRule::Public));
     assert_eq!(
-        resolved.join_candidates[0].service_did,
+        resolved.join_candidates[0].service_did.as_str(),
         "did:web:server.local"
     );
 
