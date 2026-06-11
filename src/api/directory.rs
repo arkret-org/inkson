@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::ServerDescriptionExt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InviteeResolution {

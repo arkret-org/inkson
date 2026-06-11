@@ -416,6 +416,7 @@ async fn run_iteration(
             }
             let selected_realm_id = ctx.selected_realm_id.read().clone();
             if !selected_realm_id.is_empty() {
+                let mut state_store = ctx.state_store;
                 match api.snapshot_head(&selected_realm_id).await {
                     Ok(Some(manifest)) => {
                         tracing::debug!(
@@ -425,7 +426,7 @@ async fn run_iteration(
                         );
                     }
                     Ok(None) => {
-                        ctx.state_store.write().mark_snapshot_degraded(
+                        state_store.write().mark_snapshot_degraded(
                             selected_realm_id.clone(),
                             "snapshot head unavailable after stale_frontier",
                         );
@@ -436,7 +437,7 @@ async fn run_iteration(
                             realm_id = %selected_realm_id,
                             "stale_frontier recovery: snapshot head probe failed"
                         );
-                        ctx.state_store.write().mark_snapshot_degraded(
+                        state_store.write().mark_snapshot_degraded(
                             selected_realm_id.clone(),
                             format!("snapshot head probe failed: {snapshot_error}"),
                         );
