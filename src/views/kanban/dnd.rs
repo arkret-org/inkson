@@ -1195,7 +1195,7 @@ pub(super) fn rebase_flow_position_after_conflict(
 /// the cell is in initial state) so the next CAS Move uses
 /// `head_eq null`.
 pub(super) fn locate_flow_position_in_projection(
-    projection: &cokret_sdk::CollectionProjectionResBody,
+    projection: &cokret_sdk::CollectionProjectionOutcome,
     flow_id: &str,
 ) -> FlowPositionExpectation {
     for group in &projection.groups {

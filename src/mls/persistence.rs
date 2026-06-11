@@ -338,7 +338,10 @@ impl MlsSnapshotEnvelope {
     pub fn to_key_backup_body(&self, backup_id: &str, actor_id: &str, device_id: &str) -> Value {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
         let ciphertext = URL_SAFE_NO_PAD.encode(&envelope_bytes);
-        let ciphertext_digest = format!("sha256:{:x}", Sha256::digest(&envelope_bytes));
+        let ciphertext_digest = format!(
+            "sha256:{}",
+            crate::canonical::hex_encode(&Sha256::digest(&envelope_bytes))
+        );
         let nonce_material = format!(
             "{backup_id}|{actor_id}|{device_id}|mls_history|kb_mls_snapshot_v1|{}|xchacha20_poly1305",
             self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true)

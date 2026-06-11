@@ -8633,9 +8633,9 @@ mod tests {
     fn collection_projection_maps_to_kanban_columns() {
         use cokret_sdk::{
             CollectionProjectionDiscussion, CollectionProjectionGroup, CollectionProjectionItem,
-            CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer,
+            CollectionProjectionOutcome, ViewId, ViewKind, ViewRenderer,
         };
-        let projection = CollectionProjectionResBody {
+        let projection = CollectionProjectionOutcome {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,
             view_id: ViewId::new("ck:view:01904100-0000-7000-8000-000000000001").unwrap(),
@@ -8701,12 +8701,12 @@ mod tests {
     #[test]
     fn collection_projection_overlay_applies_remote_encrypted_flow_updates() {
         use cokret_sdk::{
-            CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionResBody,
+            CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionOutcome,
             ViewId, ViewKind, ViewRenderer,
         };
         let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
         let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000003";
-        let projection = CollectionProjectionResBody {
+        let projection = CollectionProjectionOutcome {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,
             view_id: ViewId::new("ck:view:01904100-0000-7000-8000-000000000001").unwrap(),
@@ -10375,9 +10375,9 @@ mod tests {
     fn locate_flow_position_finds_present_flow_with_rank() {
         use cokret_sdk::{
             CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionPosition,
-            CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer,
+            CollectionProjectionOutcome, ViewId, ViewKind, ViewRenderer,
         };
-        let projection = CollectionProjectionResBody {
+        let projection = CollectionProjectionOutcome {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,
             view_id: ViewId::new("ck:view:01904100-0000-7000-8000-000000000001").unwrap(),
@@ -10415,8 +10415,8 @@ mod tests {
     /// is actually non-initial, which is the safe behaviour.
     #[test]
     fn locate_flow_position_missing_flow_returns_initial() {
-        use cokret_sdk::{CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer};
-        let projection = CollectionProjectionResBody {
+        use cokret_sdk::{CollectionProjectionOutcome, ViewId, ViewKind, ViewRenderer};
+        let projection = CollectionProjectionOutcome {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,
             view_id: ViewId::new("ck:view:01904100-0000-7000-8000-000000000001").unwrap(),

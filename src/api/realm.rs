@@ -701,11 +701,11 @@ impl CokretApi {
     //
     // Pairs with cokret-rust-sdk@9d02761 + soland@1cdab88.
     // POST /_cokret/self/views/{view_id}/projection returns the typed
-    // CollectionProjectionResBody defined in cokret_core::model.
+    // CollectionProjectionOutcome defined in cokret_core::model.
     pub async fn collection_projection(
         &self,
         view_id: &str,
-    ) -> anyhow::Result<cokret_sdk::CollectionProjectionResBody> {
+    ) -> anyhow::Result<cokret_sdk::CollectionProjectionOutcome> {
         self.post_json(
             &format!("_cokret/self/views/{view_id}/projection"),
             json!({}),

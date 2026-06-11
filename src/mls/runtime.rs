@@ -869,8 +869,8 @@ pub fn apply_welcome_messages_with_device_snapshot(
             }
         };
         // YOU-02-005: epoch guard against rolling the realm snapshot backwards.
-        // A replayed / re-delivered Welcome (device_messages GET does not ack,
-        // so the same `ck.mls.welcome` can be returned repeatedly) must not
+        // A replayed / re-delivered Welcome (device_messages GET is read-only
+        // until the client consumes an explicit ack token) must not
         // overwrite a snapshot that has already advanced past the join epoch.
         // Doing so would discard the sender ratchet position (risking AEAD
         // generation/nonce reuse on the next send) and desync `expected_prev_epoch`
@@ -1177,7 +1177,7 @@ pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoj
     use unicode_normalization::UnicodeNormalization;
 
     let nfc: String = canonical_emoji.nfc().collect();
-    let mut mac = <Hmac<Sha256>>::new_from_slice(exporter_secret)
+    let mut mac = <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(exporter_secret)
         .expect("HMAC-SHA256 accepts a key of any length");
     mac.update(nfc.as_bytes());
     let tag = mac.finalize().into_bytes();

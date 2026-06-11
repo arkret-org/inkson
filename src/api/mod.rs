@@ -97,14 +97,15 @@ use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
     AccountDataSetOutcome, AuthzCheckOutcome, BackfillOutcome, BlobUploadOutcome,
     ClientSyncOutcome, ConsentCellOutcome, ConsentCellsOutcome, ContactOutcome, ContactsOutcome,
-    DevLoginOutcome, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustOutcome,
-    EphemeralSubmitOutcome, GrantList, HealthOutcome, IdentityDescribeOutcome,
-    IdentityResolveOutcome, IndexSearchOutcome, InvitesOutcome, KeysClaimOutcome, KeysQueryOutcome,
-    KeysUploadOutcome, LogoutOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody,
-    MimiGroupInfoOutcome, MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome,
-    MimiProviderDirectory, MimiProxyDownloadOutcome, MimiReportAbuseOutcome,
-    MimiRequestConsentOutcome, MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, OP_SNAPSHOT_HEAD,
-    OkOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate, RealmPolicyOutcome,
+    DevLoginOutcome, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
+    DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustOutcome, EphemeralSubmitOutcome,
+    GrantList, HealthOutcome, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchOutcome,
+    InvitesOutcome, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutOutcome,
+    MediaIceConfigOutcome, MediaIceConfigRequestBody, MimiGroupInfoOutcome,
+    MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome, MimiProviderDirectory,
+    MimiProxyDownloadOutcome, MimiReportAbuseOutcome, MimiRequestConsentOutcome,
+    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, OP_SNAPSHOT_HEAD, OkOutcome,
+    PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate, RealmPolicyOutcome,
     ReceiptOutcome, ResolveHandleOutcome, ResolveRealmOutcome, SearchActorsOutcome,
     SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
     SolandAccountRegisterOutcome, SolandAccountUpdateProfileOutcome,
@@ -2361,7 +2362,10 @@ pub fn build_signed_device_verification_proof(
             "kind": "detached_jws",
             "alg": "EdDSA",
             "verification_method": format!("{}#yougen-device", from_device),
-            "payload_digest": format!("sha256:{:x}", Sha256::digest(&canonical)),
+            "payload_digest": format!(
+                "sha256:{}",
+                crate::canonical::hex_encode(&Sha256::digest(&canonical))
+            ),
             "jws": jws,
         }
     }))
@@ -2965,6 +2969,16 @@ fn merge_account_subscribe_delta(acc: &mut ClientSyncOutcome, next: ClientSyncOu
     acc.cursor = next.cursor;
     acc.left_realms.extend(next.left_realms);
     acc.to_device.extend(next.to_device);
+    if next.to_device_ack_token.is_some() {
+        acc.to_device_ack_token = next.to_device_ack_token;
+    }
+    acc.to_device_limited = next.to_device_limited;
+    if next.to_device_next_cursor.is_some() {
+        acc.to_device_next_cursor = next.to_device_next_cursor;
+    }
+    if next.to_device_lost.is_some() {
+        acc.to_device_lost = next.to_device_lost;
+    }
     acc.account_data.extend(next.account_data);
     acc.presence.extend(next.presence);
     if !next.device_lists.is_null() {

@@ -5982,6 +5982,12 @@ async fn bootstrap_mls_welcome_for_realm(
     )
     .await
     .map_err(|error| error.display())?;
+    let ack_token = messages.ack_token.clone();
+    let can_ack_welcome_batch = !messages.messages.is_empty()
+        && messages
+            .messages
+            .iter()
+            .all(|message| message.kind == "ck.mls.welcome");
 
     // Runs on every target now that OpenMLS builds + runs under wasm32
     // (the browser uses the in-tree OpenMLS via the `js` feature). Previously
@@ -6015,6 +6021,21 @@ async fn bootstrap_mls_welcome_for_realm(
             first_error = welcome_outcome.first_error.as_deref().unwrap_or(""),
             "some MLS welcome(s) failed to apply"
         );
+    }
+    if can_ack_welcome_batch
+        && welcome_outcome.failed == 0
+        && (welcome_outcome.applied > 0 || welcome_outcome.skipped_stale > 0)
+        && let Some(ack_token) = ack_token
+    {
+        if let Err(error) = crate::views::helpers::with_authed_api(
+            &base_url,
+            session_token.clone(),
+            |api| async move { api.ack_device_messages(&ack_token).await },
+        )
+        .await
+        {
+            tracing::debug!(?error, "failed to ack applied MLS welcome device messages");
+        }
     }
 
     let applied = welcome_outcome.applied;

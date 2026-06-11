@@ -625,7 +625,10 @@ fn random_base64url(bytes_len: usize) -> anyhow::Result<String> {
 }
 
 fn sha256_digest(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!(
+        "sha256:{}",
+        crate::canonical::hex_encode(&Sha256::digest(bytes))
+    )
 }
 
 fn decode_fixed<const N: usize>(value: &str) -> anyhow::Result<[u8; N]> {

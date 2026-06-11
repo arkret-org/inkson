@@ -157,7 +157,7 @@ cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 keyring = {workspace = true,features = ["apple-native", "windows-native", "linux-native"]}
 notify-rust = {workspace = true}
-reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "rustls", "stream"]}
+reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "rustls", "stream", "form"]}
 sentry = {workspace = true,default-features = false,features = ["backtrace", "contexts", "panic", "reqwest", "rustls"]}
 tokio = {workspace = true,features = ["macros", "rt-multi-thread", "sync", "time"]}
 
@@ -189,7 +189,7 @@ cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
 dioxus = {workspace = true,features = ["web"]}
 gloo-timers = {workspace = true,features = ["futures"]}
 js-sys = {workspace = true}
-reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "stream"]}
+reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "stream", "form"]}
 tokio = {workspace = true,features = ["macros", "rt", "sync", "time"]}
 wasm-bindgen = {workspace = true}
 wasm-bindgen-futures = {workspace = true}

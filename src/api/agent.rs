@@ -1,4 +1,4 @@
-use cokret_sdk::model::{AgentParticipationResBody, AgentParticipationSetReqBody};
+use cokret_sdk::model::{AgentParticipationOutcome, AgentParticipationSetRequestBody};
 
 use super::*;
 
@@ -154,8 +154,8 @@ impl CokretApi {
     pub async fn agent_participation_set(
         &self,
         agent_principal_id: &str,
-        body: &AgentParticipationSetReqBody,
-    ) -> anyhow::Result<AgentParticipationResBody> {
+        body: &AgentParticipationSetRequestBody,
+    ) -> anyhow::Result<AgentParticipationOutcome> {
         let agent_principal_id = path_component(agent_principal_id);
         self.put_json(
             &format!("_cokret/self/agents/{agent_principal_id}/participation"),
@@ -170,7 +170,7 @@ impl CokretApi {
     pub async fn agent_participation_get(
         &self,
         agent_principal_id: &str,
-    ) -> anyhow::Result<AgentParticipationResBody> {
+    ) -> anyhow::Result<AgentParticipationOutcome> {
         let agent_principal_id = path_component(agent_principal_id);
         self.get_json(&format!(
             "_cokret/self/agents/{agent_principal_id}/participation"

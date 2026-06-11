@@ -252,6 +252,12 @@ pub fn VerifyDevicePanel(
                         Ok(resp) => resp,
                         Err(_) => continue,
                     };
+                    let ack_token = messages.ack_token.clone();
+                    let can_ack_batch = !messages.messages.is_empty()
+                        && messages
+                            .messages
+                            .iter()
+                            .all(|message| message.kind == "ck.key.verification.key");
                     let messages_value = match serde_json::to_value(&messages) {
                         Ok(v) => v,
                         Err(_) => continue,
@@ -262,6 +268,14 @@ pub fn VerifyDevicePanel(
                             "peer X25519 public key auto-filled from device_messages poll"
                                 .to_owned(),
                         );
+                        if can_ack_batch && let Some(ack_token) = ack_token {
+                            let _ = crate::views::helpers::with_authed_api(
+                                &base,
+                                api_token,
+                                |api| async move { api.ack_device_messages(&ack_token).await },
+                            )
+                            .await;
+                        }
                         break;
                     }
                 }

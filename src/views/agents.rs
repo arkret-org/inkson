@@ -30,7 +30,7 @@
 use cokret_sdk::RealmId;
 use cokret_sdk::model::{
     AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentParticipation,
-    AgentParticipationEntry, AgentParticipationScope, AgentParticipationSetReqBody,
+    AgentParticipationEntry, AgentParticipationScope, AgentParticipationSetRequestBody,
     AgentPauseRequestBody, AgentProvisionRequestBody, AgentResumeRequestBody,
     AgentRotateKeyRequestBody, AgentSidecarThreadEnsureRequestBody, AgentView,
 };
@@ -1900,7 +1900,7 @@ pub fn PersonalAgentAdminPanel(
                                     };
                                     let base = base.clone();
                                     let api_token = token();
-                                    let body = AgentParticipationSetReqBody {
+                                    let body = AgentParticipationSetRequestBody {
                                         scope: AgentParticipationScope::Realm { realm_id },
                                         selection: AgentParticipation {
                                             reply: participation_reply(),

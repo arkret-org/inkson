@@ -885,7 +885,8 @@ pub struct PushRegisterOutcome {
 }
 
 pub use cokret_sdk::model::{
-    BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome,
+    BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesAckOutcome,
+    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome,
     KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
 };
 

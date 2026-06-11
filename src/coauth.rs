@@ -1227,7 +1227,10 @@ pub fn build_session_grant_introspection_proof(
 /// (`"sha256:" + hex(sha256(grant_jwt))`). Public so callers can verify
 /// their proof binding before sending.
 pub fn session_grant_jwt_hash(grant_jwt: &str) -> String {
-    format!("sha256:{:x}", Sha256::digest(grant_jwt.as_bytes()))
+    format!(
+        "sha256:{}",
+        crate::canonical::hex_encode(&Sha256::digest(grant_jwt.as_bytes()))
+    )
 }
 
 /// Internal helper: serialize claims to canonical JSON, base64url-encode

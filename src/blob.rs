@@ -78,7 +78,7 @@ pub struct EncryptedAttachmentBundle {
 /// Content-address a blob payload as `ck:blob:sha256:<hex>`.
 pub fn blob_typed_id(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    format!("ck:blob:sha256:{digest:x}")
+    format!("ck:blob:sha256:{}", crate::canonical::hex_encode(&digest))
 }
 
 /// Finish an SDK encrypt: content-address the ciphertext and stamp the

@@ -807,13 +807,13 @@ pub(super) fn containers_with_local_space_creates(
     merged
 }
 
-/// T20 — Map a SDK [`CollectionProjectionResBody`] into the yougen
+/// T20 — Map a SDK [`CollectionProjectionOutcome`] into the yougen
 /// renderer's [`Vec<KanbanColumn>`] shape.
 ///
 /// Pure adapter so it's unit-testable without a live HTTP client.
 /// Position rank, when present, drives stable ordering inside a column.
 pub(super) fn collection_projection_to_columns(
-    projection: &cokret_sdk::CollectionProjectionResBody,
+    projection: &cokret_sdk::CollectionProjectionOutcome,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<KanbanColumn> {
     projection
@@ -1586,7 +1586,7 @@ pub(super) fn overlay_local_card_creates_with_decrypt(
 }
 
 pub(super) fn overlay_collection_projection_with_operations(
-    projection: &cokret_sdk::CollectionProjectionResBody,
+    projection: &cokret_sdk::CollectionProjectionOutcome,
     state_store: &LocalStateStore,
     board_space_id: &str,
     remote_operations: &[RawOperationRecord],

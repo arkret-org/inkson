@@ -262,6 +262,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           "keys.claim",
           "device_messages.get",
           "device_messages.put",
+          "device_messages.ack",
           "push.register_device",
           "mimi_provider_facade",
           "events.submit",
@@ -292,6 +293,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           "ck.self.keys.claim",
           "ck.self.device_messages.get",
           "ck.self.device_messages.put",
+          "ck.self.device_messages.ack",
           "ck.edge.push.register_device",
           "ck.open.mimi.provider_directory",
           "ck.self.events.describe",
@@ -736,7 +738,10 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           },
         },
         left_realms: [],
-        to_device: { messages: [{ type: "ck.mls.welcome", content: { ciphertext: "opaque" } }] },
+        to_device: {
+          messages: [{ kind: "ck.mls.welcome", content: { ciphertext: "opaque" } }],
+          ack_token: "mock-to-device-ack",
+        },
         account_data: { events: notificationEvents },
         device_lists: { changed: [], left: [] },
         presence: { events: [] },
@@ -1119,11 +1124,15 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
 
     if (url.pathname === "/_cokret/self/device_messages" && route.request().method() === "GET") {
-      return json(route, { messages: [], next_cursor: "ck:cursor:devmsg-1", has_more: false, limited: false });
+      return json(route, { messages: [], ack_token: "mock-device-messages-ack", next_cursor: "ck:cursor:devmsg-1", has_more: false, limited: false });
     }
 
     if (url.pathname === "/_cokret/self/device_messages" && route.request().method() === "POST") {
       return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_yougen"] }, unknown_devices: {} });
+    }
+
+    if (url.pathname === "/_cokret/self/device_messages/ack" && route.request().method() === "POST") {
+      return json(route, { ok: true, pruned_count: 0 });
     }
 
     if (url.pathname === "/_cokret/self/ephemeral") {

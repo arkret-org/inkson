@@ -124,6 +124,19 @@ impl CokretApi {
         self.get_json("_cokret/self/device_messages").await
     }
 
+    pub async fn ack_device_messages(
+        &self,
+        ack_token: &str,
+    ) -> anyhow::Result<DeviceMessagesAckOutcome> {
+        self.post_json(
+            "_cokret/self/device_messages/ack",
+            serde_json::to_value(DeviceMessagesAckRequestBody {
+                ack_token: ack_token.to_owned(),
+            })?,
+        )
+        .await
+    }
+
     pub async fn put_key_backup(
         &self,
         backup_id: &str,
