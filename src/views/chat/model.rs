@@ -1295,7 +1295,11 @@ pub(super) fn chat_message_create_operation(
     reply_to: Option<&str>,
 ) -> anyhow::Result<crate::operation::EventEnvelope> {
     let audience_mention_values = audience_mentions_to_json(mentions);
+    let mention_values = actor_mentions_to_content_json(mentions);
     let mut content = cokret_sdk::ContentBlock::text(body);
+    if !mention_values.is_empty() {
+        content = content.with_field("mentions", Value::Array(mention_values));
+    }
     if !audience_mention_values.is_empty() {
         content = content.with_field("audience_mentions", Value::Array(audience_mention_values));
     }
@@ -1496,6 +1500,21 @@ pub(super) fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
                             .to_owned(),
                         handle_at_time: item
                             .get("handle_at_time")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        controller_subject_id: item
+                            .get("controller_subject_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        controller_handle_at_time: item
+                            .get("controller_handle_at_time")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        agent_slug_at_time: item
+                            .get("agent_slug_at_time")
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_owned(),

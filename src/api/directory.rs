@@ -362,6 +362,45 @@ impl CokretApi {
         .await
     }
 
+    pub async fn resolve_agent_selector_mention(
+        &self,
+        controller_handle: &str,
+        agent_slug: &str,
+        realm_id: &str,
+        requester: &str,
+    ) -> anyhow::Result<cokret_sdk::model::DirectoryAgentSelectorResolutionOutcome> {
+        let controller_handle =
+            cokret_sdk::model::Handle::parse(controller_handle).map_err(|err| {
+                anyhow::anyhow!("invalid controller handle `{controller_handle}`: {err}")
+            })?;
+        cokret_sdk::model::validate_agent_slug(agent_slug)
+            .map_err(|err| anyhow::anyhow!("invalid agent_slug `{agent_slug}`: {err}"))?;
+        let requester = cokret_sdk::Did::new(requester.trim().to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid requester DID `{requester}`: {err}"))?;
+        let realm_id = cokret_sdk::RealmId::new(realm_id.trim().to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
+        let body = cokret_sdk::model::DirectoryResolveAgentSelectorRequestBody {
+            controller_handle,
+            agent_slug: agent_slug.to_owned(),
+            expected_agent_did: None,
+            proof_challenge: None,
+            intent: "mention".to_owned(),
+            realm_id: Some(realm_id),
+            requester,
+            proofs: Vec::new(),
+        };
+        let outcome: cokret_sdk::model::DirectoryAgentSelectorResolutionOutcome = self
+            .post_json(
+                "_cokret/find/directory/resolve-agent-selector",
+                serde_json::to_value(&body)?,
+            )
+            .await?;
+        outcome
+            .validate()
+            .map_err(|err| anyhow::anyhow!("invalid agent selector outcome: {err}"))?;
+        Ok(outcome)
+    }
+
     pub async fn resolve_invitee_did(&self, target: &str) -> anyhow::Result<String> {
         let target = target.trim();
         if target.is_empty() {

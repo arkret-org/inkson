@@ -23,13 +23,70 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
-    StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
-    short_protocol_id, with_authed_api_with_sync,
+    StructuredMention, active_sync_token, authed_api_with_sync,
+    parse_agent_selector_mention_tokens, parse_structured_mentions, short_protocol_id,
+    with_authed_api_with_sync,
 };
 
 mod model;
 
 use model::*;
+
+fn push_unique_structured_mention(
+    mentions: &mut Vec<StructuredMention>,
+    mention: StructuredMention,
+) {
+    if !mentions
+        .iter()
+        .any(|existing| existing.kind == mention.kind && existing.target == mention.target)
+    {
+        mentions.push(mention);
+    }
+}
+
+async fn resolve_agent_selector_mentions(
+    base_url: &str,
+    api_token: String,
+    wait_for_sync_token: Option<String>,
+    body: &str,
+    realm_id: &str,
+    requester: &str,
+) -> Vec<StructuredMention> {
+    let tokens = parse_agent_selector_mention_tokens(body);
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+    let Ok(api) = authed_api_with_sync(base_url, api_token, wait_for_sync_token) else {
+        return Vec::new();
+    };
+    let mut mentions = Vec::new();
+    for token in tokens {
+        let Ok(outcome) = api
+            .resolve_agent_selector_mention(
+                &token.controller_handle,
+                &token.agent_slug,
+                realm_id,
+                requester,
+            )
+            .await
+        else {
+            continue;
+        };
+        mentions.push(StructuredMention {
+            kind: "actor".to_owned(),
+            target: outcome.subject.as_str().to_owned(),
+            token: token.mention_text_original.clone(),
+            display_name_at_time: String::new(),
+            handle_at_time: String::new(),
+            controller_subject_id: outcome.controller_subject.as_str().to_owned(),
+            controller_handle_at_time: token.controller_handle,
+            agent_slug_at_time: outcome.agent_slug,
+            mention_text_original: token.mention_text_original,
+            resolved_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        });
+    }
+    mentions
+}
 
 fn render_message_text_block(
     key: String,
@@ -3355,6 +3412,9 @@ pub fn ChatPanel(
                                                 handle_at_time: parsed_handle
                                                     .map(|h| h.handle)
                                                     .unwrap_or_default(),
+                                                controller_subject_id: String::new(),
+                                                controller_handle_at_time: String::new(),
+                                                agent_slug_at_time: String::new(),
                                                 mention_text_original: format!(
                                                     "@{}",
                                                     chip.display_name
@@ -3405,77 +3465,15 @@ pub fn ChatPanel(
                                 let channel_kind = channel.kind.clone();
                                 let message_id = local_id.clone();
                                 let reply_to = reply_to_message();
-                                let mut op = match chat_message_create_operation(
-                                    &realm,
-                                    &actor,
-                                    &flow_id,
-                                    &channel_kind,
-                                    &message_id,
-                                    &body,
-                                    &mentions,
-                                    reply_to.as_deref(),
-                                ) {
-                                    Ok(op) => op,
-                                    Err(error) => {
-                                        if let Some(found) = messages
-                                            .write()
-                                            .iter_mut()
-                                            .find(|candidate| candidate.id == local_id)
-                                        {
-                                            found.pending = false;
-                                            found.failed = true;
-                                            found.error = Some(format!("send failed: {error:#}"));
-                                        }
-                                        status_msg.set(format!("send failed: {error:#}"));
-                                        return;
-                                    }
-                                };
-                                // G3.Y2 — mention sidecar hashes.
-                                // Decorates the outgoing payload with
-                                // `mention_sidecar_hash: [hex, ...]`
-                                // so the server can route mention
-                                // notifications without seeing the
-                                // mentioned actor's DID in plaintext.
-                                // See `discovery/push-notifications.md
-                                // §4.5`. We use the Space id as the
-                                // mention salt until soland exposes a
-                                // dedicated salt projection.
-                                if !mentions.is_empty() {
-                                    let mention_dids: Vec<String> = mentions
-                                        .iter()
-                                        .filter(|m| m.kind == "actor")
-                                        .map(|m| m.target.clone())
-                                        .collect();
-                                    let hashes =
-                                        crate::messaging::mentions::mention_sidecar_hashes(
-                                            &realm,
-                                            &mention_dids,
-                                        );
-                                    if let Some(content) = op
-                                        .payload
-                                        .get_mut("content")
-                                        .and_then(Value::as_object_mut)
-                                    {
-                                        content.insert(
-                                            "mention_sidecar_hash".to_owned(),
-                                            serde_json::Value::Array(
-                                                hashes
-                                                    .into_iter()
-                                                    .map(serde_json::Value::String)
-                                                    .collect(),
-                                            ),
-                                        );
-                                    }
-                                }
                                 // Clear the picker chip list now that
                                 // we've folded the mentions into the
-                                // outgoing op.
+                                // pending send state.
                                 mention_picker_state.write().clear();
-                                let mention_values_for_store = mentions_to_json(&mentions);
                                 let realm_for_record = realm.clone();
                                 let actor_for_store = actor.clone();
                                 let body_for_store = body.clone();
                                 let body_for_restore = body.clone();
+                                let body_for_resolve = body.clone();
                                 let flow_id_for_store = flow_id.clone();
                                 let message_id_for_store = message_id.clone();
                                 let reply_to_for_store = reply_to.clone();
@@ -3490,6 +3488,90 @@ pub fn ChatPanel(
                                 let wait_for = active_sync_token(sync_cursor());
                                 let actor_for_retry = actor.clone();
                                 spawn(async move {
+                                    let mut mentions = mentions;
+                                    for mention in resolve_agent_selector_mentions(
+                                        &base,
+                                        api_token.clone(),
+                                        wait_for.clone(),
+                                        &body_for_resolve,
+                                        &realm,
+                                        &actor,
+                                    )
+                                    .await
+                                    {
+                                        push_unique_structured_mention(&mut mentions, mention);
+                                    }
+                                    if let Some(found) = messages
+                                        .write()
+                                        .iter_mut()
+                                        .find(|candidate| candidate.id == local_id)
+                                    {
+                                        found.mentions = mentions.clone();
+                                    }
+                                    let mut op = match chat_message_create_operation(
+                                        &realm,
+                                        &actor,
+                                        &flow_id,
+                                        &channel_kind,
+                                        &message_id,
+                                        &body_for_resolve,
+                                        &mentions,
+                                        reply_to.as_deref(),
+                                    ) {
+                                        Ok(op) => op,
+                                        Err(error) => {
+                                            if let Some(found) = messages
+                                                .write()
+                                                .iter_mut()
+                                                .find(|candidate| candidate.id == local_id)
+                                            {
+                                                found.pending = false;
+                                                found.failed = true;
+                                                found.error =
+                                                    Some(format!("send failed: {error:#}"));
+                                            }
+                                            status_msg.set(format!("send failed: {error:#}"));
+                                            return;
+                                        }
+                                    };
+                                    // G3.Y2 — mention sidecar hashes.
+                                    // Decorates the outgoing payload with
+                                    // `mention_sidecar_hash: [hex, ...]`
+                                    // so the server can route mention
+                                    // notifications without seeing the
+                                    // mentioned actor's DID in plaintext.
+                                    // See `discovery/push-notifications.md
+                                    // §4.5`. We use the Space id as the
+                                    // mention salt until soland exposes a
+                                    // dedicated salt projection.
+                                    if !mentions.is_empty() {
+                                        let mention_dids: Vec<String> = mentions
+                                            .iter()
+                                            .filter(|m| m.kind == "actor")
+                                            .map(|m| m.target.clone())
+                                            .collect();
+                                        let hashes =
+                                            crate::messaging::mentions::mention_sidecar_hashes(
+                                                &realm,
+                                                &mention_dids,
+                                            );
+                                        if let Some(content) = op
+                                            .payload
+                                            .get_mut("content")
+                                            .and_then(Value::as_object_mut)
+                                        {
+                                            content.insert(
+                                                "mention_sidecar_hash".to_owned(),
+                                                serde_json::Value::Array(
+                                                    hashes
+                                                        .into_iter()
+                                                        .map(serde_json::Value::String)
+                                                        .collect(),
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    let mention_values_for_store = mentions_to_json(&mentions);
                                     match submit_chat_operation_with_auth_refresh(
                                         &base,
                                         &actor_for_retry,
@@ -4333,6 +4415,73 @@ fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
             if !mention.handle_at_time.is_empty() {
                 obj.insert("handle_at_time".to_owned(), json!(mention.handle_at_time));
             }
+            if !mention.controller_subject_id.is_empty() {
+                obj.insert(
+                    "controller_subject_id".to_owned(),
+                    json!(mention.controller_subject_id),
+                );
+            }
+            if !mention.controller_handle_at_time.is_empty() {
+                obj.insert(
+                    "controller_handle_at_time".to_owned(),
+                    json!(mention.controller_handle_at_time),
+                );
+            }
+            if !mention.agent_slug_at_time.is_empty() {
+                obj.insert(
+                    "agent_slug_at_time".to_owned(),
+                    json!(mention.agent_slug_at_time),
+                );
+            }
+            if !mention.mention_text_original.is_empty() {
+                obj.insert(
+                    "mention_text_original".to_owned(),
+                    json!(mention.mention_text_original),
+                );
+            }
+            if !mention.resolved_at.is_empty() {
+                obj.insert("resolved_at".to_owned(), json!(mention.resolved_at));
+            }
+            Value::Object(obj)
+        })
+        .collect()
+}
+
+fn actor_mentions_to_content_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
+    mentions
+        .iter()
+        .filter(|mention| mention.kind == "actor")
+        .map(|mention| {
+            let mut obj = serde_json::Map::new();
+            obj.insert("kind".to_owned(), json!("mention"));
+            obj.insert("subject_id".to_owned(), json!(mention.target));
+            if !mention.display_name_at_time.is_empty() {
+                obj.insert(
+                    "display_name_at_time".to_owned(),
+                    json!(mention.display_name_at_time),
+                );
+            }
+            if !mention.handle_at_time.is_empty() {
+                obj.insert("handle_at_time".to_owned(), json!(mention.handle_at_time));
+            }
+            if !mention.controller_subject_id.is_empty() {
+                obj.insert(
+                    "controller_subject_id".to_owned(),
+                    json!(mention.controller_subject_id),
+                );
+            }
+            if !mention.controller_handle_at_time.is_empty() {
+                obj.insert(
+                    "controller_handle_at_time".to_owned(),
+                    json!(mention.controller_handle_at_time),
+                );
+            }
+            if !mention.agent_slug_at_time.is_empty() {
+                obj.insert(
+                    "agent_slug_at_time".to_owned(),
+                    json!(mention.agent_slug_at_time),
+                );
+            }
             if !mention.mention_text_original.is_empty() {
                 obj.insert(
                     "mention_text_original".to_owned(),
@@ -4544,6 +4693,54 @@ mod tests {
         assert!(op.payload.get("audience_mentions").is_none());
         assert!(op.payload.get("mentions").is_none());
         assert!(op.payload.get("mention_relations").is_none());
+        cokret_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
+    }
+
+    #[test]
+    fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
+        let mentions = vec![StructuredMention {
+            kind: "actor".to_owned(),
+            target: "did:web:agent.example".to_owned(),
+            token: "@alice:example.com/summary".to_owned(),
+            display_name_at_time: String::new(),
+            handle_at_time: String::new(),
+            controller_subject_id: "did:web:example.com:users:alice".to_owned(),
+            controller_handle_at_time: "alice:example.com".to_owned(),
+            agent_slug_at_time: "summary".to_owned(),
+            mention_text_original: "@alice:example.com/summary".to_owned(),
+            resolved_at: "2026-06-11T00:00:00.000Z".to_owned(),
+        }];
+        let op = chat_message_create_operation(
+            "ck:realm:01904100-0000-7000-8000-000000000010",
+            "did:web:bob.example",
+            "ck:flow:01904100-0000-7000-8000-000000000001",
+            "discussion",
+            "ck:message:01904100-0000-7000-8000-000000000003",
+            "ask @alice:example.com/summary",
+            &mentions,
+            None,
+        )
+        .expect("builds");
+
+        let mention = &op.payload["content"]["mentions"][0];
+        assert_eq!(mention["kind"].as_str(), Some("mention"));
+        assert_eq!(
+            mention["subject_id"].as_str(),
+            Some("did:web:agent.example")
+        );
+        assert_eq!(
+            mention["controller_subject_id"].as_str(),
+            Some("did:web:example.com:users:alice")
+        );
+        assert_eq!(
+            mention["controller_handle_at_time"].as_str(),
+            Some("alice:example.com")
+        );
+        assert_eq!(mention["agent_slug_at_time"].as_str(), Some("summary"));
+        assert!(mention.get("target").is_none());
+        assert!(op.payload.get("mentions").is_none());
         cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
@@ -4883,6 +5080,9 @@ mod tests {
             token: "@alice:local.host".to_owned(),
             display_name_at_time: "alice:local.host".to_owned(),
             handle_at_time: "alice:local.host".to_owned(),
+            controller_subject_id: String::new(),
+            controller_handle_at_time: String::new(),
+            agent_slug_at_time: String::new(),
             mention_text_original: "@alice:local.host".to_owned(),
             resolved_at: String::new(),
         };
@@ -4910,6 +5110,9 @@ mod tests {
             token: "@bob:example.com".to_owned(),
             display_name_at_time: "bob:example.com".to_owned(),
             handle_at_time: "bob:example.com".to_owned(),
+            controller_subject_id: String::new(),
+            controller_handle_at_time: String::new(),
+            agent_slug_at_time: String::new(),
             mention_text_original: "@bob:example.com".to_owned(),
             resolved_at: String::new(),
         };

@@ -38,6 +38,18 @@ pub struct StructuredMention {
     /// only a DID was supplied.
     #[serde(default)]
     pub handle_at_time: String,
+    /// Audit-only controller principal DID captured when this actor mention
+    /// was composed from `@<controller-handle>/<agent_slug>`.
+    #[serde(default)]
+    pub controller_subject_id: String,
+    /// Audit-only canonical controller handle captured from the selector
+    /// token left-hand side.
+    #[serde(default)]
+    pub controller_handle_at_time: String,
+    /// Audit-only selector slug captured from the selector token right-hand
+    /// side.
+    #[serde(default)]
+    pub agent_slug_at_time: String,
     /// R3.2 audit-only: the original string the user typed
     /// (`mention_text_original`, e.g. `@alice:acme.com`).
     #[serde(default)]
@@ -330,15 +342,62 @@ async fn classify_api_call_error(err: anyhow::Error) -> ApiCallError {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentSelectorMentionToken {
+    pub mention_text_original: String,
+    pub controller_handle: String,
+    pub agent_slug: String,
+}
+
+fn normalize_inline_token(token: &str) -> &str {
+    token.trim_matches(|ch: char| {
+        matches!(
+            ch,
+            ',' | '.' | '!' | '?' | ':' | ';' | ')' | '(' | '[' | ']' | '"' | '\''
+        )
+    })
+}
+
+pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMentionToken> {
+    let mut tokens = Vec::new();
+    for token in input.split_whitespace() {
+        let normalized = normalize_inline_token(token);
+        let Some(rest) = normalized.strip_prefix('@') else {
+            continue;
+        };
+        let Some((controller_handle, agent_slug)) = rest.split_once('/') else {
+            continue;
+        };
+        if controller_handle.is_empty()
+            || cokret_sdk::model::validate_agent_slug(agent_slug).is_err()
+        {
+            continue;
+        }
+        let Some(parsed) = crate::identity_handle::parse_user_handle(controller_handle) else {
+            continue;
+        };
+        tokens.push(AgentSelectorMentionToken {
+            mention_text_original: normalized.to_owned(),
+            controller_handle: parsed.handle,
+            agent_slug: agent_slug.to_owned(),
+        });
+    }
+    tokens.sort_by(|left, right| {
+        left.controller_handle
+            .cmp(&right.controller_handle)
+            .then(left.agent_slug.cmp(&right.agent_slug))
+            .then(left.mention_text_original.cmp(&right.mention_text_original))
+    });
+    tokens.dedup_by(|left, right| {
+        left.controller_handle == right.controller_handle && left.agent_slug == right.agent_slug
+    });
+    tokens
+}
+
 pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
     let mut mentions = Vec::new();
     for token in input.split_whitespace() {
-        let normalized = token.trim_matches(|ch: char| {
-            matches!(
-                ch,
-                ',' | '.' | '!' | '?' | ':' | ';' | ')' | '(' | '[' | ']' | '"' | '\''
-            )
-        });
+        let normalized = normalize_inline_token(token);
         if let Some(handle) = normalized.strip_prefix('@') {
             if let Some(audience) = audience_mention_audience_from_token(normalized) {
                 mentions.push(StructuredMention {
@@ -347,6 +406,9 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                     token: normalized.to_owned(),
                     display_name_at_time: String::new(),
                     handle_at_time: String::new(),
+                    controller_subject_id: String::new(),
+                    controller_handle_at_time: String::new(),
+                    agent_slug_at_time: String::new(),
                     mention_text_original: normalized.to_owned(),
                     resolved_at: String::new(),
                 });
@@ -362,6 +424,9 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                     token: normalized.to_owned(),
                     display_name_at_time: parsed.display,
                     handle_at_time: parsed.handle,
+                    controller_subject_id: String::new(),
+                    controller_handle_at_time: String::new(),
+                    agent_slug_at_time: String::new(),
                     mention_text_original: normalized.to_owned(),
                     resolved_at: String::new(),
                 });
@@ -375,6 +440,9 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                 token: normalized.to_owned(),
                 display_name_at_time: String::new(),
                 handle_at_time: String::new(),
+                controller_subject_id: String::new(),
+                controller_handle_at_time: String::new(),
+                agent_slug_at_time: String::new(),
                 mention_text_original: normalized.to_owned(),
                 resolved_at: String::new(),
             });
@@ -389,6 +457,9 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                 token: normalized.to_owned(),
                 display_name_at_time: String::new(),
                 handle_at_time: String::new(),
+                controller_subject_id: String::new(),
+                controller_handle_at_time: String::new(),
+                agent_slug_at_time: String::new(),
                 mention_text_original: normalized.to_owned(),
                 resolved_at: String::new(),
             });
@@ -709,6 +780,22 @@ mod tests {
             mention.kind == "audience_mention" && mention.target == "effective_scope_members"
         }));
         assert!(!mentions.iter().any(|mention| mention.token == "@online"));
+    }
+
+    #[test]
+    fn parses_agent_selector_tokens_without_materializing_mentions() {
+        let tokens =
+            parse_agent_selector_mention_tokens("ask @alice:example.com/summary, not @bob:Bad");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].mention_text_original,
+            "@alice:example.com/summary"
+        );
+        assert_eq!(tokens[0].controller_handle, "alice:example.com");
+        assert_eq!(tokens[0].agent_slug, "summary");
+
+        let mentions = parse_structured_mentions("ask @alice:example.com/summary");
+        assert!(mentions.is_empty());
     }
 
     #[test]

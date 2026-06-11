@@ -1138,6 +1138,25 @@ impl ActionRequestNonceStatus {
     }
 }
 
+fn agent_view_from_directory_row(row: Value) -> Option<AgentView> {
+    if let Ok(view) = serde_json::from_value::<AgentView>(row.clone()) {
+        return Some(view);
+    }
+    row.get("agent_principal_id").and_then(Value::as_str)?;
+    let status = row
+        .get("status")
+        .or_else(|| row.get("state"))
+        .and_then(Value::as_str)
+        .unwrap_or("active")
+        .to_owned();
+    Some(AgentView {
+        agent: row,
+        status,
+        grants: Vec::new(),
+        key_state: Value::Null,
+    })
+}
+
 /// Personal Agent admin panel. Renders the 11 soland HTTP operations
 /// as buttons; deeper form layouts are stubbed as TODO(P3-impl). The
 /// critical contract is that each soland endpoint has a matching
@@ -1153,6 +1172,7 @@ pub fn PersonalAgentAdminPanel(
     let mut list_status = use_signal(String::new);
     let mut selected_agent_id = use_signal(String::new);
     let mut new_display_name = use_signal(|| "my-personal-agent".to_owned());
+    let mut new_agent_slug = use_signal(|| "summary".to_owned());
     // Spec `agent_rotate_key_request_body` = `{replacement_key,
     // proof_of_possession}` (full JSON); the scaffold takes the raw body.
     let mut rotate_body_json = use_signal(String::new);
@@ -1218,9 +1238,7 @@ pub fn PersonalAgentAdminPanel(
                                             let rows: Vec<AgentView> = resp
                                                 .agents
                                                 .into_iter()
-                                                .filter_map(|row| {
-                                                    serde_json::from_value(row).ok()
-                                                })
+                                                .filter_map(agent_view_from_directory_row)
                                                 .collect();
                                             list_status.set(format!(
                                                 "fetched {} agent(s)",
@@ -1257,6 +1275,12 @@ pub fn PersonalAgentAdminPanel(
                             .and_then(Value::as_str)
                             .unwrap_or("(unnamed)")
                             .to_owned();
+                        let agent_slug = agent
+                            .agent
+                            .get("agent_slug")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
                         let id_label = short_protocol_id(&id);
                         rsx! {
                             div {
@@ -1279,6 +1303,9 @@ pub fn PersonalAgentAdminPanel(
                                     }
                                 }
                                 div { class: "muted", "display_name: {display_name}" }
+                                if !agent_slug.is_empty() {
+                                    div { class: "muted", "agent_slug: {agent_slug}" }
+                                }
                                 div { class: "actions",
                                     Button {
                                         variant: if selected_agent_id() == id { ButtonVariant::Primary } else { ButtonVariant::Secondary },
@@ -1354,6 +1381,12 @@ pub fn PersonalAgentAdminPanel(
                         value: "{new_display_name}",
                         oninput: move |event: FormEvent| new_display_name.set(event.value()),
                     }
+                    Input {
+                        "data-testid": "agent-admin-provision-agent-slug",
+                        placeholder: "agent slug",
+                        value: "{new_agent_slug}",
+                        oninput: move |event: FormEvent| new_agent_slug.set(event.value()),
+                    }
                 }
                 div { class: "actions",
                     Button {
@@ -1365,13 +1398,20 @@ pub fn PersonalAgentAdminPanel(
                                 let base = base.clone();
                                 let api_token = token();
                                 let display = new_display_name();
+                                let slug = new_agent_slug();
+                                let agent_slug = if slug.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(slug.trim().to_owned())
+                                };
                                 // Spec `agent_provision_request_body`:
-                                // {display_name, requested_scope,
+                                // {display_name, agent_slug, requested_scope,
                                 // accountability, pairing_ttl_ms} — the
                                 // controller binding comes from the
                                 // authenticated session, not the body.
                                 let body = AgentProvisionRequestBody {
                                     display_name: Some(display),
+                                    agent_slug,
                                     requested_scope: None,
                                     accountability: Value::Null,
                                     pairing_ttl_ms: None,
