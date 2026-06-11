@@ -78,7 +78,7 @@ pub struct RemoteCursor {
     pub col: u32,
 }
 
-/// One comment thread anchored to a `[start, end)` range within the
+/// One comment thread sealed to a `[start, end)` range within the
 /// document. Spec contract is `ck.message.create` on the document
 /// Flow's discussion track (`models/flow-and-message.md` §4.3) with a
 /// payload that carries `anchor_range`. The thread is identified by
@@ -1422,7 +1422,7 @@ pub fn DocumentPanel(
                                                 // spec
                                                 // event-auth-state-resolution
                                                 // §8.1 once soland's
-                                                // anchor-finality
+                                                // seal-finality
                                                 // endpoints accept
                                                 // restore moves.
                                             }
@@ -1473,9 +1473,9 @@ pub fn DocumentPanel(
                                         // render block-count-only delta
                                         // because soland does not yet expose
                                         // per-version block snapshots in its
-                                        // anchor history.
+                                        // seal history.
                                         // TODO(G3.Y4-followup): wire to
-                                        // soland's per-anchor snapshot
+                                        // soland's per-seal snapshot
                                         // endpoint when it ships.
                                         "{build_version_diff(&blocks(), &blocks())}"
                                     }
@@ -1503,7 +1503,7 @@ pub fn DocumentPanel(
                         span { class: "badge", "Deferred" }
                     }
                     div { class: "muted",
-                        "Presence, anchored comments, restore, and version diff controls are hidden in the default UI until the collaboration transport and snapshot endpoints are wired."
+                        "Presence, sealed comments, restore, and version diff controls are hidden in the default UI until the collaboration transport and snapshot endpoints are wired."
                     }
                 }
             }

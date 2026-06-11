@@ -15,7 +15,7 @@ impl CokretApi {
     /// `realm_has_member` authz check naturally.
     ///
     /// All five create-locked fields per spec §2.3 (`encryption_profile`,
-    /// `security_class`, `federation_policy`, `anchor_profile`,
+    /// `security_class`, `federation_policy`, `notary_profile`,
     /// `digest_algorithm`) are sent inline on the create event payload —
     /// no field is dropped at the wire, unlike a REST wrapper that
     /// might only accept a subset.
@@ -31,7 +31,7 @@ impl CokretApi {
         encryption_profile: &str,
         security_class: &str,
         federation_policy: &str,
-        anchor_profile: &str,
+        notary_profile: &str,
         digest_algorithm: &str,
         trust_domain: &str,
         invitees: Vec<String>,
@@ -61,7 +61,7 @@ impl CokretApi {
             encryption_profile,
             security_class,
             federation_policy,
-            anchor_profile,
+            notary_profile,
             digest_algorithm,
             trust_domain,
             &invitees,
@@ -352,18 +352,15 @@ impl CokretApi {
         self.submit_event_envelope(&event).await
     }
 
-    /// Read the current anchorer cell value for a Realm (admin-only).
+    /// Read the current notary cell value for a Realm (admin-only).
     /// Returns the raw JSON shape the server publishes — typically
     /// `{ "mode": "single_did" | "threshold" | "open_set" | "mixed",
     ///    "principals": [...], ... }`. The endpoint is being implemented
     /// in soland on a separate track (P0 M4); when it 404s the caller's
     /// `Result::Err` arm should surface a clear "endpoint unavailable"
     /// message rather than blocking the page.
-    pub async fn admin_anchorer_describe(
-        &self,
-        realm_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("_soland/admin/realms/{realm_id}/anchorer"))
+    pub async fn admin_notary_describe(&self, realm_id: &str) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("_soland/admin/realms/{realm_id}/notary"))
             .await
     }
 
@@ -741,20 +738,20 @@ impl CokretApi {
             .await
     }
 
-    /// Resolve the current anchor head for `realm_id` to be stamped onto
-    /// outgoing reducer-input events as `anchor_ref`.
+    /// Resolve the current seal head for `realm_id` to be stamped onto
+    /// outgoing reducer-input events as `seal_ref`.
     ///
     /// Spec resolution (2026-06-11, `renames.json` migration group
     /// `snapshot_head_returns_manifest`): `ck.self.snapshot.head` returns
     /// the full signed `ck.schema.snapshot.v1` manifest, which carries no
-    /// `ck:anchor:sha256:<hex>` head — the legacy `SnapshotHeadState`
-    /// pointer DTO (whose `snapshot_ref` doubled as the anchor head) is
-    /// hard-rejected on current wire. Until anchor-head sourcing is
+    /// `ck:seal:sha256:<hex>` head — the legacy `SnapshotHeadState`
+    /// pointer DTO (whose `snapshot_ref` doubled as the seal head) is
+    /// hard-rejected on current wire. Until seal-head sourcing is
     /// re-specified for clients, fail closed instead of fabricating an
-    /// `anchor_ref`. soland currently fails closed earlier with
+    /// `seal_ref`. soland currently fails closed earlier with
     /// `not_implemented` on the operation, so the post-decode branch is
     /// unreachable against current servers either way.
-    pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
+    pub async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
         let manifest_id = self
             .snapshot_head(realm_id)
             .await?
@@ -762,7 +759,7 @@ impl CokretApi {
             .unwrap_or_else(|| "unavailable".to_owned());
         anyhow::bail!(
             "ck.self.snapshot.head for {realm_id} returned snapshot manifest `{manifest_id}`, \
-             which carries no anchor head \u{2014} cannot stamp anchor_ref"
+             which carries no seal head \u{2014} cannot stamp seal_ref"
         );
     }
 }

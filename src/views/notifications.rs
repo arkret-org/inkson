@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use crate::components::{EmptyState, EmptyStateKind, UiIcon};
-use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore};
+use crate::local_state::{ClientLocalState, LocalSealView, LocalStateStore};
 use crate::models::ClientSyncOutcome;
 use crate::notification_rules::{
     DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel,
@@ -915,8 +915,8 @@ fn apply_sync_projection_to_store(
             realm_title_hints.get(id).map(String::as_str),
         );
         store.save_realm_tree_projection(id.clone(), projection);
-        let view = LocalAnchorView::from_sync_body(body);
-        store.set_realm_anchor_view(id.clone(), view);
+        let view = LocalSealView::from_sync_body(body);
+        store.set_realm_seal_view(id.clone(), view);
         store.ingest_move_event_states(id, body);
     }
 }

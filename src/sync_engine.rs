@@ -42,7 +42,7 @@ use crate::api::{
     is_stale_frontier_error, is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
-use crate::local_state::{LocalAnchorView, LocalStateStore};
+use crate::local_state::{LocalSealView, LocalStateStore};
 use crate::models::{ClientSyncOutcome, RealmTreeNode, RealmTreeNodeKind};
 
 /// Sleep ceiling between failed iterations. 60s matches what other
@@ -453,7 +453,7 @@ async fn run_iteration(
 }
 
 /// Apply an account subscribe response: persist projections (server-authoritatively
-/// reconciled when full-sync), hydrate Anchor views + account-data, and
+/// reconciled when full-sync), hydrate Seal views + account-data, and
 /// publish derived UI signals (realm tree nodes / timeline / device queue /
 /// status / cursor).
 ///
@@ -498,7 +498,7 @@ pub fn apply_response(
     {
         let mut store = state_store.write();
         // Perf (P0): a single sync response can touch the cursor, dozens of
-        // realm-tree projections, anchor views, member identity events and account
+        // realm-tree projections, seal views, member identity events and account
         // data — each setter used to flush the *entire* `ClientLocalState` to
         // disk/localStorage. Wrap the whole apply in one batch so it persists
         // exactly once.
@@ -531,8 +531,8 @@ pub fn apply_response(
             }
             for (id, body) in &response.realms {
                 store.save_realm_tree_projection(id.clone(), body.clone());
-                let view = LocalAnchorView::from_sync_body(body);
-                store.set_realm_anchor_view(id.clone(), view);
+                let view = LocalSealView::from_sync_body(body);
+                store.set_realm_seal_view(id.clone(), view);
                 store.ingest_move_event_states(id, body);
                 // R3.1 MID-2 — harvest inlined `ck.member.identity.update`
                 // event envelopes off the `members[]` roster entries. The

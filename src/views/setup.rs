@@ -162,14 +162,14 @@ const FEDERATION_POLICY_OPTIONS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-// Spec realm-and-space.md §2.3 — `anchor_profile`. Create-locked.
+// Spec realm-and-space.md §2.3 — `notary_profile`. Create-locked.
 // `single_did` is the dev / single-operator default; the others are
-// for production deployments with multiple anchorer principals.
+// for production deployments with multiple notary principals.
 const ANCHOR_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "single_did",
         "Single DID",
-        "One principal signs anchors. Simplest setup; default.",
+        "One principal signs seals. Simplest setup; default.",
     ),
     (
         "threshold",
@@ -179,7 +179,7 @@ const ANCHOR_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "open_set",
         "Open set",
-        "Any holder of the anchorer capability may sign.",
+        "Any holder of the notary capability may sign.",
     ),
     (
         "mixed",
@@ -436,7 +436,7 @@ pub fn SetupPanel(
     // collapses these by default since they're hardly ever changed
     // from the safe defaults (`restricted` / `single_did` / `sha256`).
     let mut realm_federation_policy = use_signal(|| "restricted".to_owned());
-    let mut realm_anchor_profile = use_signal(|| "single_did".to_owned());
+    let mut realm_notary_profile = use_signal(|| "single_did".to_owned());
     let mut realm_digest_algorithm = use_signal(|| "sha256".to_owned());
     // Phase 3 — `ck.space.create` form state. The Space inherits all
     // security from its home Realm. The home Realm is supplied by the
@@ -464,7 +464,7 @@ pub fn SetupPanel(
     let realm_encryption_profile_selected = use_memo(move || Some(realm_encryption_profile()));
     let realm_security_class_selected = use_memo(move || Some(realm_security_class()));
     let realm_federation_policy_selected = use_memo(move || Some(realm_federation_policy()));
-    let realm_anchor_profile_selected = use_memo(move || Some(realm_anchor_profile()));
+    let realm_notary_profile_selected = use_memo(move || Some(realm_notary_profile()));
     let realm_digest_algorithm_selected = use_memo(move || Some(realm_digest_algorithm()));
     let new_space_kind_selected = use_memo(move || Some(new_space_kind()));
     let new_space_parent_id_selected = use_memo(move || Some(new_space_parent_id()));
@@ -481,7 +481,7 @@ pub fn SetupPanel(
     let encryption_profile_value = realm_encryption_profile();
     let security_class_value = realm_security_class();
     let federation_policy_value = realm_federation_policy();
-    let anchor_profile_value = realm_anchor_profile();
+    let notary_profile_value = realm_notary_profile();
     let digest_algorithm_value = realm_digest_algorithm();
     let federation_policy_open_forbidden = security_class_value == "high_assurance";
     // M-UX-CONTEXT-1: the sidebar's per-row "+" action sets
@@ -953,7 +953,7 @@ pub fn SetupPanel(
                                 details { class: "setup-advanced",
                                     "data-testid": "realm-advanced-config",
                                     summary { class: "setup-advanced-summary",
-                                        "Advanced (federation policy / anchor profile / hash profile)"
+                                        "Advanced (federation policy / seal profile / hash profile)"
                                     }
                                     div { class: "setup-axis-grid setup-advanced-grid",
                                         div { class: "metric directory-axis-card",
@@ -989,15 +989,15 @@ pub fn SetupPanel(
                                             }
                                         }
                                         div { class: "metric directory-axis-card",
-                                            strong { "Anchor profile" }
+                                            strong { "Seal profile" }
                                             div { class: "workflow-form setup-field",
-                                                label { "Who signs durable anchors for this Realm?" }
+                                                label { "Who signs durable seals for this Realm?" }
                                                 Select::<String> {
-                                                    "data-testid": "realm-anchor-profile-input",
-                                                    value: Some(realm_anchor_profile_selected.into()),
+                                                    "data-testid": "realm-seal-profile-input",
+                                                    value: Some(realm_notary_profile_selected.into()),
                                                     on_value_change: move |v: Option<String>| {
                                                         if let Some(v) = v {
-                                                            realm_anchor_profile.set(v);
+                                                            realm_notary_profile.set(v);
                                                         }
                                                     },
                                                     for (i, (option_value, label, _)) in ANCHOR_PROFILE_OPTIONS.iter().enumerate() {
@@ -1010,7 +1010,7 @@ pub fn SetupPanel(
                                                     }
                                                 }
                                                 div { class: "muted",
-                                                    "{ANCHOR_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == anchor_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Anchor profile is not set.\")}"
+                                                    "{ANCHOR_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == notary_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Seal profile is not set.\")}"
                                                 }
                                             }
                                         }
@@ -1134,7 +1134,7 @@ pub fn SetupPanel(
                                                 let encryption_profile = realm_encryption_profile();
                                                 let security_class = realm_security_class();
                                                 let federation_policy = realm_federation_policy();
-                                                let anchor_profile = realm_anchor_profile();
+                                                let notary_profile = realm_notary_profile();
                                                 let digest_algorithm = realm_digest_algorithm();
                                                 let seed_text = seed_members();
                                                 let actor = account_did();
@@ -1188,7 +1188,7 @@ pub fn SetupPanel(
                                                                 &encryption_profile,
                                                                 &security_class,
                                                                 &federation_policy,
-                                                                &anchor_profile,
+                                                                &notary_profile,
                                                                 &digest_algorithm,
                                                                 &trust_domain,
                                                                 invitees.clone(),

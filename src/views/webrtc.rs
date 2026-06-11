@@ -1,6 +1,6 @@
 //! WebRTC call surface for 1:1 and SFU calls.
 //!
-//! Spec anchors: `crypto-media/webrtc-signaling.md` sections 2-8.
+//! Spec seals: `crypto-media/webrtc-signaling.md` sections 2-8.
 
 use std::collections::BTreeSet;
 

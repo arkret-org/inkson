@@ -169,8 +169,8 @@ impl CokretApi {
     /// `no active signer configured` rather than sending an unsigned
     /// or placeholder-signed envelope.
     ///
-    /// For reducer-input event kinds, `anchor_ref` is auto-filled from
-    /// the current Realm anchor (`/_cokret/self/snapshot/head`) when the
+    /// For reducer-input event kinds, `seal_ref` is auto-filled from
+    /// the current Realm seal (`/_cokret/self/snapshot/head`) when the
     /// caller did not supply one.
     pub async fn submit_event_envelope(
         &self,
@@ -178,15 +178,15 @@ impl CokretApi {
     ) -> anyhow::Result<SubmitEventOutcome> {
         let mut signed = event.clone();
 
-        // Real anchor_ref for reducer-input kinds. The simple heuristic
+        // Real seal_ref for reducer-input kinds. The simple heuristic
         // is: any envelope that already carries `effects[]` is a
         // reducer-input write and MUST point at the current Realm
-        // anchor head. Non-reducer kinds (ck.read_cursor.advance,
+        // seal head. Non-reducer kinds (ck.read_cursor.advance,
         // ck.account_data.set, ck.account.blocklist, etc.) have no
-        // effects and keep `anchor_ref: None`.
-        if signed.anchor_ref.is_none() && !signed.effects.is_empty() {
-            let anchor = self.current_anchor_for(&signed.realm_id).await?;
-            signed.anchor_ref = Some(anchor);
+        // effects and keep `seal_ref: None`.
+        if signed.seal_ref.is_none() && !signed.effects.is_empty() {
+            let seal = self.current_seal_for(&signed.realm_id).await?;
+            signed.seal_ref = Some(seal);
         }
 
         // Single signing path. No placeholder, no fallback.
@@ -205,12 +205,12 @@ impl CokretApi {
 
     /// Wire-submit a fully-prepared, already-signed [`EventEnvelope`]
     /// verbatim over `POST /_cokret/self/events`. This does NOT stamp
-    /// `anchor_ref` or sign — the caller owns both. It is the shared
+    /// `seal_ref` or sign — the caller owns both. It is the shared
     /// tail of [`Self::submit_event_envelope`] and the per-envelope
     /// fallback in [`Self::submit_events_batch`]: a genesis Realm
-    /// bootstrap deliberately carries `anchor_ref: None` (it asserts
-    /// `head_eq null`, there is no prior anchor head), so re-running the
-    /// anchor-stamp heuristic here would both 404 against the
+    /// bootstrap deliberately carries `seal_ref: None` (it asserts
+    /// `head_eq null`, there is no prior seal head), so re-running the
+    /// seal-stamp heuristic here would both 404 against the
     /// not-yet-existing Realm's snapshot head and corrupt the signature.
     async fn post_signed_event_envelope(
         &self,
@@ -246,7 +246,7 @@ impl CokretApi {
     ///
     /// Envelopes MUST already be signed by the caller (typically via
     /// `event_signer::sign_with_active`) — the batch path does not
-    /// auto-sign because callers commonly need an atomic anchor_ref +
+    /// auto-sign because callers commonly need an atomic seal_ref +
     /// sign sequence the per-envelope helper cannot replicate.
     pub async fn submit_events_batch(
         &self,

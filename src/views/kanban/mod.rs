@@ -10,9 +10,7 @@ use crate::components::{
     EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteState, WriteStateIcon,
 };
 use crate::hlc::Hlc;
-use crate::local_state::{
-    LocalAnchorView, LocalStateStore, MoveSubmissionState, RawOperationRecord,
-};
+use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState, RawOperationRecord};
 use crate::move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id};
 use crate::operation::{trim_realm_id, uuid_v7};
 use crate::rank::{RankError, rank_for_drop};
@@ -1861,7 +1859,7 @@ pub fn KanbanPanel(
                                         {
                                             let move_id_label = short_protocol_id(&record.move_id);
                                             let cell_id_label = short_protocol_id(&record.cell_id);
-                                            let anchor_ref_label = short_protocol_id(&record.anchor_ref);
+                                            let seal_ref_label = short_protocol_id(&record.seal_ref);
                                             rsx! {
                                                 div { class: "event", "data-testid": "board-event-record",
                                                     div { class: "event-head",
@@ -1870,7 +1868,7 @@ pub fn KanbanPanel(
                                                     }
                                                     div { class: "muted", title: "{record.move_id}", "move_id {move_id_label}" }
                                                     div { class: "muted", title: "{record.cell_id}", "cell {cell_id_label} / hlc {record.hlc}" }
-                                                    div { class: "muted", title: "{record.anchor_ref}", "anchor_ref {anchor_ref_label}" }
+                                                    div { class: "muted", title: "{record.seal_ref}", "seal_ref {seal_ref_label}" }
                                                     div { class: "muted", "effect {record.effect_summary}" }
                                                     div { class: "muted", "{record.note}" }
                                                 }
@@ -6410,7 +6408,7 @@ fn kanban_sha256_hash_from_ref(value: &str) -> Option<String> {
     {
         return Some(value.to_owned());
     }
-    for prefix in ["ck:anchor:", "ck:state:"] {
+    for prefix in ["ck:seal:", "ck:state:"] {
         if let Some(rest) = value.strip_prefix(prefix) {
             return kanban_sha256_hash_from_ref(rest);
         }
@@ -6418,7 +6416,7 @@ fn kanban_sha256_hash_from_ref(value: &str) -> Option<String> {
     None
 }
 
-fn kanban_object_ref_from_anchor_ref(value: &str) -> Option<String> {
+fn kanban_object_ref_from_seal_ref(value: &str) -> Option<String> {
     if value.starts_with("ck:event:") && cokret_sdk::EventId::new(value.to_owned()).is_ok() {
         return Some(value.to_owned());
     }
@@ -6436,18 +6434,18 @@ fn kanban_object_ref_from_anchor_ref(value: &str) -> Option<String> {
     None
 }
 
-fn kanban_mls_base_epoch_ref(anchor_view: &LocalAnchorView, realm_id: &str) -> String {
-    anchor_view
+fn kanban_mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> String {
+    seal_view
         .frontier
         .iter()
-        .chain(anchor_view.leaves.iter())
-        .chain(anchor_view.state_root.iter())
-        .find_map(|value| kanban_object_ref_from_anchor_ref(value))
+        .chain(seal_view.leaves.iter())
+        .chain(seal_view.state_root.iter())
+        .find_map(|value| kanban_object_ref_from_seal_ref(value))
         .unwrap_or_else(|| {
             crate::canonical::canonical_sha256(&json!({
                 "kind": "kanban_mls_base_epoch",
                 "realm_id": realm_id,
-                "epoch": anchor_view.mls_epoch.unwrap_or(0),
+                "epoch": seal_view.mls_epoch.unwrap_or(0),
             }))
             .unwrap_or_else(|_| {
                 "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
@@ -6456,13 +6454,13 @@ fn kanban_mls_base_epoch_ref(anchor_view: &LocalAnchorView, realm_id: &str) -> S
 }
 
 fn kanban_mls_membership_frontier(
-    anchor_view: &LocalAnchorView,
+    seal_view: &LocalSealView,
     fallback_event_id: &cokret_sdk::EventId,
 ) -> Vec<cokret_sdk::EventId> {
-    let mut frontier = anchor_view
+    let mut frontier = seal_view
         .frontier
         .iter()
-        .chain(anchor_view.leaves.iter())
+        .chain(seal_view.leaves.iter())
         .filter_map(|value| cokret_sdk::EventId::new(value.clone()).ok())
         .collect::<Vec<_>>();
     if frontier.is_empty() {
@@ -6474,10 +6472,10 @@ fn kanban_mls_membership_frontier(
 }
 
 fn kanban_mls_policy_root(
-    anchor_view: &LocalAnchorView,
+    seal_view: &LocalSealView,
     realm_id: &str,
 ) -> Result<cokret_sdk::Hash, String> {
-    let hash = anchor_view
+    let hash = seal_view
         .state_root
         .as_deref()
         .and_then(kanban_sha256_hash_from_ref)
@@ -6485,8 +6483,8 @@ fn kanban_mls_policy_root(
             crate::canonical::canonical_sha256(&json!({
                 "kind": "kanban_mls_policy_root",
                 "realm_id": realm_id,
-                "frontier": anchor_view.frontier,
-                "state_root": anchor_view.state_root,
+                "frontier": seal_view.frontier,
+                "state_root": seal_view.state_root,
             }))
             .unwrap_or_else(|_| {
                 "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
@@ -6587,7 +6585,7 @@ pub(crate) fn build_creator_mls_genesis_event(
     if summary.realm_id != realm_id {
         return Ok(None);
     }
-    let anchor_view = state_store.anchor_view_for_realm(realm_id);
+    let seal_view = state_store.seal_view_for_realm(realm_id);
     let event_id = format!("ck:event:{}", uuid_v7());
     let event_id_typed = cokret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
@@ -6598,8 +6596,8 @@ pub(crate) fn build_creator_mls_genesis_event(
         summary.group_id.clone(),
         0,
         0,
-        kanban_mls_membership_frontier(&anchor_view, &event_id_typed),
-        kanban_mls_policy_root(&anchor_view, realm_id)?,
+        kanban_mls_membership_frontier(&seal_view, &event_id_typed),
+        kanban_mls_policy_root(&seal_view, realm_id)?,
     )
     .map_err(|err| format!("MLS genesis governance binding failed: {err}"))?;
     let payload = crate::mls::runtime::build_mls_genesis_payload(
@@ -6630,12 +6628,12 @@ pub(crate) fn kanban_mls_commit_event_from_store(
     _schedule_hash: &cokret_sdk::Hash,
     commit_envelope: &cokret_sdk::MlsCommitEnvelope,
 ) -> Result<crate::operation::EventEnvelope, String> {
-    let anchor_view = state_store.anchor_view_for_realm(realm_id);
+    let seal_view = state_store.seal_view_for_realm(realm_id);
     // `base_epoch` MUST be the SDK group's PRE-commit epoch so the
     // `next_epoch == base_epoch + 1` invariant holds by construction.
     // `commit_envelope.epoch` is the POST-commit epoch (`self_update_commit`
     // merges the pending commit before reading it), so the pre-commit epoch is
-    // exactly one less. Deriving `base_epoch` from `anchor_view.mls_epoch`
+    // exactly one less. Deriving `base_epoch` from `seal_view.mls_epoch`
     // instead — which only refreshes on `/sync` — drifts whenever the local
     // snapshot has advanced past the last server-confirmed epoch, which is what
     // tripped `mls_commit_payload.next_epoch must equal base_epoch + 1`.
@@ -6650,14 +6648,14 @@ pub(crate) fn kanban_mls_commit_event_from_store(
         commit_envelope.group_id.clone(),
         prev_epoch,
         commit_envelope.epoch,
-        kanban_mls_membership_frontier(&anchor_view, &event_id_typed),
-        kanban_mls_policy_root(&anchor_view, realm_id)?,
+        kanban_mls_membership_frontier(&seal_view, &event_id_typed),
+        kanban_mls_policy_root(&seal_view, realm_id)?,
     )
     .map_err(|err| format!("MLS governance binding failed: {err}"))?;
     let payload = cokret_sdk::MlsCommitPayload::new(
         commit_envelope.group_id.clone(),
         prev_epoch,
-        kanban_mls_base_epoch_ref(&anchor_view, realm_id),
+        kanban_mls_base_epoch_ref(&seal_view, realm_id),
         Vec::new(),
         commit_envelope.epoch,
         commit_envelope.commit_digest.clone(),
@@ -7757,7 +7755,7 @@ mod tests {
             kind: "ck.flow.create".to_owned(),
             cell_id: "ck:cell:test".to_owned(),
             effect_summary: "{}".to_owned(),
-            anchor_ref: "ck:anchor:test".to_owned(),
+            seal_ref: "ck:seal:test".to_owned(),
             hlc: "000000000000-0000-00000000".to_owned(),
             note: note.to_owned(),
             signed_move_json: None,

@@ -3,13 +3,13 @@
 //! Spec: `crypto-media/encryption-and-audit.md` §10. Every MLS commit MUST
 //! carry preconditions binding it to:
 //! 1. the previous MLS epoch (`mls_epoch_cell.head_eq(prev_epoch)`) — racing commits fail closed.
-//! 2. the Realm's `covered_frontier_cell.contains(required_governance_anchor)` — the commit MUST
-//!    already cover the governance anchor it asserts.
+//! 2. the Realm's `covered_seals_cell.contains(required_governance_seal)` — the commit MUST already
+//!    cover the governance seal it asserts.
 //!
 //! The commit's effects then:
 //! 1. set `mls_epoch_cell` to the new epoch.
 //! 2. set `key_schedule_cell` to the new schedule's content hash.
-//! 3. add the attested governance anchor to `covered_frontier_cell`.
+//! 3. add the attested governance seal to `covered_seals_cell`.
 //!
 //! This module wraps `cokret_sdk::mls_move::*` so yougen can produce the
 //! canonical Move precondition / effect tuples used by the hardening profile.
@@ -17,16 +17,16 @@
 //! `cokret_sdk::MlsCommitPayload` and `cokret_sdk::MlsGovernanceBindingPayload`.
 
 use cokret_sdk::mls_move::{
-    covered_frontier_cell_id, governance_frontier_tag, mls_commit_effects, mls_commit_preconditions,
+    covered_seals_cell_id, governance_seal_tag, mls_commit_effects, mls_commit_preconditions,
 };
-use cokret_sdk::{AnchorId, Effect, Hash, Precondition, RealmId};
+use cokret_sdk::{Effect, Hash, Precondition, RealmId, SealId};
 use serde::{Deserialize, Serialize};
 
 /// Serializable view of the MLS Governance Binding Move tuple set. Keeps
 /// Move-builder call sites typed without forcing every module to depend on
 /// `cokret_sdk::Precondition` / `Effect`.
 ///
-/// Both the human-readable summary fields (epoch / schedule / anchor /
+/// Both the human-readable summary fields (epoch / schedule / seal /
 /// frontier cell) and the **full SDK Precondition + Effect tuples** are
 /// carried. The summary fields make Audit / Conflict UIs cheap to render;
 /// the tuples are what MLS governance Moves attach so the server can enforce
@@ -45,12 +45,12 @@ pub struct GovernanceBindingPayload {
     pub new_epoch: u64,
     /// Content hash (`sha256:<hex>`) of the new MLS key schedule.
     pub new_schedule_hash: String,
-    /// Governance Anchor id this commit asserts coverage of.
-    pub attested_governance_anchor: String,
-    /// Cell ref string of the Realm's `covered_frontier_cell`.
-    pub covered_frontier_cell: String,
-    /// Tag string written into the `covered_frontier_cell` or-set entry.
-    pub covered_frontier_tag: String,
+    /// Governance Seal id this commit asserts coverage of.
+    pub attested_governance_seal: String,
+    /// Cell ref string of the Realm's `covered_seals_cell`.
+    pub covered_seals_cell: String,
+    /// Tag string written into the `covered_seals_cell` or-set entry.
+    pub covered_seals_tag: String,
     /// Canonical SDK preconditions the server MUST enforce.
     pub preconditions: Vec<Precondition>,
     /// Canonical SDK effects the commit applies on success.
@@ -58,7 +58,7 @@ pub struct GovernanceBindingPayload {
 }
 
 impl GovernanceBindingPayload {
-    /// Build a binding payload from the typed Anchor + schedule hash. Returns
+    /// Build a binding payload from the typed Seal + schedule hash. Returns
     /// `Err` if the typed ids fail validation.
     pub fn from_anchor(
         group_id: impl Into<String>,
@@ -66,7 +66,7 @@ impl GovernanceBindingPayload {
         prev_epoch: u64,
         new_epoch: u64,
         new_schedule: &Hash,
-        attested_governance_anchor: &AnchorId,
+        attested_governance_seal: &SealId,
     ) -> anyhow::Result<Self> {
         let group_id = group_id.into();
         // Capture (do not discard) the SDK's canonical precondition + effect
@@ -75,19 +75,19 @@ impl GovernanceBindingPayload {
         // the submitted Move's preconditions/effects EXACTLY match these
         // SDK-derived shapes — yougen must not re-derive or shorten them.
         let preconditions =
-            mls_commit_preconditions(&group_id, realm_id, prev_epoch, attested_governance_anchor)
+            mls_commit_preconditions(&group_id, realm_id, prev_epoch, attested_governance_seal)
                 .map_err(|e| anyhow::anyhow!("mls_commit_preconditions invalid: {e:?}"))?;
         let effects = mls_commit_effects(
             &group_id,
             realm_id,
             new_epoch,
             new_schedule,
-            attested_governance_anchor,
+            attested_governance_seal,
         )
         .map_err(|e| anyhow::anyhow!("mls_commit_effects invalid: {e:?}"))?;
 
-        let frontier_cell = covered_frontier_cell_id(realm_id)
-            .map_err(|e| anyhow::anyhow!("covered_frontier_cell_id invalid: {e:?}"))?;
+        let frontier_cell = covered_seals_cell_id(realm_id)
+            .map_err(|e| anyhow::anyhow!("covered_seals_cell_id invalid: {e:?}"))?;
 
         Ok(Self {
             group_id,
@@ -95,9 +95,9 @@ impl GovernanceBindingPayload {
             prev_epoch,
             new_epoch,
             new_schedule_hash: new_schedule.as_str().to_owned(),
-            attested_governance_anchor: attested_governance_anchor.as_str().to_owned(),
-            covered_frontier_cell: frontier_cell.as_str().to_owned(),
-            covered_frontier_tag: governance_frontier_tag(attested_governance_anchor),
+            attested_governance_seal: attested_governance_seal.as_str().to_owned(),
+            covered_seals_cell: frontier_cell.as_str().to_owned(),
+            covered_seals_tag: governance_seal_tag(attested_governance_seal),
             preconditions,
             effects,
         })
@@ -120,9 +120,9 @@ impl GovernanceBindingPayload {
             "prev_epoch": self.prev_epoch,
             "new_epoch": self.new_epoch,
             "new_schedule_hash": &self.new_schedule_hash,
-            "attested_governance_anchor": &self.attested_governance_anchor,
-            "covered_frontier_cell": &self.covered_frontier_cell,
-            "covered_frontier_tag": &self.covered_frontier_tag,
+            "attested_governance_seal": &self.attested_governance_seal,
+            "covered_seals_cell": &self.covered_seals_cell,
+            "covered_seals_tag": &self.covered_seals_tag,
             "preconditions": &self.preconditions,
             "effects": &self.effects,
         })
@@ -135,7 +135,7 @@ pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::{AnchorId, Hash, RealmId};
+    use cokret_sdk::{Hash, RealmId, SealId};
 
     use super::*;
 
@@ -143,8 +143,8 @@ mod tests {
         RealmId::new("ck:realm:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
     }
 
-    fn anchor() -> AnchorId {
-        AnchorId::new(format!("ck:anchor:sha256:{}", "a".repeat(64))).unwrap()
+    fn seal() -> SealId {
+        SealId::new(format!("ck:seal:sha256:{}", "a".repeat(64))).unwrap()
     }
 
     fn schedule_hash() -> Hash {
@@ -152,20 +152,20 @@ mod tests {
     }
 
     #[test]
-    fn payload_carries_covered_frontier_cell() {
+    fn payload_carries_covered_seals_cell() {
         let payload = GovernanceBindingPayload::from_anchor(
             "mls-group-1",
             &realm_id(),
             7,
             8,
             &schedule_hash(),
-            &anchor(),
+            &seal(),
         )
         .unwrap();
         assert_eq!(payload.prev_epoch, 7);
         assert_eq!(payload.new_epoch, 8);
-        assert!(payload.covered_frontier_cell.contains("covered_frontier"));
-        assert_eq!(payload.covered_frontier_tag, anchor().as_str());
+        assert!(payload.covered_seals_cell.contains("covered_seals"));
+        assert_eq!(payload.covered_seals_tag, seal().as_str());
     }
 
     #[test]
@@ -176,7 +176,7 @@ mod tests {
             7,
             8,
             &schedule_hash(),
-            &anchor(),
+            &seal(),
         )
         .unwrap();
         // Spec §10 requires exactly two preconditions (epoch + frontier)
@@ -198,7 +198,7 @@ mod tests {
             1,
             2,
             &schedule_hash(),
-            &anchor(),
+            &seal(),
         )
         .unwrap()
         .canonical_hash()
@@ -209,7 +209,7 @@ mod tests {
             1,
             3,
             &schedule_hash(),
-            &anchor(),
+            &seal(),
         )
         .unwrap()
         .canonical_hash()

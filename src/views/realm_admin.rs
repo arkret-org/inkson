@@ -15,12 +15,12 @@ use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id};
 
-/// Default `covered_frontier_lag` warning threshold used by the
+/// Default `covered_seals_lag` warning threshold used by the
 /// realm_admin alert banner. Mirrors sodmin's
 /// `DEFAULT_LAG_WARN_THRESHOLD` so a member moving between the two
 /// surfaces sees the same alert ceiling. Read from the user preference
 /// signal in [`RealmAdminPanel`].
-pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
+pub(crate) const DEFAULT_COVERED_SEALS_LAG_THRESHOLD: u64 = 5;
 
 /// Number of member rows the list renders per page. The member list is
 /// hydrated from the full local sync projection (which can hold tens of
@@ -1484,14 +1484,14 @@ pub fn RealmAdminPanel(
     // Covered_frontier alert threshold. Default 5 (mirrors sodmin's
     // `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the numeric
     // input next to the banner.
-    let mut covered_frontier_threshold = use_signal(|| DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD);
-    // Read-only anchorer cell value fetched from /_soland/admin/realms/{id}/anchorer.
+    let mut covered_seals_threshold = use_signal(|| DEFAULT_COVERED_SEALS_LAG_THRESHOLD);
+    // Read-only notary cell value fetched from /_soland/admin/realms/{id}/notary.
     // The endpoint may 404 in dev — surface that inline rather than blocking the page.
-    let mut anchorer_cell_status = use_signal(String::new);
-    let mut anchorer_cell_value = use_signal(String::new);
+    let mut notary_cell_status = use_signal(String::new);
+    let mut notary_cell_value = use_signal(String::new);
     // Selected Move for the failure detail inline panel. Clicking a row
     // that's in a failed state stores its move_id here; the detail block
-    // below renders the reason / anchor_ref.
+    // below renders the reason / seal_ref.
     let mut move_detail_open = use_signal(|| Option::<String>::None);
     // YOU-01-011: the former conflict-repair submit dialog was removed —
     // `ck.conflict.repair` is not in the spec event-kind-registry (186
@@ -1499,57 +1499,56 @@ pub fn RealmAdminPanel(
     // wire kind. The bottom-cells banner below stays as read-only
     // diagnostics; repair tooling returns once a repair kind is
     // registered via CKP.
-    // Read the local anchor view for this realm once per render. Surfaces:
+    // Read the local seal view for this realm once per render. Surfaces:
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
     //  - frontier head    → debug visibility into what Move builders thread
     //  - state_root       → admin can confirm divergence between local + server
-    let anchor_view = state_store.read().anchor_view_for_realm(&selected_realm_id);
-    let bottom_cells: Vec<(String, crate::local_state::BottomCellInfo)> = anchor_view
+    let seal_view = state_store.read().seal_view_for_realm(&selected_realm_id);
+    let bottom_cells: Vec<(String, crate::local_state::BottomCellInfo)> = seal_view
         .bottom_cells
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    let anchor_frontier_label = if anchor_view.frontier.is_empty() {
-        "(no Anchor seen — using sha256(empty) sentinel)".to_owned()
+    let seal_frontier_label = if seal_view.frontier.is_empty() {
+        "(no Seal seen — using sha256(empty) sentinel)".to_owned()
     } else {
-        anchor_view.frontier.join(", ")
+        seal_view.frontier.join(", ")
     };
-    let anchor_state_root_label = anchor_view
+    let seal_state_root_label = seal_view
         .state_root
         .clone()
         .unwrap_or_else(|| "(not published)".to_owned());
-    // MLS epoch + governance covered_frontier for the read-only widget.
+    // MLS epoch + governance covered_seals for the read-only widget.
     // `mls_epoch` is the cas-register value of ck.component.mls.epoch.v1;
-    // `covered_frontier` is the
-    // ck.component.governance.covered_frontier.v1 cell value. Both come
-    // from the same anchor view the bottom-cells banner reads.
-    let mls_epoch_label = anchor_view
+    // `covered_seals` is the
+    // ck.component.governance.covered_seals.v1 cell value. Both come
+    // from the same seal view the bottom-cells banner reads.
+    let mls_epoch_label = seal_view
         .mls_epoch
         .map(|epoch| epoch.to_string())
         .unwrap_or_else(|| "(no MLS epoch published)".to_owned());
-    let covered_frontier_label = anchor_view
-        .covered_frontier
+    let covered_seals_label = seal_view
+        .covered_seals
         .clone()
-        .unwrap_or_else(|| "(no governance covered_frontier published)".to_owned());
+        .unwrap_or_else(|| "(no governance covered_seals published)".to_owned());
     // Covered_frontier_lag value + threshold check for the alert banner.
     // We render only when a lag value has actually been surfaced AND it
     // exceeds the (user-configurable) warning threshold - matches the
     // sodmin admin page UX.
-    let covered_frontier_lag_value = anchor_view.covered_frontier_lag;
-    let covered_frontier_lag_threshold = covered_frontier_threshold();
-    let covered_frontier_alert =
-        anchor_view.covered_frontier_lag_above(covered_frontier_lag_threshold);
-    let covered_frontier_lag_label = covered_frontier_lag_value
+    let covered_seals_lag_value = seal_view.covered_seals_lag;
+    let covered_seals_lag_threshold = covered_seals_threshold();
+    let covered_seals_alert = seal_view.covered_seals_lag_above(covered_seals_lag_threshold);
+    let covered_seals_lag_label = covered_seals_lag_value
         .map(|lag| lag.to_string())
         .unwrap_or_else(|| "-".to_owned());
     // per-Realm Move submission tracker. Drives the state-pill list +
-    // the Realm-wide anchorer_paused banner.
+    // the Realm-wide notary_paused banner.
     let move_submissions = state_store
         .read()
         .move_submissions_for_realm(&selected_realm_id);
     let realm_paused = state_store
         .read()
-        .realm_has_paused_anchorer(&selected_realm_id);
+        .realm_has_paused_notary(&selected_realm_id);
     let realm_pending_mls_binding = state_store
         .read()
         .realm_has_pending_mls_binding(&selected_realm_id);
@@ -1572,7 +1571,7 @@ pub fn RealmAdminPanel(
     let alert_count = usize::from(realm_paused)
         + usize::from(realm_pending_mls_binding)
         + usize::from(!bottom_cells.is_empty())
-        + usize::from(covered_frontier_alert);
+        + usize::from(covered_seals_alert);
     let projected_member_count =
         projected_members_for_realm(&state_store.read(), &selected_realm_id).len();
 
@@ -1672,24 +1671,24 @@ pub fn RealmAdminPanel(
                     }
                 }
             }
-            // Realm-wide anchorer-paused banner. Fires whenever any tracked
-            // Move for this Realm has surfaced `AnchorerPaused`. The Space
-            // cannot advance until ops rotate the recovery anchorer.
+            // Realm-wide notary-paused banner. Fires whenever any tracked
+            // Move for this Realm has surfaced `NotaryPaused`. The Space
+            // cannot advance until ops rotate the recovery notary.
             if realm_paused {
                 div {
                     class: "event error-banner",
-                    "data-testid": "anchorer-paused-banner",
+                    "data-testid": "notary-paused-banner",
                     div { class: "event-head",
-                        span { "Realm halted, waiting for the recovery anchorer" }
-                        span { class: "badge red", "anchorer_paused" }
+                        span { "Realm halted, waiting for the recovery notary" }
+                        span { class: "badge red", "notary_paused" }
                     }
                     div { class: "muted",
-                        "soland's anchorer signing pipeline is offline for this Realm — Moves remain in MoveStore but no Anchor batch will close until ops rotate the recovery anchorer (sodmin H'8). All write attempts surface state=anchorer_paused."
+                        "soland's notary signing pipeline is offline for this Realm — Moves remain in MoveStore but no Seal batch will close until ops rotate the recovery notary (sodmin H'8). All write attempts surface state=notary_paused."
                     }
                 }
             }
             // Pending MLS binding toast — when a recent E2EE message Event
-            // asserts a covered_frontier the local
+            // asserts a covered_seals the local
             // MLS view has not yet acknowledged. Stays up until the
             // user clears the underlying Move record.
             if realm_pending_mls_binding {
@@ -1697,7 +1696,7 @@ pub fn RealmAdminPanel(
                     class: "event",
                     "data-testid": "pending-mls-binding-toast",
                     div { class: "event-head",
-                        span { "covered_frontier has not yet caught up to the required governance frontier" }
+                        span { "covered_seals has not yet caught up to the required governance frontier" }
                         span { class: "badge amber", "pending_mls_binding" }
                     }
                     div { class: "muted",
@@ -1715,7 +1714,7 @@ pub fn RealmAdminPanel(
                         span { "{move_submissions.len()} tracked" }
                     }
                     div { class: "muted",
-                        "Local Move/Anchor pipeline state for writes you've submitted from this device. Pending → Effective once anchored; failures expand inline."
+                        "Local Move/Seal pipeline state for writes you've submitted from this device. Pending → Effective once sealed; failures expand inline."
                     }
                     for record in move_submissions.clone() {
                         {
@@ -1774,11 +1773,11 @@ pub fn RealmAdminPanel(
                                                 } else {
                                                     div { "reason: (none reported)" }
                                                 }
-                                                if let Some(anchor) = &record.anchor_ref {
+                                                if let Some(seal) = &record.seal_ref {
                                                     {
-                                                        let anchor_label = short_protocol_id(anchor);
+                                                        let seal_label = short_protocol_id(seal);
                                                         rsx! {
-                                                            div { title: "{anchor}", "bound anchor: {anchor_label}" }
+                                                            div { title: "{seal}", "bound seal: {seal_label}" }
                                                         }
                                                     }
                                                 }
@@ -1839,19 +1838,19 @@ pub fn RealmAdminPanel(
             if active_section == RealmAdminSection::Security {
                 // Covered_frontier_lag alert banner. Mirrors sodmin's admin
                 // page banner but stays client-side - it reads the lag from
-                // the LocalAnchorView populated on /sync, compares to a
+                // the LocalSealView populated on /sync, compares to a
                 // user-configurable threshold (default 5, see
-                // DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD), and only renders
+                // DEFAULT_COVERED_SEALS_LAG_THRESHOLD), and only renders
                 // when soland has surfaced a lag AND it exceeds threshold.
                 // Operators see the same urgency cue here that sodmin shows
-                // on the dedicated covered_frontier page.
+                // on the dedicated covered_seals page.
                 div { class: "event", "data-testid": "covered-frontier-threshold-row",
                     div { class: "event-head",
-                        span { "covered_frontier alert threshold" }
+                        span { "covered_seals alert threshold" }
                         span { "client-side" }
                     }
                     div { class: "muted",
-                        "Surface a banner when soland's published covered_frontier_lag exceeds this value. Default 5 (mirrors sodmin)."
+                        "Surface a banner when soland's published covered_seals_lag exceeds this value. Default 5 (mirrors sodmin)."
                     }
                     Label { html_for: "covered-frontier-threshold-input", "Threshold (Moves)" }
                     input {
@@ -1859,83 +1858,83 @@ pub fn RealmAdminPanel(
                         "data-testid": "covered-frontier-threshold-input",
                         r#type: "number",
                         min: "0",
-                        value: "{covered_frontier_lag_threshold}",
+                        value: "{covered_seals_lag_threshold}",
                         oninput: move |evt| {
                             if let Ok(parsed) = evt.value().parse::<u64>() {
-                                covered_frontier_threshold.set(parsed);
+                                covered_seals_threshold.set(parsed);
                             }
                         },
                     }
                     div { class: "muted", "data-testid": "covered-frontier-lag-value",
-                        "current covered_frontier_lag: {covered_frontier_lag_label}"
+                        "current covered_seals_lag: {covered_seals_lag_label}"
                     }
                 }
-                if covered_frontier_alert {
+                if covered_seals_alert {
                     div { class: "event", "data-testid": "covered-frontier-alert-banner",
                         div { class: "event-head",
-                            span { "covered_frontier lag alert" }
+                            span { "covered_seals lag alert" }
                             span { class: "badge red", "above threshold" }
                         }
                         div { class: "muted", "data-testid": "covered-frontier-alert-message",
-                            "Lag of {covered_frontier_lag_label} Moves is above the warn threshold {covered_frontier_lag_threshold}; investigate MLS group health (member offline, KeyPackage stale). Admin tools live on the sodmin covered_frontier page."
+                            "Lag of {covered_seals_lag_label} Moves is above the warn threshold {covered_seals_lag_threshold}; investigate MLS group health (member offline, KeyPackage stale). Admin tools live on the sodmin covered_seals page."
                         }
                     }
                 }
                 // MLS epoch + governance frontier read-only widget. Reads
-                // from the same LocalAnchorView the bottom-cells banner
+                // from the same LocalSealView the bottom-cells banner
                 // uses, so it costs no extra fetch - just surfaces two
                 // well-known cells (mls.epoch.v1,
-                // governance.covered_frontier.v1) for admin visibility into
+                // governance.covered_seals.v1) for admin visibility into
                 // E2EE rotation status and governance gating without leaving
                 // the page.
                 div { class: "event", "data-testid": "mls-epoch-widget",
                     div { class: "event-head",
                         span { "MLS epoch & governance frontier" }
-                        span { "ck.component.mls.epoch.v1 · governance.covered_frontier.v1" }
+                        span { "ck.component.mls.epoch.v1 · governance.covered_seals.v1" }
                     }
                     div { class: "muted",
-                        "Read-only view of the most recent MLS epoch published in the cell map and the governance covered_frontier value Move acceptance gates against. Updates as soon as sync surfaces a new anchor view — no fetch button needed."
+                        "Read-only view of the most recent MLS epoch published in the cell map and the governance covered_seals value Move acceptance gates against. Updates as soon as sync surfaces a new seal view — no fetch button needed."
                     }
                     div { class: "muted", "data-testid": "mls-epoch-value",
                         "MLS epoch: {mls_epoch_label}"
                     }
                     div { class: "muted", "data-testid": "governance-covered-frontier",
-                        "covered_frontier: {covered_frontier_label}"
+                        "covered_seals: {covered_seals_label}"
                     }
                 }
-                // Anchor frontier debug — shows whether sync has surfaced a
-                // real Anchor view yet. When empty this matches the sentinel
+                // Seal frontier debug — shows whether sync has surfaced a
+                // real Seal view yet. When empty this matches the sentinel
                 // Move builders thread in.
-                div { class: "event", "data-testid": "anchor-frontier-debug",
+                div { class: "event", "data-testid": "seal-frontier-debug",
                     div { class: "event-head",
-                        span { "Anchor frontier" }
-                        span { "leaves={anchor_view.leaves.len()}" }
+                        span { "Seal frontier" }
+                        span { "leaves={seal_view.leaves.len()}" }
                     }
-                    div { class: "muted", "data-testid": "anchor-frontier-heads",
-                        "frontier: {anchor_frontier_label}"
+                    div { class: "muted", "data-testid": "seal-frontier-heads",
+                        "frontier: {seal_frontier_label}"
                     }
-                    div { class: "muted", "data-testid": "anchor-state-root",
-                        "state_root: {anchor_state_root_label}"
+                    div { class: "muted", "data-testid": "seal-state-root",
+                        "state_root: {seal_state_root_label}"
                     }
                 }
-                // Anchorer cell (read-only, P0 M4) — fetches from
-                // /_soland/admin/realms/{id}/anchorer; surfaces the
-                // recovery-anchorer mode (single_did / threshold / open_set /
+                // Notary cell (read-only, P0 M4) — fetches from
+                // /_soland/admin/realms/{id}/notary; surfaces the
+                // recovery-notary mode (single_did / threshold / open_set /
                 // mixed) on this admin page. A separate agent is implementing
                 // the endpoint on soland; on 404 we fall back to a clear
                 // inline message.
-                div { class: "event", "data-testid": "anchorer-cell-card",
+                div { class: "event", "data-testid": "notary-cell-card",
                     div { class: "event-head",
-                        span { "Anchorer cell" }
-                        span { "ck.component.anchorer.v1" }
+                        span { "Notary cell" }
+                        span { "ck.component.notary.v1" }
                     }
                     div { class: "muted",
-                        "Recovery anchorer mode for this Realm — controls who can re-anchor a paused frontier. Read-only; modifications go through the dedicated anchorer-rotation flow."
+                        "Recovery notary mode for this Realm — controls who can re-seal a paused frontier. Read-only; modifications go through the dedicated notary-rotation flow."
                     }
                     div { class: "actions",
                         Button {
                             variant: ButtonVariant::Secondary,
-                            "data-testid": "anchorer-cell-refresh",
+                            "data-testid": "notary-cell-refresh",
                             onclick: {
                                 let base = base_url.clone();
                                 let realm = selected_realm_id.clone();
@@ -1948,23 +1947,23 @@ pub fn RealmAdminPanel(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.admin_anchorer_describe(&realm).await
+                                                api.admin_notary_describe(&realm).await
                                             },
                                         )
                                         .await
                                         {
                                             Ok(value) => {
-                                                anchorer_cell_status.set("ok".to_owned());
-                                                anchorer_cell_value.set(value.to_string());
+                                                notary_cell_status.set("ok".to_owned());
+                                                notary_cell_value.set(value.to_string());
                                             }
                                             Err(err) => {
                                                 // 404 / not-implemented falls through here.
                                                 // Keep the message clear so the operator
                                                 // knows it's a missing endpoint, not bad
                                                 // data.
-                                                anchorer_cell_status.set(format!(
-                                                    "anchorer endpoint unavailable ({}); \
-                                                     expected /_soland/admin/realms/{{id}}/anchorer \
+                                                notary_cell_status.set(format!(
+                                                    "notary endpoint unavailable ({}); \
+                                                     expected /_soland/admin/realms/{{id}}/notary \
                                                      (separate agent shipping)",
                                                     err.display()
                                                 ));
@@ -1973,17 +1972,17 @@ pub fn RealmAdminPanel(
                                     });
                                 }
                             },
-                            "Fetch anchorer cell"
+                            "Fetch notary cell"
                         }
                     }
-                    if !anchorer_cell_status().is_empty() {
-                        div { class: "muted", "data-testid": "anchorer-cell-status",
-                            "{anchorer_cell_status}"
+                    if !notary_cell_status().is_empty() {
+                        div { class: "muted", "data-testid": "notary-cell-status",
+                            "{notary_cell_status}"
                         }
                     }
-                    if !anchorer_cell_value().is_empty() {
-                        div { class: "muted", "data-testid": "anchorer-cell-value",
-                            "{anchorer_cell_value}"
+                    if !notary_cell_value().is_empty() {
+                        div { class: "muted", "data-testid": "notary-cell-value",
+                            "{notary_cell_value}"
                         }
                     }
                 }

@@ -464,7 +464,7 @@ impl CardState {
         match self {
             CardState::Synced => "synced",
             CardState::Optimistic | CardState::Queued | CardState::Submitted => "sending...",
-            CardState::Accepted => "pending anchor",
+            CardState::Accepted => "pending seal",
             CardState::SoftFailed => "soft failed",
             CardState::Quarantined => "quarantined",
             CardState::Conflict => "CAS conflict",
@@ -500,7 +500,7 @@ impl CardState {
             CardState::Optimistic | CardState::Queued | CardState::Submitted => {
                 "Sending; waiting for server confirmation"
             }
-            CardState::Accepted => "Server accepted the event; waiting for projection/anchor",
+            CardState::Accepted => "Server accepted the event; waiting for projection/seal",
             CardState::SoftFailed => "Server did not accept this event",
             CardState::Quarantined => "Write failed; open the queue for details",
             CardState::Conflict => "Server reported a CAS conflict",
@@ -541,7 +541,7 @@ pub(super) struct BoardWriteRecord {
     pub(super) kind: String,
     pub(super) cell_id: String,
     pub(super) effect_summary: String,
-    pub(super) anchor_ref: String,
+    pub(super) seal_ref: String,
     pub(super) hlc: String,
     pub(super) note: String,
     pub(super) signed_move_json: Option<serde_json::Value>,

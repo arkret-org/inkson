@@ -2,14 +2,14 @@
 //!
 //! Spec: `sync/federation.md`. Cross-domain Event exchange requires:
 //! - Each domain advertises `.well-known/cokret/server` with its service DID.
-//! - Trust anchors are pinned per peer domain (DID + public key).
+//! - Trust seals are pinned per peer domain (DID + public key).
 //! - Every `FederationTransaction` carries a signature the receiver verifies against the origin
-//!   domain's trust anchor.
+//!   domain's trust seal.
 //!
 //! Yougen previously called the federation HTTP endpoints (`api.rs:1458-1521`)
 //! as opaque pass-throughs. This module adds a client-side trust bundle that
 //! collects [`cokret_sdk::TrustAnchor`] entries, verifies the well-known
-//! discovery record against the active anchor set, and gates inbound
+//! discovery record against the active seal set, and gates inbound
 //! `FederationTransaction` payloads on bundle membership.
 
 use std::collections::BTreeMap;
@@ -39,7 +39,7 @@ pub struct FederationTransaction {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustCheck {
-    /// Domain is pinned and the transaction's origin matches the anchor.
+    /// Domain is pinned and the transaction's origin matches the seal.
     Trusted,
     /// Domain is not in the bundle; reject the transaction.
     UnknownDomain(String),
@@ -52,13 +52,13 @@ pub enum TrustCheck {
 /// Pinned trust bundle. Maps `domain` → [`TrustAnchor`].
 ///
 /// F-FED-1 (2026-05-19): now `Serialize` / `Deserialize` so the
-/// local state store can persist the pinned anchor set across
+/// local state store can persist the pinned seal set across
 /// restarts. Without persistence the user has to re-pin every
 /// federated peer on every launch.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TrustBundle {
     #[serde(default)]
-    anchors: BTreeMap<String, TrustAnchor>,
+    seals: BTreeMap<String, TrustAnchor>,
     /// F-FED-1: backfill / federation transactions whose `origin`
     /// isn't pinned land here instead of being silently dropped.
     /// The UI surfaces them so the operator can decide whether to
@@ -90,32 +90,32 @@ impl TrustBundle {
         Self::default()
     }
 
-    /// Pin a [`TrustAnchor`] for `anchor.domain`. Subsequent calls overwrite
+    /// Pin a [`TrustAnchor`] for `seal.domain`. Subsequent calls overwrite
     /// the existing entry for that domain.
-    pub fn add_anchor(&mut self, anchor: TrustAnchor) {
-        self.anchors.insert(anchor.domain.clone(), anchor);
+    pub fn add_anchor(&mut self, seal: TrustAnchor) {
+        self.seals.insert(seal.domain.clone(), seal);
     }
 
-    /// Remove a pinned anchor. Returns the removed anchor on success.
+    /// Remove a pinned seal. Returns the removed seal on success.
     pub fn remove(&mut self, domain: &str) -> Option<TrustAnchor> {
-        self.anchors.remove(domain)
+        self.seals.remove(domain)
     }
 
-    /// Lookup the anchor for a domain.
+    /// Lookup the seal for a domain.
     pub fn anchor_for(&self, domain: &str) -> Option<&TrustAnchor> {
-        self.anchors.get(domain)
+        self.seals.get(domain)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &TrustAnchor)> {
-        self.anchors.iter().map(|(k, v)| (k.as_str(), v))
+        self.seals.iter().map(|(k, v)| (k.as_str(), v))
     }
 
     pub fn len(&self) -> usize {
-        self.anchors.len()
+        self.seals.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.anchors.is_empty()
+        self.seals.is_empty()
     }
 
     // ── F-FED-1: quarantine ──────────────────────────────────────────
@@ -156,14 +156,14 @@ impl TrustBundle {
     }
 
     /// F-FED-1: re-evaluate every quarantined row against the
-    /// current anchor set + `local_domain`. Returns the
+    /// current seal set + `local_domain`. Returns the
     /// `transaction_id`s that are now [`TrustCheck::Trusted`] —
     /// the caller is expected to re-fetch those transactions via
     /// `/federation/backfill` (the actual replay is out of scope
     /// for this module; we just identify the candidates).
     ///
     /// `verify_signature` is the same plug-in closure shape used
-    /// by [`crate::anchor_witness::verify_witness_chain`] — it lets
+    /// by [`crate::seal_witness::verify_seal_witness_chain`] — it lets
     /// the caller swap the signature algorithm without touching
     /// this module.
     pub fn reverify_quarantined_against(
@@ -192,13 +192,13 @@ impl TrustBundle {
 
     /// Verify a [`FederationTransaction`] against this bundle. Checks origin
     /// pinning + destination matching, then verifies the local federation
-    /// transcript against the pinned anchor key.
+    /// transcript against the pinned seal key.
     pub fn verify_transaction(
         &self,
         local_domain: &str,
         transaction: &FederationTransaction,
     ) -> TrustCheck {
-        let anchor = match self.anchors.get(&transaction.origin) {
+        let seal = match self.seals.get(&transaction.origin) {
             Some(a) => a,
             None => {
                 return TrustCheck::UnknownDomain(transaction.origin.clone());
@@ -210,11 +210,10 @@ impl TrustBundle {
                 expected: local_domain.to_owned(),
             };
         }
-        if anchor.public_key.is_empty() || transaction.signature.is_empty() {
+        if seal.public_key.is_empty() || transaction.signature.is_empty() {
             return TrustCheck::SignatureMismatch(transaction.transaction_id.clone());
         }
-        if federation_transaction_signature(transaction, &anchor.public_key)
-            != transaction.signature
+        if federation_transaction_signature(transaction, &seal.public_key) != transaction.signature
         {
             return TrustCheck::SignatureMismatch(transaction.transaction_id.clone());
         }
@@ -228,14 +227,14 @@ impl TrustBundle {
         expected_domain: &str,
         record: &WellKnownCokretServer,
     ) -> TrustCheck {
-        let anchor = match self.anchors.get(expected_domain) {
+        let seal = match self.seals.get(expected_domain) {
             Some(a) => a,
             None => return TrustCheck::UnknownDomain(expected_domain.to_owned()),
         };
         // Pinned `public_key` is interpreted as the expected service DID
         // string until the SDK exposes a typed Ed25519 verifier surface to
         // yougen. We match it case-sensitively against the well-known DID.
-        if anchor.public_key != record.service_did.as_str() {
+        if seal.public_key != record.service_did.as_str() {
             return TrustCheck::SignatureMismatch(record.service_did.as_str().to_owned());
         }
         TrustCheck::Trusted
@@ -327,7 +326,7 @@ pub fn well_known_cokret_server_url(base_url: &str) -> Result<String, WellKnownF
 /// This helper deliberately does **no** caching; the caller threads
 /// the result through [`TrustBundle::verify_well_known`] and decides
 /// what to persist (typically into the trust bundle alongside the
-/// pinned anchor). Caching is a follow-up.
+/// pinned seal). Caching is a follow-up.
 pub async fn fetch_well_known_cokret_server(
     base_url: &str,
 ) -> Result<WellKnownCokretServer, WellKnownFetchError> {
@@ -355,7 +354,7 @@ pub async fn fetch_well_known_cokret_server(
 mod tests {
     use super::*;
 
-    fn anchor(domain: &str, key: &str) -> TrustAnchor {
+    fn seal(domain: &str, key: &str) -> TrustAnchor {
         TrustAnchor {
             domain: domain.to_owned(),
             public_key: key.to_owned(),
@@ -365,7 +364,7 @@ mod tests {
     #[test]
     fn add_and_lookup_anchor() {
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("alice.example", "did:web:alice.example"));
+        bundle.add_anchor(seal("alice.example", "did:web:alice.example"));
         assert_eq!(bundle.len(), 1);
         assert!(bundle.anchor_for("alice.example").is_some());
         assert!(bundle.anchor_for("bob.example").is_none());
@@ -390,7 +389,7 @@ mod tests {
     #[test]
     fn destination_mismatch_is_caught() {
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("bob.example", "did:web:bob.example"));
+        bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
         let tx = FederationTransaction {
             transaction_id: "t1".into(),
             origin: "bob.example".into(),
@@ -420,7 +419,7 @@ mod tests {
         tx.signature = federation_transaction_signature(&tx, signing_key);
 
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("bob.example", signing_key));
+        bundle.add_anchor(seal("bob.example", signing_key));
         assert_eq!(
             bundle.verify_transaction("alice.example", &tx),
             TrustCheck::Trusted
@@ -430,7 +429,7 @@ mod tests {
     #[test]
     fn pinned_origin_with_forged_signature_is_rejected() {
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("bob.example", "bob-key"));
+        bundle.add_anchor(seal("bob.example", "bob-key"));
         // Hand-rolled signature that does NOT match the SDK's algorithm.
         let tx = FederationTransaction {
             transaction_id: "t-forged".into(),
@@ -459,7 +458,7 @@ mod tests {
         tx.signature = federation_transaction_signature(&tx, "wrong-key");
 
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("bob.example", "right-key"));
+        bundle.add_anchor(seal("bob.example", "right-key"));
         match bundle.verify_transaction("alice.example", &tx) {
             TrustCheck::SignatureMismatch(_) => {}
             other => panic!("expected SignatureMismatch, got {other:?}"),
@@ -469,7 +468,7 @@ mod tests {
     #[test]
     fn well_known_matches_pinned_did() {
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("bob.example", "did:web:bob.example"));
+        bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
         let record = WellKnownCokretServer {
             service_did: cokret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
             base_url: "https://bob.example".to_owned(),
@@ -487,7 +486,7 @@ mod tests {
     #[test]
     fn well_known_with_wrong_did_is_rejected() {
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("bob.example", "did:web:bob.example"));
+        bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
         let record = WellKnownCokretServer {
             service_did: cokret_sdk::Did::new("did:web:eve.example".to_owned()).unwrap(),
             base_url: "https://eve.example".to_owned(),
@@ -595,7 +594,7 @@ mod tests {
         assert_eq!(bundle.quarantined().len(), 1);
 
         // Operator pins bob.example → reverify should promote the row.
-        bundle.add_anchor(anchor("bob.example", "shared-key"));
+        bundle.add_anchor(seal("bob.example", "shared-key"));
         let promoted =
             bundle.reverify_quarantined_against("alice.example", std::slice::from_ref(&tx));
         assert_eq!(promoted, vec![tx.transaction_id.clone()]);
@@ -605,7 +604,7 @@ mod tests {
     #[test]
     fn trust_bundle_round_trips_through_serde() {
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("alice.example", "did:web:alice.example"));
+        bundle.add_anchor(seal("alice.example", "did:web:alice.example"));
         let tx = unpinned_tx();
         bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
 

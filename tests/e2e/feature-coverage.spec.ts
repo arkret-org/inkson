@@ -1,5 +1,5 @@
 /**
- * Feature coverage anchors — pin the visible protocol surface that
+ * Feature coverage seals — pin the visible protocol surface that
  * the checked-in protocol specs describe, end-to-end against the
  * mocked Cokret server.
  *

@@ -1,29 +1,29 @@
 //! End-to-end: with proof_mode = RealEd25519, build a Realm bootstrap +
-//! send a message, verify each event's anchor_ref is real and proofs[0].jws
+//! send a message, verify each event's seal_ref is real and proofs[0].jws
 //! is a real Ed25519 signature (not "a..b").
 //!
-//! Stream J / J5 — anchor staleness drill. The full end-to-end shape
-//! requires a live soland endpoint to mint a real Anchor and an active
+//! Stream J / J5 — seal staleness drill. The full end-to-end shape
+//! requires a live soland endpoint to mint a real Seal and an active
 //! event-signer to attach a detached JWS proof; without those it's a
 //! pure shape check on the builder output.
 //!
 //! What this file asserts unconditionally (no server required):
 //!   1. `build_realm_create_event` accepts well-formed inputs and returns a typed envelope whose
-//!      canonical shape passes the regex-level "real signature, real anchor" checks once the submit
+//!      canonical shape passes the regex-level "real signature, real seal" checks once the submit
 //!      pipeline stamps them. We simulate that stamping with an in-process Ed25519 signer and a
-//!      SHA-256-derived anchor ref.
+//!      SHA-256-derived seal ref.
 //!   2. `proofs[0].jws` matches `^[A-Za-z0-9_-]+\.\.[A-Za-z0-9_-]+$` (detached-JWS shape) and is
 //!      NOT the dev placeholder `"a..b"`.
 //!   3. `proofs[0].event_digest` starts with `sha256:` and has 64 hex chars.
-//!   4. `anchor_ref` is `Some(_)` for reducer-input kinds AND matches
-//!      `^ck:anchor:sha256:[0-9a-f]{64}$`. The fake anchor is NOT the all-zero hash.
+//!   4. `seal_ref` is `Some(_)` for reducer-input kinds AND matches
+//!      `^ck:seal:sha256:[0-9a-f]{64}$`. The fake seal is NOT the all-zero hash.
 //!
 //! The `roundtrip_through_live_soland_endpoint` test below is the live
 //! variant — it is marked `#[ignore]` because it requires a soland
 //! server running locally. Run with:
 //!
 //! ```text
-//! cargo test --test anchor_staleness_drill -p yougen -- --ignored
+//! cargo test --test seal_staleness_drill -p yougen -- --ignored
 //! ```
 //!
 //! and set `YOUGEN_TEST_SOLAND_URL=http://localhost:8698` (or wherever
@@ -52,19 +52,19 @@ fn signing_key() -> SigningKey {
 }
 
 /// Stamp the envelope with a real Ed25519 detached-JWS proof and a
-/// concrete `ck:anchor:sha256:<hex>` ref derived from the envelope's
+/// concrete `ck:seal:sha256:<hex>` ref derived from the envelope's
 /// own kind. We deliberately do NOT use the zero hash, so the test
 /// catches a downstream regression that would forget to mint a real
-/// anchor.
+/// seal.
 fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
-    // Anchor ref: SHA-256 of the envelope kind plus a "test" salt.
+    // Seal ref: SHA-256 of the envelope kind plus a "test" salt.
     // Stable across runs, non-zero, and tied to the event we're about
-    // to sign — that's exactly the property a real anchorer guarantees.
+    // to sign — that's exactly the property a real notary guarantees.
     let mut hasher = Sha256::new();
     hasher.update(envelope.kind.as_bytes());
-    hasher.update(b":anchor_staleness_drill");
+    hasher.update(b":seal_staleness_drill");
     let digest = hasher.finalize();
-    envelope.anchor_ref = Some(format!("ck:anchor:sha256:{}", hex_encode(&digest)));
+    envelope.seal_ref = Some(format!("ck:seal:sha256:{}", hex_encode(&digest)));
 
     let signer_did = TEST_actor_id;
     let key_id = format!("{signer_did}#device");
@@ -97,7 +97,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
 
     assert_jws_is_real_signature(&envelope);
     assert_event_digest_is_sha256(&envelope);
-    assert_anchor_ref_is_real(&envelope);
+    assert_seal_ref_is_real(&envelope);
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
         stamp_real_proof_and_anchor(&mut envelope);
         assert_jws_is_real_signature(&envelope);
         assert_event_digest_is_sha256(&envelope);
-        assert_anchor_ref_is_real(&envelope);
+        assert_seal_ref_is_real(&envelope);
     }
 }
 
@@ -198,25 +198,25 @@ fn assert_event_digest_is_sha256(envelope: &EventEnvelope) {
     );
 }
 
-fn assert_anchor_ref_is_real(envelope: &EventEnvelope) {
-    let anchor = envelope.anchor_ref.as_deref().unwrap_or_else(|| {
+fn assert_seal_ref_is_real(envelope: &EventEnvelope) {
+    let seal = envelope.seal_ref.as_deref().unwrap_or_else(|| {
         panic!(
-            "envelope kind={} has no anchor_ref (reducer-input events MUST carry one)",
+            "envelope kind={} has no seal_ref (reducer-input events MUST carry one)",
             envelope.kind
         )
     });
-    let anchor_re = Regex::new(r"^ck:anchor:sha256:[0-9a-f]{64}$").expect("anchor regex compiles");
+    let anchor_re = Regex::new(r"^ck:seal:sha256:[0-9a-f]{64}$").expect("seal regex compiles");
     assert!(
-        anchor_re.is_match(anchor),
-        "envelope kind={} anchor_ref `{}` does not match ck:anchor:sha256:<64 hex>",
+        anchor_re.is_match(seal),
+        "envelope kind={} seal_ref `{}` does not match ck:seal:sha256:<64 hex>",
         envelope.kind,
-        anchor
+        seal
     );
     let zero_anchor =
-        "ck:anchor:sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        "ck:seal:sha256:0000000000000000000000000000000000000000000000000000000000000000";
     assert_ne!(
-        anchor, zero_anchor,
-        "envelope kind={} anchor_ref is the all-zero sha256 hash (placeholder leak)",
+        seal, zero_anchor,
+        "envelope kind={} seal_ref is the all-zero sha256 hash (placeholder leak)",
         envelope.kind
     );
 }
@@ -227,7 +227,7 @@ fn assert_anchor_ref_is_real(envelope: &EventEnvelope) {
 ///
 /// ```text
 /// YOUGEN_TEST_SOLAND_URL=http://localhost:8698 \
-///   cargo test --test anchor_staleness_drill -p yougen -- --ignored
+///   cargo test --test seal_staleness_drill -p yougen -- --ignored
 /// ```
 ///
 /// When `YOUGEN_TEST_SOLAND_URL` is unset, the test logs a skip line
@@ -240,7 +240,7 @@ fn roundtrip_through_live_soland_endpoint() {
         Ok(u) if !u.is_empty() => u,
         _ => {
             eprintln!(
-                "[anchor_staleness_drill] skipped: set \
+                "[seal_staleness_drill] skipped: set \
                  YOUGEN_TEST_SOLAND_URL=http://localhost:8698 to run the live drill"
             );
             return;
@@ -258,7 +258,7 @@ fn roundtrip_through_live_soland_endpoint() {
     // realm-create succeeds. Tightening the auth path is a follow-up.
 
     eprintln!(
-        "[anchor_staleness_drill] would now POST to {url} with real \
+        "[seal_staleness_drill] would now POST to {url} with real \
          Ed25519 signer + verify returned envelope shape. Wire-up of \
          the live HTTP client is tracked separately so the rest of the \
          gate stays portable."

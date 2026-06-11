@@ -12,7 +12,7 @@ use crate::api::{
 use crate::audit::build_audit_ryw_receipt;
 use crate::components::{HelpTip, SecurityStateBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};
-use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore, MoveSubmissionState};
+use crate::local_state::{ClientLocalState, LocalSealView, LocalStateStore, MoveSubmissionState};
 use crate::models::SubmitEventOutcome;
 use crate::operation::{EventEnvelope, OperationBuilder, ck_ops, trim_realm_id, uuid_v7};
 use crate::routes::Route;
@@ -1113,7 +1113,7 @@ pub fn ChatPanel(
                 // A6.3 pinned bar (above the chat feed). Lists every
                 // pinned message id with a short body preview. Clicking
                 // an item scrolls (well, focuses) the corresponding
-                // message via its `data-testid` anchor.
+                // message via its `data-testid` seal.
                 //
                 // Local-only scaffolding — see TODO at `pinned_messages`
                 // signal declaration. Replace with the soland pinning
@@ -1996,7 +1996,7 @@ pub fn ChatPanel(
                                     // resulting private discussion Flow id lives in
                                     // `promoted_targets` keyed by the
                                     // source message id; we render an
-                                    // anchor row so the parent timeline
+                                    // seal row so the parent timeline
                                     // shows the divergence point.
                                     let promoted_to = promoted_targets()
                                         .get(&msg.id)
@@ -2573,7 +2573,7 @@ pub fn ChatPanel(
                                         };
                                         let title = draft_snapshot.title.trim().to_owned();
                                         let ids = crate::messaging::discussion_promote::PromoteIds::fresh();
-                                        // Optimistic UI: anchor the
+                                        // Optimistic UI: seal the
                                         // promoted indicator before the
                                         // server round-trip completes.
                                         promoted_targets
@@ -2637,10 +2637,10 @@ pub fn ChatPanel(
             }
 
             // G3.Y2 — read-receipt marker bar. A horizontal divider
-            // anchored at the highest event id we've sent a
+            // sealed at the highest event id we've sent a
             // `ck.read_cursor.advance` for; renders only when we have one. The
             // bar appears below the message list so users can see the
-            // "everyone read up to here" anchor without scrolling
+            // "everyone read up to here" seal without scrolling
             // around. The marker itself is actor-private — see
             // discovery/read-receipts.md §3.1.
             if !embedded && !latest_read_cursor().is_empty() {
@@ -3142,7 +3142,7 @@ pub fn ChatPanel(
                                         // Optimistic UI: surface the
                                         // poll card immediately, push
                                         // a synthetic ChatMessage so
-                                        // the timeline anchors it.
+                                        // the timeline seals it.
                                         poll_cards.write().push(card.clone());
                                         messages.write().push(ChatMessage {
                                             realm_id: realm.clone(),
@@ -3667,10 +3667,10 @@ pub fn ChatPanel(
                                     }
                                 };
                                 let _hlc = Hlc::now("yougen").to_string();
-                                let anchor_view = state_store.read().anchor_view_for_realm(&realm);
-                                let anchor_ref = anchor_view.move_anchor_ref();
+                                let seal_view = state_store.read().seal_view_for_realm(&realm);
+                                let seal_ref = seal_view.move_seal_ref();
                                 // 1) MLS commit event bumps the epoch +
-                                //    records covered_frontier.
+                                //    records covered_seals.
                                 // Real MLS encrypt path. The shared runtime
                                 // restores the local group from this device's
                                 // secure-store-backed snapshot secret, then
@@ -3725,7 +3725,7 @@ pub fn ChatPanel(
                                     return;
                                 }
                                 let base_group_state_ref =
-                                    chat_mls_base_epoch_ref(&anchor_view, &realm);
+                                    chat_mls_base_epoch_ref(&seal_view, &realm);
                                 let (group_state_ref, commit_envelope) =
                                     if let Some(real_commit_envelope) =
                                         real_commit_envelope.as_ref()
@@ -3776,7 +3776,7 @@ pub fn ChatPanel(
                                                 }
                                             };
                                         let policy_root = match chat_mls_policy_root(
-                                            &anchor_view,
+                                            &seal_view,
                                             &realm,
                                             &local_schedule_hash,
                                         ) {
@@ -3800,7 +3800,7 @@ pub fn ChatPanel(
                                                 prev_epoch,
                                                 mls_commit_epoch,
                                                 chat_mls_membership_frontier(
-                                                    &anchor_view,
+                                                    &seal_view,
                                                     &commit_event_id_typed,
                                                 ),
                                                 policy_root,
@@ -3971,7 +3971,7 @@ pub fn ChatPanel(
                                 .build("yougen");
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
-                                let anchor_for_record = anchor_ref.clone();
+                                let seal_for_record = seal_ref.clone();
                                 let actor_for_audit = actor.clone();
                                 let audit_delivered: Vec<String> = local_member_dids
                                     .iter()
@@ -4012,7 +4012,7 @@ pub fn ChatPanel(
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         if let Some(commit_envelope) = commit_envelope {
                                             // Submit a forced MLS commit first; if it fails,
-                                            // abort message send (covered_frontier won't bind).
+                                            // abort message send (covered_seals won't bind).
                                             match api.submit_event_envelope(&commit_envelope).await {
                                                 Ok(resp) => {
                                                     // X14 — persist-on-accept: the
@@ -4057,7 +4057,7 @@ pub fn ChatPanel(
                                                                 "accepted", None,
                                                             ),
                                                             None,
-                                                            Some(anchor_for_record.clone()),
+                                                            Some(seal_for_record.clone()),
                                                         );
                                                     }
                                                 }

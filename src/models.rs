@@ -300,7 +300,7 @@ pub struct SpaceCreateOutcome {
     pub state: String,
 }
 
-// (Move/Anchor pipeline DTOs deleted; all writes now go through
+// (Move/Seal pipeline DTOs deleted; all writes now go through
 // ck.self.events.submit via SubmitEventOutcome.)
 
 /// Outcome of [`crate::api::CokretApi::set_account_data`]. Captures the

@@ -4,7 +4,7 @@
 //! persistence the next message must refetch a Welcome and rejoin from
 //! scratch, which drops the device's leaf and churns the epoch — not
 //! viable for production, since MLS commits are causally tied to the
-//! Anchor lattice.
+//! Seal lattice.
 //!
 //! This module wires three pieces together:
 //!
@@ -32,8 +32,8 @@
 //!    MLS snapshot secret and reconstructs the group via the SDK call. Two failure modes are pinned
 //!    in tests: [`EnvelopeError::SecretMismatch`] (wrong device secret or tampered envelope) and
 //!    [`EnvelopeError::OutdatedSnapshot`] (the envelope's recorded epoch is older than the current
-//!    Anchor view — a paired-in device must NOT bind to a stale epoch since that would silently
-//!    fork the group).
+//!    Seal view — a paired-in device must NOT bind to a stale epoch since that would silently fork
+//!    the group).
 //!
 //! The happy path is encrypt -> write through `LocalStateStore` -> read
 //! back -> decrypt -> SDK restore_from_state_record. That is the same
@@ -56,7 +56,7 @@
 //!   trips the AEAD verification instead of decrypting cleanly under a forged epoch.
 //! * **Replay defence:** `recorded_at` is now part of the AEAD AAD, so an envelope cannot be
 //!   replayed with a forged timestamp to make it look fresh. The freshness check
-//!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering provided by the Anchor view,
+//!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering provided by the Seal view,
 //!   but the AAD binding guarantees the timestamp the caller sees has not been swapped out.
 
 use base64::Engine as _;
@@ -102,7 +102,7 @@ pub struct MlsSnapshotEnvelope {
     pub group_id: String,
     /// MLS epoch as recorded at snapshot time. Primary signal for
     /// outdated-snapshot detection — a peer that paired in a fresher
-    /// device sees the larger epoch on the server's anchor view.
+    /// device sees the larger epoch on the server's seal view.
     pub epoch: u64,
     /// Per-envelope salt used during device-secret stretching.
     /// Hex-encoded so the JSON form is human-debuggable.
@@ -156,7 +156,7 @@ pub enum EnvelopeError {
     SecretMismatch,
     /// The envelope is well-formed and decrypts cleanly but its
     /// recorded epoch is strictly less than the caller-supplied
-    /// "current" epoch (typically taken from the latest Anchor view).
+    /// "current" epoch (typically taken from the latest Seal view).
     /// Restoring would silently fork the MLS group; the caller must
     /// fetch a newer envelope before restoring.
     #[error("outdated snapshot: envelope epoch {envelope_epoch} < current epoch {current_epoch}")]
@@ -451,9 +451,9 @@ pub fn restore_state_record_only(
 /// sanity-checks the epoch, and reconstructs the SDK group via
 /// [`cokret_sdk::CokretMlsGroup::restore_from_state_record`].
 ///
-/// `current_epoch_floor` is taken from the latest Anchor view; pass
+/// `current_epoch_floor` is taken from the latest Seal view; pass
 /// `0` to skip the freshness check (e.g. first-boot rehydrate where
-/// no Anchor view is known yet).
+/// no Seal view is known yet).
 pub fn restore_envelope(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,

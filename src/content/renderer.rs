@@ -55,7 +55,7 @@ pub enum ContentBlock {
     CodeBlock { lang: Option<String>, code: String },
     /// Placeholder for an external link preview. The real OG-fetch
     /// pipeline is a follow-up; for now we render the URL itself with a
-    /// clickable anchor so it's at least navigable.
+    /// clickable seal so it's at least navigable.
     LinkPreview {
         url: String,
         title: Option<String>,
@@ -336,7 +336,7 @@ fn looks_like_markdown(prose: &str) -> bool {
 ///
 /// Policy:
 /// - allow `http:` / `https:` / `mailto:` (case-insensitive),
-/// - allow relative links (no scheme at all — e.g. `/foo`, `./bar`, `#anchor`, `foo/baz`),
+/// - allow relative links (no scheme at all — e.g. `/foo`, `./bar`, `#seal`, `foo/baz`),
 /// - reject anything else by returning `#`.
 ///
 /// Leading ASCII whitespace and control characters are stripped before
@@ -1004,7 +1004,7 @@ mod tests {
         // Relative links (no scheme) must pass through unchanged.
         assert_eq!(sanitize_link_url("/foo/bar").as_ref(), "/foo/bar");
         assert_eq!(sanitize_link_url("./rel").as_ref(), "./rel");
-        assert_eq!(sanitize_link_url("#anchor").as_ref(), "#anchor");
+        assert_eq!(sanitize_link_url("#seal").as_ref(), "#seal");
         assert_eq!(sanitize_link_url("foo/baz").as_ref(), "foo/baz");
     }
 

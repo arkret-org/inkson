@@ -127,14 +127,14 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
 /// the optional `target_realm_id`. When the relation projection
 /// carries the parent Flow's home Realm id the link is built as a
 /// `Route::TimelineRealm { realm_id }` navigation; when it doesn't,
-/// the anchor falls back to a `#flow:<id>` hash so the current Realm
+/// the seal falls back to a `#flow:<id>` hash so the current Realm
 /// timeline can still scroll to the parent Flow.
 #[component]
 pub fn ConfidentialDiscussionOfBanner(
     target_flow_id: String,
     target_title: String,
     /// Parent Flow's home Realm id. When supplied the link routes via
-    /// the dioxus router's `Route::TimelineRealm` (with a flow anchor
+    /// the dioxus router's `Route::TimelineRealm` (with a flow seal
     /// in the URL hash).
     #[props(default)]
     target_realm_id: Option<String>,

@@ -84,7 +84,7 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                         strong { "Token exchange" }
                         span { "data-testid": "media-binding-token-exchange", "SDK helper wired" }
                         div { class: "muted",
-                            "POST /rtc/token via SDK::call_media_token_exchange; TTL ≤ 600s; service_signature.kid anchored."
+                            "POST /rtc/token via SDK::call_media_token_exchange; TTL ≤ 600s; service_signature.kid sealed."
                         }
                     }
                     div { class: "metric",

@@ -365,7 +365,7 @@ mod tests {
             payload,
             preconditions: Vec::new(),
             effects: Vec::new(),
-            anchor_ref: None,
+            seal_ref: None,
             requirements: None,
             redacts: None,
             unsigned: BTreeMap::new(),

@@ -292,7 +292,7 @@ pub struct DeviceRevokeFullSnapshot {
 //
 // 1. an MLS commit Move that removes the device's leaf (`ck.mls.commit` via the
 //    `ck.component.mls.epoch.v1` cas-register), and
-// 2. an epoch-advance Move that bumps `covered_frontier` so subsequent message Events can reference
+// 2. an epoch-advance Move that bumps `covered_seals` so subsequent message Events can reference
 //    the post-revocation MLS state.
 //
 // Each chain entry tracks the lifecycle of those Moves
@@ -371,11 +371,11 @@ impl MlsRevokeMoveChain {
 pub enum ChainMoveState {
     /// Move not yet submitted.
     NotSubmitted,
-    /// Submitted; waiting for an Anchor to sweep it.
+    /// Submitted; waiting for an Seal to sweep it.
     Pending,
-    /// Anchored / effective.
+    /// Sealed / effective.
     Effective,
-    /// Submission failed (signature, precondition, anchorer-paused).
+    /// Submission failed (signature, precondition, notary-paused).
     Failed { reason: String },
     /// Operator cancelled the chain mid-flight.
     Cancelled,
@@ -417,7 +417,7 @@ impl ChainMoveState {
 /// Build the typed chain set from a [`DeviceRevokePlan`].
 /// One [`MlsRevokeMoveChain`] per `MlsCommit` step in the plan.
 /// `pre_revoke_epochs` maps `group_id` → known current epoch (often
-/// supplied by the local Anchor view); missing entries leave the
+/// supplied by the local Seal view); missing entries leave the
 /// `pre_revoke_epoch` field as `None`.
 pub fn chains_from_plan(
     plan: &DeviceRevokePlan,
@@ -471,7 +471,7 @@ mod chain_tests {
             commit_move_id: None,
             epoch_advance_move_id: None,
             commit_state: ChainMoveState::Failed {
-                reason: "anchorer paused".to_owned(),
+                reason: "notary paused".to_owned(),
             },
             epoch_advance_state: ChainMoveState::NotSubmitted,
             pre_revoke_epoch: None,

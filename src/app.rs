@@ -3984,7 +3984,7 @@ pub fn RouterView() -> Element {
                                                 state_store.write().set_session_grant(None);
                                                 // Then wipe every account-scoped local
                                                 // projection cache (Realm tree, drafts,
-                                                // anchors, read markers, remarks…) so
+                                                // seals, read markers, remarks…) so
                                                 // whoever signs in next on this browser
                                                 // can't see the previous session's data.
                                                 // Device-level state (local_identity,
@@ -5883,13 +5883,13 @@ fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {
         max_epoch = max_epoch.max(snapshot.epoch);
         max_epoch = max_epoch.max(
             state_store
-                .anchor_view_for_realm(&realm_id)
+                .seal_view_for_realm(&realm_id)
                 .mls_epoch
                 .unwrap_or(0),
         );
     }
-    for anchor_view in state_store.anchor_views().values() {
-        max_epoch = max_epoch.max(anchor_view.mls_epoch.unwrap_or(0));
+    for seal_view in state_store.seal_views().values() {
+        max_epoch = max_epoch.max(seal_view.mls_epoch.unwrap_or(0));
     }
     max_epoch
 }
@@ -6715,7 +6715,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     // actor). When the previous actor was non-empty this
                     // means a different human is signing in on the same
                     // device — every account-scoped record (projections,
-                    // drafts, anchor views, read markers, remarks, and the
+                    // drafts, seal views, read markers, remarks, and the
                     // previous identity's session grant + OIDC bundle) is
                     // someone else's data and must be wiped before the sync
                     // below repopulates the store. `adopt_account_scope`
@@ -6850,15 +6850,14 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     realm_title_hints.get(id).map(String::as_str),
                                 );
                                 store.save_realm_tree_projection(id.clone(), projection);
-                                // Thread the per-Realm Anchor view (frontier /
+                                // Thread the per-Realm Seal view (frontier /
                                 // leaves / state_root / bottom cells) into the
                                 // local store so Move builders + UI can read
-                                // it. Bodies without an `anchor_view` field
+                                // it. Bodies without an `seal_view` field
                                 // produce a Default view (empty frontier =
                                 // sentinel) so we still record presence.
-                                let view =
-                                    crate::local_state::LocalAnchorView::from_sync_body(body);
-                                store.set_realm_anchor_view(id.clone(), view);
+                                let view = crate::local_state::LocalSealView::from_sync_body(body);
+                                store.set_realm_seal_view(id.clone(), view);
                                 store.ingest_move_event_states(id, body);
                             }
                             // Keep notification projection current even when

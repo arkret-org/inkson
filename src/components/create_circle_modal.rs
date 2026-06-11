@@ -139,7 +139,7 @@ pub fn CreateCircleModal(
                             },
                             for (i, glyph) in [
                                 "lock", "shield", "eye", "eye_off", "user_shield", "fingerprint",
-                                "key", "diamond", "flame", "leaf", "anchor", "compass", "atom",
+                                "key", "diamond", "flame", "leaf", "seal", "compass", "atom",
                                 "bolt", "moon", "sun", "star", "globe", "satellite", "ring", "chain",
                                 "tag", "flag", "scroll", "scale", "hourglass", "spark",
                             ].iter().enumerate() {

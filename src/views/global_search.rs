@@ -76,7 +76,7 @@ pub fn result_actor_id(result: &Value) -> String {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchDestination {
     pub route: Route,
-    pub anchor: Option<String>,
+    pub seal: Option<String>,
     pub label: String,
 }
 
@@ -91,7 +91,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
                 realm_id: realm_id.to_owned(),
                 task_id: task_id.clone(),
             },
-            anchor: Some(task_id),
+            seal: Some(task_id),
             label: "Open task".to_owned(),
         });
     }
@@ -102,7 +102,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
                 realm_id: realm_id.to_owned(),
                 message_id: message_id.clone(),
             },
-            anchor: Some(message_id),
+            seal: Some(message_id),
             label: "Open message".to_owned(),
         });
     }
@@ -130,7 +130,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
     };
     Some(SearchDestination {
         route,
-        anchor: string_field(result, &["anchor", "anchor_id", "target_ref"]),
+        seal: string_field(result, &["seal", "seal_id", "target_ref"]),
         label: "Open".to_owned(),
     })
 }
@@ -288,11 +288,11 @@ pub fn GlobalSearchPanel(
                                                 class: "secondary",
                                                 "data-testid": "global-search-result-link",
                                                 to: target.route,
-                                                if let Some(anchor) = target.anchor {
+                                                if let Some(seal) = target.seal {
                                                     span {
-                                                        "data-testid": "global-search-result-anchor",
-                                                        "data-anchor": "{anchor}",
-                                                        "{target.label}: {anchor}"
+                                                        "data-testid": "global-search-result-seal",
+                                                        "data-seal": "{seal}",
+                                                        "{target.label}: {seal}"
                                                     }
                                                 } else {
                                                     "{target.label}"
@@ -419,7 +419,7 @@ mod tests {
             "content": {"body": "hit"}
         });
         let destination = result_destination(&row).expect("destination");
-        assert_eq!(destination.anchor.as_deref(), Some("ck:event:message"));
+        assert_eq!(destination.seal.as_deref(), Some("ck:event:message"));
         match destination.route {
             Route::TimelineMessage {
                 realm_id,

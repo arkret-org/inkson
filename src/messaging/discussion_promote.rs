@@ -1,7 +1,7 @@
 //! G3.Y2 — "promote a Flow's discussion to a Circle-scoped Flow" state.
 //!
 //! Spec: `models/flow-and-message.md §5` (`scope_circle_id`) +
-//! `models/circle.md §7.2` (wide anchor Flow + narrow discussion Flow).
+//! `models/circle.md §7.2` (wide seal Flow + narrow discussion Flow).
 //!
 //! This flow creates a Circle plus a private discussion Flow under the current
 //! Realm. It MUST NOT create a Space hierarchy, and it MUST NOT write a Space

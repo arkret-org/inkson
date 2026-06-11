@@ -6,7 +6,7 @@
 //! `authz/capability-chain` scenario is already live; this view focuses
 //! on inspection until revoke/delegation endpoints are available.
 //!
-//! Spec anchors:
+//! Spec seals:
 //! - `authz/capabilities.md` §3 — capability schema.
 //! - `authz/capabilities.md` §3.2 — delegation.
 //! - `authz/capabilities.md` §3.3 — revoke + cascade.

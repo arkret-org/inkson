@@ -264,7 +264,7 @@ impl OpenedLink {
     /// yougen routes a Realm/Flow through the Realm timeline
     /// (`/realms/:realm_id`, `/timeline/:realm_id`) and a Message as
     /// `/timeline/:realm_id/message/:message_id`. We route flow targets to the
-    /// flow's timeline and message targets to the message anchor.
+    /// flow's timeline and message targets to the message seal.
     pub fn route_for(&self, target_kind: TargetKind) -> Route {
         match target_kind {
             TargetKind::Realm => match &self.address.realm {

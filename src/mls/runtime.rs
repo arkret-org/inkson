@@ -239,15 +239,15 @@ pub fn mls_restore_epoch_floor(
     state_store: &crate::local_state::LocalStateStore,
     realm_id: &str,
 ) -> u64 {
-    let anchor_epoch = state_store
-        .anchor_view_for_realm(realm_id)
+    let seal_epoch = state_store
+        .seal_view_for_realm(realm_id)
         .mls_epoch
         .unwrap_or(0);
     let local_epoch = state_store
         .mls_snapshot_for(realm_id)
         .map(|snapshot| snapshot.epoch)
         .unwrap_or(0);
-    anchor_epoch.max(local_epoch)
+    seal_epoch.max(local_epoch)
 }
 
 pub fn restore_mls_history_backup_with_device_snapshot(
@@ -2178,9 +2178,9 @@ mod tests {
             device,
         );
         let mut state = temp_state_store("restore-rollback");
-        state.set_realm_anchor_view(
+        state.set_realm_seal_view(
             realm,
-            crate::local_state::LocalAnchorView {
+            crate::local_state::LocalSealView {
                 mls_epoch: Some(record.epoch + 1),
                 ..Default::default()
             },

@@ -28,7 +28,7 @@ pub const PROFILE_PUSH_GATEWAY: &str = "ck.profile.push_gateway.v1";
 ///
 /// Yougen ships the canonical event payload through
 /// [`cokret_sdk::MlsGovernanceBindingPayload`] / [`cokret_sdk::MlsCommitPayload`],
-/// and the `covered_frontier_cell` add-effect through [`cokret_sdk::mls_move`].
+/// and the `covered_seals_cell` add-effect through [`cokret_sdk::mls_move`].
 /// The commit submit path remains gated on server features advertised via
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.
 pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance_binding.full.v1";
@@ -161,9 +161,9 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         ClientProfileDeclaration {
             profile_id: PROFILE_MLS_GOVERNANCE_BINDING_FULL,
             label: "mls_governance_binding_full",
-            description: "MLS Governance Binding hardening: governance_binding payload + covered_frontier_cell add-effect on every commit.",
+            description: "MLS Governance Binding hardening: governance_binding payload + covered_seals_cell add-effect on every commit.",
             local_supported: true,
-            degradation_path: "Fall back to baseline e2ee_client without binding governance anchors to MLS commits.",
+            degradation_path: "Fall back to baseline e2ee_client without binding governance seals to MLS commits.",
             tier: ConformanceTier::V1Core,
         },
         // ---- v1.1+ extensions ----
@@ -211,7 +211,7 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// This list is used by:
 /// - The explanatory panels in `views/audit.rs` / `views/realm_admin.rs`.
 /// - Cross-references in `claude-design/` and `_todos.md`.
-/// - Fixture anchors for upcoming `tests/` end-to-end flows.
+/// - Fixture seals for upcoming `tests/` end-to-end flows.
 ///
 /// Spec sources: `overview/current-model.md`, `models/object-model-core.md`,
 /// `models/object-model-standard.md` §5 (Flow / Message / edit and redact),

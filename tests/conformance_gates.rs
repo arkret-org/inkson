@@ -4,12 +4,12 @@
 //! Stream J of `_claude_todos.md`. Two families of gates live here:
 //!
 //! 1. **J1 — event-schema gate.** For each typed builder in `yougen::api`, run build → stamp the
-//!    wire-only fields a real submitter would attach (`anchor_ref`, `proofs[0]` from a real Ed25519
+//!    wire-only fields a real submitter would attach (`seal_ref`, `proofs[0]` from a real Ed25519
 //!    signer) → serialise → validate against
 //!    `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`. Schema requires
-//!    reducer-input events to carry `preconditions`, `effects`, `anchor_ref`, and at least one
-//!    proof; the gate therefore covers both the builder output and the sign-and-stamp pipeline
-//!    immediately downstream.
+//!    reducer-input events to carry `preconditions`, `effects`, `seal_ref`, and at least one proof;
+//!    the gate therefore covers both the builder output and the sign-and-stamp pipeline immediately
+//!    downstream.
 //!
 //! 2. **J2 — operation_id registry gate.** Recursively scans `yougen/src/**/*.rs` for `operation_id
 //!    = "ck.*"` literals and asserts each is in the canonical `operation-registry.json` OR
@@ -179,15 +179,15 @@ const TEST_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-000000000002";
 const TEST_actor_id: &str = "did:web:alice.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_ANCHOR_REF: &str =
-    "ck:anchor:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    "ck:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// Stamp the wire fields the submit pipeline would normally attach
-/// (anchor_ref + Ed25519 proof) so the envelope satisfies the
-/// "reducer-input requires preconditions/effects/anchor_ref/proofs"
+/// (seal_ref + Ed25519 proof) so the envelope satisfies the
+/// "reducer-input requires preconditions/effects/seal_ref/proofs"
 /// rules baked into event-envelope.schema.json.
 fn stamp_wire_fields(envelope: &mut EventEnvelope) {
-    if envelope.anchor_ref.is_none() {
-        envelope.anchor_ref = Some(TEST_ANCHOR_REF.to_owned());
+    if envelope.seal_ref.is_none() {
+        envelope.seal_ref = Some(TEST_ANCHOR_REF.to_owned());
     }
     let signer_did = TEST_actor_id;
     let key_id = format!("{signer_did}#device");
@@ -230,7 +230,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "validator accepted a malformed event_id; resolver wiring is broken"
     );
 
-    // Reducer-input kind missing preconditions/effects/anchor_ref MUST
+    // Reducer-input kind missing preconditions/effects/seal_ref MUST
     // be rejected per the `then.required` rule on the reducer-kind
     // branch of the top-level `allOf`. If this slips through, the
     // schema validator is silently degraded to a syntax-only checker.
@@ -256,7 +256,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     assert!(
         !validator.is_valid(&reducer_missing_required),
         "validator accepted a reducer-input ck.realm.create envelope \
-         missing preconditions/effects/anchor_ref; the conditional `if/then` \
+         missing preconditions/effects/seal_ref; the conditional `if/then` \
          branch on event-envelope.schema.json is not being evaluated"
     );
 }

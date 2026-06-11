@@ -1,6 +1,6 @@
 //! Canonical JSON wrapper used by yougen write paths.
 //!
-//! Re-exports `cokret_sdk::canonical` so all envelope, Move, Anchor, and key-
+//! Re-exports `cokret_sdk::canonical` so all envelope, Move, Seal, and key-
 //! backup bodies can be hashed and signed against a single canonical encoder
 //! instead of relying on `serde_json`'s default object-key order.
 
@@ -85,13 +85,13 @@ pub fn canonical_move_bytes<T: Serialize>(move_payload: &T) -> anyhow::Result<Ve
     canonical_json_bytes(move_payload)
 }
 
-/// F-CANONICAL-1: canonical bytes for an [`crate::anchor_witness::AnchorWitnessChain`].
+/// F-CANONICAL-1: canonical bytes for an [`crate::seal_witness::SealWitnessChain`].
 /// The witness verifier passes this byte string into the per-witness
 /// signature check so a signature produced against a non-canonical
-/// serialization can't replay across anchors. See
+/// serialization can't replay across seals. See
 /// `sync/finality-and-consensus.md §3`.
-pub fn canonical_anchor_witness_bytes(
-    chain: &crate::anchor_witness::AnchorWitnessChain,
+pub fn canonical_seal_witness_bytes(
+    chain: &crate::seal_witness::SealWitnessChain,
 ) -> anyhow::Result<Vec<u8>> {
     canonical_json_bytes(chain)
 }
@@ -151,12 +151,12 @@ mod tests {
     }
 
     #[test]
-    fn canonical_anchor_witness_bytes_round_trip_is_deterministic() {
-        use crate::anchor_witness::{AnchorWitness, AnchorWitnessChain};
-        let chain = AnchorWitnessChain {
-            anchor_id: "ck:anchor:1".to_owned(),
+    fn canonical_seal_witness_bytes_round_trip_is_deterministic() {
+        use crate::seal_witness::{SealWitness, SealWitnessChain};
+        let chain = SealWitnessChain {
+            seal_id: "ck:seal:1".to_owned(),
             post_state_root: "sha256:root".to_owned(),
-            witnesses: vec![AnchorWitness {
+            witnesses: vec![SealWitness {
                 signer_did: "did:web:alice".to_owned(),
                 signer_domain: "alice.example".to_owned(),
                 signature: "sig".to_owned(),
@@ -164,8 +164,8 @@ mod tests {
             }],
             threshold_required: 1,
         };
-        let a = canonical_anchor_witness_bytes(&chain).unwrap();
-        let b = canonical_anchor_witness_bytes(&chain).unwrap();
+        let a = canonical_seal_witness_bytes(&chain).unwrap();
+        let b = canonical_seal_witness_bytes(&chain).unwrap();
         assert_eq!(a, b);
     }
 }

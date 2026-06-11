@@ -149,7 +149,7 @@ impl ReadMarkerRecord {
 }
 
 /// Server-declared `ck.realm.read_receipt_policy` snapshot for a Realm, as
-/// surfaced to clients via the Anchor view (P0 M3) once sync.rs lands.
+/// surfaced to clients via the Seal view (P0 M3) once sync.rs lands.
 /// Locks the per-scope toggle in the settings UI when `disclosure` is
 /// `required` (server forces send) or `disabled` (server forbids send).
 ///
@@ -333,65 +333,65 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
 }
 
 /// Lifecycle state of a locally-submitted Move. Mirrors the states
-/// soland's Move/Anchor pipeline can report via the
-/// `SubmitMoveOutcome.state` field plus the post-anchor effects the
+/// soland's Move/Seal pipeline can report via the
+/// `SubmitMoveOutcome.state` field plus the post-seal effects the
 /// next `/sync` cycle exposes:
 ///
-/// - `PendingAnchor` — server accepted the Move into MoveStore, waiting for the next anchorer batch
-///   to seal it. Initial state for any successful submit.
-/// - `Effective` — anchorer included the Move in a signed Anchor; the reducer ran and the resulting
+/// - `PendingSeal` — server accepted the Move into MoveStore, waiting for the next notary batch to
+///   seal it. Initial state for any successful submit.
+/// - `Effective` — notary included the Move in a signed Seal; the reducer ran and the resulting
 ///   cell state is now visible.
 /// - `FailedPrecondition` — soland rejected the Move at submit time because a precondition
 ///   (`if_state` / `if_cell` / `parent_anchor`) no longer matches the server's view.
 /// - `FailedBottom` — the reducer accepted the Move but produced a bottom (concurrent-candidate)
 ///   cell; downstream queries are undefined until an admin resolves the conflict via a `head_in`
 ///   repair Move (M8).
-/// - `RejectedAnchor` — the anchorer batch that swept the Move was rejected (signature / signer-set
-///   policy / anchorer-cell mismatch); the Move never landed.
-/// - `AnchorerPaused` — the Space's anchorer is paused (recovery anchorer not yet rotated, or
-///   quorum unmet); the Space cannot advance until ops bring it back online.
-/// - `PendingMlsBinding` — the Move targets an E2EE message but its `covered_frontier` precondition
+/// - `RejectedSeal` — the notary batch that swept the Move was rejected (signature / signer-set
+///   policy / notary-cell mismatch); the Move never landed.
+/// - `NotaryPaused` — the Space's notary is paused (recovery notary not yet rotated, or quorum
+///   unmet); the Space cannot advance until ops bring it back online.
+/// - `PendingMlsBinding` — the Move targets an E2EE message but its `covered_seals` precondition
 ///   references a governance frontier the local MLS group has not yet acknowledged. Held
 ///   client-side until the binding is observed; the user sees a toast.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MoveSubmissionState {
-    PendingAnchor,
+    PendingSeal,
     Effective,
     FailedPrecondition,
     FailedBottom,
-    RejectedAnchor,
-    AnchorerPaused,
+    RejectedSeal,
+    NotaryPaused,
     PendingMlsBinding,
 }
 
 impl MoveSubmissionState {
     /// Map a soland `SubmitMoveOutcome.state` string into the typed
-    /// enum. Unknown strings fall back to `PendingAnchor` (the safe
+    /// enum. Unknown strings fall back to `PendingSeal` (the safe
     /// "we accepted it, server will tell us more later" default) so
     /// new server-side states surface as in-flight rather than as
     /// failures.
     pub fn from_submit_state(state: &str, reason: Option<&str>) -> Self {
         match state {
-            "accepted" | "pending" | "pending_anchor" => Self::PendingAnchor,
-            "effective" | "anchored" => Self::Effective,
+            "accepted" | "pending" | "pending_seal" => Self::PendingSeal,
+            "effective" | "sealed" => Self::Effective,
             "rejected" => match reason.unwrap_or("") {
-                r if r.contains("anchorer_paused") => Self::AnchorerPaused,
-                r if r.contains("rejected_anchor") || r.contains("anchor_signature") => {
-                    Self::RejectedAnchor
+                r if r.contains("notary_paused") => Self::NotaryPaused,
+                r if r.contains("rejected_seal") || r.contains("seal_signature") => {
+                    Self::RejectedSeal
                 }
                 r if r.contains("bottom") => Self::FailedBottom,
-                r if r.contains("covered_frontier") || r.contains("mls_binding") => {
+                r if r.contains("covered_seals") || r.contains("mls_binding") => {
                     Self::PendingMlsBinding
                 }
                 _ => Self::FailedPrecondition,
             },
             "failed_precondition" => Self::FailedPrecondition,
             "failed_bottom" => Self::FailedBottom,
-            "rejected_anchor" => Self::RejectedAnchor,
-            "anchorer_paused" => Self::AnchorerPaused,
+            "rejected_seal" => Self::RejectedSeal,
+            "notary_paused" => Self::NotaryPaused,
             "pending_mls_binding" => Self::PendingMlsBinding,
-            _ => Self::PendingAnchor,
+            _ => Self::PendingSeal,
         }
     }
 
@@ -400,12 +400,12 @@ impl MoveSubmissionState {
     /// repr so log lines + CSS classes stay aligned.
     pub fn slug(self) -> &'static str {
         match self {
-            Self::PendingAnchor => "pending_anchor",
+            Self::PendingSeal => "pending_seal",
             Self::Effective => "effective",
             Self::FailedPrecondition => "failed_precondition",
             Self::FailedBottom => "failed_bottom",
-            Self::RejectedAnchor => "rejected_anchor",
-            Self::AnchorerPaused => "anchorer_paused",
+            Self::RejectedSeal => "rejected_seal",
+            Self::NotaryPaused => "notary_paused",
             Self::PendingMlsBinding => "pending_mls_binding",
         }
     }
@@ -414,12 +414,12 @@ impl MoveSubmissionState {
     /// uses Chinese copy). Surfaces in the timeline pill / banner.
     pub fn label_zh(self) -> &'static str {
         match self {
-            Self::PendingAnchor => "待 Anchor",
+            Self::PendingSeal => "待 Seal",
             Self::Effective => "已生效",
             Self::FailedPrecondition => "前置条件失败",
             Self::FailedBottom => "Bottom 冲突",
-            Self::RejectedAnchor => "Anchor 拒绝",
-            Self::AnchorerPaused => "Anchorer 暂停",
+            Self::RejectedSeal => "Seal 拒绝",
+            Self::NotaryPaused => "Notary 暂停",
             Self::PendingMlsBinding => "MLS 绑定待覆盖",
         }
     }
@@ -427,12 +427,12 @@ impl MoveSubmissionState {
     /// CSS-friendly badge class.
     pub fn badge_class(self) -> &'static str {
         match self {
-            Self::PendingAnchor => "badge amber",
+            Self::PendingSeal => "badge amber",
             Self::Effective => "badge green",
             Self::FailedPrecondition => "badge red",
             Self::FailedBottom => "badge red",
-            Self::RejectedAnchor => "badge red",
-            Self::AnchorerPaused => "badge red",
+            Self::RejectedSeal => "badge red",
+            Self::NotaryPaused => "badge red",
             Self::PendingMlsBinding => "badge amber",
         }
     }
@@ -442,10 +442,7 @@ impl MoveSubmissionState {
     pub fn is_failed(self) -> bool {
         matches!(
             self,
-            Self::FailedPrecondition
-                | Self::FailedBottom
-                | Self::RejectedAnchor
-                | Self::AnchorerPaused
+            Self::FailedPrecondition | Self::FailedBottom | Self::RejectedSeal | Self::NotaryPaused
         )
     }
 }
@@ -469,11 +466,11 @@ pub struct MoveSubmissionRecord {
     pub submitted_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// Optional last-known anchor frontier head the Move was bound to.
+    /// Optional last-known seal frontier head the Move was bound to.
     /// Surfaces in the failure detail so an operator can correlate the
     /// rejected Move to the predecessor that conflicted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anchor_ref: Option<String>,
+    pub seal_ref: Option<String>,
 }
 
 /// One competing head for a `bottom=expose` cell. Surfaced from sync so the
@@ -481,7 +478,7 @@ pub struct MoveSubmissionRecord {
 /// conflict-repair Move.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BottomCellHead {
-    /// Move (or Anchor head) id that produced this candidate.
+    /// Move (or Seal head) id that produced this candidate.
     pub move_id: String,
     /// Candidate cell value carried by that Move. `Value::Null` when soland
     /// only published the move_id without an inline value.
@@ -501,36 +498,36 @@ pub struct BottomCellInfo {
     pub heads: Vec<BottomCellHead>,
 }
 
-/// Snapshot of the latest Anchor view observed for a Space. Surfaced from
-/// the `/sync` Anchor view (P0 M3) and threaded into Move submissions so
+/// Snapshot of the latest Seal view observed for a Space. Surfaced from
+/// the `/sync` Seal view (P0 M3) and threaded into Move submissions so
 /// every cell-driven write references the right frontier instead of the
 /// `sha256(empty)` placeholder used previously.
 ///
-/// `frontier` lists the Anchor head ids the local client currently treats
+/// `frontier` lists the Seal head ids the local client currently treats
 /// as the predecessor set (typically a single id but multiple while a
 /// concurrent fork is unresolved). `state_root` is the post-state Merkle
-/// root soland published in the most recent Anchor — clients can use it
+/// root soland published in the most recent Seal — clients can use it
 /// to detect divergence between their projection and the server view.
-/// `leaves` lists the Move ids covered by the current Anchor batch (the
-/// "leaves of the lattice that the next Anchor will close over"); UIs
-/// surface this so an admin can see which pending Moves an Anchor
+/// `leaves` lists the Move ids covered by the current Seal batch (the
+/// "leaves of the lattice that the next Seal will close over"); UIs
+/// surface this so an admin can see which pending Moves an Seal
 /// rotation will sweep up.
 ///
 /// The struct is intentionally `Default` so callers that haven't received
-/// any Anchor view yet (offline, fresh login) still have a clean empty
+/// any Seal view yet (offline, fresh login) still have a clean empty
 /// view to feed into builders.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LocalAnchorView {
-    /// Anchor head ids that the next Move treats as predecessors. Empty
-    /// vec means "no Anchor seen yet" — Move builders fall back to the
+pub struct LocalSealView {
+    /// Seal head ids that the next Move treats as predecessors. Empty
+    /// vec means "no Seal seen yet" — Move builders fall back to the
     /// `sha256(empty)` sentinel.
     #[serde(default)]
     pub frontier: Vec<String>,
-    /// Move ids covered by the current Anchor batch (or about to be
-    /// closed by the next Anchor rotation). Surfaced for admin UIs.
+    /// Move ids covered by the current Seal batch (or about to be
+    /// closed by the next Seal rotation). Surfaced for admin UIs.
     #[serde(default)]
     pub leaves: Vec<String>,
-    /// Post-state Merkle root from the most recent Anchor. Optional —
+    /// Post-state Merkle root from the most recent Seal. Optional —
     /// brand new spaces / offline clients may not have one yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_root: Option<String>,
@@ -547,22 +544,22 @@ pub struct LocalAnchorView {
     /// E2EE group or pre-genesis state).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mls_epoch: Option<u64>,
-    /// The current `governance.covered_frontier` cell value - the lattice
+    /// The current `governance.covered_seals` cell value - the lattice
     /// frontier cell that governance Moves require predecessor coverage of
     /// before they're accepted. Surfaced as a string so the UI can render
     /// whatever shape soland publishes (typically a `ck:state:sha256:...`
     /// ref). `None` means the governance cell hasn't been observed yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub covered_frontier: Option<String>,
-    /// The per-Realm MLS `covered_frontier_lag` count - how many
+    pub covered_seals: Option<String>,
+    /// The per-Realm MLS `covered_seals_lag` count - how many
     /// governance Moves the MLS group has yet to acknowledge. Soland
-    /// publishes this as `anchor_view.covered_frontier_lag` (a bare
+    /// publishes this as `seal_view.covered_seals_lag` (a bare
     /// integer) when it knows the lag; clients combine it with a
     /// configurable warn threshold (default 5) to render an alert banner
     /// in `realm_admin`. `None` means soland hasn't surfaced a lag value -
     /// UI treats that as "no alert".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub covered_frontier_lag: Option<u64>,
+    pub covered_seals_lag: Option<u64>,
     /// MLS key-schedule content hash (`sha256:<hex>`) from the
     /// `ck.component.key_schedule.v1` cas-register cell. The MLS commit
     /// path uses this as `prev_schedule`; the new commit computes a
@@ -572,18 +569,18 @@ pub struct LocalAnchorView {
     pub key_schedule_hash: Option<String>,
 }
 
-impl LocalAnchorView {
-    /// SHA-256 of empty bytes — used as the "no Anchor seen yet" sentinel
+impl LocalSealView {
+    /// SHA-256 of empty bytes — used as the "no Seal seen yet" sentinel
     /// the Move builders historically defaulted to.
     pub const EMPTY_ANCHOR_REF: &'static str =
-        "ck:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        "ck:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-    /// Pick the single Anchor ref to feed into a Move builder. Returns the
+    /// Pick the single Seal ref to feed into a Move builder. Returns the
     /// first frontier head if any, otherwise the empty-bytes sentinel.
     /// When the frontier holds multiple heads (concurrent fork) this picks
     /// the lex-min head so two clients building Moves against the same
     /// view will agree on which predecessor they reference.
-    pub fn move_anchor_ref(&self) -> String {
+    pub fn move_seal_ref(&self) -> String {
         self.frontier
             .iter()
             .min()
@@ -597,13 +594,13 @@ impl LocalAnchorView {
         !self.bottom_cells.is_empty()
     }
 
-    /// True when soland has surfaced a covered_frontier_lag strictly
-    /// greater than `threshold`. Used by the realm_admin covered_frontier
+    /// True when soland has surfaced a covered_seals_lag strictly
+    /// greater than `threshold`. Used by the realm_admin covered_seals
     /// alert banner to decide whether to render. Returns `false` when no
     /// lag has been published yet (the field is `None`) - the UI treats
     /// that as "no signal, no alert".
-    pub fn covered_frontier_lag_above(&self, threshold: u64) -> bool {
-        self.covered_frontier_lag.is_some_and(|lag| lag > threshold)
+    pub fn covered_seals_lag_above(&self, threshold: u64) -> bool {
+        self.covered_seals_lag.is_some_and(|lag| lag > threshold)
     }
 
     /// For security-relevant cell families (member.state, capability.grant),
@@ -685,14 +682,14 @@ fn capability_grant_safety_rank(value: &Value) -> u8 {
     }
 }
 
-impl LocalAnchorView {
-    /// Best-effort extraction of an Anchor view from a per-Realm `/sync`
+impl LocalSealView {
+    /// Best-effort extraction of an Seal view from a per-Realm `/sync`
     /// body. The wire shape soland is moving toward (P0 M3) is:
     ///
     /// ```jsonc
     /// {
-    ///   "anchor_view": {
-    ///     "frontier": ["ck:anchor:sha256:..."],
+    ///   "seal_view": {
+    ///     "frontier": ["ck:seal:sha256:..."],
     ///     "leaves":   ["sha256:..."],
     ///     "state_root": "ck:state:sha256:...",
     ///     "cells": {
@@ -706,38 +703,38 @@ impl LocalAnchorView {
     ///
     /// Until soland publishes the full payload, missing fields default to
     /// empty / `None`. The function is total and never errors — it just
-    /// degrades to `LocalAnchorView::default()` when fields are missing
+    /// degrades to `LocalSealView::default()` when fields are missing
     /// or have unexpected shapes.
     pub fn from_sync_body(body: &Value) -> Self {
-        let anchor = body.get("anchor_view");
+        let seal = body.get("seal_view");
         let mut view = Self::default();
-        let Some(anchor) = anchor else {
+        let Some(seal) = seal else {
             view.ingest_structured_bottoms(body);
             view.ingest_legacy_bottom_cells(body);
             return view;
         };
-        if let Some(arr) = anchor.get("frontier").and_then(|v| v.as_array()) {
+        if let Some(arr) = seal.get("frontier").and_then(|v| v.as_array()) {
             view.frontier = arr
                 .iter()
                 .filter_map(|v| v.as_str().map(str::to_owned))
                 .collect();
         }
-        if let Some(arr) = anchor.get("leaves").and_then(|v| v.as_array()) {
+        if let Some(arr) = seal.get("leaves").and_then(|v| v.as_array()) {
             view.leaves = arr
                 .iter()
                 .filter_map(|v| v.as_str().map(str::to_owned))
                 .collect();
         }
-        if let Some(s) = anchor.get("state_root").and_then(|v| v.as_str()) {
+        if let Some(s) = seal.get("state_root").and_then(|v| v.as_str()) {
             view.state_root = Some(s.to_owned());
         }
-        // Top-level `covered_frontier_lag`: soland publishes this directly
-        // on the anchor view (sibling of `frontier` / `leaves`) so clients
+        // Top-level `covered_seals_lag`: soland publishes this directly
+        // on the seal view (sibling of `frontier` / `leaves`) so clients
         // don't have to compute it from cell maps.
-        if let Some(lag) = anchor.get("covered_frontier_lag").and_then(|v| v.as_u64()) {
-            view.covered_frontier_lag = Some(lag);
+        if let Some(lag) = seal.get("covered_seals_lag").and_then(|v| v.as_u64()) {
+            view.covered_seals_lag = Some(lag);
         }
-        if let Some(cells) = anchor.get("cells").and_then(|v| v.as_object()) {
+        if let Some(cells) = seal.get("cells").and_then(|v| v.as_object()) {
             for (cell_ref, status) in cells {
                 let bottom = status.get("bottom").and_then(|v| v.as_str());
                 if let Some(b) = bottom
@@ -783,10 +780,10 @@ impl LocalAnchorView {
                         .as_u64()
                         .or_else(|| value.get("epoch").and_then(|v| v.as_u64()));
                 }
-                if cell_ref.starts_with("ck:cell:ck.component.governance.covered_frontier.v1")
+                if cell_ref.starts_with("ck:cell:ck.component.governance.covered_seals.v1")
                     && let Some(value) = value_for(status)
                 {
-                    view.covered_frontier = value.as_str().map(str::to_owned).or_else(|| {
+                    view.covered_seals = value.as_str().map(str::to_owned).or_else(|| {
                         value
                             .get("frontier")
                             .and_then(|v| v.as_str())
@@ -998,13 +995,13 @@ pub struct ClientLocalState {
     /// policy is `required` or `disabled`.
     #[serde(default)]
     pub read_receipt_policy_snapshots: BTreeMap<String, ReadReceiptPolicySnapshot>,
-    /// Latest Anchor view per Space, threaded from `/sync`'s Anchor
+    /// Latest Seal view per Space, threaded from `/sync`'s Seal
     /// projection (P0 M3). Move builders pull `frontier[0]` from here
     /// instead of using the empty-bytes sentinel. UIs use the
     /// `bottom_cells` map to surface conflict banners when a cell is
     /// `bottom=expose`.
     #[serde(default)]
-    pub anchor_views: BTreeMap<String, LocalAnchorView>,
+    pub seal_views: BTreeMap<String, LocalSealView>,
     #[serde(default)]
     pub push_registration: Option<PushRegistrationState>,
     /// Per-device ed25519 identity. Generated + persisted on first access
@@ -1014,7 +1011,7 @@ pub struct ClientLocalState {
     pub local_identity: Option<LocalIdentityRecord>,
     /// Locally-submitted Move state tracker. Keyed by `move_id`; entries
     /// arrive when `submit_move` succeeds and get updated when the next
-    /// sync surfaces an Anchor that includes the id (or a rejection).
+    /// sync surfaces an Seal that includes the id (or a rejection).
     /// Drives the timeline / realm_admin state pill UI.
     #[serde(default)]
     pub move_submissions: BTreeMap<String, MoveSubmissionRecord>,
@@ -1333,7 +1330,7 @@ impl Default for ClientLocalState {
             read_receipt_realm_overrides: BTreeMap::new(),
             read_receipt_flow_overrides: BTreeMap::new(),
             read_receipt_policy_snapshots: BTreeMap::new(),
-            anchor_views: BTreeMap::new(),
+            seal_views: BTreeMap::new(),
             push_registration: None,
             local_identity: None,
             move_submissions: BTreeMap::new(),
@@ -1542,7 +1539,7 @@ impl LocalStateStore {
 
     /// Perf: run `body` with flushing suspended, then persist at most once.
     ///
-    /// Every flush-on-write setter (`save_realm_tree_projection`, `set_anchor_view`,
+    /// Every flush-on-write setter (`save_realm_tree_projection`, `set_seal_view`,
     /// `set_notification_read`, …) becomes a no-op persist while the batch is
     /// open; the single trailing flush coalesces them. Batches nest safely —
     /// only the outermost one persists. Use this on hot paths that touch the
@@ -1950,7 +1947,7 @@ impl LocalStateStore {
     /// local cache instead of lingering as ghost entries in the sidebar.
     ///
     /// Also prunes the auxiliary per-Realm caches (`drafts`,
-    /// `anchor_views`, `read_cursors`, `realm_remarks`,
+    /// `seal_views`, `read_cursors`, `realm_remarks`,
     /// `mls_snapshots`, `move_submissions` keyed by Realm, the
     /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
     /// `realm_watch_levels`, and any leftover encrypted-message draft) so a
@@ -1994,7 +1991,7 @@ impl LocalStateStore {
         self.cached.realm_tree_projections.remove(projection_id);
         self.cached.realm_lifecycle_state.remove(projection_id);
         self.cached.drafts.remove(projection_id);
-        self.cached.anchor_views.remove(projection_id);
+        self.cached.seal_views.remove(projection_id);
         self.cached.realm_remarks.remove(projection_id);
         self.cached.mls_snapshots.remove(projection_id);
         self.cached.realm_watch_levels.remove(projection_id);
@@ -2708,7 +2705,7 @@ impl LocalStateStore {
     }
 
     /// Replace the server-declared policy snapshot for a Realm. Called from
-    /// the sync path once the Anchor view (P0 M3) surfaces
+    /// the sync path once the Seal view (P0 M3) surfaces
     /// `ck.component.realm.read_receipt_policy.v1` cell value; tests use
     /// this to seed lock-state UI behavior.
     pub fn set_read_receipt_policy_snapshot(
@@ -2736,42 +2733,42 @@ impl LocalStateStore {
         self.load().read_receipt_policy_snapshots
     }
 
-    /// Get the latest Anchor view for a Realm. Returns the Default view
+    /// Get the latest Seal view for a Realm. Returns the Default view
     /// (empty frontier / empty leaves / no state_root) when none has been
     /// observed yet — Move builders treat that as "use sha256(empty)
     /// sentinel".
-    pub fn anchor_view_for_realm(&self, realm_id: &str) -> LocalAnchorView {
+    pub fn seal_view_for_realm(&self, realm_id: &str) -> LocalSealView {
         self.load()
-            .anchor_views
+            .seal_views
             .get(realm_id)
             .cloned()
             .unwrap_or_default()
     }
 
-    /// Replace the Anchor view snapshot for a Realm. Called from the sync
-    /// path once the `/sync` response surfaces the projection's Anchor
+    /// Replace the Seal view snapshot for a Realm. Called from the sync
+    /// path once the `/sync` response surfaces the projection's Seal
     /// view. Tests use this to seed Move-frontier behavior.
-    pub fn set_realm_anchor_view(&mut self, realm_id: impl Into<String>, view: LocalAnchorView) {
+    pub fn set_realm_seal_view(&mut self, realm_id: impl Into<String>, view: LocalSealView) {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        if self.cached.anchor_views.get(&realm_id) == Some(&view) {
-            return; // anchor view unchanged — skip flush
+        if self.cached.seal_views.get(&realm_id) == Some(&view) {
+            return; // seal view unchanged — skip flush
         }
-        self.cached.anchor_views.insert(realm_id, view);
+        self.cached.seal_views.insert(realm_id, view);
         let _ = self.flush();
     }
 
-    /// All known Anchor views — handy for app-wide UI banners.
-    pub fn anchor_views(&self) -> BTreeMap<String, LocalAnchorView> {
-        self.load().anchor_views
+    /// All known Seal views — handy for app-wide UI banners.
+    pub fn seal_views(&self) -> BTreeMap<String, LocalSealView> {
+        self.load().seal_views
     }
 
-    /// Convenience: pick the right `anchor_ref` to thread into a Move
+    /// Convenience: pick the right `seal_ref` to thread into a Move
     /// builder for a given Realm. Returns the lex-min frontier head when
     /// available, otherwise the `sha256(empty)` sentinel. Mirrors
-    /// [`LocalAnchorView::move_anchor_ref`].
-    pub fn anchor_ref_for_realm_move(&self, realm_id: &str) -> String {
-        self.anchor_view_for_realm(realm_id).move_anchor_ref()
+    /// [`LocalSealView::move_seal_ref`].
+    pub fn seal_ref_for_realm_move(&self, realm_id: &str) -> String {
+        self.seal_view_for_realm(realm_id).move_seal_ref()
     }
 
     /// Resolve effective send preference per spec (server policy → flow →
@@ -2841,10 +2838,10 @@ impl LocalStateStore {
         kind: impl Into<String>,
         state: MoveSubmissionState,
         reason: Option<String>,
-        anchor_ref: Option<String>,
+        seal_ref: Option<String>,
     ) -> MoveSubmissionRecord {
         self.record_move_submission_with_event_id(
-            move_id, None, realm_id, kind, state, reason, anchor_ref,
+            move_id, None, realm_id, kind, state, reason, seal_ref,
         )
     }
 
@@ -2859,7 +2856,7 @@ impl LocalStateStore {
         kind: impl Into<String>,
         state: MoveSubmissionState,
         reason: Option<String>,
-        anchor_ref: Option<String>,
+        seal_ref: Option<String>,
     ) -> MoveSubmissionRecord {
         self.ensure_cached_loaded();
         let move_id = move_id.into();
@@ -2871,7 +2868,7 @@ impl LocalStateStore {
             state,
             submitted_at: Utc::now(),
             reason,
-            anchor_ref,
+            seal_ref,
         };
         self.cached.move_submissions.insert(move_id, record.clone());
         let _ = self.flush();
@@ -2879,7 +2876,7 @@ impl LocalStateStore {
     }
 
     /// Update the lifecycle state of a tracked Move. Called when the
-    /// next `/sync` cycle surfaces an Anchor inclusion / rejection.
+    /// next `/sync` cycle surfaces an Seal inclusion / rejection.
     /// Returns `false` when the move id isn't tracked (no-op).
     pub fn update_move_submission_state(
         &mut self,
@@ -3005,12 +3002,12 @@ impl LocalStateStore {
     }
 
     /// True when at least one tracked Move in `realm_id` is in
-    /// `AnchorerPaused`. Drives the Realm-wide "waiting for recovery anchorer"
+    /// `NotaryPaused`. Drives the Realm-wide "waiting for recovery notary"
     /// banner described in the M4 ticket.
-    pub fn realm_has_paused_anchorer(&self, realm_id: &str) -> bool {
+    pub fn realm_has_paused_notary(&self, realm_id: &str) -> bool {
         self.move_submissions_for_realm(realm_id)
             .iter()
-            .any(|record| record.state == MoveSubmissionState::AnchorerPaused)
+            .any(|record| record.state == MoveSubmissionState::NotaryPaused)
     }
 
     /// True when at least one tracked Move targeting `realm_id` is
@@ -4080,25 +4077,25 @@ mod tests {
     use crate::secure_key_store::SecureKeyStore;
 
     #[test]
-    fn move_submission_state_maps_pending_anchor_and_effective() {
+    fn move_submission_state_maps_pending_seal_and_effective() {
         assert_eq!(
             MoveSubmissionState::from_submit_state("pending", None),
-            MoveSubmissionState::PendingAnchor
+            MoveSubmissionState::PendingSeal
         );
         assert_eq!(
-            MoveSubmissionState::from_submit_state("pending_anchor", None),
-            MoveSubmissionState::PendingAnchor
+            MoveSubmissionState::from_submit_state("pending_seal", None),
+            MoveSubmissionState::PendingSeal
         );
         assert_eq!(
             MoveSubmissionState::from_submit_state("accepted", None),
-            MoveSubmissionState::PendingAnchor
+            MoveSubmissionState::PendingSeal
         );
         assert_eq!(
             MoveSubmissionState::from_submit_state("effective", None),
             MoveSubmissionState::Effective
         );
         assert_eq!(
-            MoveSubmissionState::from_submit_state("anchored", None),
+            MoveSubmissionState::from_submit_state("sealed", None),
             MoveSubmissionState::Effective
         );
     }
@@ -4108,16 +4105,16 @@ mod tests {
         assert_eq!(
             MoveSubmissionState::from_submit_state(
                 "rejected",
-                Some("anchorer_paused: recovery anchorer not signed")
+                Some("notary_paused: recovery notary not signed")
             ),
-            MoveSubmissionState::AnchorerPaused
+            MoveSubmissionState::NotaryPaused
         );
         assert_eq!(
             MoveSubmissionState::from_submit_state(
                 "rejected",
-                Some("anchor_signature_invalid for batch")
+                Some("seal_signature_invalid for batch")
             ),
-            MoveSubmissionState::RejectedAnchor
+            MoveSubmissionState::RejectedSeal
         );
         assert_eq!(
             MoveSubmissionState::from_submit_state(
@@ -4127,7 +4124,7 @@ mod tests {
             MoveSubmissionState::FailedBottom
         );
         assert_eq!(
-            MoveSubmissionState::from_submit_state("rejected", Some("covered_frontier mismatch")),
+            MoveSubmissionState::from_submit_state("rejected", Some("covered_seals mismatch")),
             MoveSubmissionState::PendingMlsBinding
         );
         assert_eq!(
@@ -4215,38 +4212,38 @@ mod tests {
             mid,
             realm,
             "ck.consent.grant",
-            MoveSubmissionState::PendingAnchor,
+            MoveSubmissionState::PendingSeal,
             None,
-            Some("ck:anchor:sha256:abc".to_owned()),
+            Some("ck:seal:sha256:abc".to_owned()),
         );
         let listed = store.move_submissions_for_realm(realm);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].move_id, mid);
-        assert_eq!(listed[0].state, MoveSubmissionState::PendingAnchor);
-        assert!(!store.realm_has_paused_anchorer(realm));
+        assert_eq!(listed[0].state, MoveSubmissionState::PendingSeal);
+        assert!(!store.realm_has_paused_notary(realm));
 
-        // Update to AnchorerPaused — Space should now flag the banner.
+        // Update to NotaryPaused — Space should now flag the banner.
         assert!(store.update_move_submission_state(
             mid,
-            MoveSubmissionState::AnchorerPaused,
-            Some("recovery anchorer not signed".to_owned()),
+            MoveSubmissionState::NotaryPaused,
+            Some("recovery notary not signed".to_owned()),
         ));
-        assert!(store.realm_has_paused_anchorer(realm));
+        assert!(store.realm_has_paused_notary(realm));
         let listed = store.move_submissions_for_realm(realm);
-        assert_eq!(listed[0].state, MoveSubmissionState::AnchorerPaused);
+        assert_eq!(listed[0].state, MoveSubmissionState::NotaryPaused);
         assert_eq!(
             listed[0].reason.as_deref(),
-            Some("recovery anchorer not signed")
+            Some("recovery notary not signed")
         );
 
         // Persistence: a fresh reader sees the same state.
         let reader = LocalStateStore::with_path(path);
-        assert!(reader.realm_has_paused_anchorer(realm));
+        assert!(reader.realm_has_paused_notary(realm));
 
         // Drop it and the banner clears.
         let mut store = LocalStateStore::with_path(reader.path.clone());
         store.drop_move_submission(mid);
-        assert!(!store.realm_has_paused_anchorer(realm));
+        assert!(!store.realm_has_paused_notary(realm));
     }
 
     #[test]
@@ -4313,9 +4310,9 @@ mod tests {
             Some(event_id.to_owned()),
             realm,
             "ck.flow.move",
-            MoveSubmissionState::PendingAnchor,
+            MoveSubmissionState::PendingSeal,
             None,
-            Some("ck:anchor:sha256:abc".to_owned()),
+            Some("ck:seal:sha256:abc".to_owned()),
         );
 
         let updated = store.ingest_move_event_states(
@@ -4380,7 +4377,7 @@ mod tests {
             move_id,
             realm,
             "ck.flow.move",
-            MoveSubmissionState::PendingAnchor,
+            MoveSubmissionState::PendingSeal,
             None,
             None,
         );
@@ -4413,11 +4410,11 @@ mod tests {
             realm,
             "ck.message.create",
             MoveSubmissionState::PendingMlsBinding,
-            Some("covered_frontier missing".to_owned()),
+            Some("covered_seals missing".to_owned()),
             None,
         );
         assert!(store.realm_has_pending_mls_binding(realm));
-        assert!(!store.realm_has_paused_anchorer(realm));
+        assert!(!store.realm_has_paused_notary(realm));
     }
 
     #[test]
@@ -4570,20 +4567,20 @@ mod tests {
     #[test]
     fn move_submission_state_label_and_badge_class_distinct_per_state() {
         for state in [
-            MoveSubmissionState::PendingAnchor,
+            MoveSubmissionState::PendingSeal,
             MoveSubmissionState::Effective,
             MoveSubmissionState::FailedPrecondition,
             MoveSubmissionState::FailedBottom,
-            MoveSubmissionState::RejectedAnchor,
-            MoveSubmissionState::AnchorerPaused,
+            MoveSubmissionState::RejectedSeal,
+            MoveSubmissionState::NotaryPaused,
             MoveSubmissionState::PendingMlsBinding,
         ] {
             assert!(!state.slug().is_empty());
             assert!(!state.label_zh().is_empty());
             assert!(state.badge_class().starts_with("badge"));
         }
-        assert!(MoveSubmissionState::AnchorerPaused.is_failed());
-        assert!(!MoveSubmissionState::PendingAnchor.is_failed());
+        assert!(MoveSubmissionState::NotaryPaused.is_failed());
+        assert!(!MoveSubmissionState::PendingSeal.is_failed());
         assert!(!MoveSubmissionState::Effective.is_failed());
     }
 
@@ -5028,7 +5025,7 @@ mod tests {
                 algorithm: cokret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
                 root: snapshot_hash(9),
                 covered_event_count: 2,
-                covered_frontier: vec![snapshot_event_id("0000000000a2")],
+                covered_seals: vec![snapshot_event_id("0000000000a2")],
                 actor_seq_ranges: Vec::new(),
             },
             chunks,
@@ -5131,7 +5128,7 @@ mod tests {
         for id in ["ck:realm:keep", "ck:realm:drop-a", "ck:realm:drop-b"] {
             store.save_realm_tree_projection(id, serde_json::json!({"name": id}));
             store.save_draft(id, "draft");
-            store.set_realm_anchor_view(id, LocalAnchorView::default());
+            store.set_realm_seal_view(id, LocalSealView::default());
             store.set_realm_muted(id, true);
         }
         // Independently keyed records that should follow the prune.
@@ -5160,8 +5157,8 @@ mod tests {
         assert!(state.realm_tree_projections.contains_key("ck:realm:keep"));
         assert!(!state.drafts.contains_key("ck:realm:drop-a"));
         assert!(state.drafts.contains_key("ck:realm:keep"));
-        assert!(!state.anchor_views.contains_key("ck:realm:drop-a"));
-        assert!(state.anchor_views.contains_key("ck:realm:keep"));
+        assert!(!state.seal_views.contains_key("ck:realm:drop-a"));
+        assert!(state.seal_views.contains_key("ck:realm:keep"));
         assert!(!state.realm_watch_levels.contains_key("ck:realm:drop-b"));
         assert!(state.realm_watch_levels.contains_key("ck:realm:keep"));
         let kept_marker_keys: Vec<&str> = state.read_cursors.keys().map(String::as_str).collect();
@@ -5197,7 +5194,7 @@ mod tests {
         for id in ["ck:space:gone", "ck:space:stay"] {
             store.save_realm_tree_projection(id, serde_json::json!({}));
             store.save_draft(id, "draft");
-            store.set_realm_anchor_view(id, LocalAnchorView::default());
+            store.set_realm_seal_view(id, LocalSealView::default());
         }
 
         store.forget_realm_tree_projection("ck:space:gone");
@@ -5506,57 +5503,57 @@ mod tests {
     }
 
     #[test]
-    fn anchor_view_default_returns_empty_bytes_sentinel() {
-        let path = temp_state_path("anchor-default");
+    fn seal_view_default_returns_empty_bytes_sentinel() {
+        let path = temp_state_path("seal-default");
         let store = LocalStateStore::with_path(path);
-        let view = store.anchor_view_for_realm("ck:realm:demo");
+        let view = store.seal_view_for_realm("ck:realm:demo");
         assert!(view.frontier.is_empty());
         assert!(view.leaves.is_empty());
         assert!(view.state_root.is_none());
-        assert_eq!(view.move_anchor_ref(), LocalAnchorView::EMPTY_ANCHOR_REF);
+        assert_eq!(view.move_seal_ref(), LocalSealView::EMPTY_ANCHOR_REF);
         assert_eq!(
-            store.anchor_ref_for_realm_move("ck:realm:demo"),
-            LocalAnchorView::EMPTY_ANCHOR_REF
+            store.seal_ref_for_realm_move("ck:realm:demo"),
+            LocalSealView::EMPTY_ANCHOR_REF
         );
     }
 
     #[test]
-    fn anchor_view_set_persists_and_picks_lex_min_frontier() {
-        let path = temp_state_path("anchor-set");
+    fn seal_view_set_persists_and_picks_lex_min_frontier() {
+        let path = temp_state_path("seal-set");
         {
             let mut store = LocalStateStore::with_path(path.clone());
-            store.set_realm_anchor_view(
+            store.set_realm_seal_view(
                 "ck:realm:demo",
-                LocalAnchorView {
+                LocalSealView {
                     frontier: vec![
-                        "ck:anchor:sha256:bbb".to_owned(),
-                        "ck:anchor:sha256:aaa".to_owned(),
+                        "ck:seal:sha256:bbb".to_owned(),
+                        "ck:seal:sha256:aaa".to_owned(),
                     ],
                     leaves: vec!["sha256:lf1".to_owned()],
                     state_root: Some("ck:state:sha256:abc".to_owned()),
                     bottom_cells: BTreeMap::new(),
                     mls_epoch: None,
-                    covered_frontier: None,
-                    covered_frontier_lag: None,
+                    covered_seals: None,
+                    covered_seals_lag: None,
                     key_schedule_hash: None,
                 },
             );
         }
         let reader = LocalStateStore::with_path(path);
-        let view = reader.anchor_view_for_realm("ck:realm:demo");
+        let view = reader.seal_view_for_realm("ck:realm:demo");
         assert_eq!(view.frontier.len(), 2);
         assert_eq!(view.leaves.len(), 1);
         assert_eq!(view.state_root.as_deref(), Some("ck:state:sha256:abc"));
-        assert_eq!(view.move_anchor_ref(), "ck:anchor:sha256:aaa");
+        assert_eq!(view.move_seal_ref(), "ck:seal:sha256:aaa");
         assert_eq!(
-            reader.anchor_ref_for_realm_move("ck:realm:demo"),
-            "ck:anchor:sha256:aaa"
+            reader.seal_ref_for_realm_move("ck:realm:demo"),
+            "ck:seal:sha256:aaa"
         );
     }
 
     #[test]
-    fn anchor_view_bottom_cells_signal_conflict() {
-        let mut view = LocalAnchorView::default();
+    fn seal_view_bottom_cells_signal_conflict() {
+        let mut view = LocalSealView::default();
         assert!(!view.has_bottom_cells());
         view.bottom_cells.insert(
             "ck:cell:ck.component.member.state.v1:did:web:alice".to_owned(),
@@ -5570,7 +5567,7 @@ mod tests {
 
     #[test]
     fn safer_winner_for_member_state_prefers_ban_over_join() {
-        let mut view = LocalAnchorView::default();
+        let mut view = LocalSealView::default();
         let cell = "ck:cell:ck.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
@@ -5599,7 +5596,7 @@ mod tests {
 
     #[test]
     fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
-        let mut view = LocalAnchorView::default();
+        let mut view = LocalSealView::default();
         let cell = "ck:cell:ck.component.capability.grant.v1:ck.grant.01".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
@@ -5626,7 +5623,7 @@ mod tests {
 
     #[test]
     fn safer_winner_for_unknown_cell_family_returns_none() {
-        let mut view = LocalAnchorView::default();
+        let mut view = LocalSealView::default();
         let cell = "ck:cell:ck.component.test.unknown.v1:ck:realm:demo".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
@@ -5651,7 +5648,7 @@ mod tests {
 
     #[test]
     fn safer_winner_for_tied_heads_returns_none() {
-        let mut view = LocalAnchorView::default();
+        let mut view = LocalSealView::default();
         let cell = "ck:cell:ck.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
@@ -5675,7 +5672,7 @@ mod tests {
 
     #[test]
     fn safer_winner_for_missing_heads_returns_none() {
-        let mut view = LocalAnchorView::default();
+        let mut view = LocalSealView::default();
         let cell = "ck:cell:ck.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
@@ -5688,10 +5685,10 @@ mod tests {
     }
 
     #[test]
-    fn anchor_view_from_sync_body_parses_full_payload() {
+    fn seal_view_from_sync_body_parses_full_payload() {
         let body = serde_json::json!({
-            "anchor_view": {
-                "frontier": ["ck:anchor:sha256:aaa", "ck:anchor:sha256:bbb"],
+            "seal_view": {
+                "frontier": ["ck:seal:sha256:aaa", "ck:seal:sha256:bbb"],
                 "leaves":   ["sha256:lf1"],
                 "state_root": "ck:state:sha256:abc",
                 "cells": {
@@ -5712,7 +5709,7 @@ mod tests {
                 }
             }
         });
-        let view = LocalAnchorView::from_sync_body(&body);
+        let view = LocalSealView::from_sync_body(&body);
         assert_eq!(view.frontier.len(), 2);
         assert_eq!(view.leaves, vec!["sha256:lf1".to_owned()]);
         assert_eq!(view.state_root.as_deref(), Some("ck:state:sha256:abc"));
@@ -5736,7 +5733,7 @@ mod tests {
     }
 
     #[test]
-    fn anchor_view_from_sync_body_parses_structured_bottoms() {
+    fn seal_view_from_sync_body_parses_structured_bottoms() {
         let body = serde_json::json!({
             "bottoms": [{
                 "cell": "ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card",
@@ -5758,7 +5755,7 @@ mod tests {
             }]
         });
 
-        let view = LocalAnchorView::from_sync_body(&body);
+        let view = LocalSealView::from_sync_body(&body);
         let info = view
             .bottom_cells
             .get("ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card")
@@ -5779,35 +5776,32 @@ mod tests {
     }
 
     #[test]
-    fn anchor_view_from_sync_body_extracts_mls_epoch_and_covered_frontier() {
+    fn seal_view_from_sync_body_extracts_mls_epoch_and_covered_seals() {
         let body = serde_json::json!({
-            "anchor_view": {
-                "frontier": ["ck:anchor:sha256:aaa"],
+            "seal_view": {
+                "frontier": ["ck:seal:sha256:aaa"],
                 "leaves": [],
                 "cells": {
                     "ck:cell:ck.component.mls.epoch.v1:ck:realm:demo": {
                         "value": 7
                     },
-                    "ck:cell:ck.component.governance.covered_frontier.v1:ck:realm:demo": {
+                    "ck:cell:ck.component.governance.covered_seals.v1:ck:realm:demo": {
                         "register": { "value": "ck:state:sha256:abcd" }
                     }
                 }
             }
         });
-        let view = LocalAnchorView::from_sync_body(&body);
+        let view = LocalSealView::from_sync_body(&body);
         assert_eq!(view.mls_epoch, Some(7));
-        assert_eq!(
-            view.covered_frontier.as_deref(),
-            Some("ck:state:sha256:abcd")
-        );
+        assert_eq!(view.covered_seals.as_deref(), Some("ck:state:sha256:abcd"));
     }
 
     #[test]
-    fn anchor_view_mls_epoch_supports_object_value_with_epoch_field() {
+    fn seal_view_mls_epoch_supports_object_value_with_epoch_field() {
         // Some soland builds emit the MLS epoch cell as `{ "value": { "epoch": N } }`
         // (typed view) instead of a bare integer. Both shapes need to round-trip.
         let body = serde_json::json!({
-            "anchor_view": {
+            "seal_view": {
                 "frontier": [],
                 "cells": {
                     "ck:cell:ck.component.mls.epoch.v1:ck:realm:demo": {
@@ -5816,60 +5810,60 @@ mod tests {
                 }
             }
         });
-        let view = LocalAnchorView::from_sync_body(&body);
+        let view = LocalSealView::from_sync_body(&body);
         assert_eq!(view.mls_epoch, Some(42));
     }
 
     #[test]
-    fn anchor_view_from_sync_body_extracts_covered_frontier_lag() {
+    fn seal_view_from_sync_body_extracts_covered_seals_lag() {
         let body = serde_json::json!({
-            "anchor_view": {
-                "frontier": ["ck:anchor:sha256:aaa"],
+            "seal_view": {
+                "frontier": ["ck:seal:sha256:aaa"],
                 "leaves": [],
-                "covered_frontier_lag": 12,
+                "covered_seals_lag": 12,
                 "cells": {}
             }
         });
-        let view = LocalAnchorView::from_sync_body(&body);
-        assert_eq!(view.covered_frontier_lag, Some(12));
+        let view = LocalSealView::from_sync_body(&body);
+        assert_eq!(view.covered_seals_lag, Some(12));
         // default threshold is 5 -> 12 > 5
-        assert!(view.covered_frontier_lag_above(5));
-        assert!(!view.covered_frontier_lag_above(20));
+        assert!(view.covered_seals_lag_above(5));
+        assert!(!view.covered_seals_lag_above(20));
     }
 
     #[test]
-    fn anchor_view_lag_above_returns_false_when_lag_unknown() {
-        let view = LocalAnchorView::default();
-        assert!(!view.covered_frontier_lag_above(5));
-        assert!(!view.covered_frontier_lag_above(0));
+    fn seal_view_lag_above_returns_false_when_lag_unknown() {
+        let view = LocalSealView::default();
+        assert!(!view.covered_seals_lag_above(5));
+        assert!(!view.covered_seals_lag_above(0));
     }
 
     #[test]
-    fn anchor_view_from_sync_body_missing_returns_default() {
+    fn seal_view_from_sync_body_missing_returns_default() {
         let body = serde_json::json!({"summary": {"summary": "hi"}});
-        let view = LocalAnchorView::from_sync_body(&body);
-        assert_eq!(view, LocalAnchorView::default());
+        let view = LocalSealView::from_sync_body(&body);
+        assert_eq!(view, LocalSealView::default());
     }
 
     #[test]
-    fn anchor_views_aggregates_across_realms() {
-        let path = temp_state_path("anchor-aggregate");
+    fn seal_views_aggregates_across_realms() {
+        let path = temp_state_path("seal-aggregate");
         let mut store = LocalStateStore::with_path(path);
-        store.set_realm_anchor_view(
+        store.set_realm_seal_view(
             "ck:realm:one",
-            LocalAnchorView {
-                frontier: vec!["ck:anchor:sha256:one".to_owned()],
-                ..LocalAnchorView::default()
+            LocalSealView {
+                frontier: vec!["ck:seal:sha256:one".to_owned()],
+                ..LocalSealView::default()
             },
         );
-        store.set_realm_anchor_view(
+        store.set_realm_seal_view(
             "ck:realm:two",
-            LocalAnchorView {
-                frontier: vec!["ck:anchor:sha256:two".to_owned()],
-                ..LocalAnchorView::default()
+            LocalSealView {
+                frontier: vec!["ck:seal:sha256:two".to_owned()],
+                ..LocalSealView::default()
             },
         );
-        let all = store.anchor_views();
+        let all = store.seal_views();
         assert_eq!(all.len(), 2);
         assert!(all.contains_key("ck:realm:one"));
         assert!(all.contains_key("ck:realm:two"));

@@ -173,7 +173,7 @@ pub(super) fn submit_kanban_move(
     mut board_status: Signal<String>,
 ) {
     let hlc = Hlc::now("yougen").to_string();
-    let anchor_ref = state_store.read().anchor_ref_for_realm_move(&realm_id);
+    let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before updating cards".to_owned());
         return;
@@ -241,7 +241,7 @@ pub(super) fn submit_kanban_move(
         kind: kind.to_owned(),
         cell_id: cell_id.clone(),
         effect_summary: effect_summary.clone(),
-        anchor_ref: anchor_ref.clone(),
+        seal_ref: seal_ref.clone(),
         hlc: hlc.clone(),
         note: format!("submitting {wire_kind} event via ck.self.events.submit"),
         signed_move_json: None,
@@ -269,7 +269,7 @@ pub(super) fn submit_kanban_move(
     ));
     let api_token = token();
     let realm_for_record = realm_id.clone();
-    let anchor_for_record = anchor_ref.clone();
+    let seal_for_record = seal_ref.clone();
     let kind_for_record = kind.to_owned();
     let op_for_track = op_id.clone();
     spawn(async move {
@@ -293,7 +293,7 @@ pub(super) fn submit_kanban_move(
                     kind_for_record.clone(),
                     state,
                     None,
-                    Some(anchor_for_record),
+                    Some(seal_for_record),
                 );
                 if let Some(record) = write_records
                     .write()
@@ -302,13 +302,13 @@ pub(super) fn submit_kanban_move(
                 {
                     record.state = CardState::Accepted;
                     record.note = format!(
-                        "event accepted; pending anchor event_id={}",
+                        "event accepted; pending seal event_id={}",
                         short_protocol_id(&resp.event_id)
                     );
                 }
                 set_card_state_in_columns(&mut columns, &subject, CardState::Accepted);
                 board_status.set(format!(
-                    "{kind_for_record} event {} accepted by server; pending anchor (event_id={})",
+                    "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
                     short_protocol_id(&op_for_track),
                     short_protocol_id(&resp.event_id)
                 ));
@@ -860,7 +860,7 @@ pub(super) fn submit_flow_position_cas_move(
 /// the rebase attempt counter. `attempt` is the **next** attempt number
 /// (`0` for the user-initiated drop, `1` for the first rebase, …);
 /// reaching [`MAX_CONFLICT_REBASE_ATTEMPTS`] without an Accepted /
-/// PendingAnchor result quarantines the record for manual review.
+/// PendingSeal result quarantines the record for manual review.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn submit_flow_position_cas_move_with_attempt(
     base_url: String,
@@ -880,7 +880,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
     mut board_status: Signal<String>,
 ) {
     let hlc = Hlc::now("yougen").to_string();
-    let anchor_ref = state_store.read().anchor_ref_for_realm_move(&realm_id);
+    let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before moving cards".to_owned());
         return;
@@ -933,7 +933,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
         kind: kind.to_owned(),
         cell_id: cell_id.clone(),
         effect_summary,
-        anchor_ref: anchor_ref.clone(),
+        seal_ref: seal_ref.clone(),
         hlc: hlc.clone(),
         note: if attempt == 0 {
             format!("submitting {kind} via ck.self.events.submit")
@@ -977,7 +977,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
     let api_token = token();
     let move_for_track = move_id.clone();
     let kind_for_record = kind.to_owned();
-    let anchor_for_record = anchor_ref.clone();
+    let seal_for_record = seal_ref.clone();
     let realm_for_record = realm_id.clone();
     let base_for_rebase = base_url.clone();
     let realm_for_rebase = realm_id.clone();
@@ -1010,7 +1010,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                     kind_for_record.clone(),
                     submission_state,
                     None,
-                    Some(anchor_for_record),
+                    Some(seal_for_record),
                 );
                 if let Some(record) = write_records
                     .write()
@@ -1019,13 +1019,13 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                 {
                     record.state = CardState::Accepted;
                     record.note = format!(
-                        "event accepted; pending anchor event_id={}",
+                        "event accepted; pending seal event_id={}",
                         short_protocol_id(&resp.event_id)
                     );
                 }
                 set_card_state_in_columns(&mut columns, &flow_id, CardState::Accepted);
                 board_status.set(format!(
-                    "{kind_for_record} event {} accepted by server; pending anchor (event_id={})",
+                    "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
                     short_protocol_id(&move_for_track),
                     short_protocol_id(&resp.event_id)
                 ));

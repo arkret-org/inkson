@@ -200,7 +200,7 @@ pub struct CriticalExtension {
 /// Current v1 Event Envelope used by active write paths.
 ///
 /// Field names match the wire JSON exactly per spec `event-envelope.schema.json` —
-/// no serde renames. `preconditions` / `effects` / `anchor_ref` are
+/// no serde renames. `preconditions` / `effects` / `seal_ref` are
 /// `Option<Vec<...>>` / `Option<String>` because reducer-input event kinds
 /// require them and non-reducer kinds (read marker, account_data, ...)
 /// must omit them entirely.
@@ -231,7 +231,7 @@ pub struct EventEnvelope {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<Effect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anchor_ref: Option<String>,
+    pub seal_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redacts: Option<String>,
     pub payload: Value,
@@ -277,7 +277,7 @@ impl EventProofAudience {
 }
 
 /// Builder for creating typed event envelopes. Callers attach
-/// preconditions / effects / anchor_ref / requirements after `new()`
+/// preconditions / effects / seal_ref / requirements after `new()`
 /// and before `build()`; `build()` produces an unsigned envelope and the
 /// `submit_event_envelope` path requires an active signer to attach the
 /// detached JWS proof before going on the wire.
@@ -293,7 +293,7 @@ pub struct OperationBuilder {
     preconditions: Vec<Precondition>,
     effects: Vec<Effect>,
     refs: Vec<SemanticRef>,
-    anchor_ref: Option<String>,
+    seal_ref: Option<String>,
     requirements: Option<EventRequirements>,
     redacts: Option<String>,
 }
@@ -316,7 +316,7 @@ impl OperationBuilder {
             preconditions: Vec::new(),
             effects: Vec::new(),
             refs: Vec::new(),
-            anchor_ref: None,
+            seal_ref: None,
             requirements: None,
             redacts: None,
         }
@@ -362,8 +362,8 @@ impl OperationBuilder {
         self
     }
 
-    pub fn anchor_ref(mut self, anchor_ref: impl Into<String>) -> Self {
-        self.anchor_ref = Some(anchor_ref.into());
+    pub fn seal_ref(mut self, seal_ref: impl Into<String>) -> Self {
+        self.seal_ref = Some(seal_ref.into());
         self
     }
 
@@ -416,7 +416,7 @@ impl OperationBuilder {
             payload: self.body,
             preconditions: self.preconditions,
             effects: self.effects,
-            anchor_ref: self.anchor_ref,
+            seal_ref: self.seal_ref,
             requirements: self.requirements,
             redacts: self.redacts,
             unsigned,
@@ -856,12 +856,12 @@ pub mod ck_ops {
     }
 
     /// Build the private-side relation from a Circle-scoped discussion Flow
-    /// back to the public anchor Flow/message.
+    /// back to the public seal Flow/message.
     pub fn confidential_discussion_relation_create(
         realm_id: &str,
         actor: &str,
         private_flow_id: &str,
-        public_anchor_ref: &str,
+        public_seal_ref: &str,
         circle_id: &str,
     ) -> anyhow::Result<OperationBuilder> {
         // `circle_id` is unused on the wire: relation_create_payload is
@@ -873,7 +873,7 @@ pub mod ck_ops {
             .body(relation_create_payload_value(
                 "confidential_discussion_of",
                 private_flow_id,
-                public_anchor_ref,
+                public_seal_ref,
             )?))
     }
 
@@ -1155,7 +1155,7 @@ pub mod ck_ops {
         )
     }
 
-    /// Build a range-anchored document comment as `ck.message.create`.
+    /// Build a range-sealed document comment as `ck.message.create`.
     pub fn document_comment_create(
         realm_id: &str,
         actor: &str,
@@ -1601,7 +1601,7 @@ pub mod ck_ops {
 
     /// `ck.mls.genesis` event installing an MLS group at epoch 0. Emitted
     /// once when a creator's local group is first observed by the server so
-    /// the canonical audit record + creator/covered_frontier seed exist and
+    /// the canonical audit record + creator/covered_seals seed exist and
     /// the server epoch starts in lockstep with the local snapshot before
     /// the first `ck.mls.commit` bumps it to 1.
     ///

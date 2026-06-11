@@ -248,7 +248,7 @@ pub(super) fn chat_sha256_hash_from_ref(value: &str) -> Option<String> {
     {
         return Some(value.to_owned());
     }
-    for prefix in ["ck:anchor:", "ck:state:"] {
+    for prefix in ["ck:seal:", "ck:state:"] {
         if let Some(rest) = value.strip_prefix(prefix) {
             return chat_sha256_hash_from_ref(rest);
         }
@@ -256,12 +256,12 @@ pub(super) fn chat_sha256_hash_from_ref(value: &str) -> Option<String> {
     None
 }
 
-pub(super) fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, realm_id: &str) -> String {
-    anchor_view
+pub(super) fn chat_mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> String {
+    seal_view
         .frontier
         .iter()
-        .chain(anchor_view.leaves.iter())
-        .chain(anchor_view.state_root.iter())
+        .chain(seal_view.leaves.iter())
+        .chain(seal_view.state_root.iter())
         .find_map(|value| {
             if value.starts_with("ck:event:") && cokret_sdk::EventId::new(value.clone()).is_ok() {
                 Some(value.clone())
@@ -273,7 +273,7 @@ pub(super) fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, realm_id: &
             crate::canonical::canonical_sha256(&json!({
                 "kind": "chat_mls_base_epoch",
                 "realm_id": realm_id,
-                "epoch": anchor_view.mls_epoch.unwrap_or(0),
+                "epoch": seal_view.mls_epoch.unwrap_or(0),
             }))
             .unwrap_or_else(|_| {
                 "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
@@ -282,13 +282,13 @@ pub(super) fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, realm_id: &
 }
 
 pub(super) fn chat_mls_membership_frontier(
-    anchor_view: &LocalAnchorView,
+    seal_view: &LocalSealView,
     fallback_event_id: &cokret_sdk::EventId,
 ) -> Vec<cokret_sdk::EventId> {
-    let mut frontier = anchor_view
+    let mut frontier = seal_view
         .frontier
         .iter()
-        .chain(anchor_view.leaves.iter())
+        .chain(seal_view.leaves.iter())
         .filter_map(|value| cokret_sdk::EventId::new(value.clone()).ok())
         .collect::<Vec<_>>();
     if frontier.is_empty() {
@@ -300,11 +300,11 @@ pub(super) fn chat_mls_membership_frontier(
 }
 
 pub(super) fn chat_mls_policy_root(
-    anchor_view: &LocalAnchorView,
+    seal_view: &LocalSealView,
     realm_id: &str,
     schedule_hash: &cokret_sdk::Hash,
 ) -> Result<cokret_sdk::Hash, String> {
-    let hash = anchor_view
+    let hash = seal_view
         .state_root
         .as_deref()
         .and_then(chat_sha256_hash_from_ref)
@@ -312,8 +312,8 @@ pub(super) fn chat_mls_policy_root(
             crate::canonical::canonical_sha256(&json!({
                 "kind": "chat_mls_policy_root",
                 "realm_id": realm_id,
-                "frontier": anchor_view.frontier,
-                "state_root": anchor_view.state_root,
+                "frontier": seal_view.frontier,
+                "state_root": seal_view.state_root,
                 "schedule_hash": schedule_hash.as_str(),
             }))
             .unwrap_or_else(|_| {

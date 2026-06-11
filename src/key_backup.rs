@@ -57,7 +57,7 @@ const KEY_BACKUP_SIGNED_FIELDS_MANDATORY: &[&str] = &[
 /// the device Ed25519 key. The signature covers
 /// `canonical_json(envelope without auth_data.signature)` — i.e. the rest of
 /// `auth_data` (verification_method / signed_fields / ssk_generation) is bound
-/// too, so it cannot be tampered. `ssk_generation`, when given, anchors the
+/// too, so it cannot be tampered. `ssk_generation`, when given, seals the
 /// envelope to the published cross-signing self-signing key generation.
 pub fn sign_key_backup_auth_data(
     body: &mut Value,

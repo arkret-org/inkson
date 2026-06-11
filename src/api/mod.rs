@@ -1395,7 +1395,7 @@ pub fn build_realm_bootstrap_events(
     encryption_profile: &str,
     security_class: &str,
     federation_policy: &str,
-    anchor_profile: &str,
+    notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
     invitees: &[String],
@@ -1425,7 +1425,7 @@ pub fn build_realm_bootstrap_events(
         encryption_profile,
         security_class,
         federation_policy,
-        anchor_profile,
+        notary_profile,
         digest_algorithm,
         trust_domain,
         plaintext_visible_services,
@@ -1477,7 +1477,7 @@ pub fn build_realm_create_event(
     encryption_profile: &str,
     security_class: &str,
     federation_policy: &str,
-    anchor_profile: &str,
+    notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
     plaintext_visible_services: &[String],
@@ -1510,9 +1510,9 @@ pub fn build_realm_create_event(
         "encryption_profile": encryption_profile,
         "security_class": security_class,
         "federation_policy": effective_federation_policy,
-        "anchor_profile": anchor_profile,
+        "notary_profile": notary_profile,
         "digest_algorithm": digest_algorithm,
-        "anchorer": realm_genesis_anchorer(anchor_profile, actor_id),
+        "notary": realm_genesis_notary(notary_profile, actor_id),
         "created_at": created_at_for_object,
     });
     if let Some(summary) = summary
@@ -1580,8 +1580,8 @@ pub fn build_realm_create_event(
     Ok(envelope)
 }
 
-fn realm_genesis_anchorer(anchor_profile: &str, actor_id: &str) -> Value {
-    match anchor_profile {
+fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> Value {
+    match notary_profile {
         "threshold" => json!({
             "type": "threshold",
             "members": [actor_id],
@@ -1625,7 +1625,7 @@ fn derived_recovery_controller_organization_did(controller: &str) -> String {
 }
 
 fn derived_recovery_member_did(controller_or_actor: &str) -> String {
-    format!("{}:recovery:anchorer", controller_or_actor.trim())
+    format!("{}:recovery:notary", controller_or_actor.trim())
 }
 
 /// Build a `ck.space.create` event per spec realm-and-space.md §3.2.
@@ -3118,7 +3118,7 @@ fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
 ///   事件(`/_cokret/self/events`);
 /// - 真·协议原语(register / account/me / principal-realm / logout / bridge-describe) → 待 soland 在
 ///   `/_cokret/` 暴露后切换;
-/// - 运维/遥测(audit/user-action、admin anchorer、dev-login)→ 评估是否保留为本地面。
+/// - 运维/遥测(audit/user-action、admin notary、dev-login)→ 评估是否保留为本地面。
 ///
 /// 模板中以 `{` 开头的路径段为通配(匹配单段),其余段逐字相等。
 const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
@@ -3140,7 +3140,7 @@ const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
     "_soland/gate/auth/logout",
     "_soland/gate/auth/bridge/describe",
     // admin —— 运维面,deployment-local(按设计不入协议)
-    "_soland/admin/realms/{realm_id}/anchorer",
+    "_soland/admin/realms/{realm_id}/notary",
     // circles —— CKP-0014 §5 候选操作(产品面)。circle 尚未入正式 catalog,
     // 未入前 MUST 走 `/_soland`、MUST NOT 挂 `/_cokret`(实测 `/_cokret/self/circles`
     // 返回 404)。待 circle 入 catalog 后,这几行连同 realm.rs 调用一起迁回 `/_cokret`。
@@ -3763,18 +3763,18 @@ mod tests {
         );
         assert_eq!(create.payload["object"]["default_join_rule"], "invite");
         assert_eq!(create.payload["object"]["history_visibility"], "shared");
-        assert_eq!(create.payload["object"]["anchorer"]["type"], "single_did");
-        assert_eq!(create.payload["object"]["anchorer"]["did"], create.actor_id);
+        assert_eq!(create.payload["object"]["notary"]["type"], "single_did");
+        assert_eq!(create.payload["object"]["notary"]["did"], create.actor_id);
         assert_eq!(
-            create.payload["object"]["anchorer"]["recovery_members"][0],
-            "did:web:alice.example:recovery:anchorer",
+            create.payload["object"]["notary"]["recovery_members"][0],
+            "did:web:alice.example:recovery:notary",
         );
         assert_eq!(
-            create.payload["object"]["anchorer"]["controller_organization"],
+            create.payload["object"]["notary"]["controller_organization"],
             "did:web:alice.example",
         );
         assert_eq!(
-            create.payload["object"]["anchorer"]["recovery_controller_organizations"][0],
+            create.payload["object"]["notary"]["recovery_controller_organizations"][0],
             "did:web:alice.example:recovery",
         );
         assert_eq!(
@@ -3782,10 +3782,10 @@ mod tests {
             "ck:cell:ck.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(create.effects[0].op.kind, "set");
-        // anchor_ref starts unset on the typed envelope. Realm genesis
+        // seal_ref starts unset on the typed envelope. Realm genesis
         // has no snapshot head yet, so the create event relies on its
-        // `head_eq null` precondition instead of a prior anchor.
-        assert!(create.anchor_ref.is_none());
+        // `head_eq null` precondition instead of a prior seal.
+        assert!(create.seal_ref.is_none());
         // The typed builder leaves the envelope unsigned — the active
         // signer attaches the detached JWS proof at submit time.
         assert!(create.proofs.is_empty());

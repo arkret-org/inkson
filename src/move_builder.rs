@@ -1,5 +1,5 @@
 //! Small client-side helpers retained from the former cell-driven
-//! Move/Anchor write pipeline.
+//! Move/Seal write pipeline.
 //!
 //! The full Move construction + signing surface (`build_*_move`,
 //! `sign_unsigned_move`, `UnsignedMove`, …) has been removed: all writes

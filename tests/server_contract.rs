@@ -64,7 +64,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
             algorithm: cokret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
             root: snapshot_contract_hash(9),
             covered_event_count: 1,
-            covered_frontier: vec![snapshot_contract_event_id("0000000000c1")],
+            covered_seals: vec![snapshot_contract_event_id("0000000000c1")],
             actor_seq_ranges: Vec::new(),
         },
         chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),
@@ -289,7 +289,7 @@ fn yougen_accepts_server_contract_payloads() {
     );
     assert!(
         serde_json::from_value::<cokret_sdk::SnapshotManifest>(json!({
-            "anchor": "ck:anchor:sha256:00",
+            "seal": "ck:seal:sha256:00",
             "chunk_count": 1,
             "merkle_root": format!("sha256:{}", "00".repeat(32)),
             "generator_proof": {}
@@ -785,7 +785,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     );
 }
 
-// (Move/Anchor pipeline tests removed — all writes now go through
+// (Move/Seal pipeline tests removed — all writes now go through
 // ck.self.events.submit; the SubmitEventOutcome wire shape is exercised by
 // soland's own integration tests and the cokret-spec fixtures.)
 
