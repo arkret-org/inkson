@@ -210,7 +210,15 @@ pub struct EventEnvelope {
     pub event_id: String,
     pub kind: String,
     pub realm_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_scope: Option<Value>,
     pub actor_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executed_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_kind: Option<String>,
     pub actor_seq: u64,
     pub created_at: String,
     pub hlc: String,
@@ -280,6 +288,8 @@ pub struct OperationBuilder {
     target_ref: Option<String>,
     body: Value,
     authz_ref: Option<String>,
+    executed_by: Option<String>,
+    authorization_ref: Option<String>,
     preconditions: Vec<Precondition>,
     effects: Vec<Effect>,
     refs: Vec<SemanticRef>,
@@ -301,6 +311,8 @@ impl OperationBuilder {
             target_ref: None,
             body: Value::Null,
             authz_ref: None,
+            executed_by: None,
+            authorization_ref: None,
             preconditions: Vec::new(),
             effects: Vec::new(),
             refs: Vec::new(),
@@ -322,6 +334,16 @@ impl OperationBuilder {
 
     pub fn authz_ref(mut self, authz_ref: impl Into<String>) -> Self {
         self.authz_ref = Some(authz_ref.into());
+        self
+    }
+
+    pub fn executed_by(mut self, executed_by: impl Into<String>) -> Self {
+        self.executed_by = Some(executed_by.into());
+        self
+    }
+
+    pub fn authorization_ref(mut self, authorization_ref: impl Into<String>) -> Self {
+        self.authorization_ref = Some(authorization_ref.into());
         self
     }
 
@@ -380,9 +402,13 @@ impl OperationBuilder {
         EventEnvelope {
             event_id: format!("ck:event:{}", uuid_v7()),
             kind: self.op_type,
-            actor_id: self.actor,
-            actor_seq,
             realm_id,
+            effective_scope: None,
+            actor_id: self.actor,
+            executed_by: self.executed_by,
+            authorization_ref: self.authorization_ref,
+            actor_kind: None,
+            actor_seq,
             created_at: crate::clock::now_rfc3339_secs(),
             hlc: hlc.encode(),
             prev_refs: deps,
@@ -2068,6 +2094,64 @@ mod tests {
         let json = serde_json::to_string(&op).unwrap();
         let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(op, parsed);
+    }
+
+    #[test]
+    fn operation_builder_can_emit_signed_authorization_binding() {
+        let op = OperationBuilder::new("ck:realm:s1", "did:web:bob", "ck.message.create")
+            .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+            .executed_by("did:web:agent.example")
+            .authorization_ref("ck:grant:0196419b-0000-7000-8000-000000000001")
+            .build("node");
+
+        assert_eq!(op.executed_by.as_deref(), Some("did:web:agent.example"));
+        assert_eq!(
+            op.authorization_ref.as_deref(),
+            Some("ck:grant:0196419b-0000-7000-8000-000000000001")
+        );
+        assert!(op.unsigned.get("local_authz_ref").is_none());
+
+        let mut canonical = serde_json::to_value(&op).unwrap();
+        if let serde_json::Value::Object(object) = &mut canonical {
+            object.remove("proofs");
+            object.remove("unsigned");
+        }
+        assert_eq!(canonical["executed_by"], "did:web:agent.example");
+        assert_eq!(
+            canonical["authorization_ref"],
+            "ck:grant:0196419b-0000-7000-8000-000000000001"
+        );
+    }
+
+    #[test]
+    fn event_envelope_accepts_current_optional_top_level_fields() {
+        let op = OperationBuilder::new("ck:realm:s1", "did:web:bob", "ck.message.create")
+            .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+            .build("node");
+        let mut value = serde_json::to_value(&op).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert(
+            "effective_scope".to_owned(),
+            json!({"kind": "realm", "realm_id": "ck:realm:s1"}),
+        );
+        object.insert("executed_by".to_owned(), json!("did:web:agent.example"));
+        object.insert(
+            "authorization_ref".to_owned(),
+            json!("ck:grant:0196419b-0000-7000-8000-000000000001"),
+        );
+        object.insert("actor_kind".to_owned(), json!("agent"));
+
+        let parsed: EventEnvelope = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            parsed.effective_scope,
+            Some(json!({"kind": "realm", "realm_id": "ck:realm:s1"}))
+        );
+        assert_eq!(parsed.executed_by.as_deref(), Some("did:web:agent.example"));
+        assert_eq!(
+            parsed.authorization_ref.as_deref(),
+            Some("ck:grant:0196419b-0000-7000-8000-000000000001")
+        );
+        assert_eq!(parsed.actor_kind.as_deref(), Some("agent"));
     }
 
     #[test]
