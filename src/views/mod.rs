@@ -139,7 +139,8 @@ pub enum View {
     /// G3.Y1 compatibility variant. `/settings/recovery` now renders
     /// through `View::Settings` so the Settings sidebar remains visible.
     SettingsRecovery,
-    /// G3.Y1 — key-backup status panel at `/settings/security`.
+    /// Compatibility view for the legacy `/settings/security` URL; renders the
+    /// unified Recovery settings section.
     SettingsSecurity,
     /// CKP-0007 P3B.2.5 — Circle detail panel at `/circles/:circle_id`.
     Circle,

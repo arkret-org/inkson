@@ -357,8 +357,8 @@ pub(crate) fn recovery_options_configured(
 }
 
 /// SHA-256 fingerprint of the locally configured Recovery Key (24 words), if
-/// one was ever generated on this device. Used by the settings Key-backup
-/// status panel; never the plaintext.
+/// one was ever generated on this device. Used by recovery prompts and settings
+/// affordances; never the plaintext.
 pub(crate) fn local_recovery_key_fingerprint(
     state_store: &LocalStateStore,
     account_key: &str,
@@ -554,6 +554,7 @@ pub fn RecoveryPanel(
     let mut recovery_key_status = use_signal(String::new);
     let mut passkey_wraps = use_signal(|| initial.passkey_wraps.clone());
     let mut passkey_status = use_signal(String::new);
+    let mut passkey_recovery_key_input = use_signal(String::new);
 
     // Social recovery state
     let mut threshold = use_signal(|| initial.sss_threshold);
@@ -622,7 +623,13 @@ pub fn RecoveryPanel(
                             if recovery_key_fp().is_empty() { "not generated" } else { "fingerprint stored" }
                         }
                         div { class: "muted",
-                            if recovery_key_rotated_at().is_empty() { "Generate one to enable cross-device recovery" } else { "Last rotated {fmt_relative(&recovery_key_rotated_at())}" }
+                            if recovery_key_fp().is_empty() {
+                                "Generate one to enable cross-device recovery"
+                            } else if recovery_key_rotated_at().is_empty() {
+                                "Recovery Key imported on this device"
+                            } else {
+                                "Last rotated {fmt_relative(&recovery_key_rotated_at())}"
+                            }
                         }
                     }
                     div { class: "metric",
@@ -826,13 +833,34 @@ pub fn RecoveryPanel(
                 if !passkey_status().is_empty() {
                     div { class: "muted", "data-testid": "passkey-wrap-status", "{passkey_status}" }
                 }
+                div { class: "workflow-form", "data-testid": "passkey-wrap-key-form",
+                    Label { html_for: "passkey-wrap-recovery-key", "Recovery Key for passkey setup" }
+                    Input {
+                        id: "passkey-wrap-recovery-key",
+                        "data-testid": "passkey-wrap-recovery-key",
+                        r#type: "password",
+                        autocomplete: "off",
+                        value: "{passkey_recovery_key_input}",
+                        placeholder: "Paste your existing 24-word Recovery Key",
+                        oninput: move |event: FormEvent| passkey_recovery_key_input.set(event.value()),
+                    }
+                    div { class: "muted", "data-testid": "passkey-wrap-key-hint",
+                        if !live_recovery_key().trim().is_empty() {
+                            "Using the Recovery Key currently displayed above. You can also paste an existing 24-word key here after the words are cleared from screen."
+                        } else if passkey_recovery_key_input().trim().is_empty() {
+                            "Create passkey unlock becomes available after you generate a new Recovery Key or paste your existing 24 words here."
+                        } else {
+                            "Ready to create a browser-local passkey wrapper. The pasted words are cleared after setup succeeds."
+                        }
+                    }
+                }
                 div { class: "actions",
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "passkey-wrap-create",
-                        disabled: live_recovery_key().trim().is_empty(),
-                        title: if live_recovery_key().trim().is_empty() {
-                            "Generate or unlock the 24-word Recovery Key first."
+                        disabled: live_recovery_key().trim().is_empty() && passkey_recovery_key_input().trim().is_empty(),
+                        title: if live_recovery_key().trim().is_empty() && passkey_recovery_key_input().trim().is_empty() {
+                            "Generate a Recovery Key or paste your existing 24 words first."
                         } else {
                             "Create a browser-local passkey wrapper for the current 24-word Recovery Key."
                         },
@@ -840,16 +868,34 @@ pub fn RecoveryPanel(
                             let actor_key = actor_key.clone();
                             let mut store = state_store;
                             move |_| {
-                                let recovery_key = live_recovery_key();
-                                if recovery_key.trim().is_empty() {
-                                    passkey_status.set("Generate or unlock the 24-word Recovery Key first.".to_owned());
+                                let raw_recovery_key = if live_recovery_key().trim().is_empty() {
+                                    passkey_recovery_key_input()
+                                } else {
+                                    live_recovery_key()
+                                };
+                                let Some(recovery_key) = normalize_recovery_key_input(&raw_recovery_key) else {
+                                    passkey_status.set(
+                                        "Enter the full 24-word Recovery Key before creating passkey unlock.".to_owned(),
+                                    );
+                                    return;
+                                };
+                                let entered_fp = fingerprint_recovery_key(&recovery_key);
+                                let existing_fp = recovery_key_fp();
+                                if !existing_fp.trim().is_empty() && existing_fp != entered_fp {
+                                    passkey_status.set(
+                                        "Entered Recovery Key does not match the fingerprint stored for this account.".to_owned(),
+                                    );
                                     return;
                                 }
+                                let effective_fp = if existing_fp.trim().is_empty() {
+                                    entered_fp
+                                } else {
+                                    existing_fp
+                                };
                                 let actor = actor_key.clone();
                                 let rp_id = crate::passkey_prf::default_rp_id()
                                     .unwrap_or_else(|| "origin-default".to_owned());
                                 let label = format!("Cokret Recovery {}", short_protocol_id(&actor));
-                                let fp = recovery_key_fp();
                                 passkey_status.set("Waiting for passkey user verification…".to_owned());
                                 spawn(async move {
                                     let salt = match generate_passkey_wrap_salt() {
@@ -879,7 +925,7 @@ pub fn RecoveryPanel(
                                         credential_id_b64: material.credential_id_b64.clone(),
                                         credential_label: label.clone(),
                                         rp_id: rp_id.clone(),
-                                        recovery_key_fingerprint: fp.clone(),
+                                        recovery_key_fingerprint: effective_fp.clone(),
                                         created_at,
                                         ..PasskeyRecoveryWrap::default()
                                     };
@@ -914,6 +960,10 @@ pub fn RecoveryPanel(
                                     });
                                     next.push(wrap);
                                     passkey_wraps.set(next);
+                                    if recovery_key_fp().trim().is_empty() {
+                                        recovery_key_fp.set(effective_fp);
+                                    }
+                                    passkey_recovery_key_input.set(String::new());
                                     save_state(&mut store, &actor, &snapshot_state());
                                     passkey_status.set(
                                         "Passkey quick unlock saved locally. Keep the 24 words offline for fresh-device recovery.".to_owned()

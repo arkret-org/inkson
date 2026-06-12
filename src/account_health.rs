@@ -22,25 +22,23 @@
 /// on `resolve(..) == Variant`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AccountHealthPrompt {
-    /// 1. This device is not yet a long-term authorized device. Everything else
-    ///    is blocked until pairing/recovery promotes it. (`needs_device_authorization`)
+    /// 1. This device is not yet a long-term authorized device. Everything else is blocked until
+    ///    pairing/recovery promotes it. (`needs_device_authorization`)
     DeviceAuthorization,
-    /// 2. The server holds an account-secret backup but this device has no local
-    ///    material — encrypted history can be restored by unlocking it. (`needs_mls_unlock`)
+    /// 2. The server holds an account-secret backup but this device has no local material —
+    ///    encrypted history can be restored by unlocking it. (`needs_mls_unlock`)
     MlsUnlock,
-    /// 3. This device has encrypted material but the server has no backup yet —
-    ///    a fresh browser would lose history; publish a backup now. (`needs_mls_backup`)
+    /// 3. This device has encrypted material but the server has no backup yet — a fresh browser
+    ///    would lose history; publish a backup now. (`needs_mls_backup`)
     MlsBackup,
-    /// 4. Encrypted history exists but there is nothing this browser can decrypt
-    ///    and no recovery path is configured (S5 dead-end diagnostic).
-    ///    (`needs_mls_recovery_setup`)
+    /// 4. Encrypted history exists but there is nothing this browser can decrypt and no recovery
+    ///    path is configured (S5 dead-end diagnostic). (`needs_mls_recovery_setup`)
     RecoverySetupMissing,
-    /// 5. A Realm (PCR or collaboration) is below the recommended encryption
-    ///    floor; offer to enable it (and, if needed, set up the Recovery Key
-    ///    first). (`floor_low`)
+    /// 5. A Realm (PCR or collaboration) is below the recommended encryption floor; offer to enable
+    ///    it (and, if needed, set up the Recovery Key first). (`floor_low`)
     RecommendedEncryptionFloor,
-    /// 6. Everything functional is fine, but no Recovery Key / backup is
-    ///    configured — the standing SPOF reminder. (`recovery_unconfigured`)
+    /// 6. Everything functional is fine, but no Recovery Key / backup is configured — the standing
+    ///    SPOF reminder. (`recovery_unconfigured`)
     RecoverySetupReminder,
     /// Nothing to prompt.
     None,

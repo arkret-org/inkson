@@ -79,10 +79,9 @@ pub enum Route {
     #[route("/settings/recovery", crate::app::RouterView)]
     SettingsRecovery,
 
-    /// G3.Y1 — key-backup STATUS panel (read-only). Computes the real state
-    /// from soland's `ck.schema.key_backup.v1` list endpoint
-    /// (`GET /_cokret/self/keys/backups`); the only backup write path is the
-    /// Recovery Key (24 words) flow on `/settings/recovery`.
+    /// Legacy key-backup URL. The Settings shell maps it to the unified
+    /// Recovery section so older links still land on account recovery and the
+    /// backup list.
     #[route("/settings/security", crate::app::RouterView)]
     SettingsSecurity,
 
@@ -359,8 +358,7 @@ impl Route {
             Route::SettingsSection { section } => Some(section.as_str()),
             Route::NotificationsSettings => Some("notifications"),
             Route::SettingsDevices | Route::SettingsDevicesPair => Some("devices"),
-            Route::SettingsRecovery | Route::Recovery => Some("recovery"),
-            Route::SettingsSecurity => Some("security"),
+            Route::SettingsRecovery | Route::SettingsSecurity | Route::Recovery => Some("recovery"),
             Route::Audit => Some("audit"),
             Route::Developer => Some("developer"),
             _ => None,
@@ -393,7 +391,7 @@ impl From<View> for Route {
             View::Settings => Route::Settings,
             View::SettingsDevices => Route::SettingsDevices,
             View::SettingsRecovery => Route::SettingsRecovery,
-            View::SettingsSecurity => Route::SettingsSecurity,
+            View::SettingsSecurity => Route::SettingsRecovery,
             View::VerifyDevice => Route::VerifyDevice,
             View::RealmAdmin => Route::RealmAdmin {
                 realm_id: String::new(),
@@ -528,7 +526,7 @@ mod tests {
             Some("encryption")
         );
         assert_eq!(Route::SettingsDevices.settings_section(), Some("devices"));
-        assert_eq!(Route::SettingsSecurity.settings_section(), Some("security"));
+        assert_eq!(Route::SettingsSecurity.settings_section(), Some("recovery"));
         assert_eq!(Route::Audit.settings_section(), Some("audit"));
         assert_eq!(Route::Developer.settings_section(), Some("developer"));
         assert_eq!(Route::Settings.settings_section(), None);

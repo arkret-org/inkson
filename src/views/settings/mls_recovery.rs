@@ -4,7 +4,7 @@
 //! boot-time detection effect flips `needs_mls_backup`, whose `detection_key`
 //! rarely changes — so users frequently never see it. This section is the
 //! RELIABLE entry: it is always reachable under
-//! `/settings/encryption` (Security & recovery), is NOT gated on
+//! `/settings/encryption`, is NOT gated on
 //! `needs_mls_backup`, shows the live backup status, and lets the user
 //! generate/replace the MLS recovery key regardless of effect timing.
 //!
