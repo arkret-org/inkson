@@ -6466,6 +6466,19 @@ fn redirect_to_login(navigator: Navigator) {
     let _ = navigator.push(Route::Login);
 }
 
+fn adopt_live_token_for_api(
+    api: &CokretApi,
+    live_token: Signal<String>,
+    session_token: &mut String,
+    authed: &mut CokretApi,
+) {
+    let latest = live_token();
+    if !latest.trim().is_empty() && latest != *session_token {
+        *session_token = latest;
+        *authed = api.clone().with_bearer(session_token.clone());
+    }
+}
+
 fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
     let device = normalize_device_id(&device);
     spawn(async move {
@@ -6602,6 +6615,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 }
 
                 let mut authed = api.clone().with_bearer(session_token.clone());
+                adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
                 // Resolve the canonical actor DID from `/account/me`. Three
                 // outcomes:
                 //   1. Ok with non-empty DID -> use it as canonical_actor.
@@ -6758,12 +6772,13 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         .write()
                         .stamp_account_scope_owner(&canonical_actor);
                 }
+                adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
                 persist_config(
                     config_store,
                     base.clone(),
                     canonical_actor.clone(),
                     device.clone(),
-                    session_token,
+                    session_token.clone(),
                 );
                 crypto_state.set("Session active".to_owned());
 
@@ -6773,6 +6788,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 // "re-establish the world from scratch". The SyncEngine
                 // (see crate::sync_engine) owns the long-poll loop that
                 // threads the cursor for incremental deltas.
+                adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
                 let sync_result = match authed.account_subscribe_snapshot(None).await {
                     Ok(sync) => Ok(sync),
                     Err(error) if is_auth_expired_error(&error) => {
@@ -6788,6 +6804,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 };
                 match sync_result {
                     Ok(sync) => {
+                        adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
                         let invite_notifications = match authed.invites().await {
                             Ok(response) => Some(response.invites),
                             Err(error) if is_auth_expired_error(&error) => {
@@ -7115,6 +7132,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         last_error.set(Some(format!("sync: {error}")));
                     }
                 }
+                adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
                 let events_result = match authed.events_describe().await {
                     Ok(events) => Ok(events),
                     Err(error) if is_auth_expired_error(&error) => {

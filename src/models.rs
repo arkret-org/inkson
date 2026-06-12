@@ -884,17 +884,16 @@ pub struct PushRegisterOutcome {
     pub expires_at: Option<String>,
 }
 
-pub use cokret_sdk::model::{
-    BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesAckOutcome,
-    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome,
-    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
-};
-
 /// `POST /_cokret/self/moderation/report` response. soland emits the SDK
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
 /// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
 pub use cokret_sdk::model::ModerationReportOutcome;
+pub use cokret_sdk::model::{
+    BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesAckOutcome,
+    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome,
+    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
+};
 
 // ── Directory ───────────────────────────────────────────────────
 

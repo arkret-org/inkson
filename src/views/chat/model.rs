@@ -1604,15 +1604,22 @@ pub(super) fn sender_display_label(
     participants: &[SpaceParticipant],
 ) -> String {
     if is_own_message_sender(sender, account_did) {
+        let account_did = account_did.trim();
         let own_participant = participants
             .iter()
-            .find(|participant| participant.did == account_did.trim());
+            .find(|participant| participant.did == account_did);
         return own_participant
             .and_then(participant_handle_label)
             .or_else(|| clean_participant_display_name(account_display_name, Some(account_did)))
             .or_else(|| own_participant.and_then(|participant| participant.display_name.clone()))
             .or_else(|| crate::views::helpers::handle_display_from_did(account_did))
-            .unwrap_or_else(|| "yougen".to_owned());
+            .unwrap_or_else(|| {
+                if account_did.is_empty() {
+                    "yougen".to_owned()
+                } else {
+                    short_principal_label(account_did)
+                }
+            });
     }
     participants
         .iter()
@@ -1836,6 +1843,14 @@ pub(super) fn first_string_in_candidates<'a>(
     candidates
         .iter()
         .find_map(|candidate| value_string_at(candidate, keys))
+}
+
+pub(super) fn message_actor_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a str> {
+    first_string_in_candidates(candidates, &["actor_id", "sender_actor_id"]).or_else(|| {
+        // Compatibility for local raw-operation records persisted before
+        // yougen switched its client-side cache to the canonical actor_id key.
+        first_string_in_candidates(candidates, &["actor"])
+    })
 }
 
 pub(super) fn message_kind_is_create(value: &Value) -> bool {
@@ -2182,15 +2197,9 @@ pub(super) fn chat_message_from_event_with_sidecar(
             .unwrap_or(realm_id)
             .to_owned(),
         id: event_id,
-        sender: first_string_in_candidates(
-            &candidates,
-            // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
-            // sender → sender_actor_id,hard_reject)。只读 actor_id /
-            // sender_actor_id;legacy `sender` / `sender_id` / `actor` 不再容忍。
-            &["actor_id", "sender_actor_id"],
-        )
-        .unwrap_or("did:web:unknown")
-        .to_owned(),
+        sender: message_actor_from_candidates(&candidates)
+            .unwrap_or("did:web:unknown")
+            .to_owned(),
         body,
         timestamp: short_message_time(first_string_in_candidates(&candidates, &["created_at"])),
         flow_id,
@@ -2250,14 +2259,7 @@ pub(super) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
         if let Some((poll_id, choices)) =
             crate::messaging::polls::poll_response_from_content(content)
         {
-            let actor = first_string_in_candidates(
-                &candidates,
-                // 只读 canonical `actor_id` / `sender_actor_id`(spec
-                // forbidden-wire-fields: sender → sender_actor_id,
-                // hard_reject);legacy `sender`/`sender_id`/`actor` 不再容忍。
-                &["actor_id", "sender_actor_id"],
-            )
-            .unwrap_or("did:web:unknown");
+            let actor = message_actor_from_candidates(&candidates).unwrap_or("did:web:unknown");
             if let Some(index) = by_poll_id.get(&poll_id).copied() {
                 cards[index].vote_choices(actor, &choices);
             }

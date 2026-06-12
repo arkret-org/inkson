@@ -295,7 +295,7 @@ async fn run_iteration(
         return IterationOutcome::NotReady;
     }
     let api = match CokretApi::new(&base) {
-        Ok(api) => api.with_bearer(token),
+        Ok(api) => api.with_bearer(token.clone()),
         Err(error) => {
             return IterationOutcome::Transient(format!("sync_engine: invalid base URL: {error}"));
         }
@@ -331,7 +331,13 @@ async fn run_iteration(
             let refresh_invites =
                 is_full_sync || *deltas_since_invites >= INVITES_REFRESH_EVERY_N_DELTAS;
             let invite_notifications = if refresh_invites {
-                match api.invites().await {
+                let latest_token = ctx.token.read().clone();
+                let invite_api = if !latest_token.trim().is_empty() && latest_token != token {
+                    api.clone().with_bearer(latest_token)
+                } else {
+                    api.clone()
+                };
+                match invite_api.invites().await {
                     Ok(response) => {
                         *deltas_since_invites = 0;
                         Some(response.invites)

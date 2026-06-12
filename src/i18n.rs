@@ -625,22 +625,42 @@ pub fn english_translations() -> TranslationDict {
     dict.set("recovery.title", "Recovery");
     dict.set("recovery.recovery_key_section", "Recovery Key (24 words)");
     dict.set("recovery.social_section", "Social Recovery");
-    dict.set("mls_unlock.aria_label", "Unlock encrypted history");
-    dict.set("mls_unlock.title", "Unlock encrypted history");
-    dict.set("mls_unlock.subtitle", "24-word recovery key");
+    dict.set("mls_unlock.aria_label", "Authorize this device");
+    dict.set("mls_unlock.title", "Authorize this device");
+    dict.set("mls_unlock.subtitle", "Existing device approval");
     dict.set(
         "mls_unlock.description",
-        "This device doesn't have your encrypted history key yet. Enter the 24-word recovery key from your first device to restore encrypted realms from your account backup.",
+        "This browser is signed in, but it is not an authorized device for encrypted history yet. Cokret v1 requires an already-authorized device to approve a new device before MLS history keys are shared.",
+    );
+    dict.set(
+        "mls_unlock.approve_step_existing_title",
+        "On an existing device",
+    );
+    dict.set(
+        "mls_unlock.approve_step_existing_body",
+        "Open Settings -> Devices -> Pair new device, paste or scan this browser's request, and approve it.",
+    );
+    dict.set("mls_unlock.approve_step_new_title", "On this browser");
+    dict.set(
+        "mls_unlock.approve_step_new_body",
+        "Open the pairing request screen and keep it available while the existing device approves.",
     );
     dict.set(
         "mls_unlock.loading_hint",
         "Restoring multiple encrypted realms can take a few seconds. Keep this tab open.",
     );
+    dict.set("mls_unlock.open_pairing", "Show pairing request");
+    dict.set("mls_unlock.show_recovery_key", "Use recovery key instead");
+    dict.set("mls_unlock.hide_recovery_key", "Hide recovery key");
+    dict.set(
+        "mls_unlock.recovery_fallback_hint",
+        "Use this only if no authorized device is available. The 24-word Recovery Key starts the recovery path and unlocks encrypted-history backups after policy checks.",
+    );
     dict.set("mls_unlock.placeholder", "24-word recovery key");
-    dict.set("mls_unlock.button_idle", "Unlock history");
+    dict.set("mls_unlock.button_idle", "Unlock with key");
     dict.set("mls_unlock.button_busy", "Unlocking...");
-    dict.set("mls_unlock.dismiss", "Enter recovery key later");
-    dict.set("mls_unlock.reopen", "Unlock encrypted history");
+    dict.set("mls_unlock.dismiss", "Do this later");
+    dict.set("mls_unlock.reopen", "Authorize this device");
     dict.set(
         "mls_unlock.status.enter_passphrase",
         "Enter your 24-word recovery key to unlock encrypted history.",
@@ -1843,22 +1863,39 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("recovery.title", "恢复");
     dict.set("recovery.recovery_key_section", "恢复密钥（24 词）");
     dict.set("recovery.social_section", "社交恢复");
-    dict.set("mls_unlock.aria_label", "解锁加密历史");
-    dict.set("mls_unlock.title", "解锁加密历史");
-    dict.set("mls_unlock.subtitle", "24 词恢复密钥");
+    dict.set("mls_unlock.aria_label", "授权此设备");
+    dict.set("mls_unlock.title", "授权此设备");
+    dict.set("mls_unlock.subtitle", "优先使用已授权设备确认");
     dict.set(
         "mls_unlock.description",
-        "此设备还没有你的加密历史密钥。输入第一台设备上生成的 24 词恢复密钥，即可从账号备份恢复加密空间。",
+        "此浏览器已经登录，但还不是可读取加密历史的已授权设备。Cokret v1 要求已有授权设备先批准新设备，然后才共享 MLS 历史密钥。",
+    );
+    dict.set("mls_unlock.approve_step_existing_title", "在已有设备上");
+    dict.set(
+        "mls_unlock.approve_step_existing_body",
+        "打开 Settings -> Devices -> Pair new device，粘贴或扫描此浏览器的请求，然后批准。",
+    );
+    dict.set("mls_unlock.approve_step_new_title", "在此浏览器上");
+    dict.set(
+        "mls_unlock.approve_step_new_body",
+        "打开配对请求页面并保持可见，等待已有设备完成批准。",
     );
     dict.set(
         "mls_unlock.loading_hint",
         "批量恢复加密空间可能需要几秒钟，请保持此标签页打开。",
     );
+    dict.set("mls_unlock.open_pairing", "显示配对请求");
+    dict.set("mls_unlock.show_recovery_key", "改用恢复密钥");
+    dict.set("mls_unlock.hide_recovery_key", "隐藏恢复密钥");
+    dict.set(
+        "mls_unlock.recovery_fallback_hint",
+        "仅在无法使用任何已授权设备时使用。24 词恢复密钥会进入恢复路径，并在策略校验后解锁加密历史备份。",
+    );
     dict.set("mls_unlock.placeholder", "24 词恢复密钥");
-    dict.set("mls_unlock.button_idle", "解锁历史");
+    dict.set("mls_unlock.button_idle", "用密钥解锁");
     dict.set("mls_unlock.button_busy", "正在解锁…");
-    dict.set("mls_unlock.dismiss", "稍后输入恢复密钥");
-    dict.set("mls_unlock.reopen", "解锁加密历史");
+    dict.set("mls_unlock.dismiss", "稍后处理");
+    dict.set("mls_unlock.reopen", "授权此设备");
     dict.set(
         "mls_unlock.status.enter_passphrase",
         "输入 24 词恢复密钥以解锁加密历史。",

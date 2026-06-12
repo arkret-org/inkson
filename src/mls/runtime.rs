@@ -796,10 +796,10 @@ pub fn force_epoch_rotation_commit(
 ///
 /// Flow:
 ///   1. plaintext-cache hit → return without touching MLS state;
-///   2. otherwise, under the store's decrypt serialization guard:
-///      restore the latest snapshot → `decrypt_payload` → export the
-///      advanced state → [`LocalStateStore::advance_mls_receive_chain`]
-///      (persists snapshot + plaintext atomically with respect to readers).
+///   2. otherwise, under the store's decrypt serialization guard: restore the latest snapshot →
+///      `decrypt_payload` → export the advanced state →
+///      [`LocalStateStore::advance_mls_receive_chain`] (persists snapshot + plaintext atomically
+///      with respect to readers).
 ///
 /// Soft failures (no snapshot, missing device secret, author's own
 /// ciphertext — which OpenMLS rejects before advancing any ratchet — or an
@@ -2070,7 +2070,10 @@ mod tests {
                 .expect("bob decrypts m2 after restart");
         assert_eq!(plain2, br#"{"body":"m2"}"#);
         assert_eq!(
-            restarted.mls_snapshot_for(realm).unwrap().app_messages_observed,
+            restarted
+                .mls_snapshot_for(realm)
+                .unwrap()
+                .app_messages_observed,
             2
         );
         let _ = std::fs::remove_file(path);
@@ -2107,8 +2110,9 @@ mod tests {
 
         // Out-of-order: m3 first (within OpenMLS's default
         // out_of_order_tolerance of 5).
-        let plain3 = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m3)
-            .expect("bob decrypts m3 ahead of m1/m2");
+        let plain3 =
+            decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m3)
+                .expect("bob decrypts m3 ahead of m1/m2");
         assert_eq!(plain3, br#""three""#);
 
         // Restart, then decrypt the skipped earlier message.
@@ -2135,7 +2139,7 @@ mod tests {
         let realm = "ck:realm:01904100-0000-7000-8000-0000000000d2";
 
         ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
-        let (_, _, encrypted_values, _, _) = encrypt_values_with_device_snapshot(
+        let (_, _, encrypted_values, ..) = encrypt_values_with_device_snapshot(
             &mut state,
             &secure,
             realm,
@@ -2187,8 +2191,9 @@ mod tests {
 
         state.drop_mls_snapshot(realm);
         assert!(state.mls_snapshot_for(realm).is_none());
-        let cached = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
-            .expect("cache hit requires no group state");
+        let cached =
+            decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
+                .expect("cache hit requires no group state");
         assert_eq!(cached, br#""cached""#);
     }
 

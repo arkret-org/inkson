@@ -2688,6 +2688,28 @@ label.avatar-upload-button:active,
   flex-direction: column;
   gap: 12px;
 }
+.mls-device-authorization-path {
+  display: grid;
+  gap: 8px;
+}
+.mls-device-authorization-step {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.mls-device-authorization-step strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+.mls-device-authorization-step span,
+.mls-unlock-fallback-note {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .mls-recovery-modal textarea {
   width: 100%;
   min-height: 92px;
@@ -2705,6 +2727,12 @@ label.avatar-upload-button:active,
 .mls-recovery-modal .mls-unlock-row input {
   flex: 1 1 260px;
   min-width: min(100%, 220px);
+}
+.mls-unlock-recovery-row {
+  align-items: center;
+}
+.mls-unlock-fallback-note {
+  flex: 1 0 100%;
 }
 .mls-unlock-reopen-button {
   position: fixed;

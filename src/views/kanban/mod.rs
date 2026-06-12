@@ -58,8 +58,7 @@ fn CardMarkdownEditor(
         let token = token.clone();
         let realm_id = realm_id.clone();
         move || {
-            let Some(script) = toast_editor_bootstrap_script(&host_id, &fallback_id, &value)
-            else {
+            let Some(script) = toast_editor_bootstrap_script(&host_id, &fallback_id, &value) else {
                 return;
             };
             // YOU-06-002: the editor JS only extracts file bytes and hands
@@ -8736,8 +8735,9 @@ mod tests {
             view_id: "ck:view:01904100-0000-7000-8000-000000000001".to_owned(),
             realm_id: None,
             frontier: StateFrontierView {
-                state_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-                    .to_owned(),
+                state_digest:
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_owned(),
                 event_ids: vec!["ck:event:01904100-0000-7000-8000-000000000042".to_owned()],
                 actor_frontiers: Vec::new(),
             },

@@ -1413,11 +1413,13 @@ pub fn ChatPanel(
                             let message_is_pinned = pinned_messages()
                                 .iter()
                                 .any(|id| id == &msg.id);
+                            let sender_is_own =
+                                is_own_message_sender(&msg.sender, &account_did);
                             rsx! {
                         div {
                             key: "{msg.id}",
                             class: {
-                                let mut base = if is_own_message_sender(&msg.sender, &account_did) {
+                                let mut base = if sender_is_own {
                                     if msg.failed { "discussion-message is-own is-failed".to_owned() } else { "discussion-message is-own".to_owned() }
                                 } else if msg.failed {
                                     "discussion-message is-failed".to_owned()
@@ -1556,6 +1558,14 @@ pub fn ChatPanel(
                                 }
                                 div { class: "msg-head",
                                     span { class: "name", "{sender_display_label(&msg.sender, &account_did, &account_display_label, &participants_for_messages)}" }
+                                    if sender_is_own {
+                                        span {
+                                            class: "badge message-self-badge",
+                                            "data-testid": "message-self-badge",
+                                            title: "This message was sent by this account",
+                                            "me"
+                                        }
+                                    }
                                     {
                                         let sender_participant = participants_for_messages
                                             .iter()
@@ -1802,7 +1812,7 @@ pub fn ChatPanel(
                                                                         json!({
                                                                             "event_id": resp.event_id.clone(),
                                                                             "kind": "ck.message.create",
-                                                                            "actor": actor_for_store,
+                                                                            "actor_id": actor_for_store,
                                                                             "body": body_for_store,
                                                                             "flow_id": flow_id_for_store,
                                                                             "message_id": message_id_for_store,
@@ -3552,7 +3562,7 @@ pub fn ChatPanel(
                                 messages.write().push(ChatMessage {
                                     realm_id: realm.clone(),
                                     id: local_id.clone(),
-                                    sender: "yougen".to_owned(),
+                                    sender: actor.clone(),
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     flow_id: channel.flow_id.clone(),
@@ -3706,7 +3716,7 @@ pub fn ChatPanel(
                                                     json!({
                                                         "event_id": resp.event_id.clone(),
                                                         "kind": "ck.message.create",
-                                                        "actor": actor_for_store,
+                                                        "actor_id": actor_for_store,
                                                         "body": body_for_store,
                                                         "flow_id": flow_id_for_store,
                                                         "message_id": message_id_for_store,
@@ -3793,7 +3803,7 @@ pub fn ChatPanel(
                                 messages.write().push(ChatMessage {
                                     realm_id: realm.clone(),
                                     id: message_id.clone(),
-                                    sender: "yougen".to_owned(),
+                                    sender: actor.clone(),
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     flow_id: flow_id.clone(),
@@ -4325,7 +4335,7 @@ pub fn ChatPanel(
                                                         json!({
                                                             "event_id": resp.event_id.clone(),
                                                             "kind": "ck.message.create",
-                                                            "actor": actor_for_record.clone(),
+                                                            "actor_id": actor_for_record.clone(),
                                                             "flow_id": flow_id_for_record.clone(),
                                                             "message_id": message_id_for_record.clone(),
                                                             "encrypted_content": true,
@@ -4921,7 +4931,34 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].realm_id, "ck:realm:local");
         assert_eq!(messages[0].flow_id, "ck:flow:announce");
+        assert_eq!(messages[0].sender, "did:web:alice.example");
         assert_eq!(messages[0].body, "local fallback message");
+    }
+
+    #[test]
+    fn restores_canonical_actor_id_from_local_raw_operations() {
+        let state = ClientLocalState {
+            raw_operations: vec![crate::local_state::RawOperationRecord {
+                operation_id: "ck:operation:local".to_owned(),
+                realm_id: Some("ck:realm:local".to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "event_id": "ck:event:local",
+                    "kind": "ck.message.create",
+                    "actor_id": "did:web:local.host:users:alice",
+                    "body": "canonical local message",
+                    "flow_id": "ck:flow:announce",
+                    "message_id": "chat-msg-local"
+                }),
+            }],
+            ..ClientLocalState::default()
+        };
+
+        let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].sender, "did:web:local.host:users:alice");
+        assert_eq!(messages[0].body, "canonical local message");
     }
 
     #[test]
@@ -4953,7 +4990,7 @@ mod tests {
                 payload: json!({
                     "event_id": "ck:event:enc",
                     "kind": "ck.message.create",
-                    "actor": "did:web:alice.example",
+                    "actor_id": "did:web:alice.example",
                     "flow_id": "ck:flow:announce",
                     "message_id": "chat-msg-enc",
                     "encrypted_content": true,
@@ -4969,6 +5006,7 @@ mod tests {
         let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None, None);
         assert_eq!(without_sidecar.len(), 1);
         assert_eq!(without_sidecar[0].flow_id, "ck:flow:announce");
+        assert_eq!(without_sidecar[0].sender, "did:web:alice.example");
         assert_eq!(without_sidecar[0].body, "");
         assert!(matches!(
             without_sidecar[0].crypto_state,
@@ -4980,6 +5018,7 @@ mod tests {
         let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].flow_id, "ck:flow:announce");
+        assert_eq!(restored[0].sender, "did:web:alice.example");
         assert_eq!(restored[0].body, "secret discussion body");
         assert!(matches!(
             restored[0].crypto_state,
@@ -5002,7 +5041,7 @@ mod tests {
                 "",
                 &participants
             ),
-            "yougen"
+            "alice.example"
         );
         assert_eq!(
             sender_display_label(
@@ -5012,6 +5051,15 @@ mod tests {
                 &participants,
             ),
             "Alice Local"
+        );
+        assert_eq!(
+            sender_display_label(
+                "did:web:local.host:users:alice",
+                "did:web:local.host:users:alice",
+                "alice:local.host",
+                &participants,
+            ),
+            "alice:local.host"
         );
     }
 

@@ -12,7 +12,7 @@
 //!   then rotates the account MLS history secret and rewraps local `mls_history` backups.
 //!
 //! The pair flow on `/settings/devices/pair` carries:
-//! - `pair-device-start-button` — generates a new-device pairing request payload.
+//! - `pair-device-start-button` — on the device being added, generates a pairing request payload.
 //! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with the encoded payload mirrored as
 //!   plain text in `pair-device-secret` so e2e harnesses that don't OCR can read it directly.
 //! - `pair-device-status` — feedback area.
@@ -104,7 +104,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
     (current, rows)
 }
 
-/// Build the QR / paste payload an already-authorized device approves.
+/// Build the QR / paste payload that an already-authorized device approves.
 /// The new device owns `requesting_device_id` and its local key material;
 /// the existing device turns this payload into `ck.gate.account.device_pair`.
 fn build_pair_payload(
@@ -274,6 +274,7 @@ pub fn SettingsDevicesPanel(
             if pair_mode {
                 {render_pair_flow(
                     account_did,
+                    device_id,
                     base_url,
                     token,
                     state_store,
@@ -812,6 +813,7 @@ fn render_rename_modal(
 #[allow(clippy::too_many_arguments)]
 fn render_pair_flow(
     account_did: Signal<String>,
+    device_id: Signal<String>,
     base_url: Signal<String>,
     token: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
@@ -853,9 +855,7 @@ fn render_pair_flow(
                 span { "{status_value}" }
             }
             p { class: "muted",
-                "On the device you want to add, open "
-                code { "/onboarding" }
-                ", choose \"Add to existing account\", and paste the payload below (or scan the QR with the device camera)."
+                "On the browser or device you are adding, create a request here. Then use an already-authorized device to approve the request below, or paste/scan the request there."
             }
             div { class: "actions",
                 Button {
@@ -878,7 +878,11 @@ fn render_pair_flow(
                                 return;
                             }
                         };
-                        let requesting_device_id = format!("ck:device:{}", uuid_v7());
+                        let requesting_device_id = device_id();
+                        if requesting_device_id.trim().is_empty() {
+                            pair_status.set("This browser has no local device id yet. Sign in again or reload before pairing.".to_owned());
+                            return;
+                        }
                         let pairing_code = uuid_v7().replace('-', "");
                         let challenge_signature = uuid_v7().replace('-', "");
                         let payload = build_pair_payload(
@@ -893,7 +897,7 @@ fn render_pair_flow(
                             "Pairing request generated for {requesting_device_id}. Display the QR or paste payload below."
                         ));
                     },
-                    "Start pairing"
+                    "Create request"
                 }
                 Button {
                     variant: ButtonVariant::Secondary,
@@ -917,7 +921,7 @@ fn render_pair_flow(
                         }
                     }
                     div { class: "metric",
-                        strong { "Payload (paste on new device)" }
+                        strong { "Request payload" }
                         Textarea {
                             "data-testid": "pair-device-secret",
                             readonly: true,
@@ -941,7 +945,7 @@ fn render_pair_flow(
                 span { "for new sibling" }
             }
             p { class: "muted",
-                "On an already-authorized device, paste the new-device request below and approve it through "
+                "Use this section only on an already-authorized device. Paste the new-device request and approve it through "
                 code { "/_cokret/gate/account/device-pair" }
                 "."
             }

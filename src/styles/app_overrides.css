@@ -863,8 +863,14 @@
 }
 
 .discussion-message.is-own .msg-body {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-  background: color-mix(in srgb, var(--accent-soft) 74%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent-soft) 82%, var(--surface)),
+      color-mix(in srgb, var(--accent-soft) 68%, var(--surface)));
+  box-shadow:
+    inset -3px 0 0 color-mix(in srgb, var(--accent) 82%, var(--accent-2)),
+    var(--shadow-xs);
 }
 
 .discussion-message.is-failed .msg-body,
@@ -878,6 +884,23 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
+}
+
+.discussion-message.is-own .msg-head {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.discussion-message .msg-head .name {
+  overflow-wrap: anywhere;
+}
+
+.message-self-badge {
+  border: 1px solid color-mix(in srgb, var(--accent) 56%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--accent-ink);
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .discussion-message .msg-content {

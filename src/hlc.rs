@@ -9,9 +9,9 @@
 //! All HLC kernel responsibilities are delegated to the SDK:
 //! - format validation / parsing: `validate_hlc_format` / `parse_hlc`,
 //! - encode + overflow semantics: `cokret_sdk::Hlc::new`,
-//! - node-id derivation: `HlcGenerator::compute_node_id` (`encoding.md` §7,
-//!   `SHA256("cokret-hlc-v1" || realm_id || device_id || secret)[0:4]`),
-//!   reached through generator construction because the helper is private.
+//! - node-id derivation: `HlcGenerator::compute_node_id` (`encoding.md` §7, `SHA256("cokret-hlc-v1"
+//!   || realm_id || device_id || secret)[0:4]`), reached through generator construction because the
+//!   helper is private.
 //!
 //! The only local responsibility left is injecting the physical clock
 //! through `crate::clock`: the SDK generator's advancing entry points
@@ -57,8 +57,8 @@ impl Hlc {
     /// `crate::clock` (and injected via `with_initial_time`) so the wasm
     /// build never touches `std::time::SystemTime::now()`.
     pub fn now(node_id: &str) -> Self {
-        let minted = sdk_generator_at(node_id, crate::clock::now_unix_ms().min(0xffffffffffff))
-            .current();
+        let minted =
+            sdk_generator_at(node_id, crate::clock::now_unix_ms().min(0xffffffffffff)).current();
         let parts =
             parse_hlc(minted.as_str()).expect("SDK-minted HLC string is parseable by parse_hlc");
         Self {
