@@ -735,6 +735,7 @@ pub fn RouterView() -> Element {
     let device_id = use_signal(move || initial_device_id);
     let mut token = use_signal(move || initial_session_token);
     let mut session_boot_state = use_signal(move || initial_session_boot_state);
+    let mut session_generation = use_signal(|| 0_u64);
 
     // Install the app-wide, single-flight bearer refresher exactly once.
     // Every auth-expired handler (connect, sync, chat send, Realm create,
@@ -751,6 +752,7 @@ pub fn RouterView() -> Element {
                 state_store,
                 token,
                 config_store,
+                session_generation,
             )) as crate::session::LocalRefreshFuture
         }));
     });
@@ -1144,6 +1146,7 @@ pub fn RouterView() -> Element {
         let mut invalidator_status = status;
         let mut invalidator_network_state = network_state;
         let mut invalidator_last_error = last_error;
+        let mut invalidator_session_boot_state = session_boot_state;
         let mut invalidator_state_store = state_store;
         let invalidator_config_store = config_store;
         let invalidator_base_url = base_url;
@@ -1153,9 +1156,11 @@ pub fn RouterView() -> Element {
         let mut invalidator_device_authorization_check_complete =
             device_authorization_check_complete;
         let mut invalidator_sync_generation = sync_generation;
+        let mut invalidator_session_generation = session_generation;
         let invalidator_navigator = navigator;
         use_hook(move || {
             crate::session::register_session_invalidator(move |reason| {
+                invalidator_session_generation.set(invalidator_session_generation() + 1);
                 invalidator_state_store.write().set_session_grant(None);
                 invalidator_token.set(String::new());
                 persist_config(
@@ -1177,6 +1182,7 @@ pub fn RouterView() -> Element {
                 invalidator_needs_device_authorization.set(false);
                 invalidator_device_authorization_check_complete.set(false);
                 invalidator_sync_generation.set(invalidator_sync_generation() + 1);
+                invalidator_session_boot_state.set(SessionBootState::Unauthenticated);
                 let _ = invalidator_navigator.push(Route::Login);
             });
         });
@@ -4200,7 +4206,9 @@ pub fn RouterView() -> Element {
                                                 let actor = account_did();
                                                 let device = device_id();
                                                 let api_token = token();
+                                                let logout_generation = session_generation() + 1;
                                                 account_session_state.set("Logging out".to_owned());
+                                                session_generation.set(logout_generation);
                                                 // Clear OIDC + session-grant state up
                                                 // front so a refresh-token-based silent
                                                 // re-auth cannot resurrect the session
@@ -4242,12 +4250,22 @@ pub fn RouterView() -> Element {
                                                 personal_handles_status.set("Not published".to_owned());
                                                 personal_handles_lookup_key.set(String::new());
                                                 last_error.set(None);
+                                                token.set(String::new());
+                                                persist_config(
+                                                    config_store,
+                                                    base.clone(),
+                                                    actor.clone(),
+                                                    device.clone(),
+                                                    String::new(),
+                                                );
                                                 session_boot_state.set(SessionBootState::Unauthenticated);
                                                 // Bump the SyncEngine generation so any
                                                 // in-flight long-poll exits on its next
                                                 // iteration check instead of applying a
                                                 // response after the wipe.
                                                 sync_generation.set(sync_generation() + 1);
+                                                account_menu_open.set(false);
+                                                redirect_to_login(navigator);
                                                 spawn(async move {
                                                     let api_result = CokretApi::new(&base)
                                                         .map(|api| api.with_bearer(api_token));
@@ -4265,17 +4283,9 @@ pub fn RouterView() -> Element {
                                                             format!("Invalid server URL: {error}")
                                                         }
                                                     };
-                                                    token.set(String::new());
-                                                    persist_config(
-                                                        config_store,
-                                                        base,
-                                                        actor,
-                                                        device,
-                                                        String::new(),
-                                                    );
-                                                    account_session_state.set(logout_message);
-                                                    account_menu_open.set(false);
-                                                    redirect_to_login(navigator);
+                                                    if session_generation() == logout_generation {
+                                                        account_session_state.set(logout_message);
+                                                    }
                                                 });
                                             },
                                             "Log out"
@@ -6633,10 +6643,12 @@ async fn remint_principal_bearer(
     mut state_store: Signal<LocalStateStore>,
     mut token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
+    session_generation: Signal<u64>,
 ) -> Option<String> {
     let base = base_url();
     let actor = account_did();
     let device = device_id();
+    let generation = session_generation();
 
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let oidc_bundle = {
@@ -6649,9 +6661,10 @@ async fn remint_principal_bearer(
         match refresh_oidc_bearer_for_server(&base, &actor, &device, &bundle).await {
             Ok(next) => {
                 // Abandon if the user switched servers while the refresh was in
-                // flight — committing here would resurrect the old server's
-                // credentials over the freshly selected session.
-                if !same_server_url(&base, &base_url()) {
+                // flight, or if a logout invalidated this refresh generation.
+                // Committing here would resurrect stale credentials over the
+                // freshly selected or logged-out session.
+                if !same_server_url(&base, &base_url()) || session_generation() != generation {
                     return None;
                 }
                 let access_token = next.access_token.clone();
@@ -6671,7 +6684,7 @@ async fn remint_principal_bearer(
                 return Some(access_token);
             }
             Err(error) if oidc_refresh_error_invalidates_grant(&error) => {
-                if !same_server_url(&base, &base_url()) {
+                if !same_server_url(&base, &base_url()) || session_generation() != generation {
                     return None;
                 }
                 tracing::warn!(
@@ -6704,8 +6717,9 @@ async fn remint_principal_bearer(
         crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
             let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
             // Same server-switch guard as the OIDC path: don't write the
-            // old server's grant outcome onto a session that just moved.
-            if !same_server_url(&base, &base_url()) {
+            // old server's grant outcome onto a session that just moved or
+            // logged out.
+            if !same_server_url(&base, &base_url()) || session_generation() != generation {
                 return None;
             }
             let mut store = state_store.write();
@@ -6714,6 +6728,9 @@ async fn remint_principal_bearer(
     };
     match outcome {
         crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
+            if session_generation() != generation {
+                return None;
+            }
             token.set(access_token.clone());
             persist_config(
                 config_store,
@@ -6729,8 +6746,16 @@ async fn remint_principal_bearer(
             None
         }
         _ => {
+            let can_reissue_development_session = {
+                let store = state_store.read();
+                let state = store.load();
+                can_bootstrap_with_development_session_reissue(&state, &base, &actor, &device)
+            };
+            if !can_reissue_development_session {
+                return None;
+            }
             if let Some(session) = reissue_development_session(&base, &actor, &device).await {
-                if !same_server_url(&base, &base_url()) {
+                if !same_server_url(&base, &base_url()) || session_generation() != generation {
                     return None;
                 }
                 let access_token = session.access_token.clone();
@@ -7826,6 +7851,30 @@ mod tests {
         state.account_scope_owner = Some("did:web:bob.example".to_owned());
         assert!(!can_bootstrap_with_development_session_reissue(
             &state,
+            "https://local.host",
+            actor,
+            device
+        ));
+    }
+
+    #[test]
+    fn cleared_account_scope_blocks_development_session_reissue() {
+        let actor = "did:web:alice.example";
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let mut store = crate::local_state::isolated_store_for_tests("cleared-dev-reissue-owner");
+        store.adopt_account_scope(actor);
+
+        assert!(can_bootstrap_with_development_session_reissue(
+            &store.load(),
+            "https://local.host",
+            actor,
+            device
+        ));
+
+        store.clear_account_scoped();
+
+        assert!(!can_bootstrap_with_development_session_reissue(
+            &store.load(),
             "https://local.host",
             actor,
             device
