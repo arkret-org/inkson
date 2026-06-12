@@ -5,7 +5,9 @@
 > `cokret-spec/spec/v1/zh/crypto-media/device-lifecycle.md`（§1.2 / §2 / §10 / §15）、
 > `cokret-spec/spec/v1/zh/models/realm-and-space.md`（§2.3 / §2.8.1）。
 > 本文描述 yougen 客户端面向最终用户的完整流程编排；协议细节以 spec 为准。
-> 已识别的 spec 缺口登记在 `_spec_review/2026-06-12-key-lifecycle-flow-review.md`。
+> 配套的 spec 缺口（F1–F6）已于 2026-06-12 全部修复，记录见 `_spec_review/2026-06-12-key-lifecycle-flow-review.md`。
+> 关键结论：**PCR 的两条加密 floor 已在协议层（`realm.schema.json` PCR 守卫）钉死为 `e2ee_required`**，
+> 因此正确实现下 PCR projection 必然携带达标 floor；"PCR 加密建议"弹窗仅对存量/异常 Realm 生效。
 
 ---
 
@@ -232,16 +234,30 @@ flowchart TD
 
 ---
 
-## 10. 与 yougen 现有实现的对照
+## 10. 与 yougen 现有实现的对照（含本轮改动）
 
-| 设计点 | 现状 | 差距 |
+### 10.1 新抽象：`account_health` 统一自检链解析器
+
+本轮把"哪个弹窗该显示"从各组件内联的 suppression 条件，收敛到单一纯函数 `src/account_health.rs`：
+
+- `AccountHealthPrompt` 枚举按声明顺序即优先级（derive `Ord`）：`DeviceAuthorization` → `MlsUnlock` → `MlsBackup` → `RecoverySetupMissing` → `RecommendedEncryptionFloor` → `RecoverySetupReminder` → `None`。
+- `AccountHealthInputs`（纯 bool 输入）+ `resolve()` 返回当前唯一应显示的弹窗。功能性弹窗（device/unlock/backup/recovery-missing）不等 sync；建议性弹窗（floor/SPOF）等 `sync_bootstrap_complete` 且避开 recovery 路由。
+- `app.rs` 每次渲染从现有 signals 采样一次 `active_prompt`，每个弹窗 `if active_prompt == X` 才挂载。**这替代了原先散落且漂移的内联条件**（旧实现里 floor 模态会对 unlock/backup 自抑制，却不抑制 S5 banner；SPOF banner 完全不抑制 unlock/backup，导致多 banner 叠加）。
+- 14 条单测覆盖全部优先级与门控（`cargo test --lib -- account_health`）。
+
+### 10.2 对照表
+
+| 设计点 | 状态 | 说明 |
 | --- | --- | --- |
-| 自检链优先级 1–4 | `app.rs` 中 `needs_device_authorization` → `needs_mls_unlock` → `needs_mls_backup` → `EncryptionFloorPrompt` 的 gating 顺序已一致；floor prompt 在 recovery 未配置时转 `recovery_key_setup_prompt` 也已实现 | 第 5 步 SPOF 周期提醒未见独立实现 |
-| S1 first-backup gate | `onboarding.rs` Step 3 `FirstBackupGate` 轮询 `did_recovery` 备份，硬门禁已实现 | 拒绝分支（SPOF 标记 + 启动提醒）需补 |
-| S3 配对 | `settings/devices.rs` QR/pairing-code/gate device-pair 框架完整 | SAS transcript 与 `ck.secret.*` 直传的端到端联动待补 |
-| S4 恢复 | `recovery.rs` 24 词输入与备份解锁已有 | `recovery_session` 协议闭环（challenge/proof/complete/receipt）未接 |
-| S6 创建前检查 | `setup.rs` 加密默认值已对齐 | **创建前的 recovery soft-gate 完全缺失**（本文 §9） |
-| `recovery_options_configured` | 本地 `recovery_key_fingerprint` 或 guardian 非空即视为已配置 | 与服务端真相（`active_policy` + `did_recovery` series）可能脱节；应以服务端读取面为准、本地态做缓存 |
+| 自检链优先级 1–5 | ✅ 已重构 | 统一到 `account_health::resolve`；§3 的五级链 + 单弹窗互斥落地，SPOF 提醒（第 5 步）也纳入解析器（`RecoverySetupReminder`） |
+| S1 first-backup gate | ✅ 已有（既存） | `onboarding.rs` `FirstBackupGate` 硬门禁；拒绝分支的 SPOF 标记 + 启动提醒仍可加强 |
+| S3 配对 | ◑ 既存框架 | `settings/devices.rs` QR/pairing-code/gate device-pair 完整；SAS transcript 与 `ck.secret.*` 直传端到端联动待补 |
+| S4 恢复 | ◑ 既存框架 | `recovery.rs` 24 词输入与备份解锁已有；`recovery_session` 协议闭环（challenge/proof/complete/receipt）待接 |
+| S6 创建前检查 | ✅ 本轮新增 | `setup.rs` 创建按钮新增 recovery soft-gate：加密 Realm + 未配置 recovery → 弹门，"设置 Recovery Key"（转 `SettingsRecovery`）或 "Create without recovery"（personal_node override，置 `recovery_gate_acknowledged`） |
+| PCR floor 协议固定 | ✅ 本轮（spec） | `realm.schema.json` PCR 守卫钉死双 floor；`EncryptionFloorPrompt` 对正确实现的 PCR 不再误弹 |
+| `recovery_options_configured` | ◑ 待加强 | 本地 `recovery_key_fingerprint` / guardian 非空即视为已配置；应以服务端 `active_policy` + `did_recovery` series 为真相、本地态做缓存 |
+
+图例：✅ 已落地 ／ ◑ 既存框架但有缺口 ／ ❌ 缺失。
 
 ---
 
@@ -251,4 +267,5 @@ flowchart TD
 - [x] "PCR 没加密"在协议层不可能（receiver MUST reject），用户语境下的真实含义是 **floor 不达标**——已在 §1/§5 澄清，弹窗语义统一为"推荐加密地板"。
 - [x] 两个"必须设助记词"的强时点（注册 first-backup gate、首次创建加密 Realm）+ 两个"建议"时点（floor 启用、SPOF 提醒）互不冲突，全部收敛到同一个 24 词设置流程。
 - [x] S4 完成后不可能弹"设置助记词"（用户刚输入过）；S3 完成后可能弹——四象限表（§6.1）闭合。
-- [x] 与 spec 的冲突点不在本文擅自裁决，统一登记到 `_spec_review`（PCR floor 未固定、history_visibility 不一致、SSK 域归属矛盾、Realm 创建前置门缺失）。
+- [x] 与 spec 的冲突点（PCR floor 未固定、history_visibility 不一致、SSK 域归属矛盾、Realm 创建前置门缺失）已全部修复，见 `_spec_review/2026-06-12-key-lifecycle-flow-review.md` 处置表（F1–F6 resolved，lint 通过）。
+- [x] yougen 侧本轮改动：新增 `account_health` 统一解析器（替代散落 suppression）+ S6 加密 Realm 创建 recovery soft-gate；`cargo check --lib` 与 `cargo test --lib -- account_health encryption_floor_prompt`（22 通过）均绿，未引入新 warning。

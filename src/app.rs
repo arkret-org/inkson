@@ -2153,11 +2153,35 @@ pub fn RouterView() -> Element {
     } else {
         route.clone()
     };
-    let show_recovery_setup_prompt = has_session
-        && !matches!(&content_route, Route::Recovery | Route::SettingsRecovery)
-        && device_authorization_check_complete()
-        && !needs_device_authorization()
-        && recovery_setup_prompt_required(&state_store.read(), &account_did());
+    // Single source of truth for the post-boot account-health prompt chain.
+    // Each prompt below renders iff it is the resolved highest-priority one,
+    // replacing the per-prompt inline suppression that used to drift apart.
+    // See `account_health` and `docs/user-flows-key-lifecycle.md` §3.
+    let active_prompt = {
+        let store = state_store.read();
+        let actor = account_did();
+        crate::account_health::AccountHealthInputs {
+            has_session,
+            sync_bootstrap_complete: sync_bootstrap_complete(),
+            device_check_complete: device_authorization_check_complete(),
+            on_recovery_route: matches!(
+                &content_route,
+                Route::Recovery | Route::SettingsRecovery
+            ),
+            needs_device_authorization: needs_device_authorization(),
+            needs_mls_unlock: needs_mls_unlock(),
+            needs_mls_backup: needs_mls_backup(),
+            needs_mls_recovery_setup: needs_mls_recovery_setup(),
+            floor_low:
+                crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
+                    &store, &actor,
+                ),
+            recovery_unconfigured: recovery_setup_prompt_required(&store, &actor),
+        }
+        .resolve()
+    };
+    use crate::account_health::AccountHealthPrompt;
+    let show_recovery_setup_prompt = active_prompt == AccountHealthPrompt::RecoverySetupReminder;
 
     rsx! {
         style { "{DXC_THEME}" }
@@ -2275,16 +2299,18 @@ pub fn RouterView() -> Element {
             crate::components::DeviceAuthorizationPrompt {
                 needs_device_authorization,
             }
-            crate::components::EncryptionFloorPrompt {
-                token,
-                account_did,
-                state_store,
-                sync_bootstrap_complete,
-                device_authorization_check_complete,
-                needs_device_authorization,
-                needs_mls_unlock,
-                needs_mls_backup,
-                recovery_key_setup_prompt,
+            if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor {
+                crate::components::EncryptionFloorPrompt {
+                    token,
+                    account_did,
+                    state_store,
+                    sync_bootstrap_complete,
+                    device_authorization_check_complete,
+                    needs_device_authorization,
+                    needs_mls_unlock,
+                    needs_mls_backup,
+                    recovery_key_setup_prompt,
+                }
             }
             crate::components::RecoveryKeySetupPrompt {
                 base_url,
@@ -2332,7 +2358,7 @@ pub fn RouterView() -> Element {
             // Fresh-device diagnostic: encrypted history exists, but no
             // passphrase-backed account-secret backup is available to unlock
             // on this browser.
-            if device_authorization_check_complete() && !needs_device_authorization() {
+            if active_prompt == AccountHealthPrompt::RecoverySetupMissing {
                 crate::components::MlsRecoverySetupMissingBanner {
                     needs_mls_recovery_setup,
                     actor_id: account_did,
@@ -2342,7 +2368,7 @@ pub fn RouterView() -> Element {
             // recovery-passphrase banner that restores encrypted history on
             // a fresh device. Renders nothing unless boot detection flagged
             // `needs_mls_unlock`.
-            if device_authorization_check_complete() && !needs_device_authorization() {
+            if active_prompt == AccountHealthPrompt::MlsUnlock {
                 crate::components::MlsUnlockPrompt {
                     base_url,
                     token,
@@ -2356,7 +2382,7 @@ pub fn RouterView() -> Element {
             // Task X3 — one-time account-secret BACKUP prompt (mirror of the
             // unlock banner). Renders nothing unless detection flagged
             // `needs_mls_backup` (local secret exists, no server backup yet).
-            if device_authorization_check_complete() && !needs_device_authorization() {
+            if active_prompt == AccountHealthPrompt::MlsBackup {
                 crate::components::MlsBackupPrompt {
                     base_url,
                     token,

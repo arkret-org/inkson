@@ -456,6 +456,13 @@ pub fn SetupPanel(
     let mut new_space_created_id = use_signal(String::new);
     let mut realm_state = use_signal(|| "Draft not created yet".to_owned());
     let mut created_realm_id = use_signal(String::new);
+    // S6 (docs/user-flows-key-lifecycle.md §9, key-management §7.11) — recovery
+    // soft-gate for encrypted-Realm creation. Creating an e2ee Realm produces
+    // MLS material that is unrecoverable if the device is lost and no recovery
+    // path is configured. The gate prompts the user to set up the Recovery Key
+    // first; `recovery_gate_acknowledged` lets a personal_node user override.
+    let mut pending_recovery_gate = use_signal(|| false);
+    let mut recovery_gate_acknowledged = use_signal(|| false);
 
     let realm_discoverability_selected = use_memo(move || Some(realm_discoverability()));
     let realm_policy_join_rule_selected = use_memo(move || Some(realm_policy_join_rule()));
@@ -655,6 +662,49 @@ pub fn SetupPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "setup-panel",
+            if pending_recovery_gate() {
+                crate::ui::dialog::Dialog {
+                    open: true,
+                    on_open_change: move |open: bool| {
+                        if !open {
+                            pending_recovery_gate.set(false);
+                        }
+                    },
+                    "data-testid": "encrypted-realm-recovery-gate",
+                    "aria-label": "Set up recovery before creating an encrypted Realm",
+                    div { class: "modal event",
+                        div { class: "modal-head event-head",
+                            h3 { "Set up recovery first" }
+                            span { class: "muted", "encrypted Realm" }
+                        }
+                        div { class: "modal-body",
+                            div { class: "muted",
+                                "This Realm is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it."
+                            }
+                        }
+                        div { class: "modal-foot actions",
+                            Link {
+                                class: "primary",
+                                "data-testid": "encrypted-realm-recovery-gate-setup",
+                                to: Route::SettingsRecovery,
+                                onclick: move |_| pending_recovery_gate.set(false),
+                                "Set up Recovery Key"
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "encrypted-realm-recovery-gate-override",
+                                onclick: move |_| {
+                                    // personal_node override: accept single-point-of-failure
+                                    // risk for this session and let the next Create proceed.
+                                    recovery_gate_acknowledged.set(true);
+                                    pending_recovery_gate.set(false);
+                                },
+                                "Create without recovery"
+                            }
+                        }
+                    }
+                }
+            }
             if active_section == SetupSection::Overview {
                 div { class: "event", "data-testid": "workspace-setup-map",
                     div { class: "event-head",
@@ -1134,6 +1184,27 @@ pub fn SetupPanel(
                                         onclick: {
                                             let base = base_url.clone();
                                             move |_| {
+                                                // S6 soft-gate: block encrypted-Realm creation when
+                                                // no recovery path is configured, unless the user has
+                                                // explicitly overridden via the gate dialog.
+                                                if crate::security_state::encryption_profile_is_encrypted(
+                                                    &realm_encryption_profile(),
+                                                ) && !recovery_gate_acknowledged()
+                                                {
+                                                    let actor_now = account_did();
+                                                    let recovery_ready = {
+                                                        let store = state_store.read();
+                                                        crate::views::recovery::recovery_options_configured(
+                                                            &store, &actor_now,
+                                                        ) || crate::components::mls_recovery_backup_configured(
+                                                            &store, &actor_now,
+                                                        )
+                                                    };
+                                                    if !recovery_ready {
+                                                        pending_recovery_gate.set(true);
+                                                        return;
+                                                    }
+                                                }
                                                 let api_token = token();
                                                 let base = base.clone();
                                                 let backup_trigger_signal =

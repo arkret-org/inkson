@@ -10,6 +10,12 @@
 )]
 
 pub mod account_data;
+/// Single-source-of-truth resolver for the post-boot "account health" prompt
+/// chain (device authorization → MLS unlock → MLS backup → recovery-missing →
+/// recommended encryption floor → recovery reminder). Replaces the scattered
+/// per-prompt suppression conditions that used to live inline in `app.rs`.
+/// See `docs/user-flows-key-lifecycle.md` §3.
+pub mod account_health;
 pub mod api;
 pub mod app;
 pub mod audit;
