@@ -41,6 +41,11 @@ pub(super) fn next_kanban_projection_refresh_key(
     Some(key)
 }
 
+pub(super) fn actor_is_current_account(actor_id: &str, account_did: &str) -> bool {
+    let account = account_did.trim();
+    !account.is_empty() && actor_id.trim() == account
+}
+
 pub(super) const LOCAL_PENDING_CARD_DESCRIPTION: &str =
     "New local card waiting for reducer receipt.";
 pub(super) const DEMO_FLOW_LEGAL_REVIEW_ID: &str = "ck:flow:0196419b-0000-7000-8000-000000000101";
@@ -121,6 +126,26 @@ mod tests {
             next_kanban_projection_refresh_key("", "", "", "ck:cursor:1"),
             None
         );
+    }
+
+    #[test]
+    fn actor_is_current_account_requires_exact_non_empty_match() {
+        assert!(actor_is_current_account(
+            "did:web:auth.local.host:users:alice",
+            " did:web:auth.local.host:users:alice "
+        ));
+        assert!(!actor_is_current_account(
+            "",
+            "did:web:auth.local.host:users:alice"
+        ));
+        assert!(!actor_is_current_account(
+            "did:web:auth.local.host:users:alice",
+            ""
+        ));
+        assert!(!actor_is_current_account(
+            "did:web:auth.local.host:users:bob",
+            "did:web:auth.local.host:users:alice"
+        ));
     }
 }
 

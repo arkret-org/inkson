@@ -10,20 +10,25 @@ struct Styles;
 pub fn Dialog(props: DialogRootProps) -> Element {
     let base = attributes!(div {
         class: Styles::dx_dialog,
+        role: "dialog",
+        "aria-modal": "true",
     });
     let merged = merge_attributes(vec![base, props.attributes]);
+    let open = (props.open)().unwrap_or(props.default_open);
+
+    if !open {
+        return rsx! {};
+    }
 
     rsx! {
-        dialog::DialogRoot {
+        div {
             class: Styles::dx_dialog_backdrop,
             id: props.id,
-            is_modal: props.is_modal,
-            open: props.open,
-            default_open: props.default_open,
-            on_open_change: props.on_open_change,
-            dialog::DialogContent {
-                class: None,
-                attributes: merged,
+            "data-state": "open",
+            onclick: move |_| props.on_open_change.call(false),
+            div {
+                onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                ..merged,
                 {props.children}
             }
         }

@@ -339,6 +339,32 @@ impl CokretApi {
             .await
     }
 
+    /// Create a server-mediated pending device-pairing request for approval
+    /// from an already-authorized device.
+    pub async fn create_device_pairing_request(&self, body: Value) -> anyhow::Result<Value> {
+        self.post_json("_cokret/gate/account/device-pairing-requests", body)
+            .await
+    }
+
+    /// List pending device-pairing requests visible to this authenticated
+    /// device.
+    pub async fn list_device_pairing_requests(&self) -> anyhow::Result<Value> {
+        self.get_json("_cokret/self/devices/pairing-requests").await
+    }
+
+    /// Approve a pending device-pairing request from this authenticated
+    /// device.
+    pub async fn approve_device_pairing_request(
+        &self,
+        pairing_request_id: &str,
+    ) -> anyhow::Result<Value> {
+        self.post_json(
+            &format!("_cokret/self/devices/pairing-requests/{pairing_request_id}/approve"),
+            json!({}),
+        )
+        .await
+    }
+
     pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustOutcome> {
         self.get_json("_cokret/self/devices/trust").await
     }

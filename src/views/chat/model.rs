@@ -1609,7 +1609,7 @@ pub(super) fn sender_display_label(
             .iter()
             .find(|participant| participant.did == account_did);
         return own_participant
-            .and_then(participant_handle_label)
+            .and_then(|participant| participant.handle_label.clone())
             .or_else(|| clean_participant_display_name(account_display_name, Some(account_did)))
             .or_else(|| own_participant.and_then(|participant| participant.display_name.clone()))
             .or_else(|| crate::views::helpers::handle_display_from_did(account_did))

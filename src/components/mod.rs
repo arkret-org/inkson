@@ -45,6 +45,7 @@ pub mod policy_deny_banner;
 /// P3B.8 — "Report a problem" dialog + crash telemetry opt-in
 /// toggle. Crash reports are off by default.
 pub mod report_problem;
+pub mod self_attribution;
 pub mod shortcut_help;
 /// P5 — skeleton loaders for feed / agent list / key-backup history.
 pub mod skeleton;
@@ -93,6 +94,7 @@ pub use policy_deny_banner::{
 pub use report_problem::{
     CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,
 };
+pub use self_attribution::SelfAttributionBadge;
 pub use shortcut_help::{
     ShortcutHelpOverlay, default_shortcuts, key_event_is_help_trigger, target_is_text_input,
 };

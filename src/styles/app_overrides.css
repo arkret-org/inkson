@@ -895,12 +895,25 @@
   overflow-wrap: anywhere;
 }
 
-.message-self-badge {
+.self-attribution-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
+  padding: 1px 6px;
   border: 1px solid color-mix(in srgb, var(--accent) 56%, transparent);
+  border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 18%, var(--surface));
   color: var(--accent-ink);
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.2;
   text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.message-self-badge {
+  flex: 0 0 auto;
 }
 
 .discussion-message .msg-content {

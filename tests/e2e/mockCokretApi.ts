@@ -1146,6 +1146,64 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
+    if (url.pathname === "/_cokret/gate/account/device-pairing-requests" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      const request = {
+        pairing_request_id: "01970000-0000-7000-8000-000000000020",
+        state: "pending",
+        requesting_device_id: body.new_device_pubkey?.kid ?? "ck:device:01964137-0000-7000-8000-0000000000b2",
+        pairing_code: body.pairing_code,
+        new_device_pubkey: body.new_device_pubkey,
+        challenge_signature: body.challenge_signature,
+        display_name: body.display_name ?? "New device",
+        device_metadata: body.device_metadata ?? {},
+        created_at: "2026-06-12T12:00:00Z",
+        expires_at: "2026-06-12T12:10:00Z",
+      };
+      return json(route, {
+        pairing_request_id: request.pairing_request_id,
+        state: "pending",
+        requesting_device_id: request.requesting_device_id,
+        pairing_code: request.pairing_code,
+        expires_at: request.expires_at,
+        request,
+        notified_devices: 1,
+      });
+    }
+
+    if (url.pathname === "/_cokret/self/devices/pairing-requests" && route.request().method() === "GET") {
+      return json(route, {
+        requests: [
+          {
+            pairing_request_id: "01970000-0000-7000-8000-000000000020",
+            state: "pending",
+            requesting_device_id: "ck:device:01964137-0000-7000-8000-0000000000b2",
+            pairing_code: "pairing-code",
+            new_device_pubkey: {
+              kty: "OKP",
+              kid: "ck:device:01964137-0000-7000-8000-0000000000b2",
+              alg: "EdDSA",
+              key: "emtleQ",
+            },
+            challenge_signature: "c2ln",
+            display_name: "New browser",
+            device_metadata: { platform: "browser" },
+            created_at: "2026-06-12T12:00:00Z",
+            expires_at: "2026-06-12T12:10:00Z",
+          },
+        ],
+      });
+    }
+
+    if (url.pathname.endsWith("/approve") && url.pathname.includes("/_cokret/self/devices/pairing-requests/") && route.request().method() === "POST") {
+      return json(route, {
+        device_id: "ck:device:01964137-0000-7000-8000-0000000000b2",
+        authorized_event_ref: "ck:event:01964137-0000-7000-8000-00000000d001",
+        device_grant: { status: "active" },
+        key_backup_hint: {},
+      });
+    }
+
     if (url.pathname === "/_cokret/self/device_messages" && route.request().method() === "GET") {
       return json(route, { messages: [], ack_token: "mock-device-messages-ack", next_cursor: "ck:cursor:devmsg-1", has_more: false, limited: false });
     }

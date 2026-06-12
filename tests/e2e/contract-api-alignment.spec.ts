@@ -65,6 +65,32 @@ const PROBES: Probe[] = [
     },
   },
   {
+    label: "account_device_pairing_request_create",
+    method: "POST",
+    path: "/_cokret/gate/account/device-pairing-requests",
+    body: {
+      pairing_code: "pairing-code",
+      new_device_pubkey: {
+        kty: "OKP",
+        kid: "ck:device:01964137-0000-7000-8000-0000000000b2",
+        alg: "EdDSA",
+        key: "emtleQ",
+      },
+      challenge_signature: "c2ln",
+    },
+  },
+  {
+    label: "devices_pairing_requests",
+    method: "GET",
+    path: "/_cokret/self/devices/pairing-requests",
+  },
+  {
+    label: "devices_pairing_request_approve",
+    method: "POST",
+    path: "/_cokret/self/devices/pairing-requests/01970000-0000-7000-8000-000000000020/approve",
+    body: {},
+  },
+  {
     label: "devices_pairing_challenge",
     method: "POST",
     path: "/_cokret/self/devices/pairing-challenge",
@@ -98,7 +124,7 @@ const CONTRACT_REQUIRED: Record<string, string[]> = {
     "supported_operations",
     "limits",
   ],
-  events_submit: ["event_id", "status", "canonical_digest", "sync_token", "receipt"],
+  events_submit: ["status", "accepted", "cursor"],
   events_list: ["events"],
   account_me: ["did", "handle", "display_name"],
   directory_describe: [

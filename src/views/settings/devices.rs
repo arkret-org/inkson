@@ -56,6 +56,16 @@ struct DeviceRow {
     created_at: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct PairingRequestRow {
+    pairing_request_id: String,
+    requesting_device_id: String,
+    pairing_code: String,
+    display_name: String,
+    state: String,
+    expires_at: String,
+}
+
 fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
     let explicit_current = value
         .get("current_device_id")
@@ -102,6 +112,52 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
         .unwrap_or_default();
     let current = explicit_current.or_else(|| rows.first().map(|row| row.device_id.clone()));
     (current, rows)
+}
+
+fn parse_pairing_requests(value: &Value) -> Vec<PairingRequestRow> {
+    value
+        .get("requests")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let pairing_request_id = item
+                        .get("pairing_request_id")
+                        .and_then(Value::as_str)?
+                        .to_owned();
+                    let requesting_device_id = item
+                        .get("requesting_device_id")
+                        .and_then(Value::as_str)?
+                        .to_owned();
+                    Some(PairingRequestRow {
+                        pairing_request_id,
+                        requesting_device_id,
+                        pairing_code: item
+                            .get("pairing_code")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                        display_name: item
+                            .get("display_name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                        state: item
+                            .get("state")
+                            .and_then(Value::as_str)
+                            .unwrap_or("pending")
+                            .to_owned(),
+                        expires_at: item
+                            .get("expires_at")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Build the QR / paste payload that an already-authorized device approves.
@@ -165,6 +221,9 @@ pub fn SettingsDevicesPanel(
     // ── Pair (current device side) state ─────────────────────────────
     let pair_payload = use_signal(String::new);
     let pair_status = use_signal(String::new);
+    let mut pending_pair_requests = use_signal(Vec::<PairingRequestRow>::new);
+    let mut pending_pair_status = use_signal(String::new);
+    let mut pending_pair_loaded = use_signal(|| false);
 
     // ── Accept (receiving device side) state ─────────────────────────
     let accept_input = use_signal(String::new);
@@ -243,6 +302,40 @@ pub fn SettingsDevicesPanel(
         });
     }
 
+    {
+        let base = base_url();
+        let api_token = token();
+        use_effect(move || {
+            if !pair_mode || api_token.trim().is_empty() || pending_pair_loaded() {
+                return;
+            }
+            pending_pair_loaded.set(true);
+            let base = base.clone();
+            let api_token = api_token.clone();
+            pending_pair_status.set("Loading pairing requests...".to_owned());
+            spawn(async move {
+                match with_authed_api(&base, api_token, |api| async move {
+                    api.list_device_pairing_requests().await
+                })
+                .await
+                {
+                    Ok(value) => {
+                        let rows = parse_pairing_requests(&value);
+                        let count = rows.len();
+                        pending_pair_requests.set(rows);
+                        pending_pair_status.set(format!("Loaded {count} pending request(s)"));
+                    }
+                    Err(err) => {
+                        pending_pair_status.set(format!(
+                            "Loading pairing requests failed: {}",
+                            err.display()
+                        ));
+                    }
+                }
+            });
+        });
+    }
+
     rsx! {
         div { class: "settings-content-stack", "data-testid": "settings-devices-panel",
             div { class: "event settings-control-panel",
@@ -280,6 +373,8 @@ pub fn SettingsDevicesPanel(
                     state_store,
                     pair_payload,
                     pair_status,
+                    pending_pair_requests,
+                    pending_pair_status,
                     accept_input,
                     accept_status,
                 )}
@@ -819,12 +914,16 @@ fn render_pair_flow(
     mut state_store: Signal<LocalStateStore>,
     mut pair_payload: Signal<String>,
     mut pair_status: Signal<String>,
+    mut pending_pair_requests: Signal<Vec<PairingRequestRow>>,
+    mut pending_pair_status: Signal<String>,
     mut accept_input: Signal<String>,
     mut accept_status: Signal<String>,
 ) -> Element {
     let actor_id = account_did();
     let payload_value = pair_payload();
     let status_value = pair_status();
+    let pending_rows = pending_pair_requests();
+    let pending_status_value = pending_pair_status();
 
     // Render a QR for the current payload (if any). `qrcode` returns
     // the rendered SVG as a String which Dioxus wraps in
@@ -847,6 +946,35 @@ fn render_pair_flow(
     };
 
     let payload_for_state = payload_value.clone();
+    let refresh_pending_requests = {
+        let base = base_url();
+        let api_token = token();
+        move |_| {
+            let base = base.clone();
+            let api_token = api_token.clone();
+            pending_pair_status.set("Loading pairing requests...".to_owned());
+            spawn(async move {
+                match with_authed_api(&base, api_token, |api| async move {
+                    api.list_device_pairing_requests().await
+                })
+                .await
+                {
+                    Ok(value) => {
+                        let rows = parse_pairing_requests(&value);
+                        let count = rows.len();
+                        pending_pair_requests.set(rows);
+                        pending_pair_status.set(format!("Loaded {count} pending request(s)"));
+                    }
+                    Err(err) => {
+                        pending_pair_status.set(format!(
+                            "Loading pairing requests failed: {}",
+                            err.display()
+                        ));
+                    }
+                }
+            });
+        }
+    };
 
     rsx! {
         div { class: "event", "data-testid": "pair-device-card",
@@ -892,10 +1020,54 @@ fn render_pair_flow(
                             &pairing_code,
                             &challenge_signature,
                         );
+                        let request_body: Value = match serde_json::from_str(&payload) {
+                            Ok(value) => value,
+                            Err(err) => {
+                                pair_status.set(format!("Pairing payload generation failed: {err}"));
+                                return;
+                            }
+                        };
                         pair_payload.set(payload.clone());
                         pair_status.set(format!(
-                            "Pairing request generated for {requesting_device_id}. Display the QR or paste payload below."
+                            "Publishing pairing request for {requesting_device_id}..."
                         ));
+                        let base = base_url();
+                        let api_token = token();
+                        let request_body_for_display = request_body.clone();
+                        spawn(async move {
+                            match with_authed_api(&base, api_token, |api| async move {
+                                api.create_device_pairing_request(request_body).await
+                            })
+                            .await
+                            {
+                                Ok(value) => {
+                                    let mut published_payload = request_body_for_display.clone();
+                                    let response_request = value.get("request").unwrap_or(&value);
+                                    if let Some(object) = published_payload.as_object_mut() {
+                                        for key in [
+                                            "pairing_request_id",
+                                            "requesting_device_id",
+                                            "state",
+                                            "expires_at",
+                                        ] {
+                                            if let Some(field) = response_request.get(key) {
+                                                object.insert(key.to_owned(), field.clone());
+                                            }
+                                        }
+                                    }
+                                    pair_payload.set(published_payload.to_string());
+                                    pair_status.set(format!(
+                                        "Pairing request published for {requesting_device_id}. Open this page on an existing device and approve the matching code."
+                                    ));
+                                }
+                                Err(err) => {
+                                    pair_status.set(format!(
+                                        "Pairing request generated locally, but server publish failed: {}. Use the QR or paste payload on an existing device.",
+                                        err.display()
+                                    ));
+                                }
+                            }
+                        });
                     },
                     "Create request"
                 }
@@ -933,6 +1105,114 @@ fn render_pair_flow(
                 }
             }
             div { class: "muted", "data-testid": "pair-device-status", "{status_value}" }
+        }
+
+        div { class: "event", "data-testid": "pending-pairing-requests-card",
+            div { class: "event-head",
+                span { "Requests awaiting this device" }
+                span { "{pending_status_value}" }
+            }
+            p { class: "muted",
+                "On an already-authorized device, approve a request published by the browser you are adding. Compare the pairing code on both devices before approving."
+            }
+            div { class: "actions",
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    "data-testid": "pending-pairing-refresh-button",
+                    onclick: refresh_pending_requests,
+                    "Refresh requests"
+                }
+            }
+            if pending_rows.is_empty() {
+                div {
+                    class: "muted",
+                    "data-testid": "pending-pairing-empty",
+                    "No pending pairing requests for this account."
+                }
+            } else {
+                div { class: "settings-list", "data-testid": "pending-pairing-list",
+                    for row in pending_rows {
+                        {
+                            let request_id = row.pairing_request_id.clone();
+                            let request_id_for_label = request_id.clone();
+                            let request_id_for_click = request_id.clone();
+                            let device_label = if row.display_name.trim().is_empty() {
+                                short_protocol_id(&row.requesting_device_id)
+                            } else {
+                                row.display_name.clone()
+                            };
+                            let code_label = if row.pairing_code.trim().is_empty() {
+                                "(no code)".to_owned()
+                            } else {
+                                row.pairing_code.clone()
+                            };
+                            rsx! {
+                                div {
+                                    class: "metric",
+                                    "data-testid": "pending-pairing-request",
+                                    "data-pairing-request-id": "{request_id_for_label}",
+                                    strong { "{device_label}" }
+                                    span { class: "muted mono", "{short_protocol_id(&row.requesting_device_id)}" }
+                                    span { class: "muted", "Code {code_label}" }
+                                    span { class: "muted", "Expires {row.expires_at}" }
+                                    div { class: "actions",
+                                        Button {
+                                            variant: ButtonVariant::Primary,
+                                            "data-testid": "approve-pairing-request-button",
+                                            onclick: move |_| {
+                                                let base = base_url();
+                                                let api_token = token();
+                                                let request_id = request_id_for_click.clone();
+                                                pending_pair_status.set(format!(
+                                                    "Approving pairing request {request_id}..."
+                                                ));
+                                                spawn(async move {
+                                                    match with_authed_api(&base, api_token.clone(), |api| {
+                                                        let request_id = request_id.clone();
+                                                        async move {
+                                                            api.approve_device_pairing_request(&request_id).await
+                                                        }
+                                                    })
+                                                    .await
+                                                    {
+                                                        Ok(value) => {
+                                                            pending_pair_status.set(format!(
+                                                                "Pairing request approved. Server response: {value}"
+                                                            ));
+                                                            match with_authed_api(&base, api_token, |api| async move {
+                                                                api.list_device_pairing_requests().await
+                                                            })
+                                                            .await
+                                                            {
+                                                                Ok(value) => {
+                                                                    pending_pair_requests.set(parse_pairing_requests(&value));
+                                                                }
+                                                                Err(err) => {
+                                                                    pending_pair_status.set(format!(
+                                                                        "Approved, but reloading requests failed: {}",
+                                                                        err.display()
+                                                                    ));
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(err) => {
+                                                            pending_pair_status.set(format!(
+                                                                "Approving pairing request failed: {}",
+                                                                err.display()
+                                                            ));
+                                                        }
+                                                    }
+                                                });
+                                            },
+                                            "Approve"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Receiving-device input lives on the same panel so the e2e
@@ -1137,6 +1417,29 @@ mod tests {
         assert_eq!(parsed["new_device_pubkey"]["key"], "abc-123");
         assert_eq!(parsed["challenge_signature"], "challenge-signature");
         assert!(parsed["issued_at"].as_str().is_some());
+    }
+
+    #[test]
+    fn parses_pending_pairing_requests() {
+        let rows = parse_pairing_requests(&json!({
+            "requests": [
+                {
+                    "pairing_request_id": "01970000-0000-7000-8000-000000000020",
+                    "requesting_device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+                    "pairing_code": "pairing-code",
+                    "display_name": "New browser",
+                    "state": "pending",
+                    "expires_at": "2026-06-12T12:00:00Z"
+                }
+            ]
+        }));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].pairing_request_id,
+            "01970000-0000-7000-8000-000000000020"
+        );
+        assert_eq!(rows[0].display_name, "New browser");
+        assert_eq!(rows[0].state, "pending");
     }
 
     #[test]

@@ -7,7 +7,8 @@ use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
 
 use crate::components::{
-    EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteState, WriteStateIcon,
+    EmptyState, EmptyStateKind, SecurityStateBadge, SelfAttributionBadge, UiIcon, WriteState,
+    WriteStateIcon,
 };
 use crate::hlc::Hlc;
 use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState, RawOperationRecord};
@@ -528,8 +529,6 @@ pub fn KanbanPanel(
     let mut card_detail_tab = use_signal(card_detail_tab_from_current_url);
     let mut card_detail_discussion_mounted_for = use_signal(|| Option::<String>::None);
     let mut card_detail_sidebar_tab = use_signal(CardDetailSidebarTab::default);
-    let mut card_detail_overlay_press_started = use_signal(|| false);
-    let mut card_detail_overlay_press_ended = use_signal(|| false);
     let mut card_detail_docked = use_signal(read_card_detail_docked);
     let mut card_detail_dock_width = use_signal(read_card_detail_dock_width);
     let mut card_detail_resizing = use_signal(|| false);
@@ -623,8 +622,6 @@ pub fn KanbanPanel(
                 card_detail_tab.set(routed_tab);
                 card_synthesis_history_open_id.set(None);
                 card_synthesis_selected_revision_id.set(None);
-                card_detail_overlay_press_started.set(false);
-                card_detail_overlay_press_ended.set(false);
                 selected_card.set(Some(card));
             }
         });
@@ -2296,8 +2293,6 @@ pub fn KanbanPanel(
                                         card_detail_tab.set(CardDetailContentTab::Description);
                                         card_synthesis_history_open_id.set(None);
                                         card_synthesis_selected_revision_id.set(None);
-                                        card_detail_overlay_press_started.set(false);
-                                        card_detail_overlay_press_ended.set(false);
                                         selected_card.set(Some(c.clone()));
                                         let _ = navigator.push(kanban_card_task_route(
                                             &route_realm_id,
@@ -2896,35 +2891,22 @@ pub fn KanbanPanel(
                             class: "{overlay_class}",
                             "data-testid": "card-detail-overlay",
                             role: "presentation",
-                            onmousedown: move |_| {
-                                card_detail_overlay_press_started.set(true);
-                                card_detail_overlay_press_ended.set(false);
-                            },
-                            onmouseup: move |_| {
-                                card_detail_overlay_press_ended.set(true);
-                            },
                             onclick: move |_| {
-                                if card_detail_overlay_press_started()
-                                    && card_detail_overlay_press_ended()
-                                {
-                                    selected_card.set(None);
-                                    editing_card_detail.set(false);
-                                    card_detail_edit_status.set(String::new());
-                                    assignee_picker_open.set(false);
-                                    assignee_filter.set(String::new());
-                                    assignee_selected_actor_ids.set(BTreeSet::new());
-                                    assignee_edit_status.set(String::new());
-                                    due_picker_open.set(false);
-                                    due_edit_value.set(String::new());
-                                    due_calendar_month.set(default_due_calendar_month());
-                                    due_edit_status.set(String::new());
-                                    card_detail_actions_open.set(false);
-                                    if route_is_card_detail {
-                                        let _ = overlay_navigator.push(overlay_board_route.clone());
-                                    }
+                                selected_card.set(None);
+                                editing_card_detail.set(false);
+                                card_detail_edit_status.set(String::new());
+                                assignee_picker_open.set(false);
+                                assignee_filter.set(String::new());
+                                assignee_selected_actor_ids.set(BTreeSet::new());
+                                assignee_edit_status.set(String::new());
+                                due_picker_open.set(false);
+                                due_edit_value.set(String::new());
+                                due_calendar_month.set(default_due_calendar_month());
+                                due_edit_status.set(String::new());
+                                card_detail_actions_open.set(false);
+                                if route_is_card_detail {
+                                    let _ = overlay_navigator.push(overlay_board_route.clone());
                                 }
-                                card_detail_overlay_press_started.set(false);
-                                card_detail_overlay_press_ended.set(false);
                             },
                             div {
                                 class: "{popup_class}",
@@ -2932,15 +2914,6 @@ pub fn KanbanPanel(
                                 "data-testid": "card-detail-modal",
                                 role: "dialog",
                                 "aria-modal": "true",
-                                onmousedown: move |event: dioxus::events::MouseEvent| {
-                                    card_detail_overlay_press_started.set(false);
-                                    card_detail_overlay_press_ended.set(false);
-                                    event.stop_propagation();
-                                },
-                                onmouseup: move |event: dioxus::events::MouseEvent| {
-                                    card_detail_overlay_press_ended.set(false);
-                                    event.stop_propagation();
-                                },
                                 onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
                                 if is_docked {
                                     div {
@@ -3575,10 +3548,20 @@ pub fn KanbanPanel(
                                                                         } else {
                                                                             "history"
                                                                         };
+                                                                        let synthesis_is_own =
+                                                                            actor_is_current_account(&display_revision.actor_id, &account_did);
                                                                         let entry_class = if selected_synthesis_is_latest {
-                                                                            "card-synthesis-entry is-latest"
+                                                                            if synthesis_is_own {
+                                                                                "card-synthesis-entry is-latest is-own"
+                                                                            } else {
+                                                                                "card-synthesis-entry is-latest"
+                                                                            }
                                                                         } else {
-                                                                            "card-synthesis-entry is-history"
+                                                                            if synthesis_is_own {
+                                                                                "card-synthesis-entry is-history is-own"
+                                                                            } else {
+                                                                                "card-synthesis-entry is-history"
+                                                                            }
                                                                         };
                                                                         let history_open = card_synthesis_history_open_id()
                                                                             .as_deref()
@@ -3596,6 +3579,12 @@ pub fn KanbanPanel(
                                                                                 "data-synthesis-version-state": "{version_state}",
                                                                                 header { class: "card-synthesis-entry-head",
                                                                                     span { class: "card-synthesis-author", title: "{actor_title}", "{display_revision.author_label}" }
+                                                                                    if synthesis_is_own {
+                                                                                        SelfAttributionBadge {
+                                                                                            class: Some("card-synthesis-self-badge".to_owned()),
+                                                                                            test_id: Some("card-synthesis-self-badge".to_owned()),
+                                                                                        }
+                                                                                    }
                                                                                     time { class: "card-synthesis-time", "{display_revision.timestamp_label}" }
                                                                                     span { class: "badge", "{version_label}" }
                                                                                     if selected_synthesis_is_latest {
@@ -3659,6 +3648,8 @@ pub fn KanbanPanel(
                                                                                                             } else {
                                                                                                                 preview
                                                                                                             };
+                                                                                                            let history_is_own =
+                                                                                                                actor_is_current_account(&history_entry.actor_id, &account_did);
                                                                                                             rsx! {
                                                                                                                 Button {
                                                                                                                     variant: ButtonVariant::Secondary,
@@ -3680,6 +3671,12 @@ pub fn KanbanPanel(
                                                                                                                             span { class: "badge badge-success", "latest" }
                                                                                                                         }
                                                                                                                         span { title: "{history_author_title}", "{history_entry.author_label}" }
+                                                                                                                        if history_is_own {
+                                                                                                                            SelfAttributionBadge {
+                                                                                                                                class: Some("card-synthesis-history-self-badge".to_owned()),
+                                                                                                                                test_id: Some("card-synthesis-history-self-badge".to_owned()),
+                                                                                                                            }
+                                                                                                                        }
                                                                                                                         time { "{history_entry.timestamp_label}" }
                                                                                                                     }
                                                                                                                     span { class: "card-synthesis-history-preview", "{preview}" }

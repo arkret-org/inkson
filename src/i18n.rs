@@ -638,7 +638,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "mls_unlock.approve_step_existing_body",
-        "Open Settings -> Devices -> Pair new device, paste or scan this browser's request, and approve it.",
+        "Open Settings -> Devices -> Pair new device, review the pending request, compare the code, and approve it.",
     );
     dict.set("mls_unlock.approve_step_new_title", "On this browser");
     dict.set(
@@ -1873,7 +1873,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.approve_step_existing_title", "在已有设备上");
     dict.set(
         "mls_unlock.approve_step_existing_body",
-        "打开 Settings -> Devices -> Pair new device，粘贴或扫描此浏览器的请求，然后批准。",
+        "打开 Settings -> Devices -> Pair new device，查看待审批请求，比对验证码后批准。",
     );
     dict.set("mls_unlock.approve_step_new_title", "在此浏览器上");
     dict.set(

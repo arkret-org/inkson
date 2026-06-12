@@ -10,7 +10,7 @@ use crate::api::{
     is_space_membership_denied_error,
 };
 use crate::audit::build_audit_ryw_receipt;
-use crate::components::{HelpTip, SecurityStateBadge, UiIcon};
+use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};
 use crate::local_state::{ClientLocalState, LocalSealView, LocalStateStore, MoveSubmissionState};
 use crate::models::SubmitEventOutcome;
@@ -1559,11 +1559,9 @@ pub fn ChatPanel(
                                 div { class: "msg-head",
                                     span { class: "name", "{sender_display_label(&msg.sender, &account_did, &account_display_label, &participants_for_messages)}" }
                                     if sender_is_own {
-                                        span {
-                                            class: "badge message-self-badge",
-                                            "data-testid": "message-self-badge",
-                                            title: "This message was sent by this account",
-                                            "me"
+                                        SelfAttributionBadge {
+                                            class: Some("message-self-badge".to_owned()),
+                                            test_id: Some("message-self-badge".to_owned()),
                                         }
                                     }
                                     {
@@ -5114,6 +5112,30 @@ mod tests {
                 "did:web:local.host:users:alice",
                 "did:web:local.host:users:alice",
                 "alice",
+                &participants,
+            ),
+            "alice:local.host"
+        );
+    }
+
+    #[test]
+    fn own_sender_label_prefers_account_handle_over_did_derived_materialized_id() {
+        let participants = vec![SpaceParticipant {
+            did: "did:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8".to_owned(),
+            display_name: None,
+            handle_label: None,
+            display_name_rank: u8::MAX,
+            role: SpaceParticipantRole::Member,
+            is_self: true,
+            is_agent: false,
+            agent_metadata: None,
+        }];
+
+        assert_eq!(
+            sender_display_label(
+                "did:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8",
+                "did:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8",
+                "alice:local.host",
                 &participants,
             ),
             "alice:local.host"
