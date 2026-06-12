@@ -15,7 +15,7 @@
 //! | Target          | Default backend         | Notes |
 //! |-----------------|-------------------------|-------|
 //! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the `keyring` crate (Keychain / Secret Service / Credential Manager). |
-//! | wasm32          | [`LocalStorageSecureKeyStore`] for non-signing first-paint secrets, then [`IndexedDbSecureKeyStore`] after async upgrade | Ed25519 signing seeds require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before upgrade. |
+//! | wasm32          | [`LocalStorageSecureKeyStore`] for low-value first-paint secrets, then [`IndexedDbSecureKeyStore`] after async upgrade | Ed25519 signing seeds, account MLS secrets, and bearer tokens require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before upgrade. |
 //! | iOS / Android   | [`HostBridgeSecureKeyStore`] when the host installs a bridge; otherwise [`MemorySecureKeyStore`] | Mobile artifacts are outside the local 1.0 milestone. |
 //!
 //! ## Why not reuse `crate::key_store::KeyStore`?
@@ -42,7 +42,7 @@ static WASM_UPGRADED_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore>> = OnceL
 #[cfg(target_arch = "wasm32")]
 pub(crate) const WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND: &str = "indexed_db_subtle_aes_gcm";
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 const WASM_LOCAL_IDENTITY_SEED_KEY: &str = "identity.local.primary.v1";
 
 #[cfg(target_arch = "wasm32")]
@@ -51,8 +51,22 @@ const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds r
      localStorage seed read/write is disabled";
 
 #[cfg(target_arch = "wasm32")]
+const WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED: &str = "wasm account secrets and bearer tokens require IndexedDbSecureKeyStore with a \
+     non-extractable SubtleCrypto AES-GCM wrapping key; localStorage read/write is disabled";
+
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
     key == SIGNING_SEED_KEY || key == WASM_LOCAL_IDENTITY_SEED_KEY
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
+    is_wasm_ed25519_seed_key(key)
+        || key.starts_with("yougen.mls_snapshot.account_secret.")
+        || key.starts_with("yougen_mls_account_secret")
+        || key.starts_with("coauth.refresh_token.")
+        || key.starts_with("coauth.access_token.")
+        || key.starts_with("coauth.session_token.")
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -929,11 +943,11 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
 /// the localStorage blob (an actual attack the spec calls out in
 /// `crypto-media/secret-storage.md` §3 — the "lukewarm" tier).
 ///
-/// This backend is only for non-signing first-paint secrets. Ed25519
-/// signing seeds and local identity seeds are refused so they cannot
-/// land in localStorage. The IndexedDB + non-extractable SubtleCrypto
-/// tier uses the same `yougen.secret.<service_name>.<key>` namespace
-/// after async upgrade.
+/// This backend is only for non-sensitive first-paint secrets. Ed25519
+/// signing seeds, local identity seeds, account MLS secrets, and bearer
+/// tokens are refused so they cannot land in localStorage. The IndexedDB
+/// + non-extractable SubtleCrypto tier uses the same
+/// `yougen.secret.<service_name>.<key>` namespace after async upgrade.
 #[cfg(target_arch = "wasm32")]
 pub struct LocalStorageSecureKeyStore {
     service_name: String,
@@ -1025,9 +1039,13 @@ impl std::fmt::Debug for LocalStorageSecureKeyStore {
 #[cfg(target_arch = "wasm32")]
 impl SecureKeyStore for LocalStorageSecureKeyStore {
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
-        if is_wasm_ed25519_seed_key(key) {
+        if is_wasm_indexeddb_required_secret_key(key) {
             return Err(SecureKeyStoreError::Unsupported(
-                WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
+                if is_wasm_ed25519_seed_key(key) {
+                    WASM_ED25519_SEED_INDEXEDDB_REQUIRED
+                } else {
+                    WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED
+                },
             ));
         }
         let storage = Self::storage()?;
@@ -1038,9 +1056,13 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
     }
 
     fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
-        if is_wasm_ed25519_seed_key(key) {
+        if is_wasm_indexeddb_required_secret_key(key) {
             return Err(SecureKeyStoreError::Unsupported(
-                WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
+                if is_wasm_ed25519_seed_key(key) {
+                    WASM_ED25519_SEED_INDEXEDDB_REQUIRED
+                } else {
+                    WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED
+                },
             ));
         }
         let storage = Self::storage()?;
@@ -2199,6 +2221,36 @@ mod tests {
             .unwrap();
         let err = load_signing_seed(&store).unwrap_err();
         assert!(matches!(err, SecureKeyStoreError::Backend(_)));
+    }
+
+    #[test]
+    fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
+        assert!(is_wasm_indexeddb_required_secret_key(SIGNING_SEED_KEY));
+        assert!(is_wasm_indexeddb_required_secret_key(
+            "identity.local.primary.v1"
+        ));
+        assert!(is_wasm_indexeddb_required_secret_key(
+            "yougen.mls_snapshot.account_secret.v1.did:example:alice"
+        ));
+        assert!(is_wasm_indexeddb_required_secret_key(
+            "yougen_mls_account_secret"
+        ));
+        assert!(is_wasm_indexeddb_required_secret_key(
+            "coauth.refresh_token.did:example:alice"
+        ));
+        assert!(is_wasm_indexeddb_required_secret_key(
+            "coauth.access_token.did:example:alice"
+        ));
+        assert!(is_wasm_indexeddb_required_secret_key(
+            "coauth.session_token.did:example:alice"
+        ));
+
+        assert!(!is_wasm_indexeddb_required_secret_key(
+            "push.fcm.registration_token.device-a"
+        ));
+        assert!(!is_wasm_indexeddb_required_secret_key(
+            "oidc.nonce.scaffold"
+        ));
     }
 
     /// The AEAD wrap helper MUST be a real ChaCha20-Poly1305 wrap —
