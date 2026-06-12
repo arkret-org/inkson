@@ -562,10 +562,10 @@ fn auth_surface_for_route(
 ) -> AuthSurface {
     if matches!(route, Route::AuthCallback) {
         AuthSurface::Callback
-    } else if has_session {
-        AuthSurface::AppShell
     } else if boot_state.is_pending() {
         AuthSurface::Restoring
+    } else if has_session {
+        AuthSurface::AppShell
     } else {
         AuthSurface::Login
     }
@@ -6758,6 +6758,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 };
 
                 let mut session_token = token();
+                if !session_token.trim().is_empty()
+                    && let Some(refreshed) = crate::session::refresh_current_bearer().await
+                {
+                    session_token = refreshed;
+                    session_boot_state.set(SessionBootState::Checking);
+                }
                 if session_token.trim().is_empty() {
                     if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                         session_token = refreshed;
@@ -7931,6 +7937,14 @@ mod tests {
         assert_eq!(
             auth_surface_for_route(&Route::Login, false, SessionBootState::Unauthenticated),
             AuthSurface::Login
+        );
+    }
+
+    #[test]
+    fn auth_surface_waits_while_live_session_is_checking() {
+        assert_eq!(
+            auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking),
+            AuthSurface::Restoring
         );
     }
 

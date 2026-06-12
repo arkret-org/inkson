@@ -280,7 +280,7 @@ impl ApiCallError {
 /// surrounding component scope.
 pub async fn with_authed_api<F, Fut, T>(
     base_url: &str,
-    access_token: String,
+    mut access_token: String,
     f: F,
 ) -> Result<T, ApiCallError>
 where
@@ -291,6 +291,11 @@ where
         return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
             "missing authenticated session"
         )));
+    }
+    if let Some(refreshed) = crate::session::wait_for_current_bearer_refresh().await
+        && !refreshed.trim().is_empty()
+    {
+        access_token = refreshed;
     }
     let api = authed_api(base_url, access_token).map_err(ApiCallError::Unavailable)?;
     match f(api).await {
@@ -305,7 +310,7 @@ where
 /// [`active_sync_token`] as `wait_for_sync_token`.
 pub async fn with_authed_api_with_sync<F, Fut, T>(
     base_url: &str,
-    access_token: String,
+    mut access_token: String,
     wait_for_sync_token: Option<String>,
     f: F,
 ) -> Result<T, ApiCallError>
@@ -317,6 +322,11 @@ where
         return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
             "missing authenticated session"
         )));
+    }
+    if let Some(refreshed) = crate::session::wait_for_current_bearer_refresh().await
+        && !refreshed.trim().is_empty()
+    {
+        access_token = refreshed;
     }
     let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token)
         .map_err(ApiCallError::Unavailable)?;
