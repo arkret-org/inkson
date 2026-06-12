@@ -1,7 +1,7 @@
 //! Settings surface.
 //!
 //! Territory split (preserved from former sibling files):
-//! - G3.Y1 (device + key-backup): [`devices`], [`security`].
+//! - G3.Y1 (device management): [`devices`].
 //! - G3.Y3 (policy / consent / capabilities): [`blocklist`], [`capabilities`], [`consent`].
 //! The aggregate routing entry + the generic profile card live in
 //! this `mod.rs`.
@@ -13,7 +13,6 @@ pub mod devices;
 /// U4 — "谁可以邀请我" invite_receive_policy editor.
 pub mod invite_policy;
 pub mod mls_recovery;
-pub mod security;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{
@@ -912,7 +911,6 @@ enum SettingsSection {
     Devices,
     Storage,
     Encryption,
-    KeyBackup,
     Recovery,
     Mimi,
     Notifications,
@@ -938,8 +936,7 @@ impl SettingsSection {
             "devices" => Self::Devices,
             "storage" => Self::Storage,
             "encryption" => Self::Encryption,
-            "security" | "key-backup" => Self::KeyBackup,
-            "recovery" => Self::Recovery,
+            "security" | "key-backup" | "recovery" => Self::Recovery,
             "mimi" => Self::Mimi,
             "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
@@ -962,7 +959,6 @@ impl SettingsSection {
             Self::Devices => "devices",
             Self::Storage => "storage",
             Self::Encryption => "encryption",
-            Self::KeyBackup => "security",
             Self::Recovery => "recovery",
             Self::Mimi => "mimi",
             Self::Notifications => "notifications",
@@ -985,7 +981,6 @@ impl SettingsSection {
             Self::Devices => "Devices",
             Self::Storage => "Data & sync",
             Self::Encryption => "Security",
-            Self::KeyBackup => "Key backup",
             Self::Recovery => "Recovery",
             Self::Mimi => "Integrations",
             Self::Notifications => "Notifications",
@@ -1003,7 +998,6 @@ impl SettingsSection {
     fn route(self) -> Route {
         match self {
             Self::Devices => Route::SettingsDevices,
-            Self::KeyBackup => Route::SettingsSecurity,
             Self::Recovery => Route::SettingsRecovery,
             _ => Route::SettingsSection {
                 section: self.slug().to_owned(),
@@ -1046,9 +1040,8 @@ const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[
     SettingsSection::Agents,
     SettingsSection::Server,
     SettingsSection::Devices,
+    SettingsSection::Recovery,
 ];
-const SETTINGS_SECURITY_GROUP: &[SettingsSection] =
-    &[SettingsSection::KeyBackup, SettingsSection::Recovery];
 const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     SettingsSection::Notifications,
     SettingsSection::Privacy,
@@ -1073,11 +1066,6 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
         "Account",
         "Identity, server, and signed-in devices.",
         SETTINGS_ACCOUNT_GROUP,
-    ),
-    (
-        "Security & recovery",
-        "Encrypted backup and account recovery.",
-        SETTINGS_SECURITY_GROUP,
     ),
     (
         "Notifications & privacy",
@@ -1965,15 +1953,6 @@ pub fn SettingsPanel(
                         }
                     }
 
-                    if active_section == SettingsSection::KeyBackup {
-                        crate::views::settings::security::SettingsSecurityPanel {
-                            base_url,
-                            account_did,
-                            token,
-                            state_store,
-                        }
-                    }
-
                     if active_section == SettingsSection::Recovery {
                         crate::views::recovery::RecoveryPanel {
                             base_url: base_url(),
@@ -2072,7 +2051,7 @@ pub fn SettingsPanel(
                                 }
                             }
                             // X11.1 — persistent MLS recovery-key entry.
-                            // Always reachable here (Security & recovery),
+                            // Always reachable from this encryption section,
                             // shows live backup status, and lets the user
                             // generate/replace the recovery key regardless of the
                             // boot detection effect timing. NOT gated on
@@ -2094,7 +2073,7 @@ pub fn SettingsPanel(
                                     "Encrypted history recovery above creates key backup envelopes automatically. The recovery backup id is generated when a backup is created; it is not something to type by hand."
                                 }
                                 div { class: "muted",
-                                    "Use these links only for protocol diagnostics or when debugging a specific backup envelope."
+                                    "Open Recovery when debugging a specific backup envelope."
                                 }
                                 div { class: "actions",
                                     Link {
@@ -2102,14 +2081,7 @@ pub fn SettingsPanel(
                                         "data-testid": "key-backup-open-recovery",
                                         to: Route::SettingsRecovery,
                                         UiIcon { name: "key" }
-                                        "Recovery Key (24 words)"
-                                    }
-                                    Link {
-                                        class: "secondary",
-                                        "data-testid": "key-backup-open-manual",
-                                        to: Route::SettingsSecurity,
-                                        UiIcon { name: "archive" }
-                                        "Key backup status"
+                                        "Recovery & backups"
                                     }
                                 }
                                 div { class: "muted",

@@ -522,8 +522,8 @@ test("topbar breadcrumbs avoid duplicated route and server context", async ({ pa
   await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Principal Server https://");
 });
 
-test("settings encryption keeps key backup under advanced diagnostics", async ({ page }) => {
-  await page.goto("/settings/encryption", { waitUntil: "domcontentloaded" });
+test("settings encryption links key backup diagnostics to recovery", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/settings/encryption");
   const recovery = latestTestId(page, "settings-mls-recovery");
   const guidance = latestTestId(page, "key-backup-guidance");
   await expect(recovery).toBeVisible();
@@ -536,28 +536,34 @@ test("settings encryption keeps key backup under advanced diagnostics", async ({
   await expect(guidance).toContainText(
     "backup id is generated when a backup is created",
   );
-  await expect(latestTestId(page, "key-backup-open-manual")).toBeVisible();
+  await expect(latestTestId(page, "key-backup-open-recovery")).toContainText(
+    "Recovery & backups",
+  );
+  await expect(page.getByTestId("key-backup-open-manual")).toHaveCount(0);
   await expect(page.getByTestId("key-backup-id-input")).toHaveCount(0);
   await expect(page.getByTestId("key-backup-passphrase-input")).toHaveCount(0);
   await expect(page.getByTestId("key-backup-setup")).toHaveCount(0);
 });
 
 test("recovery passkey quick unlock stays additive to the 24-word key", async ({ page }) => {
-  await page.goto("/settings/recovery", { waitUntil: "domcontentloaded" });
+  await gotoAndDismissRecovery(page, "/settings/recovery");
   await expect(page.getByTestId("settings-nav-item-recovery")).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("settings-nav-item-security")).toHaveCount(0);
   const recoveryPanel = latestTestId(page, "recovery-panel");
   await expect(recoveryPanel).toBeVisible();
 
   const passkeySection = recoveryPanel.getByTestId("passkey-recovery-section");
   await expect(passkeySection).toBeVisible();
   await expect(passkeySection).toContainText("browser-local WebAuthn PRF");
-  await expect(passkeySection).toContainText("not a replacement");
+  await expect(passkeySection).toContainText("Passkey unlock is additive");
   await expect(recoveryPanel.getByTestId("passkey-wrap-count")).toHaveText("0 saved");
   await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeDisabled();
   await expect(recoveryPanel.getByTestId("passkey-wrap-unlock")).toBeDisabled();
 
   await recoveryPanel.getByTestId("recovery-key-regenerate").click();
-  await expect(recoveryPanel.getByTestId("recovery-key-status")).toContainText("New Recovery Key generated");
+  await expect(recoveryPanel.getByTestId("recovery-key-status")).toContainText(
+    /Recovery Key (generated|saved)/,
+  );
   const recoveryWords = (await recoveryPanel.getByTestId("recovery-key-current").textContent()) ?? "";
   expect(recoveryWords.trim().split(/\s+/)).toHaveLength(24);
   await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeEnabled();
@@ -1154,13 +1160,17 @@ test("diagnostic and preview surfaces stay behind clear user-facing states", asy
 });
 
 test("account settings split account/server info and surface personal agents", async ({ page }) => {
-  await refreshServer(page);
-
   // Account information is its own section (identity + invite locator).
-  await page.goto("/settings/account", { waitUntil: "domcontentloaded" });
+  await gotoAndDismissRecovery(page, "/settings/account");
+  await expect(page.getByTestId("settings-panel")).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId("settings-nav-item-account")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
   await expect(page.getByTestId("settings-account-did")).toBeVisible();
+  const accountNavGroup = page
+    .locator(".settings-nav-cluster")
+    .filter({ hasText: "Account" })
+    .first();
+  await expect(accountNavGroup.getByTestId("settings-nav-item-recovery")).toBeVisible();
 
   // Server information is a separate section (transport context).
   await page.getByTestId("settings-nav-item-server").click();

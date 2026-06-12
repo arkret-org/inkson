@@ -22,7 +22,7 @@
 //!
 //! Job mechanics mirror the sidecar backup job (digest dedupe, debounce,
 //! min-interval, single-flight) and add exponential-backoff retries plus a
-//! status snapshot consumed by the `/settings/security` status panel.
+//! status snapshot available to recovery/debug surfaces.
 
 use std::collections::BTreeMap;
 use std::sync::{LazyLock, Mutex};
@@ -70,7 +70,7 @@ static MLS_HISTORY_BACKUP_JOBS: LazyLock<Mutex<BTreeMap<String, MlsHistoryBackup
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 /// Last terminal outcomes, kept separately from the per-realm job map so the
-/// status panel can show "last failure" even after the failing job was
+/// diagnostics can show "last failure" even after the failing job was
 /// superseded by a successful upload of newer material.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct MlsHistoryBackupLastOutcome {
@@ -82,7 +82,7 @@ struct MlsHistoryBackupLastOutcome {
 static MLS_HISTORY_BACKUP_LAST_OUTCOME: LazyLock<Mutex<MlsHistoryBackupLastOutcome>> =
     LazyLock::new(|| Mutex::new(MlsHistoryBackupLastOutcome::default()));
 
-/// Status snapshot for the `/settings/security` panel.
+/// Status snapshot for recovery/debug surfaces.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MlsHistoryBackupStatus {
     /// Realms whose newest local MLS snapshot has not been uploaded yet

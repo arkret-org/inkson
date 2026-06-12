@@ -70,6 +70,37 @@ fn pinned_realm_ids_from_store(store: &LocalStateStore) -> BTreeSet<String> {
         .collect()
 }
 
+fn notification_projection_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn notification_projection_bool(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
+}
+
+fn unread_notification_count(snapshot: &ClientLocalState) -> usize {
+    snapshot
+        .notification_projection
+        .iter()
+        .enumerate()
+        .filter(|(index, value)| {
+            let id = notification_projection_string(value, &["notification_id", "id"])
+                .unwrap_or_else(|| format!("notification-{index}"));
+            let client_state = snapshot.notification_client_state.get(&id);
+            let client_read = client_state.map(|state| state.read).unwrap_or(false);
+            let client_archived = client_state.map(|state| state.archived).unwrap_or(false);
+            let archived =
+                notification_projection_bool(value, "archived").unwrap_or(client_archived);
+            let read = notification_projection_bool(value, "read").unwrap_or(client_read);
+            !archived && !read
+        })
+        .count()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct RealmManageRow {
     realm_id: String,
@@ -2032,6 +2063,8 @@ pub fn RouterView() -> Element {
         });
     let topbar_search_is_open =
         palette_open() || topbar_search_expanded() || !global_query().is_empty();
+    let topbar_unread_notifications = unread_notification_count(&state_store.read().load());
+    let has_topbar_unread_notifications = topbar_unread_notifications > 0;
     let document_title = if matches!(&route, Route::Dashboard) {
         "Yougen | Cokret".to_owned()
     } else {
@@ -2454,8 +2487,10 @@ pub fn RouterView() -> Element {
                         }
                         notifications_drawer_open.toggle();
                     },
-                    UiIcon { name: "inbox" }
-                    span { class: "topbar-notifications-badge", "aria-hidden": "true" }
+                    UiIcon { name: "bell" }
+                    if has_topbar_unread_notifications {
+                        span { class: "topbar-notifications-badge", "aria-hidden": "true" }
+                    }
                 }
             }
             nav {
@@ -3718,8 +3753,10 @@ pub fn RouterView() -> Element {
                                 }
                                 notifications_drawer_open.toggle();
                             },
-                            UiIcon { name: "inbox" }
-                            span { class: "topbar-notifications-badge", "aria-hidden": "true" }
+                            UiIcon { name: "bell" }
+                            if has_topbar_unread_notifications {
+                                span { class: "topbar-notifications-badge", "aria-hidden": "true" }
+                            }
                         }
                         // M-UX-CONTEXT-1: the old "+ New Space"
                         // topbar shortcut is gone. Realm + Space
@@ -4653,7 +4690,7 @@ pub fn RouterView() -> Element {
                         onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
                         div { class: "notifications-drawer-header",
                             div { class: "notifications-drawer-title",
-                                UiIcon { name: "inbox" }
+                                UiIcon { name: "bell" }
                                 span { {crate::i18n::tr("nav.notifications")} }
                             }
                             div { class: "notifications-drawer-actions",
@@ -5844,7 +5881,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::SettingsDevices => "Devices",
         Route::SettingsDevicesPair => "Pair new device",
         Route::SettingsRecovery => "Recovery",
-        Route::SettingsSecurity => "Key backup",
+        Route::SettingsSecurity => "Recovery",
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",
         Route::Applets => "Applets",
@@ -5859,8 +5896,7 @@ fn settings_route_label(section: &str) -> &'static str {
         "devices" => "Devices",
         "storage" => "Data & sync",
         "encryption" => "Security",
-        "security" | "key-backup" => "Key backup",
-        "recovery" => "Recovery",
+        "security" | "key-backup" | "recovery" => "Recovery",
         "mimi" => "Integrations",
         "push" | "notifications" => "Notifications",
         "privacy" => "Privacy & sharing",
@@ -7518,6 +7554,50 @@ mod tests {
             crate::push::push_token_provider().is_some(),
             "second ensure call must keep the provider installed"
         );
+    }
+
+    #[test]
+    fn unread_notification_count_ignores_read_and_archived_items() {
+        let mut snapshot = ClientLocalState {
+            notification_projection: vec![
+                serde_json::json!({
+                    "notification_id": "unread",
+                    "read": false
+                }),
+                serde_json::json!({
+                    "notification_id": "server-read",
+                    "read": true
+                }),
+                serde_json::json!({
+                    "notification_id": "client-read"
+                }),
+                serde_json::json!({
+                    "notification_id": "client-archived"
+                }),
+                serde_json::json!({
+                    "notification_id": "server-archived",
+                    "read": false,
+                    "archived": true
+                }),
+            ],
+            ..ClientLocalState::default()
+        };
+        snapshot.notification_client_state.insert(
+            "client-read".to_owned(),
+            crate::local_state::NotificationClientState {
+                read: true,
+                archived: false,
+            },
+        );
+        snapshot.notification_client_state.insert(
+            "client-archived".to_owned(),
+            crate::local_state::NotificationClientState {
+                read: false,
+                archived: true,
+            },
+        );
+
+        assert_eq!(unread_notification_count(&snapshot), 1);
     }
 
     fn oidc_bundle(access_token: &str, expires_at_unix: Option<i64>) -> OidcTokenBundle {
