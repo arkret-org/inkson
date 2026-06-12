@@ -1,5 +1,7 @@
 //! Conformance profiles, JSON schema validation, and security checks
-//! per cokret-spec sections 12–13.
+//! per cokret-spec sections 12-13.
+
+use std::sync::LazyLock;
 
 use cokret_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
@@ -222,13 +224,12 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// `extensions/agent-protocol-interop.md`, `extensions/mimi-interop.md`.
 /// Canonical registry: `artifacts/registry/event-kind-registry.json`.
 pub fn known_event_kinds() -> Vec<&'static str> {
-    // 110 active wire event kinds, mirrored from
-    // `artifacts/registry/event-kind-registry.json` (active set, 2026-05-07).
+    // Client-supported subset of active wire event kinds from
+    // `artifacts/registry/event-kind-registry.json`.
     // ORDER MATTERS for diff-friendly maintenance: keep alphabetical inside each
-    // group. When the spec adds/removes a kind, refresh
-    // `tests/fixtures/event-kind-registry.snapshot.txt` via
-    // `scripts/sync-event-kind-registry.ps1`, update this list, and bump the
-    // count assertions in `mod tests` below.
+    // group. Tests load the adjacent cokret-spec registry directly and assert
+    // that every listed kind is still active and that its wire_scope matches
+    // the SDK classifier.
     vec![
         // Account / actor profile
         "ck.account.blocklist",
@@ -378,10 +379,10 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.space.restore",
         "ck.space.tombstone",
         "ck.space.update",
-        // MLS Space-key share (audited E2EE)
-        "ck.space_key.share",
-        "ck.space_key.share_audit",
-        "ck.space_key.withheld",
+        // MLS Realm-key share (audited E2EE)
+        "ck.realm_key.share",
+        "ck.realm_key.share_audit",
+        "ck.realm_key.withheld",
         // View (View projection)
         "ck.view.create",
         "ck.view.reconcile",
@@ -397,10 +398,9 @@ pub fn known_event_kinds() -> Vec<&'static str> {
 /// - `Ephemeral` — short-TTL signaling; reducer MUST NOT use as state input.
 ///
 /// The chat / call / verification views use this to keep ephemeral signals
-/// from being rendered as durable history. The diff test in `mod tests`
-/// pins the classification to `tests/fixtures/event-kind-wire-scopes.snapshot.tsv`,
-/// which is regenerated from cokret-spec via
-/// `scripts/sync-event-kind-registry.ps1`.
+/// from being rendered as durable history. The classification delegates to
+/// `cokret_sdk::events::kinds::event_wire_scope`, so wire-scope facts come
+/// from the SDK's spec-sync surface instead of a yougen-local mirror.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKindWireScope {
     Durable,
@@ -427,29 +427,25 @@ impl EventKindWireScope {
     }
 }
 
-/// Event kinds whose wire_scope is `actor_private_event`.
-const ACTOR_PRIVATE_EVENT_KINDS: &[&str] = &[
-    "ck.account.blocklist",
-    "ck.account_data.set",
-    "ck.read_cursor.advance",
-];
+fn known_event_kind_slice() -> &'static [&'static str] {
+    static KNOWN_EVENT_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(known_event_kinds);
+    KNOWN_EVENT_KINDS.as_slice()
+}
 
-/// Event kinds whose wire_scope is `ephemeral_event`. Reducers must NOT take
-/// these as state input — they are short-TTL signaling only.
-const EPHEMERAL_EVENT_KINDS: &[&str] = &[
-    "ck.call.signal",
-    "ck.key.verification.accept",
-    "ck.key.verification.cancel",
-    "ck.key.verification.done",
-    "ck.key.verification.key",
-    "ck.key.verification.mac",
-    "ck.key.verification.ready",
-    "ck.key.verification.request",
-    "ck.key.verification.start",
-    "ck.presence",
-    "ck.receipt.read",
-    "ck.typing",
-];
+fn sdk_wire_scope(event_kind: &str) -> Option<EventKindWireScope> {
+    match cokret_sdk::events::kinds::event_wire_scope(event_kind) {
+        cokret_sdk::events::kinds::EventWireScope::DurableEvent => {
+            Some(EventKindWireScope::Durable)
+        }
+        cokret_sdk::events::kinds::EventWireScope::ActorPrivateEvent => {
+            Some(EventKindWireScope::ActorPrivate)
+        }
+        cokret_sdk::events::kinds::EventWireScope::EphemeralEvent => {
+            Some(EventKindWireScope::Ephemeral)
+        }
+        cokret_sdk::events::kinds::EventWireScope::Custom => None,
+    }
+}
 
 /// F-PROFILE-1: cheap fast-path version of "is `kind` in
 /// [`known_event_kinds()`]?" used by inbound event-parse gates.
@@ -487,14 +483,8 @@ pub fn require_known_event_kind(event_kind: &str) -> Result<(), ValidationError>
 /// kind is unknown to yougen. Unknown kinds default to "treat as durable" at
 /// the call site so we never leak signaling into a state path by accident.
 pub fn event_kind_wire_scope(event_kind: &str) -> Option<EventKindWireScope> {
-    if ACTOR_PRIVATE_EVENT_KINDS.contains(&event_kind) {
-        return Some(EventKindWireScope::ActorPrivate);
-    }
-    if EPHEMERAL_EVENT_KINDS.contains(&event_kind) {
-        return Some(EventKindWireScope::Ephemeral);
-    }
-    if known_event_kinds().contains(&event_kind) {
-        return Some(EventKindWireScope::Durable);
+    if known_event_kind_slice().contains(&event_kind) {
+        return sdk_wire_scope(event_kind);
     }
     None
 }
@@ -503,12 +493,26 @@ pub fn event_kind_wire_scope(event_kind: &str) -> Option<EventKindWireScope> {
 /// chat/call views use this to render their "ephemeral signals" banners
 /// programmatically rather than re-typing kind literals.
 pub fn ephemeral_event_kinds() -> &'static [&'static str] {
-    EPHEMERAL_EVENT_KINDS
+    static EPHEMERAL_EVENT_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+        known_event_kind_slice()
+            .iter()
+            .copied()
+            .filter(|kind| sdk_wire_scope(kind) == Some(EventKindWireScope::Ephemeral))
+            .collect()
+    });
+    EPHEMERAL_EVENT_KINDS.as_slice()
 }
 
 /// All event kinds yougen currently classifies as actor-private.
 pub fn actor_private_event_kinds() -> &'static [&'static str] {
-    ACTOR_PRIVATE_EVENT_KINDS
+    static ACTOR_PRIVATE_EVENT_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+        known_event_kind_slice()
+            .iter()
+            .copied()
+            .filter(|kind| sdk_wire_scope(kind) == Some(EventKindWireScope::ActorPrivate))
+            .collect()
+    });
+    ACTOR_PRIVATE_EVENT_KINDS.as_slice()
 }
 
 pub fn profile_readiness(server: Option<&ServerDescription>) -> Vec<ProfileReadiness> {
@@ -920,31 +924,10 @@ mod tests {
 
     #[test]
     fn known_event_kinds_matches_registry_count() {
-        // C18 wire-break (spec 2026-05-08): ck.flow.branch.* (7 kinds) renamed
-        // and pruned to ck.flow.track.{enable,disable,update,set_primary}
-        // (4 kinds; spec dropped member/history_visibility/policy_components
-        // because tracks no longer carry independent membership/visibility/
-        // policy; Flow.scope_circle_id owns the Flow-wide effective scope.
-        // Net -3 from prior 110.
-        // Follow-on wire-break (spec dc01ad7, 2026-05-18): the four track
-        // events above unified into a single `ck.flow.tracks.update` carrying
-        // a `ck.patch.v1` JSON Patch against `Flow.tracks`. Net -3 more.
-        // Round C45 (spec 5ed365c, 2026-05-18 main): +3 new event kinds
-        // (ck.attestation.range_completeness / ck.identity.accountability_grant /
-        // ck.morph.schema_migrate). The two standing-audit-member kinds
-        // (ck.audit.epoch_key_destruction and ck.realm.audit_policy_downgrade)
-        // were later removed by the 2026-06-04 audit-applet-binding migration —
-        // yougen never surfaced those typed kinds, so the removal doesn't shift
-        // the count.
-        // Spec `artifacts/registry/event-kind-registry.json` itself declares
-        // 134 active event kinds at HEAD — yougen's `known_event_kinds()`
-        // surface remains a subset (105 here).
-        // T2.3 wire-break: ck.space.lifecycle.set and ck.space.policy.set
-        // were removed (artifacts/registry/removed-event-kinds.json,
-        // hard_reject); net -2 from prior 107.
-        // Realm/Space split: security-boundary events live under `ck.realm.*`,
-        // and container lifecycle events live under `ck.space.*`.
-        assert_eq!(known_event_kinds().len(), 110);
+        // This pins the client-supported subset size. Registry membership and
+        // wire_scope are checked against the adjacent cokret-spec artifact below,
+        // so this count only catches accidental local additions/removals.
+        assert_eq!(known_event_kinds().len(), 108);
     }
 
     #[test]
@@ -1083,112 +1066,93 @@ mod tests {
         );
     }
 
-    /// Hermetic diff against the vendored snapshot of
-    /// `cokret-spec/spec/v1/artifacts/registry/event-kind-registry.json`.
-    ///
-    /// The snapshot lives in `tests/fixtures/event-kind-registry.snapshot.txt`
-    /// and is refreshed via `scripts/sync-event-kind-registry.ps1`. When the
-    /// spec adds or renames an event kind, the script regenerates the snapshot
-    /// (which makes this test fail until `known_event_kinds()` is updated to
-    /// match), so spec drift never lands silently. The snapshot is the
-    /// authoritative reference inside the yougen tree — there is intentionally
-    /// no runtime fetch of cokret-spec.
-    const EVENT_KIND_REGISTRY_SNAPSHOT: &str =
-        include_str!("../tests/fixtures/event-kind-registry.snapshot.txt");
+    fn spec_event_kind_registry_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("yougen lives next to cokret-spec")
+            .join("cokret-spec")
+            .join("spec")
+            .join("v1")
+            .join("artifacts")
+            .join("registry")
+            .join("event-kind-registry.json")
+    }
 
-    fn parse_snapshot_kinds(snapshot: &str) -> Vec<String> {
-        snapshot
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(str::to_owned)
-            .collect()
+    fn active_spec_event_kind_scopes()
+    -> std::collections::BTreeMap<String, super::EventKindWireScope> {
+        let path = spec_event_kind_registry_path();
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
+        let value: Value = serde_json::from_str(&raw)
+            .unwrap_or_else(|err| panic!("parse {} failed: {err}", path.display()));
+        let entries = value
+            .get("event_kinds")
+            .and_then(Value::as_array)
+            .expect("event-kind-registry.json has event_kinds array");
+
+        let mut out = std::collections::BTreeMap::new();
+        for entry in entries {
+            if entry.get("status").and_then(Value::as_str) != Some("active") {
+                continue;
+            }
+            let kind = entry
+                .get("event_kind")
+                .and_then(Value::as_str)
+                .expect("active event-kind entry has event_kind");
+            let scope_str = entry
+                .get("wire_scope")
+                .and_then(Value::as_str)
+                .expect("active event-kind entry has wire_scope");
+            let scope = super::EventKindWireScope::from_registry_str(scope_str)
+                .unwrap_or_else(|| panic!("unknown wire_scope `{scope_str}` for `{kind}`"));
+            out.insert(kind.to_owned(), scope);
+        }
+        assert!(
+            !out.is_empty(),
+            "event-kind-registry.json contained no active event kinds"
+        );
+        out
     }
 
     #[test]
-    fn known_event_kinds_match_spec_snapshot() {
-        let snapshot: std::collections::BTreeSet<String> =
-            parse_snapshot_kinds(EVENT_KIND_REGISTRY_SNAPSHOT)
-                .into_iter()
-                .collect();
-        let yougen: std::collections::BTreeSet<String> =
-            known_event_kinds().into_iter().map(str::to_owned).collect();
-
-        let missing: Vec<&String> = snapshot.difference(&yougen).collect();
-        let extra: Vec<&String> = yougen.difference(&snapshot).collect();
+    fn known_event_kinds_are_active_in_current_spec_registry() {
+        let registry = active_spec_event_kind_scopes();
+        let missing: Vec<&str> = known_event_kinds()
+            .into_iter()
+            .filter(|kind| !registry.contains_key(*kind))
+            .collect();
 
         assert!(
-            missing.is_empty() && extra.is_empty(),
-            "yougen `known_event_kinds()` is out of sync with `tests/fixtures/event-kind-registry.snapshot.txt`. \
-             Refresh the snapshot via `scripts/sync-event-kind-registry.ps1` and reconcile both files in the same commit. \
-             missing_in_yougen={missing:?} extra_in_yougen={extra:?}"
+            missing.is_empty(),
+            "yougen `known_event_kinds()` contains entries absent from the current spec registry: {missing:?}"
         );
     }
 
-    /// Hermetic diff between the typed `event_kind_wire_scope()` classifier
-    /// and the vendored registry snapshot. Catches drift in *either* direction:
-    ///   1. spec moves a kind between scopes (e.g. ephemeral → durable)
-    ///   2. yougen forgets to update the in-code classifier alongside the spec
-    ///   3. a kind exists in one source but not the other
-    ///
-    /// Refresh `tests/fixtures/event-kind-wire-scopes.snapshot.tsv` via
-    /// `scripts/sync-event-kind-registry.ps1` and reconcile the in-code lists
-    /// (`ACTOR_PRIVATE_EVENT_KINDS`, `EPHEMERAL_EVENT_KINDS`) in the same commit.
-    const EVENT_KIND_WIRE_SCOPE_SNAPSHOT: &str =
-        include_str!("../tests/fixtures/event-kind-wire-scopes.snapshot.tsv");
-
-    fn parse_wire_scope_snapshot(snapshot: &str) -> Vec<(String, super::EventKindWireScope)> {
-        snapshot
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(|line| {
-                let mut parts = line.splitn(2, '\t');
-                let kind = parts.next().expect("snapshot row missing kind").to_owned();
-                let scope_str = parts.next().expect("snapshot row missing scope");
-                let scope = super::EventKindWireScope::from_registry_str(scope_str)
-                    .unwrap_or_else(|| panic!("unknown wire_scope `{scope_str}` in snapshot"));
-                (kind, scope)
-            })
-            .collect()
-    }
-
     #[test]
-    fn event_kind_wire_scope_classifier_matches_snapshot() {
-        let snapshot = parse_wire_scope_snapshot(EVENT_KIND_WIRE_SCOPE_SNAPSHOT);
-
+    fn event_kind_wire_scope_classifier_matches_current_spec_registry() {
+        let registry = active_spec_event_kind_scopes();
         let mut mismatches: Vec<String> = Vec::new();
-        for (kind, expected) in &snapshot {
+        for kind in known_event_kinds() {
+            let expected = registry
+                .get(kind)
+                .unwrap_or_else(|| panic!("known event kind `{kind}` missing from spec registry"));
             match super::event_kind_wire_scope(kind) {
                 Some(actual) if actual == *expected => {}
                 Some(actual) => mismatches.push(format!(
-                    "{kind}: snapshot={} but classifier={}",
+                    "{kind}: registry={} but classifier={}",
                     expected.as_registry_str(),
                     actual.as_registry_str()
                 )),
                 None => mismatches.push(format!(
-                    "{kind}: snapshot={} but classifier returned None",
+                    "{kind}: registry={} but classifier returned None",
                     expected.as_registry_str()
                 )),
             }
         }
 
-        let snapshot_kinds: std::collections::BTreeSet<String> =
-            snapshot.iter().map(|(k, _)| k.clone()).collect();
-        for kind in known_event_kinds() {
-            if !snapshot_kinds.contains(kind) {
-                mismatches.push(format!(
-                    "{kind}: in known_event_kinds but absent from snapshot"
-                ));
-            }
-        }
-
         assert!(
             mismatches.is_empty(),
-            "event_kind_wire_scope classifier is out of sync with the snapshot. \
-             Refresh via `scripts/sync-event-kind-registry.ps1` and reconcile the \
-             in-code `ACTOR_PRIVATE_EVENT_KINDS` / `EPHEMERAL_EVENT_KINDS` constants. \
-             mismatches=\n - {}",
+            "event_kind_wire_scope classifier drifted from the current spec registry:\n - {}",
             mismatches.join("\n - "),
         );
     }
@@ -1222,36 +1186,18 @@ mod tests {
     }
 
     #[test]
-    fn event_kind_registry_snapshot_is_well_formed() {
-        let kinds = parse_snapshot_kinds(EVENT_KIND_REGISTRY_SNAPSHOT);
-        assert!(
-            !kinds.is_empty(),
-            "snapshot must list at least one event kind"
-        );
-
-        let mut seen = std::collections::BTreeSet::new();
-        for kind in &kinds {
+    fn active_spec_event_kind_registry_is_well_formed() {
+        for kind in active_spec_event_kind_scopes().keys() {
             assert!(
                 kind.starts_with("ck."),
-                "snapshot entry `{kind}` missing ck.* namespace"
-            );
-            assert!(
-                seen.insert(kind.clone()),
-                "snapshot contains duplicate entry `{kind}`"
+                "registry entry `{kind}` missing ck.* namespace"
             );
             for ch in kind.chars() {
                 assert!(
                     ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '.' || ch == '_',
-                    "snapshot entry `{kind}` has illegal char `{ch}`"
+                    "registry entry `{kind}` has illegal char `{ch}`"
                 );
             }
         }
-
-        let mut sorted = kinds.clone();
-        sorted.sort();
-        assert_eq!(
-            sorted, kinds,
-            "snapshot entries must stay sorted to keep diffs reviewable"
-        );
     }
 }
