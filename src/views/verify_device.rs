@@ -205,17 +205,36 @@ pub fn VerifyDevicePanel(
     let mut peer_public_b64 = use_signal(String::new);
     let mut sas_send_status = use_signal(String::new);
 
-    // Once the user generates their
-    // own ephemeral keypair, start polling `/_cokret/self/device_messages`
-    // every ~3 s looking for a `ck.key.verification.key` envelope from
-    // the peer device. When one arrives, auto-fill `peer_public_b64`
-    // so the SAS pair recomputes from the real X25519 shared secret
-    // without the user copy-pasting. Polling stops once a peer key
-    // lands, once SAS is confirmed (`verify_status` non-empty), or
-    // after ~120 ticks (~6 min) to bound the budget.
+    {
+        let state_store_for_inbox = state_store;
+        use_effect(move || {
+            if verify_method() != VerifyMethod::Sas
+                || ephemeral_keypair().is_none()
+                || !peer_public_b64().is_empty()
+                || !verify_status().is_empty()
+            {
+                return;
+            }
+            let inbox = state_store_for_inbox.read().to_device_inbox();
+            if inbox.is_empty() {
+                return;
+            }
+            let messages_value = serde_json::json!({ "messages": inbox });
+            if let Some(key) = extract_peer_verification_key(&messages_value) {
+                peer_public_b64.set(key);
+                sas_send_status
+                    .set("peer X25519 public key auto-filled from account subscribe".to_owned());
+            }
+        });
+    }
+
+    // The main receive path is account.subscribe via the local to-device
+    // dispatcher above. This foreground poll is a short recovery path for
+    // cases where sync is not yet running or the dispatcher needs a catch-up.
     {
         let base = base_url.clone();
         let token_for_poll = token;
+        let mut state_store_for_poll = state_store;
         use_future(move || {
             let base = base.clone();
             async move {
@@ -238,6 +257,18 @@ pub fn VerifyDevicePanel(
                     if !verify_status().is_empty() {
                         break;
                     }
+                    let inbox = state_store_for_poll.read().to_device_inbox();
+                    if !inbox.is_empty() {
+                        let messages_value = serde_json::json!({ "messages": inbox });
+                        if let Some(key) = extract_peer_verification_key(&messages_value) {
+                            peer_public_b64.set(key);
+                            sas_send_status.set(
+                                "peer X25519 public key auto-filled from account subscribe"
+                                    .to_owned(),
+                            );
+                            break;
+                        }
+                    }
                     let api_token = token_for_poll();
                     if api_token.trim().is_empty() {
                         continue;
@@ -257,15 +288,23 @@ pub fn VerifyDevicePanel(
                         && messages
                             .messages
                             .iter()
-                            .all(|message| message.kind == "ck.key.verification.key");
+                            .all(|message| message.kind.starts_with("ck.key.verification."));
                     let messages_value = match serde_json::to_value(&messages) {
                         Ok(v) => v,
                         Err(_) => continue,
                     };
+                    if let Some(items) = messages_value
+                        .get("messages")
+                        .and_then(serde_json::Value::as_array)
+                    {
+                        state_store_for_poll
+                            .write()
+                            .ingest_to_device_messages(items);
+                    }
                     if let Some(key) = extract_peer_verification_key(&messages_value) {
                         peer_public_b64.set(key);
                         sas_send_status.set(
-                            "peer X25519 public key auto-filled from device_messages poll"
+                            "peer X25519 public key auto-filled from device_messages fallback"
                                 .to_owned(),
                         );
                         if can_ack_batch && let Some(ack_token) = ack_token {

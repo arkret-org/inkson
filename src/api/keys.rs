@@ -124,6 +124,26 @@ impl CokretApi {
         self.get_json("_cokret/self/device_messages").await
     }
 
+    pub async fn receive_device_messages_page(
+        &self,
+        from: Option<&str>,
+        limit: Option<u32>,
+    ) -> anyhow::Result<DeviceMessagesGetOutcome> {
+        let mut url = self.endpoint("_cokret/self/device_messages")?;
+        {
+            let mut query = url.query_pairs_mut();
+            if let Some(from) = from.map(str::trim).filter(|value| !value.is_empty()) {
+                query.append_pair("from", from);
+            }
+            if let Some(limit) = limit {
+                query.append_pair("limit", &limit.to_string());
+            }
+        }
+        let request = self.http.get(url);
+        self.send_json(self.prepare_request(request), Method::GET)
+            .await
+    }
+
     pub async fn ack_device_messages(
         &self,
         ack_token: &str,
@@ -319,50 +339,10 @@ impl CokretApi {
         self.get_json("_cokret/self/account/viewer").await
     }
 
-    /// Request a short-lived legacy pairing challenge from soland's local
-    /// scaffold. New device pairing should prefer [`account_device_pair`].
-    pub async fn device_pairing_challenge(&self, body: Value) -> anyhow::Result<Value> {
-        self.post_json("_soland/self/devices/pairing-challenge", body)
-            .await
-    }
-
-    /// Finalize legacy local scaffold pairing. New device pairing should
-    /// prefer [`account_device_pair`].
-    pub async fn authorize_device_pairing(&self, body: Value) -> anyhow::Result<Value> {
-        self.post_json("_soland/self/devices/authorize-pairing", body)
-            .await
-    }
-
     /// Pair a new sibling device through the spec account-auth gate.
     pub async fn account_device_pair(&self, body: Value) -> anyhow::Result<Value> {
         self.post_json("_cokret/gate/account/device-pair", body)
             .await
-    }
-
-    /// Create a server-mediated pending device-pairing request for approval
-    /// from an already-authorized device.
-    pub async fn create_device_pairing_request(&self, body: Value) -> anyhow::Result<Value> {
-        self.post_json("_cokret/gate/account/device-pairing-requests", body)
-            .await
-    }
-
-    /// List pending device-pairing requests visible to this authenticated
-    /// device.
-    pub async fn list_device_pairing_requests(&self) -> anyhow::Result<Value> {
-        self.get_json("_cokret/self/devices/pairing-requests").await
-    }
-
-    /// Approve a pending device-pairing request from this authenticated
-    /// device.
-    pub async fn approve_device_pairing_request(
-        &self,
-        pairing_request_id: &str,
-    ) -> anyhow::Result<Value> {
-        self.post_json(
-            &format!("_cokret/self/devices/pairing-requests/{pairing_request_id}/approve"),
-            json!({}),
-        )
-        .await
     }
 
     pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustOutcome> {

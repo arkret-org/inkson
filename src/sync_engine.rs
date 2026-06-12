@@ -43,7 +43,9 @@ use crate::api::{
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalSealView, LocalStateStore};
-use crate::models::{ClientSyncOutcome, RealmTreeNode, RealmTreeNodeKind};
+use crate::models::{
+    ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNode, RealmTreeNodeKind,
+};
 
 /// Sleep ceiling between failed iterations. 60s matches what other
 /// Long enough that a wedged server doesn't get DoSed by retries,
@@ -81,6 +83,8 @@ const MIN_INTER_ITERATION_MS: u64 = 5_000;
 /// `None` to `apply_response`, which preserves the last merged invite
 /// projection rather than clearing it.
 const INVITES_REFRESH_EVERY_N_DELTAS: u32 = 6;
+const TO_DEVICE_PAGE_LIMIT: u32 = 1000;
+const MAX_TO_DEVICE_BACKFILL_PAGES: usize = 32;
 
 /// Bundle of signals + state-store the engine needs to apply a response.
 /// `Copy` because Dioxus signals already are; the struct is just a
@@ -369,6 +373,14 @@ async fn run_iteration(
                 return IterationOutcome::Ok;
             }
             apply_response(&response, is_full_sync, ctx, invite_notifications);
+            if let Err(error) = process_to_device_delivery(&api, &response, ctx).await {
+                if is_auth_expired_error(&error) {
+                    return IterationOutcome::AuthExpired;
+                }
+                let mut last_error = ctx.last_error;
+                last_error.set(Some(format!("sync_engine to-device: {error}")));
+                return IterationOutcome::Transient(format!("sync_engine to-device: {error}"));
+            }
             IterationOutcome::Ok
         }
         Ok(AccountSubscribeSnapshotOutcome::ReconnectAfter {
@@ -550,6 +562,7 @@ pub fn apply_response(
             apply_account_data(store, response, &account_did, &mut theme, &mut last_error);
             apply_notification_projection(store, response, invite_notifications);
             store.save_presence_projection(response.presence.clone());
+            store.ingest_to_device_messages(&response.to_device);
         }); // store.batch — single coalesced flush happens here
     }
 
@@ -593,7 +606,7 @@ pub fn apply_response(
     };
     timeline.set(next_timeline);
 
-    device_queue.set(response.to_device.len());
+    device_queue.set(state_store.read().load().to_device_inbox.len());
     sync_cursor.set(response.cursor.clone());
 }
 
@@ -604,6 +617,79 @@ pub fn apply_response(
 /// `state.events[]` form where the roster only carries
 /// `identity_event_ids[]` and the events themselves live in the
 /// frame-level event log.
+async fn process_to_device_delivery(
+    api: &CokretApi,
+    response: &ClientSyncOutcome,
+    ctx: &SyncEngineContext,
+) -> anyhow::Result<()> {
+    let mut ack_safe_prefix = to_device_batch_all_ack_safe(&response.to_device);
+    if ack_safe_prefix
+        && !response.to_device.is_empty()
+        && let Some(ack_token) = response.to_device_ack_token.as_deref()
+    {
+        api.ack_device_messages(ack_token).await?;
+    }
+
+    let mut next_cursor = if response.to_device_limited {
+        response.to_device_next_cursor.clone()
+    } else {
+        None
+    };
+    let mut page_count = 0usize;
+    while let Some(cursor) = next_cursor {
+        page_count += 1;
+        if page_count > MAX_TO_DEVICE_BACKFILL_PAGES {
+            anyhow::bail!(
+                "to-device backfill exceeded {MAX_TO_DEVICE_BACKFILL_PAGES} pages without finishing"
+            );
+        }
+        let page = api
+            .receive_device_messages_page(Some(&cursor), Some(TO_DEVICE_PAGE_LIMIT))
+            .await?;
+        let messages = device_messages_get_values(&page)?;
+        {
+            let mut state_store = ctx.state_store;
+            state_store.write().ingest_to_device_messages(&messages);
+        }
+        if !to_device_batch_all_ack_safe(&messages) {
+            ack_safe_prefix = false;
+        }
+        if ack_safe_prefix
+            && !messages.is_empty()
+            && let Some(ack_token) = page.ack_token.as_deref()
+        {
+            api.ack_device_messages(ack_token).await?;
+        }
+        if !(page.has_more || page.limited) {
+            break;
+        }
+        next_cursor = page.next_cursor.clone();
+        if next_cursor.is_none() {
+            anyhow::bail!("to-device page reported more data without next_cursor");
+        }
+    }
+    let mut device_queue = ctx.device_queue;
+    device_queue.set(ctx.state_store.read().load().to_device_inbox.len());
+    Ok(())
+}
+
+fn device_messages_get_values(page: &DeviceMessagesGetOutcome) -> anyhow::Result<Vec<Value>> {
+    page.messages
+        .iter()
+        .map(|message| serde_json::to_value(message).map_err(Into::into))
+        .collect()
+}
+
+fn to_device_batch_all_ack_safe(messages: &[Value]) -> bool {
+    messages.iter().all(|message| {
+        message
+            .get("kind")
+            .or_else(|| message.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.starts_with("ck.key.verification."))
+    })
+}
+
 fn ingest_member_identity_events_from_projection(
     store: &mut LocalStateStore,
     realm_id: &str,

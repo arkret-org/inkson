@@ -29,6 +29,7 @@ const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
 /// cursor, plaintext sidecar) silently fails. We retain the most recent
 /// `RAW_OPERATIONS_MAX` records, dropping the oldest first.
 const RAW_OPERATIONS_MAX: usize = 512;
+const TO_DEVICE_INBOX_MAX: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawOperationRecord {
@@ -956,6 +957,13 @@ pub struct ClientLocalState {
     pub notification_projection: Vec<Value>,
     #[serde(default)]
     pub presence_projection: Vec<Value>,
+    /// Persisted per-device to-device inbox. Both account.subscribe
+    /// `delta.to_device.messages[]` and explicit `device_messages` pulls are
+    /// funneled through this queue before protocol-specific handlers consume
+    /// them. Entries stay local only and are deduplicated by envelope identity
+    /// plus transaction/request ids where present.
+    #[serde(default)]
+    pub to_device_inbox: Vec<Value>,
     #[serde(default)]
     pub notification_client_state: BTreeMap<String, NotificationClientState>,
     /// Legacy binary per-realm mute map (JSON key `muted_realms`). Superseded
@@ -1339,6 +1347,7 @@ impl Default for ClientLocalState {
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
             presence_projection: Vec::new(),
+            to_device_inbox: Vec::new(),
             notification_client_state: BTreeMap::new(),
             legacy_muted_realms: BTreeMap::new(),
             realm_watch_levels: BTreeMap::new(),
@@ -1700,6 +1709,53 @@ impl LocalStateStore {
         }
         self.cached.presence_projection = events;
         let _ = self.flush();
+    }
+
+    pub fn ingest_to_device_messages(&mut self, messages: &[Value]) -> usize {
+        if messages.is_empty() {
+            return 0;
+        }
+        self.ensure_cached_loaded();
+        let now = Utc::now();
+        let before_retain = self.cached.to_device_inbox.len();
+        self.cached
+            .to_device_inbox
+            .retain(|message| !to_device_message_expired(message, now));
+        let pruned_expired = before_retain != self.cached.to_device_inbox.len();
+        let mut seen: BTreeSet<String> = self
+            .cached
+            .to_device_inbox
+            .iter()
+            .map(to_device_message_dedup_key)
+            .collect();
+        let mut inserted = 0;
+        for message in messages {
+            if to_device_message_expired(message, now) {
+                continue;
+            }
+            let key = to_device_message_dedup_key(message);
+            if !seen.insert(key) {
+                continue;
+            }
+            self.cached.to_device_inbox.push(message.clone());
+            inserted += 1;
+        }
+        let overflow = self
+            .cached
+            .to_device_inbox
+            .len()
+            .saturating_sub(TO_DEVICE_INBOX_MAX);
+        if overflow > 0 {
+            self.cached.to_device_inbox.drain(0..overflow);
+        }
+        if inserted > 0 || pruned_expired || overflow > 0 {
+            let _ = self.flush();
+        }
+        inserted
+    }
+
+    pub fn to_device_inbox(&self) -> Vec<Value> {
+        self.load().to_device_inbox
     }
 
     pub fn append_raw_operation(
@@ -4061,6 +4117,55 @@ impl LocalStateStore {
         }
         self.loaded.set(true);
     }
+}
+
+fn to_device_message_dedup_key(message: &Value) -> String {
+    let kind = message
+        .get("kind")
+        .or_else(|| message.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let sender = message
+        .get("sender_principal_id")
+        .or_else(|| message.get("sender"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let sender_device = message
+        .get("sender_device_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let recipient = message
+        .get("recipient_principal_id")
+        .or_else(|| message.get("recipient"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let recipient_device = message
+        .get("recipient_device_id")
+        .or_else(|| message.get("device_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let content = message.get("content").unwrap_or(&Value::Null);
+    let transaction = content
+        .get("transaction_id")
+        .or_else(|| content.get("request_id"))
+        .or_else(|| content.get("pairing_code"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !transaction.is_empty() {
+        return format!(
+            "{kind}|{sender}|{sender_device}|{recipient}|{recipient_device}|{transaction}"
+        );
+    }
+    serde_json::to_string(message).unwrap_or_else(|_| format!("{kind}|{sender}|{recipient}"))
+}
+
+fn to_device_message_expired(message: &Value, now: DateTime<Utc>) -> bool {
+    message
+        .get("expires_at")
+        .and_then(Value::as_str)
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|expires_at| expires_at.with_timezone(&Utc) <= now)
+        .unwrap_or(false)
 }
 
 fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
