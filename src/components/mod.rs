@@ -38,6 +38,7 @@ pub mod mls_history_backup;
 /// that restores encrypted history on a fresh device. Mounted once near the
 /// app shell; renders only when boot detection flags `needs_mls_unlock`.
 pub mod mls_unlock;
+pub mod recovery_key_setup_prompt;
 // YOU-02-008: the P3B.5 `offline_pending_badge` component was removed
 // together with the unwired offline-queue modules (see `src/lib.rs`).
 pub mod permission_pill;
@@ -95,6 +96,7 @@ pub use policy_deny_banner::{
     POLICY_DENY_AUTODISMISS_MS, PolicyDenyBanner, PolicyDenyEvent, is_policy_deny_code,
     push_policy_deny, take_policy_deny,
 };
+pub use recovery_key_setup_prompt::RecoveryKeySetupPrompt;
 pub use report_problem::{
     CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,
 };

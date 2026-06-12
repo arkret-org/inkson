@@ -8,6 +8,7 @@ struct Styles;
 
 #[component]
 pub fn Dialog(props: DialogRootProps) -> Element {
+    let mut surface_press_started = use_signal(|| false);
     let base = attributes!(div {
         class: Styles::dx_dialog,
         role: "dialog",
@@ -25,9 +26,25 @@ pub fn Dialog(props: DialogRootProps) -> Element {
             class: Styles::dx_dialog_backdrop,
             id: props.id,
             "data-state": "open",
-            onclick: move |_| props.on_open_change.call(false),
+            onclick: move |_| {
+                if surface_press_started() {
+                    surface_press_started.set(false);
+                    return;
+                }
+                props.on_open_change.call(false);
+            },
             div {
-                onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                onmousedown: move |event: dioxus::events::MouseEvent| {
+                    surface_press_started.set(true);
+                    event.stop_propagation();
+                },
+                onmouseup: move |_| {
+                    surface_press_started.set(false);
+                },
+                onclick: move |event: dioxus::events::MouseEvent| {
+                    surface_press_started.set(false);
+                    event.stop_propagation();
+                },
                 ..merged,
                 {props.children}
             }

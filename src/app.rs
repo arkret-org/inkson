@@ -932,6 +932,7 @@ pub fn RouterView() -> Element {
     // distinct from `needs_mls_unlock`: there is nothing this browser can
     // decrypt until an existing device creates the recovery backup.
     let needs_mls_recovery_setup = use_signal(|| false);
+    let mut recovery_key_setup_prompt = use_signal(|| false);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
@@ -2267,6 +2268,16 @@ pub fn RouterView() -> Element {
                 sync_bootstrap_complete,
                 needs_mls_unlock,
                 needs_mls_backup,
+                recovery_key_setup_prompt,
+            }
+            crate::components::RecoveryKeySetupPrompt {
+                base_url,
+                token,
+                account_did,
+                device_id,
+                state_store,
+                open: recovery_key_setup_prompt,
+                personal_handles,
             }
             if show_recovery_setup_prompt {
                 div {
@@ -2282,10 +2293,10 @@ pub fn RouterView() -> Element {
                         "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Cokret cannot recover the 24 words for you."
                     }
                     div { class: "actions",
-                        Link {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "recovery-setup-open-recovery",
-                            to: Route::SettingsRecovery,
+                            onclick: move |_| recovery_key_setup_prompt.set(true),
                             UiIcon { name: "key" }
                             "Configure recovery"
                         }

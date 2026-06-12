@@ -9,13 +9,20 @@ function latestTestId(page: import("@playwright/test").Page, testId: string) {
 }
 
 async function dismissBlockingRecoveryModal(page: import("@playwright/test").Page) {
-  const modal = page.getByRole("dialog", { name: "Recovery backup is missing" }).last();
-  await modal.waitFor({ state: "visible", timeout: 1_000 }).catch(() => undefined);
-  if (!(await modal.isVisible())) {
-    return;
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const modal = page.getByRole("dialog").last();
+    await modal.waitFor({ state: "visible", timeout: 500 }).catch(() => undefined);
+    if (!(await modal.isVisible().catch(() => false))) {
+      return;
+    }
+    const dismiss = modal.getByRole("button", { name: /^(Not now|Dismiss)$/ });
+    if ((await dismiss.count()) === 0) {
+      return;
+    }
+    await dismiss.evaluate((button: HTMLElement) => button.click());
+    await expect(modal).toBeHidden({ timeout: 5_000 });
   }
-  await modal.getByRole("button", { name: "Dismiss" }).click();
-  await expect(modal).toBeHidden({ timeout: 5_000 });
 }
 
 async function openServerSwitcher(page: import("@playwright/test").Page) {

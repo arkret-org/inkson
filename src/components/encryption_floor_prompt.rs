@@ -1,12 +1,10 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use dioxus_router::hooks::use_navigator;
 use serde_json::Value;
 
 use crate::local_state::LocalStateStore;
 use crate::realm_tree::string_field;
-use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 
@@ -18,10 +16,10 @@ pub fn EncryptionFloorPrompt(
     sync_bootstrap_complete: Signal<bool>,
     needs_mls_unlock: Signal<bool>,
     needs_mls_backup: Signal<bool>,
+    recovery_key_setup_prompt: Signal<bool>,
 ) -> Element {
     let mut dismissed = use_signal(|| false);
     let mut status = use_signal(String::new);
-    let navigator = use_navigator();
 
     let session = token();
     let actor = account_did();
@@ -36,20 +34,9 @@ pub fn EncryptionFloorPrompt(
         return rsx! {};
     }
 
-    let has_local_account_secret = {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        matches!(
-            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &actor),
-            Ok(Some(_))
-        )
-    };
-
     let on_enable = move |_| {
         dismissed.set(true);
-        if has_local_account_secret {
-            needs_mls_backup.set(true);
-        }
-        let _ = navigator.push(Route::SettingsRecovery);
+        recovery_key_setup_prompt.set(true);
     };
 
     rsx! {
@@ -75,7 +62,7 @@ pub fn EncryptionFloorPrompt(
                         "The current account has no evidence of the recommended metadata and content encryption floor. Principal Control Realm and private collaboration state should use MLS with metadata_encryption_floor=e2ee_required and content_encryption_floor=e2ee_required."
                     }
                     div { class: "muted",
-                        "Choosing the recommended mode opens Recovery Key setup first. If encrypted material already exists on this device, the key-backup prompt will appear immediately; otherwise the app will ask again when the first encrypted Realm creates MLS material."
+                        "Choosing the recommended mode opens the 24-word Recovery Key setup prompt first. If encrypted material already exists on this device, the prompt will back it up immediately; otherwise the first encrypted Realm will use this Recovery Key when MLS material is created."
                     }
                     if !status().is_empty() {
                         div { class: "muted", "data-testid": "recommended-encryption-floor-status", "{status}" }
@@ -86,7 +73,7 @@ pub fn EncryptionFloorPrompt(
                         variant: ButtonVariant::Primary,
                         "data-testid": "recommended-encryption-floor-enable",
                         onclick: on_enable,
-                        "Use recommended encryption"
+                        "Set up 24-word Recovery Key"
                     }
                     Button {
                         variant: ButtonVariant::Secondary,

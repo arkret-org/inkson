@@ -1,8 +1,7 @@
 //! Shared outside-click dismissal layer for modal-like popups.
 //!
-//! The popup closes only from a real `click` on the overlay. Press/release
-//! events are intentionally ignored so dragging across the surface boundary
-//! does not dismiss the popup.
+//! The popup closes from a real overlay `click`, except when the press started
+//! inside the surface and was dragged outside before release.
 
 use dioxus::prelude::*;
 
@@ -40,13 +39,20 @@ pub fn DismissiblePopup(props: DismissiblePopupProps) -> Element {
     let surface_test_id = surface_test_id.unwrap_or_default();
     let overlay_style = overlay_style.unwrap_or_default();
     let surface_style = surface_style.unwrap_or_default();
+    let mut surface_press_started = use_signal(|| false);
 
     rsx! {
         div {
             class: "{overlay_class}",
             "data-testid": "{overlay_test_id}",
             style: "{overlay_style}",
-            onclick: move |_| on_dismiss.call(()),
+            onclick: move |_| {
+                if surface_press_started() {
+                    surface_press_started.set(false);
+                    return;
+                }
+                on_dismiss.call(());
+            },
             div {
                 class: "{surface_class}",
                 "data-testid": "{surface_test_id}",
@@ -54,7 +60,17 @@ pub fn DismissiblePopup(props: DismissiblePopupProps) -> Element {
                 role: "dialog",
                 "aria-modal": "true",
                 "aria-label": "{aria_label}",
-                onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                onmousedown: move |event: dioxus::events::MouseEvent| {
+                    surface_press_started.set(true);
+                    event.stop_propagation();
+                },
+                onmouseup: move |_| {
+                    surface_press_started.set(false);
+                },
+                onclick: move |event: dioxus::events::MouseEvent| {
+                    surface_press_started.set(false);
+                    event.stop_propagation();
+                },
                 {children}
             }
         }

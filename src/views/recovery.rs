@@ -303,6 +303,24 @@ fn save_state(state_store: &mut Signal<LocalStateStore>, account_key: &str, stat
     }
 }
 
+pub(crate) fn save_generated_recovery_key_metadata(
+    state_store: &mut Signal<LocalStateStore>,
+    account_key: &str,
+    recovery_key: &str,
+) -> Option<(String, String)> {
+    if account_key.trim().is_empty() || recovery_key.trim().is_empty() {
+        return None;
+    }
+    let mut state = load_state(state_store, account_key);
+    let fingerprint = fingerprint_recovery_key(recovery_key);
+    let rotated_at = chrono::Utc::now().to_rfc3339();
+    state.recovery_key_fingerprint = fingerprint.clone();
+    state.recovery_key_rotated_at = rotated_at.clone();
+    state.passkey_wraps.clear();
+    save_state(state_store, account_key, &state);
+    Some((fingerprint, rotated_at))
+}
+
 fn recovery_state_has_user_material(state: &RecoveryState) -> bool {
     !state.recovery_key_fingerprint.trim().is_empty()
         || state
@@ -412,7 +430,7 @@ fn copy_recovery_text_to_clipboard(text: &str) {
 /// `MlsBackupPrompt`'s upload (account secret + best-effort sidecar). No-op with
 /// an explanatory status when there is no account secret yet (encryption hasn't
 /// been used, so there is nothing to back up — the backup runs on first use).
-fn upload_recovery_key_account_backup(
+pub(crate) fn upload_recovery_key_account_backup(
     base_url: String,
     token: Signal<String>,
     account_did: Signal<String>,
@@ -502,15 +520,17 @@ fn upload_recovery_key_account_backup(
                         })
                         .await;
                 }
-                status.set(
-                    "Recovery Key generated and your encrypted history is now backed up to it. Write the 24 words down — they are the only way to restore on a new device.".to_owned(),
-                );
+                if let Ok(mut slot) = status.try_write() {
+                    *slot = "Recovery Key generated and your encrypted history is now backed up to it. Write the 24 words down — they are the only way to restore on a new device.".to_owned();
+                }
             }
             Err(err) => {
-                status.set(format!(
-                    "Recovery Key saved, but backing up your encrypted history failed: {}",
-                    err.display()
-                ));
+                if let Ok(mut slot) = status.try_write() {
+                    *slot = format!(
+                        "Recovery Key saved, but backing up your encrypted history failed: {}",
+                        err.display()
+                    );
+                }
             }
         }
     });
@@ -559,6 +579,23 @@ pub fn RecoveryPanel(
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
     let recovery_key_backed_up =
         crate::components::mls_recovery_backup_configured(&state_store.read(), &actor_key);
+
+    {
+        let actor_key = actor_key.clone();
+        let state_store = state_store;
+        use_effect(move || {
+            let next = load_state(&state_store, &actor_key);
+            if recovery_key_fp() != next.recovery_key_fingerprint {
+                recovery_key_fp.set(next.recovery_key_fingerprint);
+            }
+            if recovery_key_rotated_at() != next.recovery_key_rotated_at {
+                recovery_key_rotated_at.set(next.recovery_key_rotated_at);
+            }
+            if passkey_wraps() != next.passkey_wraps {
+                passkey_wraps.set(next.passkey_wraps);
+            }
+        });
+    }
 
     let snapshot_state = move || RecoveryState {
         recovery_key_fingerprint: recovery_key_fp(),

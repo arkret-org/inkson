@@ -24,17 +24,20 @@ function latestTestId(page: import("@playwright/test").Page, testId: string) {
 }
 
 async function dismissBlockingDialog(page: import("@playwright/test").Page) {
-  const dialog = page.getByRole("dialog").last();
-  await dialog.waitFor({ state: "visible", timeout: 1_000 }).catch(() => undefined);
-  if (!(await dialog.isVisible().catch(() => false))) {
-    return;
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const dialog = page.getByRole("dialog").last();
+    await dialog.waitFor({ state: "visible", timeout: 500 }).catch(() => undefined);
+    if (!(await dialog.isVisible().catch(() => false))) {
+      return;
+    }
+    const dismiss = dialog.getByRole("button", { name: /^(Not now|Dismiss)$/ });
+    if ((await dismiss.count()) === 0) {
+      return;
+    }
+    await dismiss.evaluate((button: HTMLElement) => button.click());
+    await expect(dialog).toBeHidden({ timeout: 5_000 });
   }
-  const dismiss = dialog.getByRole("button", { name: "Dismiss" });
-  if ((await dismiss.count()) === 0) {
-    return;
-  }
-  await dismiss.click();
-  await expect(dialog).toBeHidden({ timeout: 5_000 });
 }
 
 test.describe("feature coverage placeholders", () => {
