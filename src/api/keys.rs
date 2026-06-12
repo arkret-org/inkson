@@ -300,23 +300,36 @@ impl CokretApi {
 
     // ── Device & Crypto ─────────────────────────────────────────────
 
-    /// User-driven device revoke. Hits soland's deployment-local
-    /// `ck.devices.revoke` (`POST /_cokret/self/devices/{device_id}/revoke`) —
-    /// NOT spec's `ck.admin.revoke_device` (`POST /_soland/admin/devices/{id}/revoke`),
-    /// which is an operator-scope endpoint we don't expose from the UI.
+    /// User-driven device revoke. This is a soland deployment-local scaffold,
+    /// NOT the spec-canonical revocation mechanism, so it lives in the
+    /// `_soland/` product namespace (`POST /_soland/self/devices/{device_id}/revoke`).
+    ///
+    /// YOU-01-008 残留(跨仓阻塞):spec 的规范吊销是 durable 事件
+    /// `ck.device.revoke`(device-lifecycle.md §2.2),其 payload MUST 携带
+    /// `revocation_frontier`(`event_payload.schema.json#/$defs/device_revoke_payload`,
+    /// 即 `seal_frontier`:`^(sha256|blake3):[0-9a-f]{64}$` 的 accepted-Seal
+    /// digest hash 数组,minItems 1)。客户端目前**无可达端点**产出该 digest
+    /// frontier:`current_seal_for` 因 client seal-head sourcing 未在 spec 注册
+    /// 而 fail-closed;`events/frontier`(account_client)只回 `ck:event:` typed id
+    /// 而非 digest hash。soland 的 events 提交管线虽已 admit `ck.device.revoke`
+    /// 并按 SDK schema 校验,但缺失 frontier 会被 schema 拒收 →
+    /// 切 durable 事件需先在 soland/spec 补 client-reachable seal-frontier digest
+    /// 来源。在此之前保留本 scaffold(soland 现行 `device_revoke` 仅翻本地记录 +
+    /// audit log,亦未铸造 frontier),仅把命名空间从 `/_cokret/` 迁回 `/_soland/`。
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkOutcome> {
         self.post_json(
-            &format!("_cokret/self/devices/{device_id}/revoke"),
+            &format!("_soland/self/devices/{device_id}/revoke"),
             json!({}),
         )
         .await
     }
 
     /// Rename a device the caller controls by updating its user-facing
-    /// `display_name`. Hits soland's `ck.devices.rename`
-    /// (`POST /_cokret/self/devices/{device_id}/rename`). `display_name` is the
+    /// `display_name`. Hits soland's deployment-local scaffold
+    /// (`POST /_soland/self/devices/{device_id}/rename`). `display_name` is the
     /// optional, mutable, UI-only device name per
-    /// `crypto-media/device-lifecycle.md` §4; the canonical id is always
+    /// `crypto-media/device-lifecycle.md` §4 — not a protocol event, so it
+    /// stays in the `_soland/` product namespace. The canonical id is always
     /// `device_id`. Returns the updated device record JSON.
     pub async fn rename_device(
         &self,
@@ -324,7 +337,7 @@ impl CokretApi {
         display_name: &str,
     ) -> anyhow::Result<Value> {
         self.post_json(
-            &format!("_cokret/self/devices/{device_id}/rename"),
+            &format!("_soland/self/devices/{device_id}/rename"),
             json!({ "display_name": display_name }),
         )
         .await
@@ -345,10 +358,19 @@ impl CokretApi {
             .await
     }
 
+    /// Deployment-local device trust table read. The spec-canonical device
+    /// key verification flow runs over the `ck.key.verification.*`
+    /// device-messages channel (device-lifecycle.md §10, see
+    /// `api/events.rs`); this `_soland/`-namespaced view is a soland scaffold
+    /// surfacing the resulting trust states for the verify_device UI table.
     pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustOutcome> {
-        self.get_json("_cokret/self/devices/trust").await
+        self.get_json("_soland/self/devices/trust").await
     }
 
+    /// Deployment-local device-verification scaffold. The signed proof is
+    /// also (and authoritatively) exchanged over the spec
+    /// `ck.key.verification.*` device-messages channel; this `_soland/`
+    /// scaffold records the resulting trust transition for the UI table.
     pub async fn verify_device(
         &self,
         device_id: &str,
@@ -357,7 +379,7 @@ impl CokretApi {
     ) -> anyhow::Result<VerifyDeviceOutcome> {
         ensure_device_verification_proof_is_signed(&proof)?;
         self.post_json(
-            &format!("_cokret/self/devices/{device_id}/verify"),
+            &format!("_soland/self/devices/{device_id}/verify"),
             json!({"method": method, "proof": proof}),
         )
         .await

@@ -8,8 +8,11 @@
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke hits
-//!   `POST /_cokret/self/devices/{device_id}/revoke` via [`crate::api::CokretApi::revoke_device`],
-//!   then rotates the account MLS history secret and rewraps local `mls_history` backups.
+//!   the soland deployment-local scaffold `POST /_soland/self/devices/{device_id}/revoke` via
+//!   [`crate::api::CokretApi::revoke_device`], then rotates the account MLS history secret and
+//!   rewraps local `mls_history` backups. (Spec-canonical revoke is the durable `ck.device.revoke`
+//!   event; blocked on a client-reachable `revocation_frontier` digest source — see
+//!   `api/keys.rs::revoke_device`.)
 //!
 //! The pair flow on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — on the device being added, generates a pairing request payload.
@@ -27,7 +30,7 @@
 //! ## Soland / coauth endpoints
 //!
 //! - `GET /_cokret/self/account/viewer` — implemented (soland)
-//! - `POST /_cokret/self/devices/{device_id}/revoke` — implemented (soland)
+//! - `POST /_soland/self/devices/{device_id}/revoke` — deployment-local revoke scaffold (soland)
 //! - `POST /_cokret/gate/account/device-pair` — spec-level device pairing.
 
 use dioxus::prelude::*;

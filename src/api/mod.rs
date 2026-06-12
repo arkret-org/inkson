@@ -3274,6 +3274,17 @@ const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
     "_soland/gate/auth/bridge/describe",
     // admin —— 运维面,deployment-local(按设计不入协议)
     "_soland/admin/realms/{realm_id}/notary",
+    // identity/device —— 设备生命周期 scaffold(deployment-local)。
+    // YOU-01-008:这些是 soland 部署本地的设备管理 shim,不是 spec 协议面,
+    // 故从 `/_cokret/` 迁回 `/_soland/`。revoke/rename 由 soland
+    // `device::router()` 在 legacy 树下服务;trust/verify 的权威验证走
+    // `ck.key.verification.*` device-messages 通道,这两条是 UI 信任表的本地
+    // scaffold。spec-canonical 吊销(durable `ck.device.revoke` + `revocation_frontier`)
+    // 因缺 client-reachable seal-frontier digest 来源,留待跨仓(soland/spec)补齐。
+    "_soland/self/devices/{device_id}/revoke",
+    "_soland/self/devices/{device_id}/rename",
+    "_soland/self/devices/trust",
+    "_soland/self/devices/{device_id}/verify",
     // circles —— CKP-0014 §5 候选操作(产品面)。circle 尚未入正式 catalog,
     // 未入前 MUST 走 `/_soland`、MUST NOT 挂 `/_cokret`(实测 `/_cokret/self/circles`
     // 返回 404)。待 circle 入 catalog 后,这几行连同 realm.rs 调用一起迁回 `/_cokret`。
