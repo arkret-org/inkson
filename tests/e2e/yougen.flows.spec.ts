@@ -268,6 +268,22 @@ test("first authenticated session prompts recovery setup", async ({ page }) => {
   await expect(latestTestId(page, "recovery-setup-open-encryption")).toBeVisible();
 });
 
+test("fresh browser requires device authorization before recovery or encryption prompts", async ({
+  page,
+}) => {
+  await writeLocalConfigAndReload(page, {
+    device_id: "ck:device:01964137-0000-7000-8000-0000000000b2",
+  });
+
+  const authModal = latestTestId(page, "device-authorization-modal");
+  await expect(authModal).toBeVisible({ timeout: 30_000 });
+  await expect(authModal).toContainText("Authorize this device");
+  await expect(latestTestId(page, "device-authorization-open-pairing")).toBeVisible();
+  await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
+  await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
+  await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
+});
+
 test("dashboard summarizes unread notifications from sync projection", async ({ page }) => {
   await refreshServer(page);
 

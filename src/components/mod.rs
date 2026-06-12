@@ -16,6 +16,7 @@ pub mod circle_scope_picker;
 /// CKP-0007 P3B.2 — Create-Circle modal surfaced from the Realm-detail
 /// page. Strict-subset validation runs client-side before submit.
 pub mod create_circle_modal;
+pub mod device_authorization_prompt;
 pub mod dismissible_popup;
 pub mod empty_state;
 /// Entry-time warning for accounts whose visible PCR / Realm projections do
@@ -72,6 +73,7 @@ pub use circle_scope_picker::{
     CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };
 pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
+pub use device_authorization_prompt::DeviceAuthorizationPrompt;
 pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use encryption_floor_prompt::EncryptionFloorPrompt;

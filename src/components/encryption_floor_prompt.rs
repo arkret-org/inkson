@@ -14,6 +14,8 @@ pub fn EncryptionFloorPrompt(
     account_did: Signal<String>,
     state_store: Signal<LocalStateStore>,
     sync_bootstrap_complete: Signal<bool>,
+    device_authorization_check_complete: Signal<bool>,
+    needs_device_authorization: Signal<bool>,
     needs_mls_unlock: Signal<bool>,
     needs_mls_backup: Signal<bool>,
     recovery_key_setup_prompt: Signal<bool>,
@@ -25,8 +27,10 @@ pub fn EncryptionFloorPrompt(
     let actor = account_did();
     if dismissed()
         || !sync_bootstrap_complete()
+        || !device_authorization_check_complete()
         || session.trim().is_empty()
         || actor.trim().is_empty()
+        || needs_device_authorization()
         || needs_mls_unlock()
         || needs_mls_backup()
         || !account_needs_recommended_encryption_prompt(&state_store.read(), &actor)
@@ -108,6 +112,9 @@ pub(crate) fn account_needs_recommended_encryption_prompt_for_projections(
     if actor.is_empty() {
         return false;
     }
+    if projections.is_empty() {
+        return false;
+    }
 
     let pcr_realm_id = cokret_sdk::Did::new(actor.to_owned())
         .ok()
@@ -140,10 +147,7 @@ pub(crate) fn account_needs_recommended_encryption_prompt_for_projections(
     if saw_recommended {
         return false;
     }
-    !saw_realm
-        || projections
-            .values()
-            .any(|body| !projection_has_recommended_encryption_floor(body))
+    saw_realm
 }
 
 pub(crate) fn projection_has_recommended_encryption_floor(value: &Value) -> bool {
@@ -223,6 +227,53 @@ mod tests {
 
         assert!(account_needs_recommended_encryption_prompt_for_projections(
             actor,
+            &projections
+        ));
+    }
+
+    #[test]
+    fn empty_projection_set_is_inconclusive() {
+        assert!(
+            !account_needs_recommended_encryption_prompt_for_projections(
+                "did:web:alice.example",
+                &BTreeMap::new()
+            )
+        );
+    }
+
+    #[test]
+    fn non_realm_projection_only_is_inconclusive() {
+        let mut projections = BTreeMap::new();
+        projections.insert(
+            "ck:notification:0196419b-0000-7000-8000-000000000001".to_owned(),
+            json!({
+                "__kind": "notification",
+                "message": "hello"
+            }),
+        );
+
+        assert!(
+            !account_needs_recommended_encryption_prompt_for_projections(
+                "did:web:alice.example",
+                &projections
+            )
+        );
+    }
+
+    #[test]
+    fn visible_low_floor_realm_prompts_without_pcr_projection() {
+        let mut projections = BTreeMap::new();
+        projections.insert(
+            "ck:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
+            json!({
+                "summary": {
+                    "encryption_profile": "none"
+                }
+            }),
+        );
+
+        assert!(account_needs_recommended_encryption_prompt_for_projections(
+            "did:web:alice.example",
             &projections
         ));
     }

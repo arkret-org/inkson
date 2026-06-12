@@ -932,6 +932,8 @@ pub fn RouterView() -> Element {
     // distinct from `needs_mls_unlock`: there is nothing this browser can
     // decrypt until an existing device creates the recovery backup.
     let needs_mls_recovery_setup = use_signal(|| false);
+    let needs_device_authorization = use_signal(|| false);
+    let device_authorization_check_complete = use_signal(|| false);
     let mut recovery_key_setup_prompt = use_signal(|| false);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
@@ -1056,6 +1058,9 @@ pub fn RouterView() -> Element {
         let invalidator_base_url = base_url;
         let invalidator_account_did = account_did;
         let invalidator_device_id = device_id;
+        let mut invalidator_needs_device_authorization = needs_device_authorization;
+        let mut invalidator_device_authorization_check_complete =
+            device_authorization_check_complete;
         let mut invalidator_sync_generation = sync_generation;
         let invalidator_navigator = navigator;
         use_hook(move || {
@@ -1078,6 +1083,8 @@ pub fn RouterView() -> Element {
                 invalidator_status.set("Session expired; sign in again".to_owned());
                 invalidator_network_state.set("online".to_owned());
                 invalidator_last_error.set(Some(reason));
+                invalidator_needs_device_authorization.set(false);
+                invalidator_device_authorization_check_complete.set(false);
                 invalidator_sync_generation.set(invalidator_sync_generation() + 1);
                 let _ = invalidator_navigator.push(Route::Login);
             });
@@ -1191,6 +1198,8 @@ pub fn RouterView() -> Element {
                     personal_handles_status,
                     theme,
                     sync_generation,
+                    needs_device_authorization,
+                    device_authorization_check_complete,
                     sync_bootstrap_complete,
                     session_boot_state,
                     navigator,
@@ -2146,6 +2155,8 @@ pub fn RouterView() -> Element {
     };
     let show_recovery_setup_prompt = has_session
         && !matches!(&content_route, Route::Recovery | Route::SettingsRecovery)
+        && device_authorization_check_complete()
+        && !needs_device_authorization()
         && recovery_setup_prompt_required(&state_store.read(), &account_did());
 
     rsx! {
@@ -2261,11 +2272,16 @@ pub fn RouterView() -> Element {
             // policy-deny dispatcher. Renders nothing when no error
             // is queued.
             crate::components::CircleErrorToast { i18n: i18n_signal }
+            crate::components::DeviceAuthorizationPrompt {
+                needs_device_authorization,
+            }
             crate::components::EncryptionFloorPrompt {
                 token,
                 account_did,
                 state_store,
                 sync_bootstrap_complete,
+                device_authorization_check_complete,
+                needs_device_authorization,
                 needs_mls_unlock,
                 needs_mls_backup,
                 recovery_key_setup_prompt,
@@ -2316,34 +2332,40 @@ pub fn RouterView() -> Element {
             // Fresh-device diagnostic: encrypted history exists, but no
             // passphrase-backed account-secret backup is available to unlock
             // on this browser.
-            crate::components::MlsRecoverySetupMissingBanner {
-                needs_mls_recovery_setup,
-                actor_id: account_did,
+            if device_authorization_check_complete() && !needs_device_authorization() {
+                crate::components::MlsRecoverySetupMissingBanner {
+                    needs_mls_recovery_setup,
+                    actor_id: account_did,
+                }
             }
             // Step 3 of the account-MLS-secret auto-unlock flow: a
             // recovery-passphrase banner that restores encrypted history on
             // a fresh device. Renders nothing unless boot detection flagged
             // `needs_mls_unlock`.
-            crate::components::MlsUnlockPrompt {
-                base_url,
-                token,
-                actor_id: account_did,
-                device_id,
-                state_store,
-                needs_mls_unlock,
-                restore_payload_cache: mls_restore_payload_cache,
+            if device_authorization_check_complete() && !needs_device_authorization() {
+                crate::components::MlsUnlockPrompt {
+                    base_url,
+                    token,
+                    actor_id: account_did,
+                    device_id,
+                    state_store,
+                    needs_mls_unlock,
+                    restore_payload_cache: mls_restore_payload_cache,
+                }
             }
             // Task X3 — one-time account-secret BACKUP prompt (mirror of the
             // unlock banner). Renders nothing unless detection flagged
             // `needs_mls_backup` (local secret exists, no server backup yet).
-            crate::components::MlsBackupPrompt {
-                base_url,
-                token,
-                actor_id: account_did,
-                device_id,
-                state_store,
-                needs_mls_backup,
-                personal_handles,
+            if device_authorization_check_complete() && !needs_device_authorization() {
+                crate::components::MlsBackupPrompt {
+                    base_url,
+                    token,
+                    actor_id: account_did,
+                    device_id,
+                    state_store,
+                    needs_mls_backup,
+                    personal_handles,
+                }
             }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 Button {
@@ -2450,6 +2472,8 @@ pub fn RouterView() -> Element {
                                     personal_handles_status,
                                     theme,
                                     sync_generation,
+                                    needs_device_authorization,
+                                    device_authorization_check_complete,
                                     sync_bootstrap_complete,
                                     session_boot_state,
                                     navigator,
@@ -2626,6 +2650,8 @@ pub fn RouterView() -> Element {
                                                         personal_handles_status,
                                                         theme,
                                                         sync_generation,
+                                                        needs_device_authorization,
+                                                        device_authorization_check_complete,
                                                         sync_bootstrap_complete,
                                                         session_boot_state,
                                                         navigator,
@@ -5922,6 +5948,95 @@ fn recovery_setup_prompt_required(state_store: &LocalStateStore, actor_id: &str)
         || crate::components::mls_recovery_backup_configured(state_store, actor))
 }
 
+fn current_device_authorization_from_account_viewer(
+    viewer: &Value,
+    configured_device_id: &str,
+) -> Option<bool> {
+    let configured_device = configured_device_id.trim();
+    let current_device = viewer
+        .get("current_device_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|device| !device.is_empty())
+        .unwrap_or(configured_device);
+    let devices = viewer.get("devices").and_then(Value::as_array)?;
+    if devices.is_empty() {
+        return None;
+    }
+
+    let current_row = devices
+        .iter()
+        .find(|device| {
+            device
+                .get("is_current_session_device")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .or_else(|| {
+            if current_device.is_empty() {
+                None
+            } else {
+                devices.iter().find(|device| {
+                    device
+                        .get("device_id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        == Some(current_device)
+                })
+            }
+        });
+
+    match current_row {
+        Some(device) => device_authorization_from_record(device),
+        None => Some(false),
+    }
+}
+
+fn device_authorization_from_record(device: &Value) -> Option<bool> {
+    if device
+        .get("revoked_at")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+        || device.get("revoked_at").is_some_and(|value| {
+            !value.is_null() && !value.as_str().map(str::trim).unwrap_or_default().is_empty()
+        })
+    {
+        return Some(false);
+    }
+
+    for key in [
+        "verification_state",
+        "verification",
+        "trust_state",
+        "status",
+    ] {
+        if let Some(state) = device.get(key).and_then(Value::as_str)
+            && let Some(authorized) = device_status_authorization(state)
+        {
+            return Some(authorized);
+        }
+    }
+    None
+}
+
+fn device_status_authorization(status: &str) -> Option<bool> {
+    let normalized = status.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    match normalized.as_str() {
+        "verified" | "authorized" | "active" | "cross_signed" | "trusted" => Some(true),
+        "unverified"
+        | "pending"
+        | "pending_authorization"
+        | "requires_authorization"
+        | "revoked"
+        | "disabled"
+        | "inactive" => Some(false),
+        _ => None,
+    }
+}
+
 fn mls_recovery_setup_missing(
     list_payload: &Value,
     state_store: &LocalStateStore,
@@ -6473,6 +6588,8 @@ struct ConnectContext {
     /// (account swap on the same device) so any in-flight engine for
     /// the previous account exits before applying its response.
     sync_generation: Signal<u64>,
+    needs_device_authorization: Signal<bool>,
+    device_authorization_check_complete: Signal<bool>,
     /// Set when the explicit bootstrap/manual connect attempt has completed.
     /// The background SyncEngine waits for this so it does not race the
     /// first full account-subscribe snapshot on the same render.
@@ -6523,7 +6640,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut theme = ctx.theme;
         let navigator = ctx.navigator;
         let mut session_boot_state = ctx.session_boot_state;
+        let mut needs_device_authorization = ctx.needs_device_authorization;
+        let mut device_authorization_check_complete = ctx.device_authorization_check_complete;
 
+        needs_device_authorization.set(false);
+        device_authorization_check_complete.set(false);
         session_boot_state.set(if token().trim().is_empty() {
             SessionBootState::Restoring
         } else {
@@ -6627,6 +6748,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             device.clone(),
                             String::new(),
                         );
+                        needs_device_authorization.set(false);
+                        device_authorization_check_complete.set(true);
                         session_boot_state.set(SessionBootState::Unauthenticated);
                         sync_bootstrap_complete.set(true);
                         return;
@@ -6701,6 +6824,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     network_state.set("online".to_owned());
                                     last_error
                                         .set(Some("auth_expired: session expired".to_owned()));
+                                    needs_device_authorization.set(false);
+                                    device_authorization_check_complete.set(true);
                                     session_boot_state.set(SessionBootState::Unauthenticated);
                                     redirect_to_login(navigator);
                                     sync_bootstrap_complete.set(true);
@@ -6725,6 +6850,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             status.set("Session expired; sign in again".to_owned());
                             network_state.set("online".to_owned());
                             last_error.set(Some("auth_expired: session expired".to_owned()));
+                            needs_device_authorization.set(false);
+                            device_authorization_check_complete.set(true);
                             session_boot_state.set(SessionBootState::Unauthenticated);
                             redirect_to_login(navigator);
                             sync_bootstrap_complete.set(true);
@@ -6792,6 +6919,48 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         .stamp_account_scope_owner(&canonical_actor);
                 }
                 adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
+                match authed.list_devices().await {
+                    Ok(viewer) => {
+                        match current_device_authorization_from_account_viewer(&viewer, &device) {
+                            Some(true) => needs_device_authorization.set(false),
+                            Some(false) => needs_device_authorization.set(true),
+                            None => needs_device_authorization.set(false),
+                        }
+                        device_authorization_check_complete.set(true);
+                    }
+                    Err(error) if is_auth_expired_error(&error) => {
+                        if let Some(refreshed) = crate::session::refresh_current_bearer().await {
+                            session_token = refreshed;
+                            authed = api.clone().with_bearer(session_token.clone());
+                            match authed.list_devices().await {
+                                Ok(viewer) => {
+                                    match current_device_authorization_from_account_viewer(
+                                        &viewer, &device,
+                                    ) {
+                                        Some(true) => needs_device_authorization.set(false),
+                                        Some(false) => needs_device_authorization.set(true),
+                                        None => needs_device_authorization.set(false),
+                                    }
+                                }
+                                Err(retry_error) => {
+                                    tracing::warn!(
+                                        ?retry_error,
+                                        "device authorization check failed after refresh"
+                                    );
+                                    needs_device_authorization.set(false);
+                                }
+                            }
+                        } else {
+                            needs_device_authorization.set(false);
+                        }
+                        device_authorization_check_complete.set(true);
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "device authorization check failed");
+                        needs_device_authorization.set(false);
+                        device_authorization_check_complete.set(true);
+                    }
+                }
                 persist_config(
                     config_store,
                     base.clone(),
@@ -7421,6 +7590,72 @@ mod tests {
             actor,
             device
         ));
+    }
+
+    #[test]
+    fn current_device_authorization_detects_verified_current_device() {
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let viewer = serde_json::json!({
+            "current_device_id": device,
+            "devices": [{
+                "device_id": device,
+                "verification_state": "verified"
+            }]
+        });
+
+        assert_eq!(
+            current_device_authorization_from_account_viewer(&viewer, device),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn current_device_authorization_detects_unverified_new_device() {
+        let device = "ck:device:01964137-0000-7000-8000-000000000002";
+        let viewer = serde_json::json!({
+            "current_device_id": device,
+            "devices": [{
+                "device_id": device,
+                "verification_state": "unverified"
+            }]
+        });
+
+        assert_eq!(
+            current_device_authorization_from_account_viewer(&viewer, device),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn current_device_authorization_treats_missing_current_device_as_unauthorized() {
+        let device = "ck:device:01964137-0000-7000-8000-000000000002";
+        let viewer = serde_json::json!({
+            "devices": [{
+                "device_id": "ck:device:01964137-0000-7000-8000-000000000001",
+                "status": "active"
+            }]
+        });
+
+        assert_eq!(
+            current_device_authorization_from_account_viewer(&viewer, device),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn current_device_authorization_accepts_sdk_active_status() {
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let viewer = serde_json::json!({
+            "devices": [{
+                "device_id": device,
+                "status": "active"
+            }]
+        });
+
+        assert_eq!(
+            current_device_authorization_from_account_viewer(&viewer, device),
+            Some(true)
+        );
     }
 
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
