@@ -9,6 +9,7 @@ export function mockCokretContract(req) {
   const method = (req.method ?? "GET").toUpperCase();
   const path = canonicalPath(req.path ?? "/");
   const body = req.body ?? {};
+  const query = req.query ?? {};
 
   if (method === "GET" && path === "/_cokret/describe") {
     return json({
@@ -92,7 +93,17 @@ export function mockCokretContract(req) {
   }
 
   if (method === "GET" && path === "/_cokret/self/keys/backups") {
-    return json({ backups: [] });
+    const backups = [];
+    const backupClass = query.backup_class;
+    return json({
+      backups: backupClass
+        ? backups.filter((backup) => backup.backup_class === backupClass)
+        : backups,
+    });
+  }
+
+  if (method === "GET" && path === "/_cokret/root/identity/recovery-policy") {
+    return json({ active_policy: null });
   }
 
   if (method === "POST" && path === "/_cokret/gate/account/device-pair") {

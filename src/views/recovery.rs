@@ -86,6 +86,7 @@ struct PasskeyRecoveryWrap {
 struct BackupSummaryRow {
     backup_id: String,
     backup_class: String,
+    recipient_method: String,
     backup_version: String,
     created_at: String,
     ciphertext_digest: String,
@@ -103,6 +104,11 @@ fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
     let backup_id = v.get("backup_id")?.as_str()?.to_owned();
     let backup_class = v
         .get("backup_class")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let recipient_method = v
+        .pointer("/encryption/recipient_method")
         .and_then(|c| c.as_str())
         .unwrap_or("")
         .to_owned();
@@ -139,6 +145,7 @@ fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
     Some(BackupSummaryRow {
         backup_id,
         backup_class,
+        recipient_method,
         backup_version,
         created_at,
         ciphertext_digest,
@@ -157,6 +164,50 @@ fn parse_backup_list(payload: &serde_json::Value) -> Vec<BackupSummaryRow> {
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(parse_backup_summary).collect())
         .unwrap_or_default()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BackupClassCounts {
+    did_recovery: usize,
+    secret_storage: usize,
+    mls_history: usize,
+    other: usize,
+}
+
+fn backup_class_counts(rows: &[BackupSummaryRow]) -> BackupClassCounts {
+    let mut counts = BackupClassCounts::default();
+    for row in rows {
+        match row.backup_class.as_str() {
+            "did_recovery" => counts.did_recovery += 1,
+            "secret_storage" => counts.secret_storage += 1,
+            "mls_history" => counts.mls_history += 1,
+            _ => counts.other += 1,
+        }
+    }
+    counts
+}
+
+fn backup_inventory_status(rows: &[BackupSummaryRow]) -> String {
+    let counts = backup_class_counts(rows);
+    if rows.is_empty() {
+        return "Loaded 0 backups from the server. Recovery is incomplete: no did_recovery backup is available.".to_owned();
+    }
+    let mut message = format!(
+        "Loaded {} backup(s): did_recovery {}, secret_storage {}, mls_history {}",
+        rows.len(),
+        counts.did_recovery,
+        counts.secret_storage,
+        counts.mls_history
+    );
+    if counts.other > 0 {
+        message.push_str(&format!(", other {}", counts.other));
+    }
+    if counts.did_recovery == 0 {
+        message.push_str(
+            ". Recovery is incomplete for fresh devices until a did_recovery backup exists.",
+        );
+    }
+    message
 }
 
 #[cfg(test)]
@@ -186,6 +237,7 @@ mod restore_parse_tests {
             "ck:backup:01964137-0000-7000-8000-000000000000"
         );
         assert_eq!(row.backup_class, "secret_storage");
+        assert_eq!(row.recipient_method, "passphrase_kdf");
         assert_eq!(row.backup_version, "kb_1");
         assert_eq!(row.created_at, "2026-05-15T00:00:00Z");
         assert_eq!(row.salt_b64, "U0FMVA");
@@ -203,6 +255,39 @@ mod restore_parse_tests {
     #[test]
     fn parse_backup_summary_rejects_missing_id() {
         assert!(parse_backup_summary(&json!({})).is_none());
+    }
+
+    #[test]
+    fn backup_inventory_status_marks_empty_server_as_incomplete() {
+        assert!(backup_inventory_status(&[]).contains("Recovery is incomplete"));
+    }
+
+    #[test]
+    fn backup_inventory_status_counts_classes() {
+        let rows = parse_backup_list(&json!({
+            "backups": [
+                {
+                    "backup_id": "ck:backup:a",
+                    "backup_class": "did_recovery",
+                    "encryption": {"recipient_method": "recovery_public_key"}
+                },
+                {
+                    "backup_id": "ck:backup:b",
+                    "backup_class": "secret_storage",
+                    "encryption": {"recipient_method": "recovery_public_key"}
+                },
+                {
+                    "backup_id": "ck:backup:c",
+                    "backup_class": "mls_history",
+                    "encryption": {"recipient_method": "secret_storage_key"}
+                }
+            ]
+        }));
+        let counts = backup_class_counts(&rows);
+        assert_eq!(counts.did_recovery, 1);
+        assert_eq!(counts.secret_storage, 1);
+        assert_eq!(counts.mls_history, 1);
+        assert!(!backup_inventory_status(&rows).contains("incomplete"));
     }
 
     #[test]
@@ -480,12 +565,12 @@ pub(crate) fn upload_recovery_key_account_backup(
         let mut state_store = state_store;
         let result = with_authed_api(&base, session, |api| async move {
             let secure = crate::secure_key_store::default_secure_key_store("yougen");
-            crate::mls::account_recovery::upload_mls_account_secret_backup_with_passphrase(
+            crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                 &api,
                 secure.as_ref(),
                 &actor,
                 &device,
-                recovery_secret.as_bytes(),
+                &recovery_secret,
             )
             .await
         })
@@ -571,6 +656,7 @@ pub fn RecoveryPanel(
     // lives only in `restore_plaintext` until the user clears it.
     let mut restore_status = use_signal(String::new);
     let mut restore_loading = use_signal(|| false);
+    let mut restore_loaded_once = use_signal(|| false);
     let mut backup_rows = use_signal(Vec::<BackupSummaryRow>::new);
     let mut restore_pass = use_signal(String::new);
     let mut restore_target = use_signal(|| Option::<String>::None);
@@ -1287,11 +1373,10 @@ pub fn RecoveryPanel(
                                     {
                                         Ok(payload) => {
                                             let rows = parse_backup_list(&payload);
-                                            let len = rows.len();
+                                            let status = backup_inventory_status(&rows);
                                             backup_rows.set(rows);
-                                            restore_status.set(format!(
-                                                "Loaded {len} backup(s) from the server"
-                                            ));
+                                            restore_loaded_once.set(true);
+                                            restore_status.set(status);
                                         }
                                         Err(err) => restore_status
                                             .set(format!("List: {}", err.display())),
@@ -1308,6 +1393,7 @@ pub fn RecoveryPanel(
                         disabled: backup_rows().is_empty() && restore_plaintext().is_empty(),
                         onclick: move |_| {
                             backup_rows.set(Vec::new());
+                            restore_loaded_once.set(false);
                             restore_target.set(None);
                             restore_pass.set(String::new());
                             restore_plaintext.set(String::new());
@@ -1320,7 +1406,13 @@ pub fn RecoveryPanel(
                     div { class: "muted", "data-testid": "restore-status", "{restore_status}" }
                 }
                 if backup_rows().is_empty() {
-                    div { class: "muted", "data-testid": "restore-empty", "No backups listed yet. Click \"List my backups\" to fetch from the server." }
+                    div { class: "muted", "data-testid": "restore-empty",
+                        if restore_loaded_once() {
+                            "No server backups found. Recovery is incomplete until an active policy and did_recovery backup exist."
+                        } else {
+                            "No backups listed yet. Click \"List my backups\" to fetch from the server."
+                        }
+                    }
                 } else {
                     div { class: "metric-grid", "data-testid": "restore-rows",
                         for row in backup_rows() {
@@ -1333,6 +1425,7 @@ pub fn RecoveryPanel(
                                 div { class: "muted",
                                     "version {row.backup_version} · created {fmt_relative(&row.created_at)}"
                                 }
+                                div { class: "muted", "method {row.recipient_method}" }
                                 div { class: "muted", style: "word-break: break-all;",
                                     {
                                         let digest = row.ciphertext_digest.clone();

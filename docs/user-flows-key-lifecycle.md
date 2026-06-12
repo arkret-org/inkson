@@ -36,6 +36,8 @@
 | **V3 E2EE 材料/备份** `e2ee_backup` | `in_sync` / `needs_unlock`（服务器有备份、本地无材料）/ `needs_backup`（本地有材料、服务器无或落后）/ `none`（无任何材料，仅异常存量账号） | 本地 secret storage vs 服务端 backup series |
 | **V4 加密地板** `floor_state` | `recommended`（PCR 与全部私有 Realm 达推荐地板）/ `low`（PCR floor 缺失或存在显式低地板的 Realm）/ `unknown`（projection 不足，不弹） | realm projections（PCR 优先，PCR 在视野内时以 PCR 为准） |
 
+`recovery.state.v1` 里的本地指纹只表示"这台设备曾见过一组 24 词"。它不是账号级 recovery configured 证据,也不能替代服务端 active policy 和 `did_recovery` backup。若本地有指纹但服务端 `active_policy=null` 或 `did_recovery` 为空,状态必须按 `none`/incomplete 处理。
+
 关键推论（回答"换机走完会不会弹"这类问题时反复用到）：
 
 - **走 24 词恢复路（S4）的用户，`recovery_state` 必然是 `configured`**——他刚输入了助记词。恢复完成后只可能弹 floor 提示，不会弹"设置助记词"。
@@ -255,7 +257,8 @@ flowchart TD
 | S4 恢复 | ◑ 既存框架 | `recovery.rs` 24 词输入与备份解锁已有；`recovery_session` 协议闭环（challenge/proof/complete/receipt）待接 |
 | S6 创建前检查 | ✅ 本轮新增 | `setup.rs` 创建按钮新增 recovery soft-gate：加密 Realm + 未配置 recovery → 弹门，"设置 Recovery Key"（转 `SettingsRecovery`）或 "Create without recovery"（personal_node override，置 `recovery_gate_acknowledged`） |
 | PCR floor 协议固定 | ✅ 本轮（spec） | `realm.schema.json` PCR 守卫钉死双 floor；`EncryptionFloorPrompt` 对正确实现的 PCR 不再误弹 |
-| `recovery_options_configured` | ◑ 待加强 | 本地 `recovery_key_fingerprint` / guardian 非空即视为已配置；应以服务端 `active_policy` + `did_recovery` series 为真相、本地态做缓存 |
+| `recovery_options_configured` | ✅ 本轮修正 | 以服务端 `active_policy` + `did_recovery` series 为真相；本地 `recovery_key_fingerprint` 只做本设备缓存/显示,不得单独判账号 configured |
+| Legacy `passphrase_kdf` | ✅ fallback | 新写入以 `recipient_method="recovery_public_key"` 为主；旧 `passphrase_kdf` envelope 只在 restore 时兼容读取,成功后应写入 `recovery_public_key` successor |
 
 图例：✅ 已落地 ／ ◑ 既存框架但有缺口 ／ ❌ 缺失。
 

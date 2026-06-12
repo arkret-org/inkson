@@ -480,7 +480,8 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
             return;
         }
     };
-    if crate::mls::account_recovery::select_mls_account_secret_backup(&payload).is_some() {
+    if crate::mls::account_recovery::select_preferred_mls_account_secret_backup(&payload).is_some()
+    {
         try_set_signal(needs_mls_backup, false);
         return;
     }
@@ -495,11 +496,11 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
 /// account has a LOCAL account MLS secret (encryption has been used) but the
 /// server holds NO `mls_account_secret` backup yet. The client generates a
 /// high-entropy recovery key and we call
-/// [`crate::mls::account_recovery::upload_mls_account_secret_backup_with_passphrase`]
+/// [`crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key`]
 /// to wrap + upload the account secret so a future fresh browser can recover
 /// encrypted history. The wire recipient method remains spec-conformant
-/// `secret_storage` + `passphrase_kdf`; the user-facing flow does not ask the
-/// user to invent or confirm a passphrase.
+/// `secret_storage` + `recovery_public_key`; the user-facing flow does not ask
+/// the user to invent or confirm a separate passphrase.
 #[component]
 pub fn MlsBackupPrompt(
     base_url: Signal<String>,
@@ -634,12 +635,12 @@ pub fn MlsBackupPrompt(
             let session_for_sidecar = session.clone();
             let result = with_authed_api(&base, session, |api| async move {
                 let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                crate::mls::account_recovery::upload_mls_account_secret_backup_with_passphrase(
+                crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                     &api,
                     secure_store.as_ref(),
                     &actor,
                     &device,
-                    recovery_secret.as_bytes(),
+                    &recovery_secret,
                 )
                 .await
             })

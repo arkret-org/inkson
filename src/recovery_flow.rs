@@ -24,6 +24,33 @@ pub struct ActiveRecoveryPolicy {
     pub allowed_proof_kinds: Vec<String>,
 }
 
+/// Account-level recovery state derived from server facts plus optional local
+/// display metadata.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccountRecoveryState {
+    pub active_policy: Option<ActiveRecoveryPolicy>,
+    pub did_recovery_backup_count: usize,
+    pub recovery_public_key_secret_storage_backup_count: usize,
+    pub local_recovery_key_fingerprint: Option<String>,
+}
+
+impl AccountRecoveryState {
+    /// The account is recoverable only when the server has both the accepted
+    /// policy and the DID recovery backup required by the first-backup gate.
+    pub fn server_recovery_configured(&self) -> bool {
+        self.active_policy.is_some() && self.did_recovery_backup_count > 0
+    }
+
+    /// Local fingerprints prove only that this browser once saw a recovery key.
+    /// They do not prove that the account has a server-side recovery backup.
+    pub fn local_only_recovery_key(&self) -> bool {
+        self.local_recovery_key_fingerprint
+            .as_deref()
+            .is_some_and(|fingerprint| !fingerprint.trim().is_empty())
+            && !self.server_recovery_configured()
+    }
+}
+
 /// Parse the `GET recovery-policy` response (`{ "active_policy": <summary|null> }`)
 /// into [`ActiveRecoveryPolicy`]. Returns `None` when no policy is accepted.
 pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPolicy> {
@@ -50,6 +77,50 @@ pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPo
             })
             .unwrap_or_default(),
     })
+}
+
+pub fn account_recovery_state_from_payloads(
+    recovery_policy_response: &Value,
+    backup_list_payload: &Value,
+    local_recovery_key_fingerprint: Option<String>,
+) -> AccountRecoveryState {
+    AccountRecoveryState {
+        active_policy: parse_active_recovery_policy(recovery_policy_response),
+        did_recovery_backup_count: count_backups_by_class_and_method(
+            backup_list_payload,
+            "did_recovery",
+            "recovery_public_key",
+        ),
+        recovery_public_key_secret_storage_backup_count: count_backups_by_class_and_method(
+            backup_list_payload,
+            "secret_storage",
+            "recovery_public_key",
+        ),
+        local_recovery_key_fingerprint: local_recovery_key_fingerprint
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
+    }
+}
+
+fn count_backups_by_class_and_method(
+    list_payload: &Value,
+    backup_class: &str,
+    recipient_method: &str,
+) -> usize {
+    list_payload
+        .get("backups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|backup| {
+            backup.get("backup_class").and_then(Value::as_str) == Some(backup_class)
+                && backup
+                    .get("encryption")
+                    .and_then(|encryption| encryption.get("recipient_method"))
+                    .and_then(Value::as_str)
+                    == Some(recipient_method)
+        })
+        .count()
 }
 
 /// 6.1 — fetch + parse the active recovery policy.
@@ -239,5 +310,43 @@ mod tests {
             parsed.allowed_proof_kinds,
             vec!["principal_signing", "recovery_unlock"]
         );
+    }
+
+    #[test]
+    fn account_recovery_state_requires_policy_and_did_recovery_backup() {
+        let policy = json!({
+            "active_policy": {
+                "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "version": 1,
+                "trust_domain": "ck:trust_domain:soland.local",
+                "allowed_proof_kinds": ["principal_signing"],
+            }
+        });
+        let no_backup =
+            account_recovery_state_from_payloads(&policy, &json!({"backups": []}), None);
+        assert!(!no_backup.server_recovery_configured());
+
+        let configured = account_recovery_state_from_payloads(
+            &policy,
+            &json!({
+                "backups": [{
+                    "backup_class": "did_recovery",
+                    "encryption": { "recipient_method": "recovery_public_key" }
+                }]
+            }),
+            None,
+        );
+        assert!(configured.server_recovery_configured());
+    }
+
+    #[test]
+    fn local_fingerprint_without_server_backup_is_incomplete() {
+        let state = account_recovery_state_from_payloads(
+            &json!({ "active_policy": null }),
+            &json!({"backups": []}),
+            Some(" sha256:abc ".to_owned()),
+        );
+        assert!(state.local_only_recovery_key());
+        assert!(!state.server_recovery_configured());
     }
 }
