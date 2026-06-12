@@ -107,15 +107,7 @@ pub async fn refresh_current_bearer() -> Option<String> {
     let refresher = REFRESHER.with(|slot| slot.borrow().clone())?;
 
     if IN_FLIGHT.with(Cell::get) {
-        // Another caller is already refreshing — wait for it and reuse its
-        // result instead of racing a second refresh.
-        for _ in 0..COALESCE_MAX_POLLS {
-            crate::api::sleep_for(Duration::from_millis(COALESCE_POLL_INTERVAL_MS)).await;
-            if !IN_FLIGHT.with(Cell::get) {
-                break;
-            }
-        }
-        return LAST_RESULT.with(|slot| slot.borrow().clone());
+        return wait_for_in_flight_refresh_result().await;
     }
 
     IN_FLIGHT.with(|flag| flag.set(true));
@@ -123,6 +115,26 @@ pub async fn refresh_current_bearer() -> Option<String> {
     let result = refresher().await;
     LAST_RESULT.with(|slot| *slot.borrow_mut() = result.clone());
     result
+}
+
+/// If a bearer refresh is already running, wait for it and return the
+/// resulting bearer. Does not start a new refresh.
+pub async fn wait_for_current_bearer_refresh() -> Option<String> {
+    if IN_FLIGHT.with(Cell::get) {
+        wait_for_in_flight_refresh_result().await
+    } else {
+        None
+    }
+}
+
+async fn wait_for_in_flight_refresh_result() -> Option<String> {
+    for _ in 0..COALESCE_MAX_POLLS {
+        crate::api::sleep_for(Duration::from_millis(COALESCE_POLL_INTERVAL_MS)).await;
+        if !IN_FLIGHT.with(Cell::get) {
+            break;
+        }
+    }
+    LAST_RESULT.with(|slot| slot.borrow().clone())
 }
 
 #[cfg(test)]

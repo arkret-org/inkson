@@ -7,6 +7,7 @@ use cokret_sdk::push_rule_core::{
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
+use crate::api::{CokretApi, is_auth_expired_error};
 use crate::components::{EmptyState, EmptyStateKind, UiIcon};
 use crate::local_state::{ClientLocalState, LocalSealView, LocalStateStore};
 use crate::models::ClientSyncOutcome;
@@ -81,7 +82,7 @@ pub fn NotificationsPanel(
         did_bootstrap.set(true);
         refresh_notifications(
             base_url.clone(),
-            token(),
+            token,
             state_store,
             notifications,
             status_msg,
@@ -208,7 +209,7 @@ pub fn NotificationsPanel(
                             move |_| {
                                 refresh_notifications(
                                     base_url.clone(),
-                                    token(),
+                                    token,
                                     state_store,
                                     notifications,
                                     status_msg,
@@ -362,7 +363,7 @@ pub fn NotificationsPanel(
                                         if let Some(action_to_run) = action_to_run.clone() {
                                             run_notification_action(
                                                 base_url.clone(),
-                                                token(),
+                                                token,
                                                 state_store,
                                                 notifications,
                                                 status_msg,
@@ -418,21 +419,38 @@ pub fn NotificationsPanel(
     }
 }
 
+async fn optional_invite_notifications(api: &CokretApi) -> anyhow::Result<Vec<Value>> {
+    match api.invites().await {
+        Ok(response) => Ok(response.invites),
+        Err(error) if is_auth_expired_error(&error) => {
+            let Some(refreshed) = crate::session::refresh_current_bearer().await else {
+                return Err(error);
+            };
+            let refreshed_api = api.clone().with_bearer(refreshed);
+            Ok(refreshed_api.invites().await?.invites)
+        }
+        Err(error) => {
+            tracing::debug!(
+                ?error,
+                "notification refresh could not load invite notifications"
+            );
+            Ok(Vec::new())
+        }
+    }
+}
+
 fn refresh_notifications(
     base_url: String,
-    access_token: String,
+    access_token: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
 ) {
     spawn(async move {
+        let access_token = access_token();
         match with_authed_api(&base_url, access_token, |api| async move {
             let response = api.account_subscribe_snapshot(None).await?;
-            let invite_notifications = api
-                .invites()
-                .await
-                .map(|response| response.invites)
-                .unwrap_or_default();
+            let invite_notifications = optional_invite_notifications(&api).await?;
             Ok::<_, anyhow::Error>((response, invite_notifications))
         })
         .await
@@ -580,7 +598,7 @@ fn read_cursor_targets(notifications: &[Notification]) -> Vec<NotificationReadTa
 
 fn run_notification_action(
     base_url: String,
-    access_token: String,
+    access_token: Signal<String>,
     state_store: Signal<LocalStateStore>,
     notifications: Signal<Vec<Notification>>,
     status_msg: Signal<String>,
@@ -609,7 +627,7 @@ fn run_notification_action(
 #[allow(clippy::too_many_arguments)]
 fn accept_invite_notification(
     base_url: String,
-    access_token: String,
+    access_token: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
@@ -625,6 +643,7 @@ fn accept_invite_notification(
     ));
     spawn(async move {
         let accepted_realm_for_api = accepted_realm.clone();
+        let access_token = access_token();
         match with_authed_api(&base_url, access_token, |api| async move {
             let account = api.account_me().await?;
             let submit = api
@@ -632,11 +651,7 @@ fn accept_invite_notification(
                 .await?;
             let read_api = api.clone().with_wait_for(submit.cursor);
             let sync = read_api.account_subscribe_snapshot(None).await;
-            let invite_notifications = read_api
-                .invites()
-                .await
-                .map(|response| response.invites)
-                .unwrap_or_default();
+            let invite_notifications = optional_invite_notifications(&read_api).await?;
             Ok::<_, anyhow::Error>((sync, invite_notifications))
         })
         .await
