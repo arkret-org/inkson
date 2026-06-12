@@ -681,6 +681,10 @@ pub fn SetupPanel(
                             div { class: "muted",
                                 "This Realm is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it."
                             }
+                            div { class: "muted",
+                                "data-testid": "encrypted-realm-recovery-gate-override-hint",
+                                "If you continue without recovery, press Create realm again to proceed at your own risk."
+                            }
                         }
                         div { class: "modal-foot actions",
                             Link {
@@ -699,7 +703,7 @@ pub fn SetupPanel(
                                     recovery_gate_acknowledged.set(true);
                                     pending_recovery_gate.set(false);
                                 },
-                                "Create without recovery"
+                                "Continue without recovery"
                             }
                         }
                     }

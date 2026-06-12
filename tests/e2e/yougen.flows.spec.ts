@@ -505,6 +505,59 @@ test("recovery passkey quick unlock stays additive to the 24-word key", async ({
   await expect(passkeySection).toContainText("24-word Recovery Key");
 });
 
+test("encrypted Realm creation without recovery is gated, then proceeds on override", async ({
+  page,
+}) => {
+  // S6 (key-management §7.11): creating an e2ee Realm with no recovery path
+  // configured MUST prompt the user to set up the Recovery Key first. The
+  // default mock account has device authorization but no recovery configured.
+  await refreshServer(page);
+
+  await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
+  const setupPanel = page.getByTestId("setup-panel");
+  await expect(setupPanel).toBeVisible();
+  await page.getByTestId("realm-title-input").fill("Gated Encrypted Realm");
+  await page.getByTestId("realm-summary-input").fill("Created to verify the recovery gate");
+  await page.getByTestId("new-realm-next-button").click();
+  await page.getByTestId("new-realm-next-button").click();
+
+  // First Create click is intercepted by the recovery gate; no create event yet.
+  let realmCreateRequests = 0;
+  page.on("request", (request) => {
+    if (
+      request.url().endsWith("/_cokret/self/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("ck.realm.create")
+    ) {
+      realmCreateRequests += 1;
+    }
+  });
+  await page.getByTestId("create-realm-button").click();
+
+  const gate = latestTestId(page, "encrypted-realm-recovery-gate");
+  await expect(gate).toBeVisible();
+  await expect(latestTestId(page, "encrypted-realm-recovery-gate-setup")).toBeVisible();
+  await expect(latestTestId(page, "encrypted-realm-recovery-gate-override")).toBeVisible();
+  // Creation was blocked, not submitted.
+  await page.waitForTimeout(250);
+  expect(realmCreateRequests).toBe(0);
+
+  // Override (personal_node accepts the SPOF risk), then re-create.
+  await latestTestId(page, "encrypted-realm-recovery-gate-override").click();
+  await expect(gate).toBeHidden();
+
+  const realmCreateRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/_cokret/self/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("ck.realm.create"),
+  );
+  await page.getByTestId("create-realm-button").click();
+  await realmCreateRequest;
+
+  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+});
+
 test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   await refreshServer(page);
 
@@ -516,6 +569,12 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   await page.getByTestId("new-realm-next-button").click();
   await page.getByTestId("new-realm-next-button").click();
   await page.getByTestId("seed-members-input").fill("did:web:bob.example");
+
+  // No recovery configured in the default mock account, so the S6 gate
+  // intercepts the first Create; accept the override to reach the backup flow.
+  await page.getByTestId("create-realm-button").click();
+  await latestTestId(page, "encrypted-realm-recovery-gate-override").click();
+  await expect(latestTestId(page, "encrypted-realm-recovery-gate")).toBeHidden();
 
   const realmCreateRequest = page.waitForRequest(
     (request) =>
@@ -566,6 +625,8 @@ test("encrypted Realm backup uses existing Recovery Key instead of generating an
       (request.postData() ?? "").includes("ck.realm.create"),
   );
   await page.getByTestId("create-realm-button").click();
+  // Recovery is already configured, so the S6 gate is bypassed entirely.
+  await expect(page.getByTestId("encrypted-realm-recovery-gate")).toHaveCount(0);
   await realmCreateRequest;
 
   await expect(page.getByTestId("realm-setup-done")).toBeVisible();
@@ -1243,6 +1304,11 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ck.realm.plaintext_visible_services"),
   );
+  await page.getByTestId("create-realm-button").click();
+  // S6 gate (no recovery configured in the default mock account): accept the
+  // override, then re-create so the queued requests fire.
+  await latestTestId(page, "encrypted-realm-recovery-gate-override").click();
+  await expect(latestTestId(page, "encrypted-realm-recovery-gate")).toBeHidden();
   await page.getByTestId("create-realm-button").click();
   const [realmCreateBody, plaintextPolicyBody] = await Promise.all([
     realmCreateRequest.then((request) => request.postDataJSON()),
