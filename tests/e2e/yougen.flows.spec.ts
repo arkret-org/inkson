@@ -45,6 +45,22 @@ async function gotoAndDismissRecovery(page: import("@playwright/test").Page, url
   await dismissBlockingRecoveryModal(page);
 }
 
+// The default mock account has encrypted history but no local key/backup, so
+// the highest-priority account-health prompt (RecoverySetupMissing) shows as a
+// blocking modal. Wait for it to settle, then dismiss it so the setup form
+// underneath becomes interactable. No-op when the modal never appears.
+async function dismissRecoveryMissingModal(page: import("@playwright/test").Page) {
+  const modal = page.getByTestId("mls-recovery-missing-modal").last();
+  const appeared = await modal
+    .waitFor({ state: "visible", timeout: 8_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (appeared) {
+    await page.getByTestId("mls-recovery-missing-dismiss").last().click();
+    await expect(modal).toBeHidden({ timeout: 8_000 });
+  }
+}
+
 async function openSettings(page: import("@playwright/test").Page) {
   await latestTestId(page, "account-menu-button").click();
   await latestTestId(page, "account-menu-settings").click();
@@ -138,8 +154,20 @@ async function readLocalConfig(page: import("@playwright/test").Page) {
 }
 
 async function seedLocalRecoveryKeyMetadata(page: import("@playwright/test").Page) {
-  await page.evaluate(() => {
+  // Use addInitScript (not a one-shot evaluate) so the seeded private_data is
+  // re-injected before EVERY page load — including later page.goto reloads in
+  // the same test. A one-shot write is clobbered when the app re-flushes its
+  // local state on a subsequent reload, which is why the recovery config has
+  // to be re-applied at boot.
+  await page.addInitScript(() => {
     const account = "did:web:alice.example";
+    const keyBytes = Array.from(new TextEncoder().encode(account));
+    // Mirror of LocalStateStore::xor_encrypt (src/local_state.rs): byte-wise
+    // XOR with the account-DID key, hex-encoded.
+    const xorHex = (plaintext: string) =>
+      Array.from(new TextEncoder().encode(plaintext))
+        .map((byte, index) => (byte ^ keyBytes[index % keyBytes.length]).toString(16).padStart(2, "0"))
+        .join("");
     const recoveryState = JSON.stringify({
       recovery_key_fingerprint: "sha256:e2e-local-recovery-key",
       recovery_key_rotated_at: "2026-06-12T12:00:00Z",
@@ -149,18 +177,35 @@ async function seedLocalRecoveryKeyMetadata(page: import("@playwright/test").Pag
       passkey_wraps: [],
       last_rehearsed_at: "",
     });
-    const keyBytes = Array.from(new TextEncoder().encode(account));
-    const dataBytes = Array.from(new TextEncoder().encode(recoveryState));
-    const encrypted = dataBytes
-      .map((byte, index) => (byte ^ keyBytes[index % keyBytes.length]).toString(16).padStart(2, "0"))
-      .join("");
+    // mls.recovery_backup.v1 — presence of a backup_id makes
+    // mls_recovery_backup_configured() true, which both bypasses the S6 create
+    // gate and drives the backup prompt's "use existing key" branch.
+    const backupState = JSON.stringify({ backup_id: "ck:backup:e2e-existing-0000" });
     const state = JSON.parse(localStorage.getItem("yougen.local_state.v1") ?? "{}");
-    state.private_data = { ...(state.private_data ?? {}), "recovery.state.v1": encrypted };
+    state.private_data = {
+      ...(state.private_data ?? {}),
+      "recovery.state.v1": xorHex(recoveryState),
+      "mls.recovery_backup.v1": xorHex(backupState),
+    };
     localStorage.setItem("yougen.local_state.v1", JSON.stringify(state));
-    window.location.reload();
   });
-  await page.waitForLoadState("domcontentloaded");
+  await page.reload({ waitUntil: "domcontentloaded" });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+}
+
+// Dismiss the "Protect your encrypted history" backup prompt (needs_mls_backup)
+// when it pops up, so a subsequent interaction underneath becomes clickable.
+// No-op when the modal isn't shown.
+async function dismissMlsBackupModal(page: import("@playwright/test").Page) {
+  const modal = page.getByTestId("mls-backup-modal").last();
+  const appeared = await modal
+    .waitFor({ state: "visible", timeout: 4_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (appeared) {
+    await page.getByTestId("mls-backup-dismiss").last().click();
+    await expect(modal).toBeHidden({ timeout: 8_000 });
+  }
 }
 
 test.beforeEach(async ({ page }, testInfo) => {
@@ -303,7 +348,21 @@ test("authenticated login route returns to the workspace", async ({ page }) => {
   await expect(page).toHaveURL(/\/$/);
 });
 
-test("first authenticated session prompts recovery setup", async ({ page }) => {
+test("first authenticated session surfaces a single recovery prompt by priority", async ({
+  page,
+}) => {
+  // Single-prompt model (src/account_health.rs): at most one account-health
+  // prompt shows at a time, by priority. The mock account has encrypted
+  // history but no local key/backup, so the highest-priority prompt is the
+  // recovery-missing dialog (RecoverySetupMissing); the lower-priority
+  // recovery-setup banner (RecoverySetupReminder) is suppressed while it shows.
+  const missing = latestTestId(page, "mls-recovery-missing-modal");
+  await expect(missing).toBeVisible();
+  await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
+  await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
+
+  // Dismissing the higher-priority prompt reveals the next one in the chain.
+  await latestTestId(page, "mls-recovery-missing-dismiss").click();
   const banner = latestTestId(page, "recovery-setup-banner");
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("Recovery setup is incomplete");
@@ -516,6 +575,7 @@ test("encrypted Realm creation without recovery is gated, then proceeds on overr
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
+  await dismissRecoveryMissingModal(page);
   await page.getByTestId("realm-title-input").fill("Gated Encrypted Realm");
   await page.getByTestId("realm-summary-input").fill("Created to verify the recovery gate");
   await page.getByTestId("new-realm-next-button").click();
@@ -564,6 +624,7 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
+  await dismissRecoveryMissingModal(page);
   await page.getByTestId("realm-title-input").fill("Recovery Words Space");
   await page.getByTestId("realm-summary-input").fill("Created to verify recovery words");
   await page.getByTestId("new-realm-next-button").click();
@@ -586,10 +647,13 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   await realmCreateRequest;
 
   await expect(page.getByTestId("realm-setup-done")).toBeVisible();
-  await expect(latestTestId(page, "mls-backup-modal")).toBeVisible();
+  const backupModal = latestTestId(page, "mls-backup-modal");
+  await expect(backupModal).toBeVisible();
   await expect(latestTestId(page, "mls-backup-banner")).toBeVisible();
-  await expect(latestTestId(page, "mls-backup-banner")).toHaveAttribute("role", "dialog");
-  await expect(latestTestId(page, "mls-backup-banner")).toHaveAttribute("aria-modal", "true");
+  // The dialog semantics live on the Dialog wrapper (mls-backup-modal), not the
+  // inner content div (mls-backup-banner).
+  await expect(backupModal).toHaveAttribute("role", "dialog");
+  await expect(backupModal).toHaveAttribute("aria-modal", "true");
   await expect(latestTestId(page, "mls-backup-submit")).toBeVisible();
   await expect(page.getByTestId("mls-backup-passphrase")).toHaveCount(0);
   await expect(page.getByTestId("mls-backup-confirm")).toHaveCount(0);
@@ -613,6 +677,7 @@ test("encrypted Realm backup uses existing Recovery Key instead of generating an
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
+  await dismissRecoveryMissingModal(page);
   await page.getByTestId("realm-title-input").fill("Existing Recovery Key Space");
   await page.getByTestId("realm-summary-input").fill("Created after recovery key setup");
   await page.getByTestId("new-realm-next-button").click();
@@ -1270,12 +1335,14 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
 
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
+  await dismissRecoveryMissingModal(page);
   await page.getByTestId("register-account-button").click();
   await expect(page.getByTestId("account-flow")).toContainText("registered alice.example");
 
   await page.getByTestId("sidebar-new-realm-cta").click();
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
+  await dismissRecoveryMissingModal(page);
   await expect(page.getByTestId("realm-title")).toContainText("New Realm");
   await expect(setupPanel.getByRole("link", { name: "Search" })).toHaveCount(0);
   await expect(setupPanel.getByRole("link", { name: "Settings" })).toHaveCount(0);
@@ -1332,6 +1399,10 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
+  // The reload re-runs account-health detection; dismiss any account-health
+  // modal that re-appears so it doesn't block the composer.
+  await dismissRecoveryMissingModal(page);
+  await dismissMlsBackupModal(page);
   await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
   await expect(page.getByTestId("timeline")).toBeVisible();
   const sendRequest = page.waitForRequest("**/_cokret/self/events");

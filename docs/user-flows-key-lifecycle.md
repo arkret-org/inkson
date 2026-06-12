@@ -259,6 +259,23 @@ flowchart TD
 
 图例：✅ 已落地 ／ ◑ 既存框架但有缺口 ／ ❌ 缺失。
 
+### 10.3 E2E 测试覆盖（`yougen/tests/e2e/yougen.flows.spec.ts`）
+
+本轮按新流程逻辑更新并新增 Playwright e2e（对 mock soland），全部通过：
+
+| 测试 | 覆盖 |
+| --- | --- |
+| `first authenticated session surfaces a single recovery prompt by priority` | 单弹窗优先级：RecoverySetupMissing 抢占 → 关闭后才显示低优先级的 recovery-setup banner（替代原 multi-prompt 断言） |
+| `fresh browser requires device authorization before recovery or encryption prompts` | 优先级 1：设备授权抢占 floor / recovery 弹窗 |
+| `encrypted Realm creation without recovery is gated, then proceeds on override` | **S6 gate**：未配置 recovery 创建加密 Realm → 弹门、阻断 create；override 后再次 create 才提交 |
+| `encrypted Realm backup uses existing Recovery Key …` | 已配置 recovery 时 gate 被绕过（`toHaveCount(0)`），走 existing-key 备份分支 |
+| `mls recovery backup generates 24 recovery words` | gate override 后进入备份流程，生成 24 词 |
+| `setup, onboarding, and space timeline flow works` | 端到端冒烟（注册→建 Realm 经 gate→备份→时间线发消息） |
+
+同时修复了 `cotest/e2e/helpers/users.ts` 的 `createRealm` helper，使其对加密 Realm 的 S6 gate 做 override，覆盖所有 cotest 场景的建 Realm 路径。
+
+> 注：上述前 5 项中的 508/548 等建 Realm 测试在改动前即因 mock 默认弹出的 recovery-missing 阻断而失败（已用 parent-commit A/B 确认为既有失败），本轮一并修正（导航后 dismiss 阻断弹窗、seed 用 `addInitScript` 持久化）。`account_health` 解析器另有 14 条 Rust 单测（`cargo test --lib -- account_health`）。
+
 ---
 
 ## 11. 自查记录
