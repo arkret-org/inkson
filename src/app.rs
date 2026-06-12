@@ -6016,7 +6016,14 @@ fn device_authorization_from_record(device: &Value) -> Option<bool> {
             return Some(authorized);
         }
     }
-    None
+    if device
+        .get("authorized_at")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Some(true);
+    }
+    Some(false)
 }
 
 fn device_status_authorization(status: &str) -> Option<bool> {
@@ -7655,6 +7662,37 @@ mod tests {
         assert_eq!(
             current_device_authorization_from_account_viewer(&viewer, device),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn current_device_authorization_accepts_authorized_at_without_status() {
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let viewer = serde_json::json!({
+            "devices": [{
+                "device_id": device,
+                "authorized_at": "2026-04-28T12:00:00Z"
+            }]
+        });
+
+        assert_eq!(
+            current_device_authorization_from_account_viewer(&viewer, device),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn current_device_authorization_rejects_current_record_without_authorization_evidence() {
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let viewer = serde_json::json!({
+            "devices": [{
+                "device_id": device
+            }]
+        });
+
+        assert_eq!(
+            current_device_authorization_from_account_viewer(&viewer, device),
+            Some(false)
         );
     }
 

@@ -137,6 +137,32 @@ async function readLocalConfig(page: import("@playwright/test").Page) {
   return page.evaluate(() => JSON.parse(localStorage.getItem("yougen.config.v1") ?? "{}"));
 }
 
+async function seedLocalRecoveryKeyMetadata(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    const account = "did:web:alice.example";
+    const recoveryState = JSON.stringify({
+      recovery_key_fingerprint: "sha256:e2e-local-recovery-key",
+      recovery_key_rotated_at: "2026-06-12T12:00:00Z",
+      sss_threshold: 3,
+      sss_total: 5,
+      guardians: [],
+      passkey_wraps: [],
+      last_rehearsed_at: "",
+    });
+    const keyBytes = Array.from(new TextEncoder().encode(account));
+    const dataBytes = Array.from(new TextEncoder().encode(recoveryState));
+    const encrypted = dataBytes
+      .map((byte, index) => (byte ^ keyBytes[index % keyBytes.length]).toString(16).padStart(2, "0"))
+      .join("");
+    const state = JSON.parse(localStorage.getItem("yougen.local_state.v1") ?? "{}");
+    state.private_data = { ...(state.private_data ?? {}), "recovery.state.v1": encrypted };
+    localStorage.setItem("yougen.local_state.v1", JSON.stringify(state));
+    window.location.reload();
+  });
+  await page.waitForLoadState("domcontentloaded");
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+}
+
 test.beforeEach(async ({ page }, testInfo) => {
   await mockCokretApi(page, {
     advertiseListHandlesForSubject: !testInfo.title.startsWith(
@@ -146,6 +172,9 @@ test.beforeEach(async ({ page }, testInfo) => {
   if (testInfo.title.startsWith("login page")) {
     return;
   }
+  const initialDeviceId = testInfo.title.startsWith("fresh browser requires device authorization")
+    ? "ck:device:01964137-0000-7000-8000-0000000000b2"
+    : "ck:device:01964137-0000-7000-8000-0000000000a1";
   await page.addInitScript(() => {
     if (localStorage.getItem("yougen.config.v1")) {
       return;
@@ -160,6 +189,20 @@ test.beforeEach(async ({ page }, testInfo) => {
       }),
     );
   });
+  await page.addInitScript((deviceId) => {
+    const current = localStorage.getItem("yougen.config.v1");
+    const parsed = current ? JSON.parse(current) : {};
+    localStorage.setItem(
+      "yougen.config.v1",
+      JSON.stringify({
+        server_url: "https://local.host",
+        account_did: "did:web:alice.example",
+        session_token: "sx:e2e-token",
+        ...parsed,
+        device_id: deviceId,
+      }),
+    );
+  }, initialDeviceId);
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
 });
@@ -268,13 +311,27 @@ test("first authenticated session prompts recovery setup", async ({ page }) => {
   await expect(latestTestId(page, "recovery-setup-open-encryption")).toBeVisible();
 });
 
+test("dialog ignores inside drag release but closes on outside click", async ({ page }) => {
+  await dismissBlockingRecoveryModal(page);
+  await latestTestId(page, "recovery-setup-open-recovery").click();
+  const modal = latestTestId(page, "recovery-key-setup-modal");
+  await expect(modal).toBeVisible();
+  const box = await latestTestId(page, "recovery-key-setup-banner").boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width + 80, box!.y + box!.height + 80);
+  await page.mouse.up();
+  await expect(modal).toBeVisible();
+
+  await page.mouse.click(12, 12);
+  await expect(modal).toBeHidden();
+});
+
 test("fresh browser requires device authorization before recovery or encryption prompts", async ({
   page,
 }) => {
-  await writeLocalConfigAndReload(page, {
-    device_id: "ck:device:01964137-0000-7000-8000-0000000000b2",
-  });
-
   const authModal = latestTestId(page, "device-authorization-modal");
   await expect(authModal).toBeVisible({ timeout: 30_000 });
   await expect(authModal).toContainText("Authorize this device");
@@ -486,6 +543,37 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   expect(generatedRecoveryKey).not.toMatch(/[A-Z0-9]{5}-[A-Z0-9]{5}/);
   await expect(latestTestId(page, "mls-backup-generated-key-warning")).toContainText("Store these words now");
   await expect(latestTestId(page, "mls-backup-saved")).toBeVisible();
+});
+
+test("encrypted Realm backup uses existing Recovery Key instead of generating another one", async ({
+  page,
+}) => {
+  await seedLocalRecoveryKeyMetadata(page);
+  await refreshServer(page);
+
+  await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
+  const setupPanel = page.getByTestId("setup-panel");
+  await expect(setupPanel).toBeVisible();
+  await page.getByTestId("realm-title-input").fill("Existing Recovery Key Space");
+  await page.getByTestId("realm-summary-input").fill("Created after recovery key setup");
+  await page.getByTestId("new-realm-next-button").click();
+  await page.getByTestId("new-realm-next-button").click();
+
+  const realmCreateRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/_cokret/self/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("ck.realm.create"),
+  );
+  await page.getByTestId("create-realm-button").click();
+  await realmCreateRequest;
+
+  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-modal")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-existing-key")).toBeVisible();
+  await expect(page.getByTestId("mls-backup-generated-key")).toHaveCount(0);
+  await expect(latestTestId(page, "mls-backup-submit")).toContainText("Back up with Recovery Key");
+  await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
 });
 
 test("login page delegates account lifecycle to coauth OIDC", async ({ page }) => {

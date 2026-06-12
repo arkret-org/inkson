@@ -708,16 +708,36 @@ pub fn english_translations() -> TranslationDict {
         "You're using encryption, but this account does not have an encrypted-history recovery backup yet. Create a 24-word recovery key so a fresh browser or device can restore the same history.",
     );
     dict.set(
+        "mls_backup.description_existing",
+        "You're using encryption, but this account does not have an encrypted-history recovery backup yet. Use your existing 24-word Recovery Key to encrypt and upload the backup.",
+    );
+    dict.set(
         "mls_backup.warning.passphrase_loss",
         "Save the 24 recovery words when they appear. They are shown once and are not stored by Cokret; existing devices keep working if you lose them, but new devices cannot restore this history.",
     );
+    dict.set(
+        "mls_backup.warning.existing_key",
+        "The Recovery Key words are not uploaded. They are used locally to encrypt the backup before it leaves this device.",
+    );
     dict.set("mls_backup.button_idle", "Create recovery key");
+    dict.set("mls_backup.button_existing", "Back up with Recovery Key");
+    dict.set("mls_backup.button_retry", "Retry backup");
     dict.set("mls_backup.button_busy", "Backing up...");
     dict.set("mls_backup.button_dismiss", "Remind me later");
     dict.set("mls_backup.button_saved", "I saved the key");
+    dict.set("mls_backup.button_done", "Done");
     dict.set("mls_backup.copy_key", "Copy");
     dict.set("mls_backup.copy_key_done", "Copied ✓");
     dict.set("mls_backup.download_key", "Download .txt");
+    dict.set("mls_backup.existing_key_label", "Recovery Key (24 words)");
+    dict.set(
+        "mls_backup.existing_key_placeholder",
+        "Enter the 24-word Recovery Key you already saved",
+    );
+    dict.set(
+        "mls_backup.existing_key_hint",
+        "This verifies you still have the offline key before encrypted-history backup is enabled.",
+    );
     dict.set(
         "mls_backup.generated_key_label",
         "Your 24-word recovery key",
@@ -737,6 +757,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set(
         "mls_backup.status.generate_failed",
         "Recovery key generation failed:",
+    );
+    dict.set(
+        "mls_backup.status.invalid_recovery_key",
+        "Enter the full 24-word Recovery Key.",
     );
 
     // X11.1 — persistent MLS recovery-key settings section.
@@ -1934,16 +1958,36 @@ pub fn chinese_translations() -> TranslationDict {
         "你已在使用加密，但账号还没有加密历史恢复备份。创建一个 24 词恢复密钥后，新浏览器或新设备才能恢复同一份加密历史。",
     );
     dict.set(
+        "mls_backup.description_existing",
+        "你已在使用加密，但账号还没有加密历史恢复备份。请使用已经保存的 24 词恢复密钥来加密并上传备份。",
+    );
+    dict.set(
         "mls_backup.warning.passphrase_loss",
         "24 个恢复词出现后请立即保存。Cokret 不会保存它们；遗失后，已设置好的设备仍可继续使用，但新设备无法恢复这份加密历史。",
     );
+    dict.set(
+        "mls_backup.warning.existing_key",
+        "恢复密钥不会上传；它只在本设备本地用于加密备份，然后才上传密文。",
+    );
     dict.set("mls_backup.button_idle", "创建恢复密钥");
+    dict.set("mls_backup.button_existing", "用恢复密钥备份");
+    dict.set("mls_backup.button_retry", "重试备份");
     dict.set("mls_backup.button_busy", "正在备份…");
     dict.set("mls_backup.button_dismiss", "稍后提醒");
     dict.set("mls_backup.button_saved", "我已保存密钥");
+    dict.set("mls_backup.button_done", "完成");
     dict.set("mls_backup.copy_key", "复制");
     dict.set("mls_backup.copy_key_done", "已复制 ✓");
     dict.set("mls_backup.download_key", "下载 .txt");
+    dict.set("mls_backup.existing_key_label", "恢复密钥（24 词）");
+    dict.set(
+        "mls_backup.existing_key_placeholder",
+        "输入你已经保存的 24 词恢复密钥",
+    );
+    dict.set(
+        "mls_backup.existing_key_hint",
+        "启用加密历史备份前，需要确认你仍然持有离线恢复密钥。",
+    );
     dict.set("mls_backup.generated_key_label", "你的 24 词恢复密钥");
     dict.set(
         "mls_backup.generated_key_warning",
@@ -1955,6 +1999,10 @@ pub fn chinese_translations() -> TranslationDict {
         "备份已创建。请立即保存这 24 个恢复词。",
     );
     dict.set("mls_backup.status.generate_failed", "恢复密钥生成失败：");
+    dict.set(
+        "mls_backup.status.invalid_recovery_key",
+        "请输入完整的 24 词恢复密钥。",
+    );
 
     // X11.1 — 持久化的 MLS 恢复密钥设置区。
     dict.set("settings.mls_recovery.title", "加密历史恢复");
