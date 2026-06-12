@@ -3,6 +3,7 @@ use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
 use serde_json::{Value, json};
 
+use crate::components::encryption_floor_prompt::projection_has_recommended_encryption_floor;
 use crate::local_state::{LocalStateStore, MoveSubmissionState};
 use crate::models::RealmTreeNodeKind;
 use crate::operation::ck_ops;
@@ -2256,6 +2257,12 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
+                                let preserve_recommended_encryption_floor = state_store
+                                    .read()
+                                    .load()
+                                    .realm_tree_projections
+                                    .get(&realm)
+                                    .is_some_and(projection_has_recommended_encryption_floor);
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
@@ -2267,6 +2274,7 @@ pub fn RealmAdminPanel(
                                                 &rule,
                                                 &vis,
                                                 join_policy,
+                                                preserve_recommended_encryption_floor,
                                             )
                                             .await
                                         },

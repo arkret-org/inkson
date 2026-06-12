@@ -1108,7 +1108,7 @@ pub fn RouterView() -> Element {
 
     // Bootstrap handshake: on first render with a valid session, run
     // `connect()` exactly once to do the `/server/describe` +
-    // `/account/me` probes and the initial server-authoritative full
+    // account viewer probes and the initial server-authoritative full
     // sync. After that, the SyncEngine (below) owns continuous sync.
     let mut bootstrap_pending = use_signal(|| true);
     if bootstrap_pending() {
@@ -2260,6 +2260,14 @@ pub fn RouterView() -> Element {
             // policy-deny dispatcher. Renders nothing when no error
             // is queued.
             crate::components::CircleErrorToast { i18n: i18n_signal }
+            crate::components::EncryptionFloorPrompt {
+                token,
+                account_did,
+                state_store,
+                sync_bootstrap_complete,
+                needs_mls_unlock,
+                needs_mls_backup,
+            }
             if show_recovery_setup_prompt {
                 div {
                     class: "event recovery-setup-banner",
@@ -6616,7 +6624,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
 
                 let mut authed = api.clone().with_bearer(session_token.clone());
                 adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
-                // Resolve the canonical actor DID from `/account/me`. Three
+                // Resolve the canonical actor DID from the account viewer. Three
                 // outcomes:
                 //   1. Ok with non-empty DID -> use it as canonical_actor.
                 //   2. Err that looks like auth expiry -> wipe session, bounce to login. The
@@ -6725,7 +6733,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 }
                 if canonical_actor != actor {
                     // Account changed since the last persisted run (the
-                    // server's `/account/me` disagrees with our cached
+                    // server's account viewer disagrees with our cached
                     // actor). When the previous actor was non-empty this
                     // means a different human is signing in on the same
                     // device — every account-scoped record (projections,

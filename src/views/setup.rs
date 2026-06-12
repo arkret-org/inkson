@@ -105,8 +105,8 @@ const HISTORY_VISIBILITY_OPTIONS: [(&str, &str, &str); 5] = [
 const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 3] = [
     (
         "mls_rfc9420",
-        "MLS (end-to-end)",
-        "Recommended. Messages are encrypted with MLS; the server only sees ciphertext.",
+        "MLS (metadata + content E2EE)",
+        "Recommended. Metadata and content use e2ee_required floors backed by MLS.",
     ),
     (
         "none",
@@ -732,7 +732,7 @@ pub fn SetupPanel(
                             }
                             h2 { class: "settings-content-title", "Create a Realm" }
                             div { class: "muted",
-                                "A Realm is the security / sync / E2EE boundary. Discoverability, join rule, history visibility, encryption profile and security class are independent decisions — encryption_profile and security_class are create-locked, so pick deliberately."
+                                "A Realm is the security / sync / E2EE boundary. The recommended mode is MLS with metadata_encryption_floor=e2ee_required and content_encryption_floor=e2ee_required."
                             }
                         }
 
@@ -910,6 +910,18 @@ pub fn SetupPanel(
                                             }
                                             div { class: "muted",
                                                 "{ENCRYPTION_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == encryption_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Encryption profile is not set.\")}"
+                                            }
+                                            if crate::api::encryption_profile_uses_recommended_floor(&encryption_profile_value) {
+                                                div { class: "muted",
+                                                    "Recommended floor: metadata_encryption_floor=e2ee_required and content_encryption_floor=e2ee_required."
+                                                }
+                                            } else {
+                                                div { class: "inline-warn", "data-testid": "realm-encryption-floor-warning",
+                                                    span { class: "body",
+                                                        strong { "Encryption floor is below the recommended mode." }
+                                                        " Use MLS if this Realm may hold private metadata or content."
+                                                    }
+                                                }
                                             }
                                             div { class: "muted",
                                                 "Locked at creation — encryption_profile cannot be changed afterwards (spec realm-and-space.md §2.3)."
@@ -1223,9 +1235,7 @@ pub fn SetupPanel(
                                                                 } else {
                                                                     vec![actor.clone()]
                                                                 };
-                                                                state_store.write().save_realm_tree_projection(
-                                                                    realm_id.clone(),
-                                                                    json!({
+                                                                let mut projection_body = json!({
                                                                         // Yougen-local schema tag — used by the
                                                                         // sidebar (M-SIDEBAR-TIER-1) to split
                                                                         // Realms from Spaces. Legacy projections
@@ -1251,7 +1261,22 @@ pub fn SetupPanel(
                                                                         "timeline": {
                                                                             "events": []
                                                                         }
-                                                                    }),
+                                                                    });
+                                                                if crate::api::encryption_profile_uses_recommended_floor(
+                                                                    &encryption_profile,
+                                                                ) {
+                                                                    projection_body["content_encryption_floor"] =
+                                                                        json!(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR);
+                                                                    projection_body["metadata_encryption_floor"] =
+                                                                        json!(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR);
+                                                                    projection_body["summary"]["content_encryption_floor"] =
+                                                                        json!(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR);
+                                                                    projection_body["summary"]["metadata_encryption_floor"] =
+                                                                        json!(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR);
+                                                                }
+                                                                state_store.write().save_realm_tree_projection(
+                                                                    realm_id.clone(),
+                                                                    projection_body,
                                                                 );
 
                                                                 let mut initial_mls_backup_id = None;
@@ -1392,6 +1417,11 @@ pub fn SetupPanel(
                                                                     &encryption_profile,
                                                                 ) {
                                                                     steps.push("MLS ready locally".to_owned());
+                                                                }
+                                                                if crate::api::encryption_profile_uses_recommended_floor(
+                                                                    &encryption_profile,
+                                                                ) {
+                                                                    steps.push("metadata/content floor e2ee_required".to_owned());
                                                                 }
 
                                                                 let message = steps.join(" · ");

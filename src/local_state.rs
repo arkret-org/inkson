@@ -2249,7 +2249,7 @@ impl LocalStateStore {
 
     /// Stamp the current account-scope owner without wiping anything.
     /// Used by paths that have already validated the actor (e.g. the
-    /// connect bootstrap's `/account/me` probe) and just need to record
+    /// connect bootstrap's account viewer probe) and just need to record
     /// who the account-scoped state now belongs to so a later
     /// [`adopt_account_scope`](Self::adopt_account_scope) recognises it.
     pub fn stamp_account_scope_owner(&mut self, actor: &str) {

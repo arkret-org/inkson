@@ -54,12 +54,24 @@ export function mockCokretContract(req) {
     return json({ events: [], next_cursor: null });
   }
 
-  if (method === "GET" && path === "/_soland/self/account/me") {
+  if (method === "GET" && path === "/_cokret/self/account/viewer") {
     return json({
-      did: "did:web:alice.example",
-      handle: "alice.example",
-      display_name: "yougen",
-      created_at: "2026-04-28T12:00:00Z",
+      principal_id: "did:web:alice.example",
+      state: "active",
+      devices: [],
+      primary_handle_claim: {
+        schema: "ck.schema.handle_claim.v1",
+        handle: "alice:local.host",
+        subject: "did:web:alice.example",
+      },
+      profile: {
+        id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
+        schema: "ck.schema.actor_profile.v1",
+        principal_id: "did:web:alice.example",
+        actor_kind: "user",
+        display_name: "yougen",
+        created_at: "2026-04-28T12:00:00Z",
+      },
     });
   }
 
@@ -189,15 +201,15 @@ export function mockCokretContract(req) {
 // prefix. Each alias MUST resolve to a path with a matching branch above;
 // `/realm/create` and `/realms/create` were dropped together with the legacy
 // realm/space creation surface forbidden by yougen/tests/server_contract.rs.
-// `/account/me` (read) and `/account/profile` (update) are distinct
-// endpoints — no alias collapses one onto the other.
+// `/account/viewer` is the short alias for the spec account viewer. Profile
+// update remains distinct and MUST NOT collapse onto this read path.
 export function canonicalPath(path) {
   const clean = path.startsWith("/_cokret/") ? path : path.replace(/\/+$/, "");
   const aliases = {
     "/server/describe": "/_cokret/describe",
     "/events/submit": "/_cokret/self/events",
     "/events/list": "/_cokret/self/events",
-    "/account/me": "/_soland/self/account/me",
+    "/account/viewer": "/_cokret/self/account/viewer",
     "/directory/search-realms": "/_cokret/find/directory/search-realms",
     "/keys/backups": "/_cokret/self/keys/backups",
     "/gate/account/device-pair": "/_cokret/gate/account/device-pair",

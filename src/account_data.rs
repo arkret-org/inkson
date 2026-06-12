@@ -189,7 +189,7 @@ impl AccountDataStore {
 /// (`ck:blob:sha256:<hex>`) is public — the avatar is also published via
 /// `ck.self.account.update_profile` so other actors see it through the
 /// directory. We mirror it here so a second device that signs in picks
-/// up the same blob without needing to re-fetch `/account/me`.
+/// up the same blob without needing to re-fetch the account viewer.
 pub fn build_client_ui_body(
     theme: Option<&str>,
     sidebar_collapsed: Option<bool>,

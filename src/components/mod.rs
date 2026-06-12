@@ -18,6 +18,9 @@ pub mod circle_scope_picker;
 pub mod create_circle_modal;
 pub mod dismissible_popup;
 pub mod empty_state;
+/// Entry-time warning for accounts whose visible PCR / Realm projections do
+/// not yet show the recommended metadata+content E2EE floor.
+pub mod encryption_floor_prompt;
 /// P5 — recoverable error display + retry affordance. Pairs with the
 /// passive `ErrorBanner` below: this one carries a request_id and a
 /// retry callback so users can copy the soland trace ID into bug
@@ -70,6 +73,7 @@ pub use circle_scope_picker::{
 pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
 pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
 pub use empty_state::{EmptyState, EmptyStateKind};
+pub use encryption_floor_prompt::EncryptionFloorPrompt;
 pub use error_boundary::{ErrorBoundary, RetryableError};
 pub use mls_backup_prompt::{
     MlsBackupPrompt, MlsBackupSignal, maybe_flag_mls_backup_after_encrypted_write,

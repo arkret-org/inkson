@@ -475,6 +475,7 @@ impl CokretApi {
         join_rule: &str,
         history_visibility: &str,
         join_policy: Option<Value>,
+        preserve_recommended_encryption_floor: bool,
     ) -> anyhow::Result<RealmPolicyOutcome> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
@@ -498,14 +499,19 @@ impl CokretApi {
             )?,
         ];
         if let Some(join_policy) = join_policy {
+            let mut policy_components = if preserve_recommended_encryption_floor {
+                recommended_realm_policy_components_value()
+            } else {
+                json!({
+                    "policy_revision": 1,
+                })
+            };
+            policy_components["join_policy"] = join_policy;
             events.push(build_realm_state_event(
                 realm_id,
                 actor_id,
                 "ck.realm.policy_components",
-                json!({
-                    "policy_revision": 1,
-                    "join_policy": join_policy
-                }),
+                policy_components,
             )?);
         }
         for event in events {

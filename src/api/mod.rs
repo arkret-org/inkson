@@ -97,7 +97,7 @@ use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
     AccountDataSetOutcome, AuthzCheckOutcome, BackfillOutcome, BlobUploadOutcome,
     ClientSyncOutcome, ConsentCellOutcome, ConsentCellsOutcome, ContactOutcome, ContactsOutcome,
-    DevLoginOutcome, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
+    CurrentAccountOutcome, DevLoginOutcome, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
     DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustOutcome, EphemeralSubmitOutcome,
     GrantList, HealthOutcome, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchOutcome,
     InvitesOutcome, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutOutcome,
@@ -116,6 +116,9 @@ use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
     trim_realm_id, uuid_v7,
 };
+
+pub const RECOMMENDED_REALM_ENCRYPTION_PROFILE: &str = "mls_rfc9420";
+pub const RECOMMENDED_REALM_ENCRYPTION_FLOOR: &str = "e2ee_required";
 
 /// Generic wrapper for soland's
 /// `/_cokret/self/projection/{spaces|flows}` lifecycle endpoints. Keeps
@@ -1533,6 +1536,16 @@ pub fn build_realm_bootstrap_events(
         trust_domain,
         plaintext_visible_services,
     )?);
+    if let Some(policy_components) =
+        recommended_realm_policy_components_for_profile(encryption_profile)
+    {
+        events.push(build_realm_state_event(
+            realm_id,
+            actor_id,
+            "ck.realm.policy_components",
+            policy_components,
+        )?);
+    }
     events.push(build_realm_state_event(
         realm_id,
         actor_id,
@@ -1681,6 +1694,25 @@ pub fn build_realm_create_event(
         .build("yougen");
     envelope.created_at = created_at_for_object;
     Ok(envelope)
+}
+
+pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
+    profile
+        .trim()
+        .eq_ignore_ascii_case(RECOMMENDED_REALM_ENCRYPTION_PROFILE)
+}
+
+pub fn recommended_realm_policy_components_value() -> Value {
+    json!({
+        "policy_revision": 1,
+        "content_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
+        "metadata_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
+    })
+}
+
+pub fn recommended_realm_policy_components_for_profile(profile: &str) -> Option<Value> {
+    encryption_profile_uses_recommended_floor(profile)
+        .then(recommended_realm_policy_components_value)
 }
 
 fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> Value {
@@ -3218,15 +3250,14 @@ fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
 ///   事件流,客户端本地 reduce;
 /// - 写状态类(contacts request/respond、consent grant/revoke、profile、mark-all-read) → 提交 `ck.*`
 ///   事件(`/_cokret/self/events`);
-/// - 真·协议原语(register / account/me / principal-realm / logout / bridge-describe) → 待 soland 在
-///   `/_cokret/` 暴露后切换;
+/// - 真·协议原语(register / principal-realm / logout / bridge-describe) → 待 soland 在 `/_cokret/`
+///   暴露后切换;
 /// - 运维/遥测(audit/user-action、admin notary、dev-login)→ 评估是否保留为本地面。
 ///
 /// 模板中以 `{` 开头的路径段为通配(匹配单段),其余段逐字相等。
 const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
     // identity/account —— account::router(),仅 legacy 面,`/_cokret/` 下无等价
     "_soland/self/account/register",
-    "_soland/self/account/me",
     "_soland/self/account/profile",
     "_soland/self/account/{did}/principal-realm",
     // consent cells —— consent dots 的投影 + 写
@@ -3300,11 +3331,12 @@ mod tests {
         // 非 soland(协议面)→ 放行
         assert!(api.endpoint("_cokret/self/events").is_ok());
         // 白名单内的存量 soland → 放行(含 `{}` 通配段)
-        assert!(api.endpoint("_soland/self/account/me").is_ok());
         assert!(
             api.endpoint("_soland/self/consent/cells/alice/grant")
                 .is_ok()
         );
+        let retired_account_me = ["_soland", "self", "account", "me"].join("/");
+        assert!(api.endpoint(&retired_account_me).is_err());
         // 白名单外的 soland → 拒绝。用拼接构造负样例,避免静态守卫把它当成
         // 一处真实的违规调用字面量。
         let unlisted = format!("{}/self/spaces/ck:space:1", "_soland");
@@ -3762,6 +3794,7 @@ mod tests {
             kinds,
             vec![
                 "ck.realm.create",
+                "ck.realm.policy_components",
                 "ck.realm.join_rule",
                 "ck.realm.history_visibility",
                 "ck.realm.discovery",
@@ -3782,6 +3815,8 @@ mod tests {
         );
         assert_eq!(create.payload["object"]["default_join_rule"], "invite");
         assert_eq!(create.payload["object"]["history_visibility"], "shared");
+        assert!(create.payload["object"]["content_encryption_floor"].is_null());
+        assert!(create.payload["object"]["metadata_encryption_floor"].is_null());
         assert_eq!(create.payload["object"]["notary"]["type"], "single_did");
         assert_eq!(create.payload["object"]["notary"]["did"], create.actor_id);
         assert_eq!(
@@ -3809,17 +3844,27 @@ mod tests {
         // signer attaches the detached JWS proof at submit time.
         assert!(create.proofs.is_empty());
 
-        // Bootstrap order: create, join_rule, history_visibility,
-        // discovery, plaintext_visible, member-invite.
-        assert_eq!(events[1].payload["value"], "invite");
-        assert_eq!(events[2].payload["value"], "shared");
-        assert_eq!(events[3].payload["value"], "listed");
+        // Bootstrap order: create, encryption floor policy,
+        // join_rule, history_visibility, discovery, plaintext_visible,
+        // member-invite.
         assert_eq!(
-            events[4].payload["services"][0]["service_did"],
+            events[1].payload["value"]["content_encryption_floor"],
+            RECOMMENDED_REALM_ENCRYPTION_FLOOR
+        );
+        assert_eq!(
+            events[1].payload["value"]["metadata_encryption_floor"],
+            RECOMMENDED_REALM_ENCRYPTION_FLOOR
+        );
+        assert_eq!(events[1].payload["value"]["policy_revision"], 1);
+        assert_eq!(events[2].payload["value"], "invite");
+        assert_eq!(events[3].payload["value"], "shared");
+        assert_eq!(events[4].payload["value"], "listed");
+        assert_eq!(
+            events[5].payload["services"][0]["service_did"],
             "did:web:server.example"
         );
         assert_eq!(
-            events[4].payload["services"][0]["data_classes"],
+            events[5].payload["services"][0]["data_classes"],
             json!([
                 "message_content",
                 "full_text_index",
@@ -3827,7 +3872,32 @@ mod tests {
                 "inbox_preview",
             ])
         );
-        assert_eq!(events[5].payload["membership"], "invite");
+        assert_eq!(events[6].payload["membership"], "invite");
+    }
+
+    #[test]
+    fn plaintext_realm_create_does_not_claim_e2ee_floors() {
+        let envelope = build_realm_create_event(
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "Public updates",
+            None,
+            "listed",
+            "public",
+            "world_readable",
+            "none",
+            "standard",
+            "open",
+            "single_did",
+            "sha256",
+            "ck:trust_domain:server.example",
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(envelope.payload["object"]["encryption_profile"], "none");
+        assert!(envelope.payload["object"]["content_encryption_floor"].is_null());
+        assert!(envelope.payload["object"]["metadata_encryption_floor"].is_null());
     }
 
     #[test]

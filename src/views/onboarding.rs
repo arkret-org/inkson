@@ -36,6 +36,7 @@ const ONBOARDING_RECOVERY_CHOICE_KEY: &str = "onboarding.recovery_choice";
 const DEFAULT_PRINCIPAL_DID_METHOD: &str = "did:webvh";
 const TEST_ONLY_DID_METHOD: &str = "did:web";
 const PCR_ENCRYPTION_PROFILE: &str = "mls_rfc9420";
+const PCR_ENCRYPTION_FLOOR: &str = "e2ee_required";
 
 fn recovery_setup_label(choice: &str) -> &'static str {
     match choice.trim() {
@@ -450,7 +451,7 @@ pub fn OnboardingPanel(
                         div { class: "metric",
                             strong { "Principal Control Realm" }
                             span { class: "badge accent", "MLS-backed" }
-                            div { class: "muted", "Your account control stream is created with encryption_profile=mls_rfc9420" }
+                            div { class: "muted", "Your account control stream uses encryption_profile={PCR_ENCRYPTION_PROFILE} with metadata/content floors {PCR_ENCRYPTION_FLOOR}" }
                         }
                         div { class: "metric",
                             strong { "Verification" }
@@ -492,7 +493,7 @@ pub fn OnboardingPanel(
                         span { "device-lifecycle §10-§13" }
                     }
                     div { class: "muted",
-                        "Your Principal Control Realm is MLS-backed from account creation with encryption_profile={PCR_ENCRYPTION_PROFILE}. Generate and store the Recovery Key (24 words) before relying on encrypted account state; Social Recovery can supplement it. A fresh device is authorized only after the active recovery_policy accepts a bound recovery_session."
+                        "Your Principal Control Realm is MLS-backed from account creation with encryption_profile={PCR_ENCRYPTION_PROFILE} and metadata/content floors {PCR_ENCRYPTION_FLOOR}. Generate and store the Recovery Key (24 words) before relying on encrypted account state; Social Recovery can supplement it. A fresh device is authorized only after the active recovery_policy accepts a bound recovery_session."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -776,5 +777,6 @@ mod tests {
             "Open Social Recovery setup ->"
         );
         assert_eq!(PCR_ENCRYPTION_PROFILE, "mls_rfc9420");
+        assert_eq!(PCR_ENCRYPTION_FLOOR, "e2ee_required");
     }
 }

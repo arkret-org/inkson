@@ -631,15 +631,6 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       }, 201);
     }
 
-    if (url.pathname === "/_soland/self/account/me") {
-      return json(route, {
-        did: "did:web:alice.example",
-        handle: "alice.example",
-        display_name: "yougen",
-        created_at: "2026-04-28T12:00:00Z",
-      });
-    }
-
     if (url.pathname === "/_soland/self/account/profile") {
       const body = await route.request().postDataJSON();
       return json(route, {
@@ -1124,6 +1115,19 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, {
         principal_id: "did:web:alice.example",
         state: "active",
+        primary_handle_claim: {
+          schema: "ck.schema.handle_claim.v1",
+          handle: "alice:local.host",
+          subject: "did:web:alice.example",
+        },
+        profile: {
+          id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
+          schema: "ck.schema.actor_profile.v1",
+          principal_id: "did:web:alice.example",
+          actor_kind: "user",
+          display_name: "yougen",
+          created_at: "2026-04-28T12:00:00Z",
+        },
         devices: [
           {
             device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",

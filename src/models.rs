@@ -28,7 +28,7 @@ pub struct LogoutOutcome {
 }
 
 /// Mirror of soland's product-face `SolandAccountRegisterOutcome` wire shape
-/// (`POST /_soland/self/account/register`, `GET /_soland/self/account/me`).
+/// (`POST /_soland/self/account/register`).
 /// Named with the `Soland` prefix because the SDK core
 /// `AccountRegisterOutcome` (`api.rs`) has a different, principal-centric
 /// shape (`principal_id` / `state` / `devices` / handle-claim fields);
@@ -39,6 +39,20 @@ pub struct SolandAccountRegisterOutcome {
     pub did: String,
     pub handle: String,
     pub display_name: Option<String>,
+    pub created_at: String,
+}
+
+/// App-local current-account projection derived from the spec
+/// `ck.self.account.viewer` response. `handle` is populated only from a
+/// signed `primary_handle_claim.handle`; an empty string means the server did
+/// not include handle evidence in the viewer response.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CurrentAccountOutcome {
+    pub did: String,
+    #[serde(default)]
+    pub handle: String,
+    pub display_name: Option<String>,
+    #[serde(default)]
     pub created_at: String,
 }
 

@@ -103,8 +103,13 @@ impl CokretApi {
         .await
     }
 
-    pub async fn account_me(&self) -> anyhow::Result<SolandAccountRegisterOutcome> {
-        self.get_json("_soland/self/account/me").await
+    pub async fn account_viewer(&self) -> anyhow::Result<cokret_sdk::model::AccountView> {
+        self.get_json("_cokret/self/account/viewer").await
+    }
+
+    pub async fn account_me(&self) -> anyhow::Result<CurrentAccountOutcome> {
+        let viewer = self.account_viewer().await?;
+        Ok(current_account_from_viewer(viewer))
     }
 
     /// A4b — update the authenticated principal's public profile
@@ -605,4 +610,90 @@ fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
                     | StatusCode::METHOD_NOT_ALLOWED
             )
         })
+}
+
+fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccountOutcome {
+    let display_name = viewer.profile.as_ref().and_then(|profile| {
+        let value = profile.display_name.trim();
+        (!value.is_empty()).then(|| value.to_owned())
+    });
+    let created_at = viewer
+        .profile
+        .as_ref()
+        .map(|profile| {
+            profile
+                .created_at
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
+        .unwrap_or_default();
+    CurrentAccountOutcome {
+        did: viewer.principal_id.as_str().to_owned(),
+        handle: primary_handle_from_viewer(&viewer),
+        display_name,
+        created_at,
+    }
+}
+
+fn primary_handle_from_viewer(viewer: &cokret_sdk::model::AccountView) -> String {
+    viewer
+        .primary_handle_claim
+        .as_ref()
+        .and_then(|claim| claim.get("handle"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|handle| !handle.is_empty())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_viewer_projection_uses_signed_handle_claim() {
+        let viewer: cokret_sdk::model::AccountView = serde_json::from_value(json!({
+            "principal_id": "did:web:alice.example",
+            "state": "active",
+            "devices": [],
+            "primary_handle_claim": {
+                "schema": "ck.schema.handle_claim.v1",
+                "handle": "alice:local.host",
+                "subject": "did:web:alice.example"
+            },
+            "profile": {
+                "id": "ck:actor_profile:01970000-0000-7000-8000-000000000001",
+                "schema": "ck.schema.actor_profile.v1",
+                "principal_id": "did:web:alice.example",
+                "actor_kind": "user",
+                "display_name": "Alice",
+                "created_at": "2026-06-12T08:00:00Z"
+            }
+        }))
+        .expect("account viewer shape");
+
+        let account = current_account_from_viewer(viewer);
+
+        assert_eq!(account.did, "did:web:alice.example");
+        assert_eq!(account.handle, "alice:local.host");
+        assert_eq!(account.display_name.as_deref(), Some("Alice"));
+        assert_eq!(account.created_at, "2026-06-12T08:00:00Z");
+    }
+
+    #[test]
+    fn account_viewer_projection_does_not_invent_handle() {
+        let viewer: cokret_sdk::model::AccountView = serde_json::from_value(json!({
+            "principal_id": "did:web:alice.example",
+            "state": "active",
+            "devices": []
+        }))
+        .expect("minimal account viewer shape");
+
+        let account = current_account_from_viewer(viewer);
+
+        assert_eq!(account.did, "did:web:alice.example");
+        assert_eq!(account.handle, "");
+        assert_eq!(account.display_name, None);
+        assert_eq!(account.created_at, "");
+    }
 }
