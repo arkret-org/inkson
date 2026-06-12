@@ -17,9 +17,11 @@
 //! are RFC 9180 conformant for cross-implementation interop.
 
 use anyhow::{Result, anyhow};
+use hkdf::Hkdf;
 use hpke_rs::{Hpke, HpkePrivateKey, HpkePublicKey, Mode};
 use hpke_rs_crypto::types::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm};
 use hpke_rs_rust_crypto::HpkeRustCrypto;
+use sha2::Sha256;
 
 /// Output of [`hpke_seal`]: the KEM encapsulated key (`enc`) and the AEAD
 /// ciphertext. Both travel on the wire (base64url) in the
@@ -41,6 +43,8 @@ fn suite() -> Hpke<HpkeRustCrypto> {
     )
 }
 
+const RECOVERY_KEY_HPKE_INFO: &[u8] = b"cokret-recovery-key-hpke-x25519-v1";
+
 /// Generate a fresh X25519 recovery keypair. Returns `(private_key, public_key)`
 /// as raw bytes; the public key is published and the private key is stored
 /// (encrypted) in the recovery vault.
@@ -49,6 +53,36 @@ pub fn generate_recovery_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
     let mut ikm = [0u8; 32];
     getrandom::fill(&mut ikm).map_err(|err| anyhow!("hpke keypair rng: {err}"))?;
     let keypair = hpke
+        .derive_key_pair(&ikm)
+        .map_err(|err| anyhow!("hpke derive key pair: {err:?}"))?;
+    let (sk, pk) = keypair.into_keys();
+    Ok((sk.as_slice().to_vec(), pk.as_slice().to_vec()))
+}
+
+/// Deterministically derive the X25519 recovery keypair from the canonical
+/// 24-word Recovery Key. This binds the HPKE private key to the offline
+/// recovery credential instead of creating a second random secret.
+pub fn derive_recovery_keypair_from_recovery_key(recovery_key: &str) -> Result<(Vec<u8>, Vec<u8>)> {
+    let canonical = crate::recovery_crypto::normalize_recovery_key_input(recovery_key)
+        .ok_or_else(|| anyhow!("recovery key must be a canonical 24-word BIP-39 mnemonic"))?;
+    let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, canonical.as_str())
+        .map_err(|err| anyhow!("recovery key mnemonic: {err}"))?;
+    derive_recovery_keypair_from_entropy(&mnemonic.to_entropy())
+}
+
+/// Deterministically derive the X25519 recovery keypair from BIP-39 entropy.
+pub fn derive_recovery_keypair_from_entropy(entropy: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    if entropy.len() != crate::recovery_crypto::RECOVERY_KEY_BYTES {
+        return Err(anyhow!(
+            "recovery key entropy must be {} bytes",
+            crate::recovery_crypto::RECOVERY_KEY_BYTES
+        ));
+    }
+    let mut ikm = [0u8; 32];
+    Hkdf::<Sha256>::new(None, entropy)
+        .expand(RECOVERY_KEY_HPKE_INFO, &mut ikm)
+        .map_err(|_| anyhow!("hpke recovery key hkdf expand failed"))?;
+    let keypair = suite()
         .derive_key_pair(&ikm)
         .map_err(|err| anyhow!("hpke derive key pair: {err:?}"))?;
     let (sk, pk) = keypair.into_keys();
@@ -144,5 +178,28 @@ mod tests {
             b"m1"
         );
         assert!(hpke_open(&sk2, &s1.enc, b"i", b"a", &s1.ciphertext).is_err());
+    }
+
+    #[test]
+    fn recovery_key_derives_stable_hpke_keypair() {
+        let mnemonic = crate::recovery_crypto::format_recovery_key(&[7u8; 32]);
+        let first = derive_recovery_keypair_from_recovery_key(&mnemonic).unwrap();
+        let second = derive_recovery_keypair_from_recovery_key(&mnemonic).unwrap();
+        assert_eq!(first, second);
+
+        let other = derive_recovery_keypair_from_recovery_key(
+            &crate::recovery_crypto::format_recovery_key(&[8u8; 32]),
+        )
+        .unwrap();
+        assert_ne!(first, other);
+    }
+
+    #[test]
+    fn derived_recovery_keypair_round_trips_hpke() {
+        let mnemonic = crate::recovery_crypto::format_recovery_key(&[9u8; 32]);
+        let (sk, pk) = derive_recovery_keypair_from_recovery_key(&mnemonic).unwrap();
+        let sealed = hpke_seal(&pk, b"info", b"aad", b"secret").unwrap();
+        let opened = hpke_open(&sk, &sealed.enc, b"info", b"aad", &sealed.ciphertext).unwrap();
+        assert_eq!(opened, b"secret");
     }
 }

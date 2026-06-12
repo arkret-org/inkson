@@ -324,6 +324,14 @@ pub fn select_mls_account_secret_recovery_public_key_backup(list_payload: &Value
         .cloned()
 }
 
+/// Select the preferred account-secret backup. New `recovery_public_key`
+/// backups are the primary fresh-device path; legacy `passphrase_kdf` backups
+/// remain a fallback for accounts created before the HPKE path existed.
+pub fn select_preferred_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
+    select_mls_account_secret_recovery_public_key_backup(list_payload)
+        .or_else(|| select_mls_account_secret_backup(list_payload))
+}
+
 /// Build the HPKE `recovery_public_key` account-secret backup: the account
 /// secret HPKE-sealed to the actor's recovery public key. ANY device (holding
 /// only the public key) can build/upload this; a fresh device opens it with the
@@ -417,8 +425,8 @@ fn mls_history_backup_needs_restore(
     crate::mls::persistence::decrypt_envelope(&local_snapshot, local_secret).is_err()
 }
 
-/// Decide whether the app should ask the user for their recovery passphrase to
-/// unlock MLS history.
+/// Decide whether the app should ask the user for their Recovery Key to unlock
+/// MLS history.
 ///
 /// A local account secret alone is not enough readiness proof: an earlier
 /// incomplete bootstrap can leave a stale/random local secret without any
@@ -433,7 +441,7 @@ pub fn mls_restore_prompt_required(
     actor_id: &str,
     device_id: &str,
 ) -> bool {
-    if select_mls_account_secret_backup(list_payload).is_none() {
+    if select_preferred_mls_account_secret_backup(list_payload).is_none() {
         return false;
     }
     let local_secret =
@@ -466,15 +474,15 @@ pub struct RestoreReport {
 }
 
 /// Pure-fetch helper: list the server's key backups and return the
-/// `mls_account_secret` body if one is present (None if absent). No passphrase
-/// is required — this is the SAFE half that can run at silent boot to *detect*
-/// whether account-secret recovery is available.
+/// preferred `mls_account_secret` body if one is present (None if absent). No
+/// Recovery Key is required — this is the SAFE half that can run at silent boot
+/// to *detect* whether account-secret recovery is available.
 pub async fn fetch_mls_account_secret_backup(api: &crate::api::CokretApi) -> Result<Option<Value>> {
     let payload = api
         .list_key_backups()
         .await
         .map_err(|err| anyhow!("list key backups: {err}"))?;
-    Ok(select_mls_account_secret_backup(&payload))
+    Ok(select_preferred_mls_account_secret_backup(&payload))
 }
 
 /// Fetch the full key-backup list once for MLS account-secret import +
@@ -1099,7 +1107,7 @@ pub fn mls_backup_prompt_required(
     device_id: &str,
 ) -> bool {
     let _ = device_id;
-    if select_mls_account_secret_backup(list_payload).is_some() {
+    if select_preferred_mls_account_secret_backup(list_payload).is_some() {
         return false;
     }
     matches!(
@@ -1159,6 +1167,56 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     api.put_key_backup(&account_backup_id, account_body)
         .await
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
+
+    Ok(account_backup_id)
+}
+
+/// Upload an HPKE `recovery_public_key` account-secret backup derived from the
+/// user's 24-word Recovery Key. This is the primary backup shape for fresh
+/// browser recovery; `passphrase_kdf` is retained only as legacy fallback.
+pub async fn upload_mls_account_secret_backup_with_recovery_key(
+    api: &crate::api::CokretApi,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    recovery_key: &str,
+) -> Result<String> {
+    let (_recovery_private_key, recovery_public_key) =
+        crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key)
+            .map_err(|err| anyhow!("derive recovery HPKE keypair: {err}"))?;
+
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
+        .map_err(|err| anyhow!("load account MLS secret: {err}"))?
+        .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
+
+    let list_payload = fetch_mls_restore_payload(api).await?;
+    let previous_account_backup =
+        match select_mls_account_secret_recovery_public_key_backup(&list_payload) {
+            Some(metadata) => Some(
+                crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+                    api, &metadata, actor_id, device_id,
+                )
+                .await
+                .map_err(|err| anyhow!("fetch previous recovery-key account backup: {err}"))?,
+            ),
+            None => None,
+        };
+
+    let account_backup_id = fresh_backup_id();
+    let recovery_key_ref = format!("{actor_id}#recovery");
+    let mut account_body = build_mls_account_secret_recovery_public_key_backup(
+        &account_backup_id,
+        actor_id,
+        device_id,
+        &recovery_public_key,
+        &recovery_key_ref,
+        &stored.secret,
+        stored.version,
+    )?;
+    apply_next_series(previous_account_backup.as_ref(), &mut account_body)?;
+    api.put_key_backup(&account_backup_id, account_body)
+        .await
+        .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;
 
     Ok(account_backup_id)
 }
@@ -1588,6 +1646,38 @@ mod tests {
         assert!(select_mls_account_secret_backup(&none_payload).is_none());
         // Absent/empty payloads are tolerated.
         assert!(select_mls_account_secret_backup(&serde_json::json!({})).is_none());
+    }
+
+    #[test]
+    fn preferred_account_secret_uses_recovery_public_key_before_legacy_passphrase() {
+        let legacy = wrap();
+        let (_sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+        let hpke = build_mls_account_secret_recovery_public_key_backup(
+            "ck:backup:01964137-0000-7000-8000-00000000c001",
+            ACTOR,
+            DEVICE,
+            &pk,
+            "did:web:alice.example#recovery",
+            ACCOUNT_SECRET,
+            1,
+        )
+        .unwrap();
+        let payload = serde_json::json!({ "backups": [legacy.clone(), hpke.clone()] });
+
+        let found = select_preferred_mls_account_secret_backup(&payload)
+            .expect("preferred account secret present");
+        assert_eq!(
+            found["encryption"]["recipient_method"],
+            serde_json::json!("recovery_public_key")
+        );
+
+        let legacy_only = serde_json::json!({ "backups": [legacy.clone()] });
+        let fallback = select_preferred_mls_account_secret_backup(&legacy_only)
+            .expect("legacy fallback present");
+        assert_eq!(
+            fallback["encryption"]["recipient_method"],
+            serde_json::json!("passphrase_kdf")
+        );
     }
 
     #[test]

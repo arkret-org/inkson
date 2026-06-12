@@ -30,10 +30,9 @@ fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
 /// is missing usable local MLS history and the server holds an
 /// `mls_account_secret` backup. The user supplies their recovery key
 /// and we call
-/// [`crate::mls::account_recovery::auto_restore_mls_history_with_passphrase`]
-/// to import the account secret and restore every `mls_history` backup. The
-/// method name reflects the wire `passphrase_kdf` recipient method; the UI
-/// presents it as a generated recovery key.
+/// [`crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload`]
+/// first, falling back to the legacy `passphrase_kdf` restore path only when an
+/// older account has no `recovery_public_key` backup yet.
 #[component]
 pub fn MlsUnlockPrompt(
     base_url: Signal<String>,
@@ -133,15 +132,39 @@ pub fn MlsUnlockPrompt(
                     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
                     match state_store.try_write() {
                         Ok(mut store) => {
-                            crate::mls::account_recovery::restore_mls_history_with_passphrase_from_payload(
-                                &payload,
-                                &mut store,
-                                secure_store.as_ref(),
-                                &actor,
-                                &device,
-                                pass.as_bytes(),
-                            )
-                            .map_err(ApiCallError::Failed)
+                            let recovery_restore =
+                                crate::hpke_backup::derive_recovery_keypair_from_recovery_key(
+                                    &pass,
+                                )
+                                .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
+                                .and_then(|(recovery_private_key, _)| {
+                                    crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
+                                        &payload,
+                                        &mut store,
+                                        secure_store.as_ref(),
+                                        &actor,
+                                        &device,
+                                        &recovery_private_key,
+                                    )
+                                });
+                            match recovery_restore {
+                                Ok(report) => Ok(report),
+                                Err(recovery_error) => {
+                                    crate::mls::account_recovery::restore_mls_history_with_passphrase_from_payload(
+                                        &payload,
+                                        &mut store,
+                                        secure_store.as_ref(),
+                                        &actor,
+                                        &device,
+                                        pass.as_bytes(),
+                                    )
+                                    .map_err(|legacy_error| {
+                                        ApiCallError::Failed(anyhow::anyhow!(
+                                            "recovery_public_key restore failed: {recovery_error}; legacy passphrase_kdf restore failed: {legacy_error}"
+                                        ))
+                                    })
+                                }
+                            }
                         }
                         Err(_) => Err(ApiCallError::Failed(anyhow::anyhow!(
                             "recovery prompt closed before restore completed"

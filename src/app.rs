@@ -735,6 +735,7 @@ pub fn RouterView() -> Element {
     let device_id = use_signal(move || initial_device_id);
     let mut token = use_signal(move || initial_session_token);
     let mut session_boot_state = use_signal(move || initial_session_boot_state);
+    let mut session_generation = use_signal(|| 0_u64);
 
     // Install the app-wide, single-flight bearer refresher exactly once.
     // Every auth-expired handler (connect, sync, chat send, Realm create,
@@ -751,6 +752,7 @@ pub fn RouterView() -> Element {
                 state_store,
                 token,
                 config_store,
+                session_generation,
             )) as crate::session::LocalRefreshFuture
         }));
     });
@@ -972,6 +974,8 @@ pub fn RouterView() -> Element {
     // dismissing the modal and against sync re-flushing local state, so the
     // proactive nudge can never re-pop within a session.
     let recovery_autoprompt_fired = use_signal(|| false);
+    let account_recovery_configured = use_signal(|| Option::<bool>::None);
+    let account_recovery_detection_key_seen = use_signal(|| Option::<String>::None);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
@@ -1068,6 +1072,58 @@ pub fn RouterView() -> Element {
     let mut sync_generation = use_signal(|| 0u64);
     let mut sync_engine_active_generation = use_signal(|| Option::<u64>::None);
 
+    {
+        let mut account_recovery_configured = account_recovery_configured;
+        let mut account_recovery_detection_key_seen = account_recovery_detection_key_seen;
+        let mut last_error = last_error;
+        let state_store_for_recovery_state = state_store;
+        use_effect(move || {
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let generation = sync_generation();
+            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+                account_recovery_configured.set(None);
+                account_recovery_detection_key_seen.set(None);
+                return;
+            }
+            let detection_key = format!("{generation}|{base}|{actor}");
+            if account_recovery_detection_key_seen().as_deref() == Some(detection_key.as_str()) {
+                return;
+            }
+            account_recovery_detection_key_seen.set(Some(detection_key));
+            let local_fingerprint = {
+                let store = state_store_for_recovery_state.read();
+                crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
+            };
+            spawn(async move {
+                match crate::views::helpers::with_authed_api(&base, session, |api| async move {
+                    let policy = api.get_recovery_policy().await?;
+                    let backups = api.list_key_backups().await?;
+                    Ok((policy, backups))
+                })
+                .await
+                {
+                    Ok((policy, backups)) => {
+                        let state = crate::recovery_flow::account_recovery_state_from_payloads(
+                            &policy,
+                            &backups,
+                            local_fingerprint,
+                        );
+                        account_recovery_configured.set(Some(state.server_recovery_configured()));
+                    }
+                    Err(error) if error.is_auth_expired() => {
+                        account_recovery_configured.set(None);
+                    }
+                    Err(error) => {
+                        last_error.set(Some(format!("recovery_state: {}", error.display())));
+                        account_recovery_configured.set(None);
+                    }
+                }
+            });
+        });
+    }
+
     // CKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
     // the sync engine context so the loop can detect a profile rotation
     // and exit cleanly. The shell is currently single-profile; the
@@ -1090,6 +1146,7 @@ pub fn RouterView() -> Element {
         let mut invalidator_status = status;
         let mut invalidator_network_state = network_state;
         let mut invalidator_last_error = last_error;
+        let mut invalidator_session_boot_state = session_boot_state;
         let mut invalidator_state_store = state_store;
         let invalidator_config_store = config_store;
         let invalidator_base_url = base_url;
@@ -1099,9 +1156,11 @@ pub fn RouterView() -> Element {
         let mut invalidator_device_authorization_check_complete =
             device_authorization_check_complete;
         let mut invalidator_sync_generation = sync_generation;
+        let mut invalidator_session_generation = session_generation;
         let invalidator_navigator = navigator;
         use_hook(move || {
             crate::session::register_session_invalidator(move |reason| {
+                invalidator_session_generation.set(invalidator_session_generation() + 1);
                 invalidator_state_store.write().set_session_grant(None);
                 invalidator_token.set(String::new());
                 persist_config(
@@ -1123,6 +1182,7 @@ pub fn RouterView() -> Element {
                 invalidator_needs_device_authorization.set(false);
                 invalidator_device_authorization_check_complete.set(false);
                 invalidator_sync_generation.set(invalidator_sync_generation() + 1);
+                invalidator_session_boot_state.set(SessionBootState::Unauthenticated);
                 let _ = invalidator_navigator.push(Route::Login);
             });
         });
@@ -1376,7 +1436,7 @@ pub fn RouterView() -> Element {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("yougen");
                         let configured_backup_id =
-                            crate::mls::account_recovery::select_mls_account_secret_backup(
+                            crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
                                 &payload,
                             )
                             .and_then(|backup| {
@@ -1536,7 +1596,9 @@ pub fn RouterView() -> Element {
                         crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
                             &store, &actor,
                         ),
-                    recovery_unconfigured: recovery_setup_prompt_required(&store, &actor),
+                    recovery_unconfigured: recovery_setup_prompt_required(
+                        account_recovery_configured(),
+                    ),
                 };
                 let already = store
                     .load_private_data(&actor, RECOVERY_AUTOPROMPT_SHOWN_KEY)
@@ -1826,7 +1888,7 @@ pub fn RouterView() -> Element {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("yougen");
                         let configured_backup_id =
-                            crate::mls::account_recovery::select_mls_account_secret_backup(
+                            crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
                                 &payload,
                             )
                             .and_then(|backup| {
@@ -2271,7 +2333,7 @@ pub fn RouterView() -> Element {
                 crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
                     &store, &actor,
                 ),
-            recovery_unconfigured: recovery_setup_prompt_required(&store, &actor),
+            recovery_unconfigured: recovery_setup_prompt_required(account_recovery_configured()),
         }
         .resolve()
     };
@@ -4144,7 +4206,9 @@ pub fn RouterView() -> Element {
                                                 let actor = account_did();
                                                 let device = device_id();
                                                 let api_token = token();
+                                                let logout_generation = session_generation() + 1;
                                                 account_session_state.set("Logging out".to_owned());
+                                                session_generation.set(logout_generation);
                                                 // Clear OIDC + session-grant state up
                                                 // front so a refresh-token-based silent
                                                 // re-auth cannot resurrect the session
@@ -4186,12 +4250,22 @@ pub fn RouterView() -> Element {
                                                 personal_handles_status.set("Not published".to_owned());
                                                 personal_handles_lookup_key.set(String::new());
                                                 last_error.set(None);
+                                                token.set(String::new());
+                                                persist_config(
+                                                    config_store,
+                                                    base.clone(),
+                                                    actor.clone(),
+                                                    device.clone(),
+                                                    String::new(),
+                                                );
                                                 session_boot_state.set(SessionBootState::Unauthenticated);
                                                 // Bump the SyncEngine generation so any
                                                 // in-flight long-poll exits on its next
                                                 // iteration check instead of applying a
                                                 // response after the wipe.
                                                 sync_generation.set(sync_generation() + 1);
+                                                account_menu_open.set(false);
+                                                redirect_to_login(navigator);
                                                 spawn(async move {
                                                     let api_result = CokretApi::new(&base)
                                                         .map(|api| api.with_bearer(api_token));
@@ -4209,17 +4283,9 @@ pub fn RouterView() -> Element {
                                                             format!("Invalid server URL: {error}")
                                                         }
                                                     };
-                                                    token.set(String::new());
-                                                    persist_config(
-                                                        config_store,
-                                                        base,
-                                                        actor,
-                                                        device,
-                                                        String::new(),
-                                                    );
-                                                    account_session_state.set(logout_message);
-                                                    account_menu_open.set(false);
-                                                    redirect_to_login(navigator);
+                                                    if session_generation() == logout_generation {
+                                                        account_session_state.set(logout_message);
+                                                    }
                                                 });
                                             },
                                             "Log out"
@@ -6063,13 +6129,8 @@ fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {
     max_epoch
 }
 
-fn recovery_setup_prompt_required(state_store: &LocalStateStore, actor_id: &str) -> bool {
-    let actor = actor_id.trim();
-    if actor.is_empty() {
-        return false;
-    }
-    !(crate::views::recovery::recovery_options_configured(state_store, actor)
-        || crate::components::mls_recovery_backup_configured(state_store, actor))
+fn recovery_setup_prompt_required(account_recovery_configured: Option<bool>) -> bool {
+    matches!(account_recovery_configured, Some(false))
 }
 
 fn current_device_authorization_from_account_viewer(
@@ -6150,6 +6211,16 @@ fn device_authorization_from_record(device: &Value) -> Option<bool> {
     Some(false)
 }
 
+fn device_authorization_required_from_account_viewer(
+    viewer: &Value,
+    configured_device_id: &str,
+) -> bool {
+    !matches!(
+        current_device_authorization_from_account_viewer(viewer, configured_device_id),
+        Some(true)
+    )
+}
+
 fn device_status_authorization(status: &str) -> Option<bool> {
     let normalized = status.trim().to_ascii_lowercase();
     if normalized.is_empty() {
@@ -6174,7 +6245,9 @@ fn mls_recovery_setup_missing(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
 ) -> bool {
-    if crate::mls::account_recovery::select_mls_account_secret_backup(list_payload).is_some() {
+    if crate::mls::account_recovery::select_preferred_mls_account_secret_backup(list_payload)
+        .is_some()
+    {
         return false;
     }
     if matches!(
@@ -6570,10 +6643,12 @@ async fn remint_principal_bearer(
     mut state_store: Signal<LocalStateStore>,
     mut token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
+    session_generation: Signal<u64>,
 ) -> Option<String> {
     let base = base_url();
     let actor = account_did();
     let device = device_id();
+    let generation = session_generation();
 
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let oidc_bundle = {
@@ -6586,9 +6661,10 @@ async fn remint_principal_bearer(
         match refresh_oidc_bearer_for_server(&base, &actor, &device, &bundle).await {
             Ok(next) => {
                 // Abandon if the user switched servers while the refresh was in
-                // flight — committing here would resurrect the old server's
-                // credentials over the freshly selected session.
-                if !same_server_url(&base, &base_url()) {
+                // flight, or if a logout invalidated this refresh generation.
+                // Committing here would resurrect stale credentials over the
+                // freshly selected or logged-out session.
+                if !same_server_url(&base, &base_url()) || session_generation() != generation {
                     return None;
                 }
                 let access_token = next.access_token.clone();
@@ -6608,7 +6684,7 @@ async fn remint_principal_bearer(
                 return Some(access_token);
             }
             Err(error) if oidc_refresh_error_invalidates_grant(&error) => {
-                if !same_server_url(&base, &base_url()) {
+                if !same_server_url(&base, &base_url()) || session_generation() != generation {
                     return None;
                 }
                 tracing::warn!(
@@ -6641,8 +6717,9 @@ async fn remint_principal_bearer(
         crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
             let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
             // Same server-switch guard as the OIDC path: don't write the
-            // old server's grant outcome onto a session that just moved.
-            if !same_server_url(&base, &base_url()) {
+            // old server's grant outcome onto a session that just moved or
+            // logged out.
+            if !same_server_url(&base, &base_url()) || session_generation() != generation {
                 return None;
             }
             let mut store = state_store.write();
@@ -6651,6 +6728,9 @@ async fn remint_principal_bearer(
     };
     match outcome {
         crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
+            if session_generation() != generation {
+                return None;
+            }
             token.set(access_token.clone());
             persist_config(
                 config_store,
@@ -6666,8 +6746,16 @@ async fn remint_principal_bearer(
             None
         }
         _ => {
+            let can_reissue_development_session = {
+                let store = state_store.read();
+                let state = store.load();
+                can_bootstrap_with_development_session_reissue(&state, &base, &actor, &device)
+            };
+            if !can_reissue_development_session {
+                return None;
+            }
             if let Some(session) = reissue_development_session(&base, &actor, &device).await {
-                if !same_server_url(&base, &base_url()) {
+                if !same_server_url(&base, &base_url()) || session_generation() != generation {
                     return None;
                 }
                 let access_token = session.access_token.clone();
@@ -7058,11 +7146,9 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
                 match authed.list_devices().await {
                     Ok(viewer) => {
-                        match current_device_authorization_from_account_viewer(&viewer, &device) {
-                            Some(true) => needs_device_authorization.set(false),
-                            Some(false) => needs_device_authorization.set(true),
-                            None => needs_device_authorization.set(false),
-                        }
+                        needs_device_authorization.set(
+                            device_authorization_required_from_account_viewer(&viewer, &device),
+                        );
                         device_authorization_check_complete.set(true);
                     }
                     Err(error) if is_auth_expired_error(&error) => {
@@ -7071,30 +7157,28 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             authed = api.clone().with_bearer(session_token.clone());
                             match authed.list_devices().await {
                                 Ok(viewer) => {
-                                    match current_device_authorization_from_account_viewer(
-                                        &viewer, &device,
-                                    ) {
-                                        Some(true) => needs_device_authorization.set(false),
-                                        Some(false) => needs_device_authorization.set(true),
-                                        None => needs_device_authorization.set(false),
-                                    }
+                                    needs_device_authorization.set(
+                                        device_authorization_required_from_account_viewer(
+                                            &viewer, &device,
+                                        ),
+                                    );
                                 }
                                 Err(retry_error) => {
                                     tracing::warn!(
                                         ?retry_error,
                                         "device authorization check failed after refresh"
                                     );
-                                    needs_device_authorization.set(false);
+                                    needs_device_authorization.set(true);
                                 }
                             }
                         } else {
-                            needs_device_authorization.set(false);
+                            needs_device_authorization.set(true);
                         }
                         device_authorization_check_complete.set(true);
                     }
                     Err(error) => {
                         tracing::warn!(?error, "device authorization check failed");
-                        needs_device_authorization.set(false);
+                        needs_device_authorization.set(true);
                         device_authorization_check_complete.set(true);
                     }
                 }
@@ -7774,6 +7858,30 @@ mod tests {
     }
 
     #[test]
+    fn cleared_account_scope_blocks_development_session_reissue() {
+        let actor = "did:web:alice.example";
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let mut store = crate::local_state::isolated_store_for_tests("cleared-dev-reissue-owner");
+        store.adopt_account_scope(actor);
+
+        assert!(can_bootstrap_with_development_session_reissue(
+            &store.load(),
+            "https://local.host",
+            actor,
+            device
+        ));
+
+        store.clear_account_scoped();
+
+        assert!(!can_bootstrap_with_development_session_reissue(
+            &store.load(),
+            "https://local.host",
+            actor,
+            device
+        ));
+    }
+
+    #[test]
     fn current_device_authorization_detects_verified_current_device() {
         let device = "ck:device:01964137-0000-7000-8000-000000000001";
         let viewer = serde_json::json!({
@@ -7868,6 +7976,49 @@ mod tests {
             current_device_authorization_from_account_viewer(&viewer, device),
             Some(false)
         );
+    }
+
+    #[test]
+    fn device_authorization_required_fails_closed_without_device_inventory() {
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        assert!(device_authorization_required_from_account_viewer(
+            &serde_json::json!({}),
+            device
+        ));
+        assert!(device_authorization_required_from_account_viewer(
+            &serde_json::json!({ "devices": [] }),
+            device
+        ));
+    }
+
+    #[test]
+    fn device_authorization_required_allows_only_verified_device() {
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        assert!(!device_authorization_required_from_account_viewer(
+            &serde_json::json!({
+                "devices": [{
+                    "device_id": device,
+                    "verification_state": "verified"
+                }]
+            }),
+            device
+        ));
+        assert!(device_authorization_required_from_account_viewer(
+            &serde_json::json!({
+                "devices": [{
+                    "device_id": device,
+                    "verification_state": "unverified"
+                }]
+            }),
+            device
+        ));
+    }
+
+    #[test]
+    fn recovery_setup_prompt_waits_for_server_state() {
+        assert!(!recovery_setup_prompt_required(None));
+        assert!(!recovery_setup_prompt_required(Some(true)));
+        assert!(recovery_setup_prompt_required(Some(false)));
     }
 
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.

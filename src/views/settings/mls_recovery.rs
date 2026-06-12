@@ -116,7 +116,9 @@ pub fn SettingsMlsRecoveryPanel(
             {
                 Ok(payload) => {
                     let server_backup_body =
-                        crate::mls::account_recovery::select_mls_account_secret_backup(&payload);
+                        crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
+                            &payload,
+                        );
                     if let Some(backup_id) = server_backup_body
                         .as_ref()
                         .and_then(|body| body.get("backup_id"))
@@ -188,12 +190,12 @@ pub fn SettingsMlsRecoveryPanel(
             let session_for_sidecar = session.clone();
             let result = with_authed_api(&base, session, |api| async move {
                 let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                crate::mls::account_recovery::upload_mls_account_secret_backup_with_passphrase(
+                crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                     &api,
                     secure_store.as_ref(),
                     &actor,
                     &device,
-                    recovery_secret.as_bytes(),
+                    &recovery_secret,
                 )
                 .await
             })
