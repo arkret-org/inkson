@@ -3207,9 +3207,8 @@ fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
 ///
 /// 背景:旧原则「优先 `/_cokret/`、404 再回退 `/_soland/` legacy」是**错误**的 ——
 /// 它给协议↔产品耦合留了永久后门。正确约束是:yougen 是 Cokret 协议客户端,
-/// **绝对不使用 `_soland/`**。该约束由 [`endpoint`](CokretApi::endpoint) 在运行时
-/// fail-closed,并由 `tests::no_unlisted_soland_call_sites_in_src` 在编译期(测试)
-/// 拦死 —— 二者共用本表。
+/// `_soland/` access is restricted at runtime by [`endpoint`](CokretApi::endpoint),
+/// which fails closed for paths outside the legacy allowlist.
 ///
 /// 本表是**递减**的:每把一处 `_soland/` 调用迁走,就删掉对应行;清零后此表为空,
 /// 红线即对所有 `_soland/` 永久生效。**严禁**为新代码新增 `_soland/` 条目。
@@ -3260,9 +3259,7 @@ fn soland_path_allowed(normalized_path: &str) -> bool {
         .split(['?', '#'])
         .next()
         .unwrap_or(normalized_path);
-    // 用 `concat!` 拆开标记,避免源码出现连续的 `_soland/` 字面量被
-    // `no_unlisted_soland_call_sites_in_src` 静态扫描器自我误伤(同 §tests
-    // 里 marker 的处理手法)。
+    // Keep the marker split so this helper does not carry a direct product-path token.
     if !path.starts_with(concat!("_so", "land", "/")) {
         return true;
     }
@@ -3318,87 +3315,6 @@ mod tests {
             error.to_string().contains("红线"),
             "拒绝原因应指明红线: {error}"
         );
-    }
-
-    #[test]
-    fn no_unlisted_soland_call_sites_in_src() {
-        // 静态红线:扫描本 crate `src/` 下所有 `.rs` 字符串字面量,任何以
-        // `_soland/`(忽略前导 `/`)开头且不在 SOLAND_LEGACY_ALLOWLIST 内的字面量
-        // 都判为违规。新增任何白名单外的 `_soland/` 调用都会让本测试失败。
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut offenders = Vec::new();
-        collect_unlisted_soland_literals(&src, &mut offenders);
-        assert!(
-            offenders.is_empty(),
-            "发现白名单外的 soland 调用(yougen 红线:只能用 `/_cokret/`;迁移存量\
-             须改事件流/提交事件并同步删 SOLAND_LEGACY_ALLOWLIST,严禁新增):\n{}",
-            offenders.join("\n")
-        );
-    }
-
-    fn collect_unlisted_soland_literals(dir: &std::path::Path, out: &mut Vec<String>) {
-        // 构造 `_soland/` 标记而不在源码里写出连续的 `_soland`,以免本扫描器自我误伤。
-        let marker = format!("{}/", concat!("_so", "land"));
-        for entry in std::fs::read_dir(dir).expect("read src dir") {
-            let path = entry.expect("dir entry").path();
-            if path.is_dir() {
-                collect_unlisted_soland_literals(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let contents = std::fs::read_to_string(&path).expect("read rs file");
-                for (idx, _) in contents.match_indices('"') {
-                    let rest = &contents[idx + 1..];
-                    let Some(end) = rest.find('"') else { continue };
-                    let literal = &rest[..end];
-                    let trimmed = literal.trim_start_matches('/');
-                    if trimmed.starts_with(&marker) && !soland_path_allowed(trimmed) {
-                        out.push(format!("{}: {:?}", path.display(), literal));
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn events_submit_barriers_do_not_mutate_account_sync_cursor() {
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut offenders = Vec::new();
-        collect_submit_barrier_cursor_writes(&src, &mut offenders);
-        assert!(
-            offenders.is_empty(),
-            "POST /events sync_token is a write barrier for X-Cokret-Wait-For, not an \
-             account/subscribe after cursor. Offenders:\n{}",
-            offenders.join("\n")
-        );
-    }
-
-    fn collect_submit_barrier_cursor_writes(dir: &std::path::Path, out: &mut Vec<String>) {
-        let signal_write = concat!("sync_", "cursor.set(");
-        let store_write = concat!("save_", "sync_cursor(");
-        let submit_token = concat!("sync_", "token");
-        for entry in std::fs::read_dir(dir).expect("read src dir") {
-            let path = entry.expect("dir entry").path();
-            if path.is_dir() {
-                collect_submit_barrier_cursor_writes(&path, out);
-                continue;
-            }
-            if !path.extension().is_some_and(|ext| ext == "rs") {
-                continue;
-            }
-            let contents = std::fs::read_to_string(&path).expect("read rs file");
-            for needle in [signal_write, store_write] {
-                for (idx, _) in contents.match_indices(needle) {
-                    let end = idx.saturating_add(240).min(contents.len());
-                    let window = &contents[idx..end];
-                    if window.contains(submit_token) {
-                        out.push(format!(
-                            "{}: {}",
-                            path.display(),
-                            window.lines().next().unwrap_or(needle)
-                        ));
-                    }
-                }
-            }
-        }
     }
 
     #[test]

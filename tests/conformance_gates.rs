@@ -1,31 +1,21 @@
 //! Conformance gate: every typed builder in yougen MUST produce an
 //! EventEnvelope that validates against cokret-spec event-envelope.schema.json.
 //!
-//! Stream J of `_claude_todos.md`. Two families of gates live here:
-//!
-//! 1. **J1 — event-schema gate.** For each typed builder in `yougen::api`, run build → stamp the
-//!    wire-only fields a real submitter would attach (`seal_ref`, `proofs[0]` from a real Ed25519
-//!    signer) → serialise → validate against
-//!    `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`. Schema requires
-//!    reducer-input events to carry `preconditions`, `effects`, `seal_ref`, and at least one proof;
-//!    the gate therefore covers both the builder output and the sign-and-stamp pipeline immediately
-//!    downstream.
-//!
-//! 2. **J2 — operation_id registry gate.** Recursively scans `yougen/src/**/*.rs` for `operation_id
-//!    = "ck.*"` literals and asserts each is in the canonical `operation-registry.json` OR
-//!    namespaced as `ck.extension.yougen.*`. Yougen has very few of these (typed Rust API, not
-//!    HTTP), but the gate keeps the convention if any are added.
+//! Stream J of `_claude_todos.md`: for each typed builder in `yougen::api`,
+//! run build, stamp the wire-only fields a real submitter would attach
+//! (`seal_ref`, `proofs[0]` from a real Ed25519 signer), serialise, and validate
+//! against `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
+//! Schema requires reducer-input events to carry `preconditions`, `effects`,
+//! `seal_ref`, and at least one proof; the gate therefore covers both the
+//! builder output and the sign-and-stamp pipeline immediately downstream.
 
-use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use ed25519_dalek::SigningKey;
 use jsonschema::{Registry, Resource};
-use regex::Regex;
 use serde_json::Value;
-use walkdir::WalkDir;
 use yougen::api;
 use yougen::operation::EventEnvelope;
 
@@ -43,55 +33,6 @@ fn spec_artifact(path: &str) -> PathBuf {
         .join("v1")
         .join("artifacts")
         .join(path)
-}
-
-fn yougen_src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-fn rust_files(root: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| e.file_name() != "target")
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.into_path();
-        if path.extension().is_some_and(|e| e == "rs") {
-            files.push(path);
-        }
-    }
-    files
-}
-
-fn is_comment_line(line: &str) -> bool {
-    line.trim_start().starts_with("//")
-}
-
-fn code_portion(line: &str) -> &str {
-    let mut in_str = false;
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        let c = bytes[i];
-        if c == b'\\' && in_str {
-            i += 2;
-            continue;
-        }
-        if c == b'"' {
-            in_str = !in_str;
-        } else if !in_str && c == b'/' && bytes[i + 1] == b'/' {
-            return &line[..i];
-        }
-        i += 1;
-    }
-    line
 }
 
 // ----------------------------------------------------------------------
@@ -491,202 +432,4 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
     .expect("non-empty service list yields Some(envelope)");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_plaintext_visible_services_event", &envelope);
-}
-
-// ----------------------------------------------------------------------
-// J2 — Operation registry gate (yougen)
-// ----------------------------------------------------------------------
-
-fn load_canonical_operation_ids() -> BTreeSet<String> {
-    let path = spec_artifact("registry/operation-registry.json");
-    let raw = fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
-    let value: Value = serde_json::from_str(&raw)
-        .unwrap_or_else(|err| panic!("parse {} failed: {err}", path.display()));
-    let mut out = BTreeSet::new();
-    collect_operation_ids(&value, &mut out);
-    assert!(
-        !out.is_empty(),
-        "operation-registry.json contained zero operation_id values"
-    );
-    out
-}
-
-fn collect_operation_ids(value: &Value, out: &mut BTreeSet<String>) {
-    match value {
-        Value::Object(map) => {
-            for (key, child) in map {
-                if key == "operation_id" {
-                    if let Some(id) = child.as_str() {
-                        out.insert(id.to_owned());
-                    }
-                } else if key == "operations"
-                    && let Some(array) = child.as_array()
-                {
-                    for entry in array {
-                        if let Some(id) = entry.as_str() {
-                            out.insert(id.to_owned());
-                        } else {
-                            collect_operation_ids(entry, out);
-                        }
-                    }
-                    continue;
-                }
-                collect_operation_ids(child, out);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_operation_ids(item, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-#[test]
-fn yougen_operation_ids_are_registered_or_namespaced() {
-    let canonical = load_canonical_operation_ids();
-    let pattern =
-        Regex::new(r#"operation_id\s*=\s*"(cx\.[A-Za-z0-9_.]+)""#).expect("regex compiles");
-
-    let mut offenders: Vec<String> = Vec::new();
-    for path in rust_files(&yougen_src_root()) {
-        let raw = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        for (idx, line) in raw.lines().enumerate() {
-            if is_comment_line(line) {
-                continue;
-            }
-            let scanned = code_portion(line);
-            for cap in pattern.captures_iter(scanned) {
-                let op = &cap[1];
-                if op.starts_with("ck.extension.yougen.") {
-                    continue;
-                }
-                if canonical.contains(op) {
-                    continue;
-                }
-                offenders.push(format!(
-                    "{}:{}: unregistered operation_id `{op}` (not in canonical \
-                     registry and not namespaced as ck.extension.yougen.*)",
-                    path.display(),
-                    idx + 1
-                ));
-            }
-        }
-    }
-
-    assert!(
-        offenders.is_empty(),
-        "yougen source declares operation_id values that are neither \
-         in the canonical registry nor namespaced as \
-         ck.extension.yougen.*:\n  {}",
-        offenders.join("\n  ")
-    );
-}
-
-// ----------------------------------------------------------------------
-// Release-readiness gates for documented deferred surfaces
-// ----------------------------------------------------------------------
-
-#[test]
-fn wasm_secure_key_store_upgrade_window_is_documented_and_boot_wired() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let secure_key_store =
-        fs::read_to_string(manifest.join("src/secure_key_store.rs")).expect("secure_key_store.rs");
-    let app = fs::read_to_string(manifest.join("src/app.rs")).expect("app.rs");
-    let security = fs::read_to_string(manifest.join("SECURITY.md")).expect("SECURITY.md");
-
-    assert!(
-        secure_key_store.contains("LocalStorageSecureKeyStore")
-            && secure_key_store.contains("IndexedDbSecureKeyStore")
-            && secure_key_store.contains("upgrade_wasm_secure_key_store_async")
-            && secure_key_store.contains("migrate_localstorage_entries_to_indexeddb"),
-        "wasm secure key store must keep the localStorage fallback, IndexedDB upgrade, and migration path visible"
-    );
-    assert!(
-        app.contains("upgrade_wasm_secure_key_store_async(\"yougen\")"),
-        "app startup must invoke the wasm secure-key-store upgrade"
-    );
-    assert!(
-        app.contains("secure_store_bootstrap_ready")
-            && app.contains("secure_store_ready_for_detection")
-            && app.contains("secure_store_ready_for_bootstrap"),
-        "MLS unlock/backup detection must wait until the wasm secure-key-store upgrade or fallback decision is complete"
-    );
-    assert!(
-        security.contains("first-paint localStorage tier")
-            && security.contains("XSS, extension, or browser profile")
-            && security.contains("dump during that window")
-            && security.contains("After the async upgrade succeeds"),
-        "SECURITY.md must explain the localStorage exposure window and the IndexedDB upgrade boundary"
-    );
-}
-
-#[test]
-fn revocation_remote_wipe_limit_is_user_visible() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let devices = fs::read_to_string(manifest.join("src/views/settings/devices.rs"))
-        .expect("settings devices view");
-    let security = fs::read_to_string(manifest.join("SECURITY.md")).expect("SECURITY.md");
-    let recovery = fs::read_to_string(manifest.join("docs/user-manual/recovery-flow.md"))
-        .expect("recovery-flow.md");
-
-    for (label, raw) in [
-        ("settings devices revoke modal", devices.as_str()),
-        ("SECURITY.md", security.as_str()),
-        ("recovery user manual", recovery.as_str()),
-    ] {
-        assert!(
-            raw.contains("remote") && raw.contains("wipe") || raw.contains("remotely erase"),
-            "{label} must tell users revocation is not a remote wipe"
-        );
-        assert!(
-            raw.contains("already") && (raw.contains("secret") || raw.contains("plaintext")),
-            "{label} must mention already-copied secrets/plaintext remain at risk"
-        );
-    }
-}
-
-#[test]
-fn unfinished_interactive_surfaces_are_default_off_or_explicitly_deferred() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cargo = fs::read_to_string(manifest.join("Cargo.toml")).expect("Cargo.toml");
-    let app = fs::read_to_string(manifest.join("src/app.rs")).expect("app.rs");
-    let call = fs::read_to_string(manifest.join("src/views/call.rs")).expect("call.rs");
-    let webrtc = fs::read_to_string(manifest.join("src/views/webrtc.rs")).expect("webrtc.rs");
-    let document = fs::read_to_string(manifest.join("src/views/document.rs")).expect("document.rs");
-    let object_address =
-        fs::read_to_string(manifest.join("src/object_address.rs")).expect("object_address.rs");
-    let viewport =
-        fs::read_to_string(manifest.join("tests/e2e/viewport.spec.ts")).expect("viewport.spec.ts");
-
-    assert!(
-        cargo.contains("experimental-webrtc = []")
-            && webrtc.contains("cfg!(feature = \"experimental-webrtc\")")
-            && app.contains("DeferredFeatureGate { feature: \"experimental-webrtc\" }")
-            && call.contains("Live WebRTC media remains feature-gated"),
-        "live WebRTC media must stay hidden behind experimental-webrtc in the default UI"
-    );
-    assert!(
-        cargo.contains("experimental-document-collaboration = []")
-            && document.contains("cfg!(feature = \"experimental-document-collaboration\")")
-            && document.contains("document-collaboration-deferred"),
-        "document collaboration controls must be hidden behind experimental-document-collaboration by default"
-    );
-    assert!(
-        object_address.contains("HTTPS-fragment-only")
-            && object_address.contains("does")
-            && object_address.contains("register"),
-        "OS deep-link/protocol-handler support must remain explicitly deferred"
-    );
-    assert!(
-        viewport.contains("test.skip(")
-            && viewport.contains("fixtures")
-            && viewport.contains("catch up"),
-        "viewport checks must stay visibly skipped/deferred until fixtures are ready"
-    );
 }

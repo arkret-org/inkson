@@ -35,6 +35,16 @@ use crate::views::helpers::{handle_from_did, short_protocol_id, with_authed_api}
 const ONBOARDING_RECOVERY_CHOICE_KEY: &str = "onboarding.recovery_choice";
 const DEFAULT_PRINCIPAL_DID_METHOD: &str = "did:webvh";
 const TEST_ONLY_DID_METHOD: &str = "did:web";
+const PCR_ENCRYPTION_PROFILE: &str = "mls_rfc9420";
+
+fn recovery_setup_label(choice: &str) -> &'static str {
+    match choice.trim() {
+        "" => "Select a recovery option to continue",
+        "key" => "Open Recovery Key setup ->",
+        "social" => "Open Social Recovery setup ->",
+        _ => "Open Recovery setup ->",
+    }
+}
 
 /// Render a `did:key:zXXXX...XX` shorthand for display. Keeps the
 /// `ed25519/` prefix style so the metric tile remains compact.
@@ -438,6 +448,11 @@ pub fn OnboardingPanel(
                             div { class: "muted", "Adds this device's public key to your authorized set" }
                         }
                         div { class: "metric",
+                            strong { "Principal Control Realm" }
+                            span { class: "badge accent", "MLS-backed" }
+                            div { class: "muted", "Your account control stream is created with encryption_profile=mls_rfc9420" }
+                        }
+                        div { class: "metric",
                             strong { "Verification" }
                             span { "Optional SAS / QR" }
                             div { class: "muted", "Your existing devices cross-sign the new one" }
@@ -477,7 +492,7 @@ pub fn OnboardingPanel(
                         span { "device-lifecycle §10-§13" }
                     }
                     div { class: "muted",
-                        "The Recovery Key (24 words) is the primary recovery credential; Social Recovery can supplement it. A fresh device is authorized only after the active recovery_policy accepts a bound recovery_session."
+                        "Your Principal Control Realm is MLS-backed from account creation with encryption_profile={PCR_ENCRYPTION_PROFILE}. Generate and store the Recovery Key (24 words) before relying on encrypted account state; Social Recovery can supplement it. A fresh device is authorized only after the active recovery_policy accepts a bound recovery_session."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -518,25 +533,35 @@ pub fn OnboardingPanel(
                         {
                             let choice = recovery_choice();
                             let choice_empty = choice.trim().is_empty();
-                            rsx! {
-                                Link {
-                                    class: if choice_empty { "secondary" } else { "primary" },
-                                    "data-testid": "onboarding-finish",
-                                    to: Route::Dashboard,
-                                    onclick: {
-                                        let actor = account_did();
-                                        let choice = choice.clone();
-                                        move |_| {
-                                            if !choice.trim().is_empty() {
+                            let finish_label = recovery_setup_label(&choice);
+                            if choice_empty {
+                                rsx! {
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "onboarding-finish",
+                                        disabled: true,
+                                        "{finish_label}"
+                                    }
+                                }
+                            } else {
+                                rsx! {
+                                    Link {
+                                        class: "primary",
+                                        "data-testid": "onboarding-finish",
+                                        to: Route::SettingsRecovery,
+                                        onclick: {
+                                            let actor = account_did();
+                                            let choice = choice.clone();
+                                            move |_| {
                                                 state_store.write().save_private_data(
                                                     &actor,
                                                     ONBOARDING_RECOVERY_CHOICE_KEY,
                                                     choice.clone(),
                                                 );
                                             }
-                                        }
-                                    },
-                                    if choice_empty { "Select a recovery option to finish" } else { "Finish onboarding →" }
+                                        },
+                                        "{finish_label}"
+                                    }
                                 }
                             }
                         }
@@ -737,5 +762,19 @@ mod tests {
         assert_eq!(DEFAULT_PRINCIPAL_DID_METHOD, "did:webvh");
         assert_eq!(TEST_ONLY_DID_METHOD, "did:web");
         assert_ne!(DEFAULT_PRINCIPAL_DID_METHOD, TEST_ONLY_DID_METHOD);
+    }
+
+    #[test]
+    fn onboarding_recovery_finish_opens_setup_flow() {
+        assert_eq!(
+            recovery_setup_label(""),
+            "Select a recovery option to continue"
+        );
+        assert_eq!(recovery_setup_label("key"), "Open Recovery Key setup ->");
+        assert_eq!(
+            recovery_setup_label("social"),
+            "Open Social Recovery setup ->"
+        );
+        assert_eq!(PCR_ENCRYPTION_PROFILE, "mls_rfc9420");
     }
 }

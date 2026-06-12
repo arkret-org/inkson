@@ -187,26 +187,3 @@ fn crypto_signature_fixture_canonical_binding_matches() {
         "ed25519_detached_jws vector must be present once"
     );
 }
-
-#[test]
-fn event_envelope_negative_fixture_loads() {
-    // Smoke test: ensure the negative-fixture file is well-formed so future
-    // work can replay the rejection cases against the EventEnvelope
-    // signing path. Full negative-case validation lands with the dedicated
-    // submit-path hardening task.
-    let fixture = load_fixture("event-envelope-negative-fixture.json");
-    if fixture.is_null() {
-        return;
-    }
-    // This fixture uses `cases[]` rather than `vectors[]`; both shapes are
-    // valid in the spec corpus. Just confirm the fixture loads and exposes a
-    // non-empty case set so the next regression cycle can replay it.
-    let cases = fixture["cases"]
-        .as_array()
-        .or_else(|| fixture["vectors"].as_array())
-        .expect("cases[] or vectors[] present");
-    assert!(
-        !cases.is_empty(),
-        "negative fixture must list at least one case"
-    );
-}

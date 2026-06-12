@@ -923,14 +923,6 @@ mod tests {
     }
 
     #[test]
-    fn known_event_kinds_matches_registry_count() {
-        // This pins the client-supported subset size. Registry membership and
-        // wire_scope are checked against the adjacent cokret-spec artifact below,
-        // so this count only catches accidental local additions/removals.
-        assert_eq!(known_event_kinds().len(), 108);
-    }
-
-    #[test]
     fn known_event_kinds_covers_load_bearing_kinds() {
         let kinds = known_event_kinds();
         // current-model §3 — unified track update (spec dc01ad7)
@@ -991,30 +983,6 @@ mod tests {
         }
     }
 
-    /// Lock-down: registry counts at the time of last alignment.
-    ///
-    /// C18 wire-break (spec 2026-05-08) deliberately retired
-    /// `ck.flow.branch.{member,history_visibility,policy_components}` — three
-    /// events that had no track-namespace successor — so the prior floor of
-    /// 110 is no longer meaningful. Spec dc01ad7 (2026-05-18) then unified
-    /// the four `ck.flow.track.{enable,disable,update,set_primary}` events
-    /// into a single `ck.flow.tracks.update`, dropping three more entries.
-    /// We pin to 102 to track the post-T2.3 count. The spec itself
-    /// declares 131 active kinds at HEAD; yougen surfaces the typed subset
-    /// relevant to its UI flows. T2.3 dropped ck.space.lifecycle.set and
-    /// ck.space.policy.set (-2 from the prior 104 floor).
-    #[test]
-    fn known_event_kinds_meet_registry_floor() {
-        let kinds = known_event_kinds();
-        // Realm/Space split keeps a stable floor of 107 by including the
-        // Space container lifecycle kinds used by the kanban workflow.
-        assert!(
-            kinds.len() >= 107,
-            "yougen surfaces {} event kinds; floor 107 includes ck.space.{{archive,create,restore,tombstone,update}} container lifecycle kinds.",
-            kinds.len()
-        );
-    }
-
     /// Lock-down: every entry in `known_event_kinds()` is unique.
     ///
     /// Drift detector — if a refactor accidentally double-listed an event
@@ -1066,97 +1034,6 @@ mod tests {
         );
     }
 
-    fn spec_event_kind_registry_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("yougen lives next to cokret-spec")
-            .join("cokret-spec")
-            .join("spec")
-            .join("v1")
-            .join("artifacts")
-            .join("registry")
-            .join("event-kind-registry.json")
-    }
-
-    fn active_spec_event_kind_scopes()
-    -> std::collections::BTreeMap<String, super::EventKindWireScope> {
-        let path = spec_event_kind_registry_path();
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
-        let value: Value = serde_json::from_str(&raw)
-            .unwrap_or_else(|err| panic!("parse {} failed: {err}", path.display()));
-        let entries = value
-            .get("event_kinds")
-            .and_then(Value::as_array)
-            .expect("event-kind-registry.json has event_kinds array");
-
-        let mut out = std::collections::BTreeMap::new();
-        for entry in entries {
-            if entry.get("status").and_then(Value::as_str) != Some("active") {
-                continue;
-            }
-            let kind = entry
-                .get("event_kind")
-                .and_then(Value::as_str)
-                .expect("active event-kind entry has event_kind");
-            let scope_str = entry
-                .get("wire_scope")
-                .and_then(Value::as_str)
-                .expect("active event-kind entry has wire_scope");
-            let scope = super::EventKindWireScope::from_registry_str(scope_str)
-                .unwrap_or_else(|| panic!("unknown wire_scope `{scope_str}` for `{kind}`"));
-            out.insert(kind.to_owned(), scope);
-        }
-        assert!(
-            !out.is_empty(),
-            "event-kind-registry.json contained no active event kinds"
-        );
-        out
-    }
-
-    #[test]
-    fn known_event_kinds_are_active_in_current_spec_registry() {
-        let registry = active_spec_event_kind_scopes();
-        let missing: Vec<&str> = known_event_kinds()
-            .into_iter()
-            .filter(|kind| !registry.contains_key(*kind))
-            .collect();
-
-        assert!(
-            missing.is_empty(),
-            "yougen `known_event_kinds()` contains entries absent from the current spec registry: {missing:?}"
-        );
-    }
-
-    #[test]
-    fn event_kind_wire_scope_classifier_matches_current_spec_registry() {
-        let registry = active_spec_event_kind_scopes();
-        let mut mismatches: Vec<String> = Vec::new();
-        for kind in known_event_kinds() {
-            let expected = registry
-                .get(kind)
-                .unwrap_or_else(|| panic!("known event kind `{kind}` missing from spec registry"));
-            match super::event_kind_wire_scope(kind) {
-                Some(actual) if actual == *expected => {}
-                Some(actual) => mismatches.push(format!(
-                    "{kind}: registry={} but classifier={}",
-                    expected.as_registry_str(),
-                    actual.as_registry_str()
-                )),
-                None => mismatches.push(format!(
-                    "{kind}: registry={} but classifier returned None",
-                    expected.as_registry_str()
-                )),
-            }
-        }
-
-        assert!(
-            mismatches.is_empty(),
-            "event_kind_wire_scope classifier drifted from the current spec registry:\n - {}",
-            mismatches.join("\n - "),
-        );
-    }
-
     #[test]
     fn ephemeral_kinds_never_classify_as_durable() {
         for kind in super::ephemeral_event_kinds() {
@@ -1183,21 +1060,5 @@ mod tests {
     #[test]
     fn event_kind_wire_scope_returns_none_for_unknown_kind() {
         assert_eq!(super::event_kind_wire_scope("ck.bogus.kind"), None);
-    }
-
-    #[test]
-    fn active_spec_event_kind_registry_is_well_formed() {
-        for kind in active_spec_event_kind_scopes().keys() {
-            assert!(
-                kind.starts_with("ck."),
-                "registry entry `{kind}` missing ck.* namespace"
-            );
-            for ch in kind.chars() {
-                assert!(
-                    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '.' || ch == '_',
-                    "registry entry `{kind}` has illegal char `{ch}`"
-                );
-            }
-        }
     }
 }

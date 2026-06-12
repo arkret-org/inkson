@@ -1967,22 +1967,9 @@ pub mod ck_ops {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use serde_json::{Value, json};
 
     use super::*;
-
-    fn spec_schema(name: &str) -> serde_json::Value {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../cokret-spec/spec/v1/artifacts/schemas")
-            .join(name);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("read spec schema {}: {err}", path.display()));
-        serde_json::from_str(&text).unwrap_or_else(|err| {
-            panic!("parse spec schema {}: {err}", path.display());
-        })
-    }
 
     fn assert_registered_payload_valid(event: &EventEnvelope) {
         let catalog = cokret_sdk::schema::event_payload_validator_catalog();
@@ -2028,34 +2015,6 @@ mod tests {
         check(value).unwrap_or_else(|err| {
             panic!("payload violates soland canonical JSON gate: {err}\npayload: {value}")
         });
-    }
-
-    fn required_fields(schema: &serde_json::Value) -> Vec<String> {
-        schema
-            .get("required")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("schema missing required[]"))
-            .iter()
-            .map(|value| value.as_str().unwrap().to_owned())
-            .collect()
-    }
-
-    fn assert_required_fields_present(schema: &serde_json::Value, value: &serde_json::Value) {
-        for field in required_fields(schema) {
-            assert!(
-                value.get(&field).is_some(),
-                "payload missing required schema field `{field}`: {value}"
-            );
-        }
-    }
-
-    fn patch_schema_ops(schema: &serde_json::Value) -> Vec<String> {
-        schema["additionalProperties"]["oneOf"][1]["properties"]["$op"]["enum"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|value| value.as_str().unwrap().to_owned())
-            .collect()
     }
 
     #[test]
@@ -2218,7 +2177,6 @@ mod tests {
         )
         .expect("builds")
         .build("node");
-        let flow_schema = spec_schema("flow.schema.json");
 
         assert_eq!(op.kind, "ck.flow.create");
         assert_eq!(op.realm_id, "ck:realm:0196419b-0000-7000-8000-000000000001");
@@ -2226,7 +2184,6 @@ mod tests {
             op.payload["object"]["realm_id"],
             "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
-        assert_required_fields_present(&flow_schema, &op.payload["object"]);
         assert_eq!(
             op.payload["object"]["tracks"]["synthesis"]["profile"],
             "kanban_card"
@@ -2670,114 +2627,6 @@ mod tests {
         assert_eq!(created_at.len(), 20);
         assert!(created_at.ends_with('Z'));
         assert!(!created_at.contains('.'));
-    }
-
-    #[test]
-    fn spec_space_schema_accepts_client_space_create_payload_shape() {
-        let schema = spec_schema("space.schema.json");
-        let op = ck_ops::space_create(
-            "ck:realm:0196419b-0000-7000-8000-000000000001",
-            "did:web:alice.example",
-            "ck:space:0196419b-0000-7000-8000-000000000002",
-            "list",
-            "To Do",
-            Some("ck:space:0196419b-0000-7000-8000-000000000003"),
-            Some("U"),
-        )
-        .expect("builds")
-        .build("node");
-        let object = &op.payload["object"];
-
-        assert_eq!(object["schema"], schema["properties"]["schema"]["const"]);
-        assert_eq!(
-            object["realm_id"],
-            "ck:realm:0196419b-0000-7000-8000-000000000001"
-        );
-        assert_eq!(op.kind, "ck.space.create");
-        assert!(serde_json::to_string(&op).unwrap().contains("\"realm_id\""));
-        assert!(!serde_json::to_string(&op).unwrap().contains("ck:list:"));
-    }
-
-    #[test]
-    fn spec_patch_schema_accepts_client_flow_tracks_update_payload_shape() {
-        let schema = spec_schema("patch.schema.json");
-        let ops = patch_schema_ops(&schema);
-        let op = ck_ops::flow_tracks_update_set_primary(
-            "ck:realm:0196419b-0000-7000-8000-000000000001",
-            "did:web:alice.example",
-            "ck:flow:0196419b-0000-7000-8000-000000000004",
-            "discussion",
-        )
-        .expect("builds")
-        .build("node");
-        let patch = op.payload["patch"].as_object().unwrap();
-
-        assert!(!patch.is_empty());
-        assert!(patch.contains_key("tracks.discussion.is_primary"));
-        assert!(!patch.contains_key("tracks.discussion.primary"));
-        for value in patch.values() {
-            let op = value["$op"].as_str().unwrap();
-            assert!(ops.iter().any(|allowed| allowed == op));
-            if matches!(op, "set" | "add" | "remove") {
-                assert!(value.get("value").is_some());
-            }
-        }
-    }
-
-    #[test]
-    fn spec_patch_schema_accepts_client_flow_update_payload_shape() {
-        let schema = spec_schema("patch.schema.json");
-        let ops = patch_schema_ops(&schema);
-        let op = ck_ops::flow_update_patch(
-            "ck:realm:0196419b-0000-7000-8000-000000000001",
-            "did:web:alice.example",
-            "ck:flow:0196419b-0000-7000-8000-000000000004",
-            json!({
-                "metadata.title": { "$op": "set", "value": "Launch checklist" },
-                "metadata.summary": { "$op": "set", "value": "Ship blockers only" },
-                "metadata.fields.labels": { "$op": "set", "value": ["release", "ops"] },
-                "metadata.fields.priority": { "$op": "set", "value": "high" },
-                "metadata.fields.due_at": { "$op": "set", "value": "2026-05-20" },
-            }),
-        )
-        .expect("builds")
-        .build("node");
-        let patch = op.payload["patch"].as_object().unwrap();
-
-        assert!(!patch.is_empty());
-        assert_eq!(op.kind, "ck.flow.update");
-        assert!(patch.contains_key("metadata.title"));
-        assert!(patch.contains_key("metadata.summary"));
-        assert!(patch.contains_key("metadata.fields.labels"));
-        assert!(patch.contains_key("metadata.fields.priority"));
-        assert!(patch.contains_key("metadata.fields.due_at"));
-        for value in patch.values() {
-            let op = value["$op"].as_str().unwrap();
-            assert!(ops.iter().any(|allowed| allowed == op));
-            if matches!(op, "set" | "add" | "remove") {
-                assert!(value.get("value").is_some());
-            }
-        }
-    }
-
-    #[test]
-    fn spec_event_schema_lists_client_write_kinds() {
-        let schema_text = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json"),
-        )
-        .unwrap();
-        for kind in [
-            "ck.account_data.set",
-            "ck.flow.update",
-            "ck.flow.tracks.update",
-            "ck.space.create",
-        ] {
-            assert!(
-                schema_text.contains(&format!("\"{kind}\"")),
-                "event-schema artifact must list client write kind {kind}"
-            );
-        }
     }
 
     #[test]

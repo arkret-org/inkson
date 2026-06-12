@@ -9174,7 +9174,6 @@ dependencies = [
  "tracing",
  "unicode-normalization",
  "url",
- "walkdir",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

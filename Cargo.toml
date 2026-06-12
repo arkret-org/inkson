@@ -234,9 +234,8 @@ web-sys = {workspace = true,features = [
 ]}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-# Stream J conformance gates (`tests/conformance_gates.rs`,
-# `tests/anchor_staleness_drill.rs`): JSON Schema 2020-12 validation of
-# envelopes produced by typed builders against
+# Stream J conformance gate (`tests/conformance_gates.rs`): JSON Schema
+# 2020-12 validation of envelopes produced by typed builders against
 # `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 # Pinned to the same version cotest uses so a registry/resource bump
 # lands in one place.
@@ -252,7 +251,6 @@ web-sys = {workspace = true,features = [
 jsonschema = {workspace = true,default-features = false,features = ["resolve-file"]}
 rand_core = {workspace = true}
 regex = {workspace = true}
-walkdir = {workspace = true}
 # rev 钉死,升级时手工 bump。
 [patch."https://github.com/DioxusLabs/components"]
 dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", rev = "3510aeee2d14f0ca2c11682c9b826650cb557d2f" }
@@ -325,7 +323,6 @@ tokio = "1.52.3"
 tracing = "0.1"
 unicode-normalization = "0.1"
 url = "2.5.8"
-walkdir = "2.5"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3.100"
