@@ -106,38 +106,58 @@ impl CokretApi {
         })
     }
 
-    /// Round 4 (spec a77b995) — `GET /_cokret/self/events/frontier` as the
-    /// `account_client` variant. Wire-breaking: the round-4
-    /// `account_client` variant carries `peer_role`, `frontier`,
-    /// `actor_seq_upper_bounds` ONLY — it does NOT include
-    /// `frontier_root`, transport signatures, or receipts. Those moved
-    /// to the `federation_peer` variant which is S2S-only and clients
-    /// MUST NEVER consume.
+    /// `GET /_cokret/self/events/frontier?realm_id=` — Realm Seal view
+    /// `{realm_id, seal_id, control_event_set_root, state_root, hlc?}`.
     ///
-    /// The caller MUST pre-confirm that the route is signed-in (the
-    /// account-client variant is gated on the principal session token).
-    /// Anonymous-health probes go through a separate route.
-    pub async fn events_frontier_account_client(
+    /// This is the spec-registered account-client sourcing for minting a
+    /// single-leaf Control Move `seal_basis` (`view.seal_basis()`) and a
+    /// DataEvent `seal_ref` (`view.seal_id`) — SPEC-SOL-003 resolution.
+    /// Fails closed (never fabricates a basis) when the server cannot
+    /// serve the view or answers for a different Realm.
+    pub async fn events_frontier_realm_seal_view(
         &self,
-    ) -> anyhow::Result<cokret_sdk::EventsFrontierAccountClientState> {
-        let body: Value = self.get_json("_cokret/self/events/frontier").await?;
-        let frontier: cokret_sdk::EventsFrontierAccountClientState = serde_json::from_value(body)
+        realm_id: &str,
+    ) -> anyhow::Result<cokret_sdk::RealmSealFrontierView> {
+        let body: Value = self
+            .get_json(&format!("_cokret/self/events/frontier?realm_id={realm_id}"))
+            .await?;
+        let state: cokret_sdk::EventsFrontierAccountClientState = serde_json::from_value(body)
             .map_err(|err| {
-            anyhow::anyhow!(
-                "events/frontier account_client decode failed (round 4 wire shape): {err}"
-            )
-        })?;
-        if !matches!(
-            frontier.peer_role,
-            cokret_sdk::FrontierPeerRole::AccountClient
-        ) {
+                anyhow::anyhow!("events/frontier account_client decode failed: {err}")
+            })?;
+        let cokret_sdk::EventsFrontierView::RealmSealView(view) = state.frontier else {
             anyhow::bail!(
-                "events/frontier peer_role {:?} is not account_client (federation_peer / \
-                 anonymous_health are off-limits to clients)",
-                frontier.peer_role
+                "events/frontier for realm_id={realm_id} did not return a Realm Seal view — \
+                 cannot mint seal_basis / seal_ref"
+            );
+        };
+        if view.realm_id.as_str() != realm_id {
+            anyhow::bail!(
+                "events/frontier answered for realm {} instead of {realm_id}",
+                view.realm_id
             );
         }
-        Ok(frontier)
+        Ok(view)
+    }
+
+    /// `GET /_cokret/self/events/frontier?actor_id=` — actor frontier
+    /// `{actor_id, actor_seq, event_id}` (highest accepted actor_seq
+    /// visible to the caller).
+    pub async fn events_frontier_actor(
+        &self,
+        actor_id: &str,
+    ) -> anyhow::Result<cokret_sdk::ActorFrontierView> {
+        let body: Value = self
+            .get_json(&format!("_cokret/self/events/frontier?actor_id={actor_id}"))
+            .await?;
+        let state: cokret_sdk::EventsFrontierAccountClientState = serde_json::from_value(body)
+            .map_err(|err| {
+                anyhow::anyhow!("events/frontier account_client decode failed: {err}")
+            })?;
+        let cokret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
+            anyhow::bail!("events/frontier for actor_id={actor_id} did not return an actor frontier");
+        };
+        Ok(view)
     }
 
     /// `GET /_cokret/self/events/describe` — spec binds the response to the

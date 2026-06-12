@@ -300,28 +300,73 @@ impl CokretApi {
 
     // ── Device & Crypto ─────────────────────────────────────────────
 
-    /// User-driven device revoke. This is a soland deployment-local scaffold,
-    /// NOT the spec-canonical revocation mechanism, so it lives in the
-    /// `_soland/` product namespace (`POST /_soland/self/devices/{device_id}/revoke`).
+    /// User-driven device revoke over the spec-canonical durable Control
+    /// Move `ck.device.revoke` (`crypto-media/device-lifecycle.md` §2.2,
+    /// SPEC-SOL-003 已裁决落地,YOU-01-008 阻塞解除):
     ///
-    /// YOU-01-008 残留(跨仓阻塞):spec 的规范吊销是 durable 事件
-    /// `ck.device.revoke`(device-lifecycle.md §2.2),其 payload MUST 携带
-    /// `revocation_frontier`(`event_payload.schema.json#/$defs/device_revoke_payload`,
-    /// 即 `seal_frontier`:`^(sha256|blake3):[0-9a-f]{64}$` 的 accepted-Seal
-    /// digest hash 数组,minItems 1)。客户端目前**无可达端点**产出该 digest
-    /// frontier:`current_seal_for` 因 client seal-head sourcing 未在 spec 注册
-    /// 而 fail-closed;`events/frontier`(account_client)只回 `ck:event:` typed id
-    /// 而非 digest hash。soland 的 events 提交管线虽已 admit `ck.device.revoke`
-    /// 并按 SDK schema 校验,但缺失 frontier 会被 schema 拒收 →
-    /// 切 durable 事件需先在 soland/spec 补 client-reachable seal-frontier digest
-    /// 来源。在此之前保留本 scaffold(soland 现行 `device_revoke` 仅翻本地记录 +
-    /// audit log,亦未铸造 frontier),仅把命名空间从 `/_cokret/` 迁回 `/_soland/`。
-    pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkOutcome> {
-        self.post_json(
-            &format!("_soland/self/devices/{device_id}/revoke"),
-            json!({}),
+    /// 1. derive the principal control realm
+    ///    (`cokret_sdk::auth::principal_control_realm_id`);
+    /// 2. mint the single-leaf `seal_basis` from the registered sourcing
+    ///    `ck.self.events.frontier?realm_id=` (fail closed when
+    ///    unavailable — never fabricate a basis);
+    /// 3. submit the signed envelope via `submit_event_envelope`
+    ///    (payload carries no frontier field);
+    /// 4. best-effort call the legacy `_soland/` scaffold
+    ///    (`POST /_soland/self/devices/{id}/revoke`) so deployments whose
+    ///    submit pipeline does not yet enforce accepted `ck.device.revoke`
+    ///    on the device record still revoke. Scaffold failure after a
+    ///    successful event submit is logged, not fatal — current soland
+    ///    enforces the revocation at event accept.
+    pub async fn revoke_device(
+        &self,
+        actor_id: &str,
+        revoked_by_device_id: &str,
+        target_device_id: &str,
+    ) -> anyhow::Result<SubmitEventOutcome> {
+        if target_device_id == revoked_by_device_id {
+            anyhow::bail!(
+                "a device cannot revoke itself; revoke from a peer device (cannot_self_revoke)"
+            );
+        }
+        let principal = cokret_sdk::Did::new(actor_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid principal DID for device revoke: {err}"))?;
+        let control_realm = cokret_sdk::auth::principal_control_realm_id(&principal);
+        let seal_view = self.events_frontier_realm_seal_view(&control_realm).await?;
+        let basis = seal_view.seal_basis();
+        let envelope = crate::operation::ck_ops::device_revoke(
+            &control_realm,
+            actor_id,
+            target_device_id,
+            revoked_by_device_id,
+            "user_request",
         )
-        .await
+        .seal_basis(crate::operation::SealBasis {
+            leaves: basis
+                .leaves
+                .iter()
+                .map(|leaf| leaf.as_str().to_owned())
+                .collect(),
+            control_event_set_root: basis.control_event_set_root.as_str().to_owned(),
+            state_root: basis.state_root.as_str().to_owned(),
+        })
+        .build(revoked_by_device_id);
+        let outcome = self.submit_event_envelope(&envelope).await?;
+
+        let scaffold: anyhow::Result<OkOutcome> = self
+            .post_json(
+                &format!("_soland/self/devices/{target_device_id}/revoke"),
+                json!({}),
+            )
+            .await;
+        if let Err(err) = scaffold {
+            tracing::warn!(
+                target_device_id,
+                error = %err,
+                "ck.device.revoke accepted but legacy device-revoke scaffold failed; \
+                 relying on event-accept enforcement"
+            );
+        }
+        Ok(outcome)
     }
 
     /// Rename a device the caller controls by updating its user-facing

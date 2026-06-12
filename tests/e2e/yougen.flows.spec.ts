@@ -9,19 +9,26 @@ function latestTestId(page: import("@playwright/test").Page, testId: string) {
 }
 
 async function dismissBlockingRecoveryModal(page: import("@playwright/test").Page) {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
+  // Dismiss a CHAIN of blocking account-health modals. Dismissing the
+  // recovery-missing modal can auto-open the one-time recovery-key setup nudge
+  // (account_health::should_autoprompt_recovery_setup); both expose a
+  // "Dismiss"/"Not now" button. Re-query each iteration and don't assert a
+  // specific modal hidden — a freshly spawned modal must not fail the helper.
+  for (let i = 0; i < 8; i += 1) {
     const modal = page.getByRole("dialog").last();
-    await modal.waitFor({ state: "visible", timeout: 500 }).catch(() => undefined);
-    if (!(await modal.isVisible().catch(() => false))) {
+    const visible = await modal
+      .waitFor({ state: "visible", timeout: 800 })
+      .then(() => true)
+      .catch(() => false);
+    if (!visible) {
       return;
     }
     const dismiss = modal.getByRole("button", { name: /^(Not now|Dismiss)$/ });
     if ((await dismiss.count()) === 0) {
       return;
     }
-    await dismiss.evaluate((button: HTMLElement) => button.click());
-    await expect(modal).toBeHidden({ timeout: 5_000 });
+    await dismiss.first().evaluate((button: HTMLElement) => button.click());
+    await page.waitForTimeout(150);
   }
 }
 
@@ -56,8 +63,9 @@ async function dismissRecoveryMissingModal(page: import("@playwright/test").Page
     .then(() => true)
     .catch(() => false);
   if (appeared) {
-    await page.getByTestId("mls-recovery-missing-dismiss").last().click();
-    await expect(modal).toBeHidden({ timeout: 8_000 });
+    // Dismiss the recovery-missing modal AND the recovery-key setup nudge it
+    // auto-opens, so the surface underneath becomes interactable.
+    await dismissBlockingRecoveryModal(page);
   }
 }
 
@@ -361,13 +369,28 @@ test("first authenticated session surfaces a single recovery prompt by priority"
   await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
   await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
 
-  // Dismissing the higher-priority prompt reveals the next one in the chain.
+  // Dismissing the higher-priority prompt drops to RecoverySetupReminder, which
+  // proactively AUTO-OPENS the 24-word Recovery Key setup modal once (the
+  // one-time new-user nudge — account_health::should_autoprompt_recovery_setup).
   await latestTestId(page, "mls-recovery-missing-dismiss").click();
+  const setupModal = latestTestId(page, "recovery-key-setup-modal");
+  await expect(setupModal).toBeVisible();
+
+  // Closing it ("Not now") leaves the passive banner; the persisted flag means
+  // it does NOT auto-pop again, so the banner is the steady-state reminder.
+  await latestTestId(page, "recovery-key-setup-dismiss").click();
+  await expect(setupModal).toBeHidden();
   const banner = latestTestId(page, "recovery-setup-banner");
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("Recovery setup is incomplete");
   await expect(latestTestId(page, "recovery-setup-open-recovery")).toBeVisible();
   await expect(latestTestId(page, "recovery-setup-open-encryption")).toBeVisible();
+
+  // Reloading must not re-pop the modal (flag persisted in local state).
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await dismissRecoveryMissingModal(page);
+  await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
 });
 
 test("dialog ignores inside drag release but closes on outside click", async ({ page }) => {

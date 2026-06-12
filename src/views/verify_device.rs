@@ -982,10 +982,19 @@ pub fn VerifyDevicePanel(
                                                         revoke_confirm.set(None);
                                                         spawn(async move {
                                                             let dev_id_for_err = dev_id.clone();
+                                                            let actor_for_revoke = actor_for_rotation.clone();
+                                                            let device_for_revoke = device_for_rotation.clone();
                                                             let revoke_result = crate::views::helpers::with_authed_api(
                                                                 &base,
                                                                 api_token.clone(),
-                                                                |api| async move { api.revoke_device(&dev_id).await },
+                                                                |api| async move {
+                                                                    api.revoke_device(
+                                                                        &actor_for_revoke,
+                                                                        &device_for_revoke,
+                                                                        &dev_id,
+                                                                    )
+                                                                    .await
+                                                                },
                                                             )
                                                             .await;
                                                             if let Err(err) = revoke_result {

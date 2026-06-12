@@ -150,6 +150,18 @@ pub struct Effect {
     pub op: LatticeOp,
 }
 
+/// Typed Control Move basis per spec `event-envelope.schema.json
+/// $defs/seal_basis` — the accepted Seal view the author signed under.
+/// Mint a single-leaf basis from the registered sourcing
+/// (`events_frontier_realm_seal_view(realm).seal_basis()`); never
+/// fabricate one (SPEC-SOL-003 resolution).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SealBasis {
+    pub leaves: Vec<String>,
+    pub control_event_set_root: String,
+    pub state_root: String,
+}
+
 /// Typed lattice op per spec `event-envelope.schema.json $defs/lattice_op`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LatticeOp {
@@ -233,6 +245,8 @@ pub struct EventEnvelope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seal_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seal_basis: Option<SealBasis>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redacts: Option<String>,
     pub payload: Value,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -294,6 +308,7 @@ pub struct OperationBuilder {
     effects: Vec<Effect>,
     refs: Vec<SemanticRef>,
     seal_ref: Option<String>,
+    seal_basis: Option<SealBasis>,
     requirements: Option<EventRequirements>,
     redacts: Option<String>,
 }
@@ -317,6 +332,7 @@ impl OperationBuilder {
             effects: Vec::new(),
             refs: Vec::new(),
             seal_ref: None,
+            seal_basis: None,
             requirements: None,
             redacts: None,
         }
@@ -364,6 +380,13 @@ impl OperationBuilder {
 
     pub fn seal_ref(mut self, seal_ref: impl Into<String>) -> Self {
         self.seal_ref = Some(seal_ref.into());
+        self
+    }
+
+    /// Control Move only — attach the signed `seal_basis` (mutually
+    /// exclusive with `seal_ref` per the spec envelope schema).
+    pub fn seal_basis(mut self, seal_basis: SealBasis) -> Self {
+        self.seal_basis = Some(seal_basis);
         self
     }
 
@@ -417,6 +440,7 @@ impl OperationBuilder {
             preconditions: self.preconditions,
             effects: self.effects,
             seal_ref: self.seal_ref,
+            seal_basis: self.seal_basis,
             requirements: self.requirements,
             redacts: self.redacts,
             unsigned,
@@ -1578,6 +1602,35 @@ pub mod ck_ops {
         OperationBuilder::new(realm_id, actor, "ck.capability.revoke")
             .target_ref(grant_id)
             .body(body)
+    }
+
+    /// Durable `ck.device.revoke` Control Move on the principal control
+    /// stream (`crypto-media/device-lifecycle.md` §2.2, SPEC-SOL-003
+    /// resolution). `realm_id` MUST be the principal's control realm
+    /// (`cokret_sdk::auth::principal_control_realm_id`); the caller MUST
+    /// attach a `seal_basis` minted from the registered frontier sourcing
+    /// before building. The payload carries no frontier field — the
+    /// authorization basis is the envelope `seal_basis` and the effective
+    /// cutoff is the accepted Seal covering this Move.
+    ///
+    /// `reason` must match the schema slug form `^[a-z][a-z0-9_]{0,63}$`
+    /// (e.g. `user_request`, `device_lost`).
+    pub fn device_revoke(
+        realm_id: &str,
+        actor: &str,
+        target_device_id: &str,
+        revoked_by_device_id: &str,
+        reason: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "ck.device.revoke")
+            .target_ref(target_device_id)
+            .body(json!({
+                "principal_id": actor,
+                "device_id": target_device_id,
+                "revoked_by": revoked_by_device_id,
+                "revoked_at": crate::clock::now_rfc3339_secs(),
+                "reason": reason,
+            }))
     }
 
     // ── MLS epoch (per-Realm group ratchet) ─────────────────────────

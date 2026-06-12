@@ -935,6 +935,12 @@ pub fn RouterView() -> Element {
     let needs_device_authorization = use_signal(|| false);
     let device_authorization_check_complete = use_signal(|| false);
     let mut recovery_key_setup_prompt = use_signal(|| false);
+    // In-memory "already auto-prompted recovery setup this session" guard. The
+    // persisted localStorage flag handles across-session suppression, but a
+    // session guard makes the one-time auto-open robust against the user
+    // dismissing the modal and against sync re-flushing local state, so the
+    // proactive nudge can never re-pop within a session.
+    let recovery_autoprompt_fired = use_signal(|| false);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
@@ -1458,6 +1464,62 @@ pub fn RouterView() -> Element {
                 let _ = redirect_navigator.push(Route::Dashboard);
             } else if matches!(redirect_route, Route::Recovery) {
                 let _ = redirect_navigator.replace(Route::SettingsRecovery);
+            }
+        });
+    }
+    {
+        // Proactive one-time 24-word Recovery Key setup nudge for new users.
+        // When the account is otherwise healthy but no recovery path is
+        // configured (the lowest-priority RecoverySetupReminder state), open the
+        // setup modal once and persist a flag so it never auto-pops again — the
+        // passive dashboard banner remains as the steady-state reminder. The
+        // in-memory `recovery_autoprompt_fired` guard makes "once" robust within
+        // a session. See account_health::should_autoprompt_recovery_setup and
+        // docs/user-flows-key-lifecycle.md §3/S1.
+        const RECOVERY_AUTOPROMPT_SHOWN_KEY: &str = "recovery.autoprompt_shown.v1";
+        let mut recovery_key_setup_prompt = recovery_key_setup_prompt;
+        let mut recovery_autoprompt_fired = recovery_autoprompt_fired;
+        let mut state_store = state_store;
+        use_effect(move || {
+            if recovery_autoprompt_fired() || recovery_key_setup_prompt() {
+                return;
+            }
+            let session = token();
+            let actor = account_did();
+            if session.trim().is_empty() || actor.trim().is_empty() {
+                return;
+            }
+            let (inputs, already_prompted) = {
+                let store = state_store.read();
+                let inputs = crate::account_health::AccountHealthInputs {
+                    has_session: true,
+                    sync_bootstrap_complete: sync_bootstrap_complete(),
+                    device_check_complete: device_authorization_check_complete(),
+                    // Route doesn't gate this one-time nudge; the guards do.
+                    on_recovery_route: false,
+                    needs_device_authorization: needs_device_authorization(),
+                    needs_mls_unlock: needs_mls_unlock(),
+                    needs_mls_backup: needs_mls_backup(),
+                    needs_mls_recovery_setup: needs_mls_recovery_setup(),
+                    floor_low:
+                        crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
+                            &store, &actor,
+                        ),
+                    recovery_unconfigured: recovery_setup_prompt_required(&store, &actor),
+                };
+                let already = store
+                    .load_private_data(&actor, RECOVERY_AUTOPROMPT_SHOWN_KEY)
+                    .is_some();
+                (inputs, already)
+            };
+            if crate::account_health::should_autoprompt_recovery_setup(inputs, already_prompted) {
+                recovery_autoprompt_fired.set(true);
+                state_store.write().save_private_data(
+                    &actor,
+                    RECOVERY_AUTOPROMPT_SHOWN_KEY,
+                    "1".to_owned(),
+                );
+                recovery_key_setup_prompt.set(true);
             }
         });
     }

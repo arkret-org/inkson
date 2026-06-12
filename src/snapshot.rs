@@ -168,7 +168,7 @@ where
     );
     context.now = now;
     context.replay_window = snapshot_replay_window(manifest.security_class.clone());
-    cokret_sdk::verify_canonical_proof_with_did_resolver(
+    let verification = cokret_sdk::verify_canonical_proof_with_did_resolver(
         &canonical_bytes,
         &proof,
         &manifest.created_by,
@@ -181,6 +181,12 @@ where
             format!("snapshot signature verification failed: {error}"),
         )
     })?;
+    if !verification.valid {
+        return Err(SnapshotFallbackReason::new(
+            cokret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+            "snapshot signature verification returned valid=false",
+        ));
+    }
     Ok(())
 }
 

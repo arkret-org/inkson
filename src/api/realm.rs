@@ -750,25 +750,16 @@ impl CokretApi {
     /// Resolve the current seal head for `realm_id` to be stamped onto
     /// outgoing reducer-input events as `seal_ref`.
     ///
-    /// Spec resolution (2026-06-11, `renames.json` migration group
-    /// `snapshot_head_returns_manifest`): `ck.self.snapshot.head` returns
-    /// the full signed `ck.schema.snapshot.v1` manifest, which carries no
-    /// `ck:seal:sha256:<hex>` head — the legacy `SnapshotHeadState`
-    /// pointer DTO (whose `snapshot_ref` doubled as the seal head) is
-    /// hard-rejected on current wire. Until seal-head sourcing is
-    /// re-specified for clients, fail closed instead of fabricating an
-    /// `seal_ref`. soland currently fails closed earlier with
-    /// `not_implemented` on the operation, so the post-decode branch is
-    /// unreachable against current servers either way.
+    /// Spec resolution (2026-06-12, SPEC-SOL-003): the registered
+    /// account-client sourcing is `ck.self.events.frontier?realm_id=`,
+    /// whose Realm Seal view carries `{seal_id, control_event_set_root,
+    /// state_root, hlc?}`. `seal_id` is the DataEvent `seal_ref`; the
+    /// full view mints a single-leaf Control Move `seal_basis` (use
+    /// [`Self::events_frontier_realm_seal_view`] directly for that).
+    /// When the sourcing is unavailable this still fails closed — no
+    /// fabricated seal heads.
     pub async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
-        let manifest_id = self
-            .snapshot_head(realm_id)
-            .await?
-            .map(|manifest| manifest.id.to_string())
-            .unwrap_or_else(|| "unavailable".to_owned());
-        anyhow::bail!(
-            "ck.self.snapshot.head for {realm_id} returned snapshot manifest `{manifest_id}`, \
-             which carries no seal head \u{2014} cannot stamp seal_ref"
-        );
+        let view = self.events_frontier_realm_seal_view(realm_id).await?;
+        Ok(view.seal_id.to_string())
     }
 }

@@ -722,9 +722,16 @@ fn render_revoke_modal(
                             spawn(async move {
                                 let target_label = short_protocol_id(&target_for_status);
                                 let target_inner = target_id.clone();
+                                let actor_for_revoke = actor.clone();
+                                let device_for_revoke = current_device.clone();
                                 let revoke_result =
                                     with_authed_api(&base, api_token.clone(), move |api| async move {
-                                        api.revoke_device(&target_inner).await
+                                        api.revoke_device(
+                                            &actor_for_revoke,
+                                            &device_for_revoke,
+                                            &target_inner,
+                                        )
+                                        .await
                                     })
                                     .await;
                                 if let Err(err) = revoke_result {

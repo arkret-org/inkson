@@ -2848,7 +2848,14 @@ async fn run_device_revoke_from_snapshot(
 ///
 /// Any error along the way is surfaced verbatim in the `status` signal;
 /// the operator can inspect it inline and retry without page reload.
+///
+/// NOTE: the realm-admin UI panel that invoked this handler was dropped in
+/// af1dce3 (2026-05, inside an unrelated feature commit) — the MLS Remove
+/// machinery (`crate::device_revoke::execute_mls_remove_from_snapshot`)
+/// is kept headless until the operator surface is re-wired alongside the
+/// durable `ck.device.revoke` flow (YOU-01-008 MLS Remove/Epoch 联动).
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 async fn run_device_revoke_from_snapshot(
     base_url: String,
     api_token: String,

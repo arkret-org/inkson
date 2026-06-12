@@ -366,6 +366,7 @@ mod tests {
             preconditions: Vec::new(),
             effects: Vec::new(),
             seal_ref: None,
+            seal_basis: None,
             requirements: None,
             redacts: None,
             unsigned: BTreeMap::new(),
