@@ -556,6 +556,10 @@ test("recovery passkey quick unlock stays additive to the 24-word key", async ({
   await expect(passkeySection).toBeVisible();
   await expect(passkeySection).toContainText("browser-local WebAuthn PRF");
   await expect(passkeySection).toContainText("Passkey unlock is additive");
+  await expect(recoveryPanel.getByTestId("passkey-wrap-key-form")).toBeVisible();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-key-hint")).toContainText(
+    "paste your existing 24 words",
+  );
   await expect(recoveryPanel.getByTestId("passkey-wrap-count")).toHaveText("0 saved");
   await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeDisabled();
   await expect(recoveryPanel.getByTestId("passkey-wrap-unlock")).toBeDisabled();
@@ -567,6 +571,13 @@ test("recovery passkey quick unlock stays additive to the 24-word key", async ({
   const recoveryWords = (await recoveryPanel.getByTestId("recovery-key-current").textContent()) ?? "";
   expect(recoveryWords.trim().split(/\s+/)).toHaveLength(24);
   await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeEnabled();
+  await recoveryPanel.getByTestId("recovery-key-clear-live").click();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeDisabled();
+  await recoveryPanel.getByTestId("passkey-wrap-recovery-key").fill(recoveryWords);
+  await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeEnabled();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-key-hint")).toContainText(
+    "Ready to create",
+  );
   await expect(passkeySection).toContainText("24-word Recovery Key");
 });
 
