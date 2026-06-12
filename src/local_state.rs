@@ -1084,6 +1084,23 @@ pub struct ClientLocalState {
     /// sidecar is a separate later task — not implemented here.)
     #[serde(default)]
     pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    /// YOU-02-004 — local-only decrypted-plaintext cache for REMOTE members'
+    /// MLS application messages, keyed `realm_id -> payload_digest ->
+    /// base64url(plaintext)`. The receive chain is persisted forward on every
+    /// successful decrypt (`encryption-and-audit.md` §5.6 "第一义务是接收链持久化"),
+    /// which deliberately consumes the per-message ratchet key — re-rendering
+    /// the same ciphertext (timeline scroll, board re-projection, restart)
+    /// MUST therefore be served from this cache instead of replaying the
+    /// ratchet from an earlier snapshot. `payload_digest` is the envelope's
+    /// canonical `sha256:` digest (bound over epoch/content_type/AAD/
+    /// ciphertext), so the key is stable across re-fetches of the same event.
+    ///
+    /// Like [`Self::mls_private_plaintext`] (the author-side sidecar) this
+    /// MUST NEVER leave the device; eviction is deliberate non-behavior —
+    /// once the ratchet has advanced past a message, the cache entry is the
+    /// only remaining way to render it.
+    #[serde(default)]
+    pub mls_decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1342,6 +1359,7 @@ impl Default for ClientLocalState {
             mls_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_private_plaintext: BTreeMap::new(),
+            mls_decrypted_plaintext: BTreeMap::new(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),
@@ -1350,6 +1368,56 @@ impl Default for ClientLocalState {
             member_identity_events: BTreeMap::new(),
             member_handle_cache: BTreeMap::new(),
             account_scope_owner: None,
+        }
+    }
+}
+
+/// YOU-02-004 — interior-mutable receive-chain write-back overlay.
+///
+/// The MLS decrypt-on-read paths only hold `&LocalStateStore` (they run
+/// inside Dioxus render passes where taking the `Signal` write lock would
+/// re-enter the active read borrow), yet `encryption-and-audit.md` §5.6
+/// makes persisting the advanced group state after every successful decrypt
+/// a MUST. This overlay is the bridge: decrypts record the advanced
+/// snapshot + decrypted plaintext here through a shared `Arc<Mutex<_>>`
+/// (same sharing pattern as `persist_health`), every read path and
+/// [`LocalStateStore::flush`] merge it over `cached`, and `&mut self`
+/// mutation paths absorb it into `cached` before touching the same maps.
+#[derive(Debug, Default)]
+struct MlsReceiveOverlay {
+    /// Advanced (post-decrypt) snapshot envelopes, keyed by realm_id.
+    /// Invariant: an entry here is always derived from (and strictly newer
+    /// than) the `cached` envelope for the same realm; `&mut` snapshot
+    /// writers clear/absorb the entry so it can never shadow a newer
+    /// send-path snapshot.
+    snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Decrypted-plaintext cache entries pending absorption into
+    /// `ClientLocalState::mls_decrypted_plaintext`
+    /// (`realm_id -> payload_digest -> base64url(plaintext)`).
+    plaintexts: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl MlsReceiveOverlay {
+    fn is_empty(&self) -> bool {
+        self.snapshots.is_empty() && self.plaintexts.is_empty()
+    }
+
+    /// Merge this overlay over a `ClientLocalState` (overlay wins — see the
+    /// invariant on [`Self::snapshots`]).
+    fn apply_to(&self, state: &mut ClientLocalState) {
+        for (realm_id, envelope) in &self.snapshots {
+            state
+                .mls_snapshots
+                .insert(realm_id.clone(), envelope.clone());
+        }
+        for (realm_id, entries) in &self.plaintexts {
+            let slot = state
+                .mls_decrypted_plaintext
+                .entry(realm_id.clone())
+                .or_default();
+            for (digest, plaintext) in entries {
+                slot.insert(digest.clone(), plaintext.clone());
+            }
         }
     }
 }
@@ -1383,6 +1451,19 @@ pub struct LocalStateStore {
     /// store is held behind `Arc<Mutex<_>>` in `InMemoryKeyStore` (`KeyStore:
     /// Send + Sync`).
     persist_health: Arc<Mutex<Option<String>>>,
+    /// YOU-02-004 — shared receive-chain write-back overlay (see
+    /// [`MlsReceiveOverlay`]). Shared across clones like `persist_health` so
+    /// a decrypt recorded through any handle is visible to every reader.
+    mls_receive_overlay: Arc<Mutex<MlsReceiveOverlay>>,
+    /// YOU-02-004 — serialization lock for the MLS "decrypt → state
+    /// write-back" critical section. Multiple views (timeline / chat /
+    /// kanban) can trigger decrypt-on-read for the same realm; holding this
+    /// for the whole restore→decrypt→export→persist sequence guarantees the
+    /// receive chain only ever advances from the latest persisted snapshot
+    /// (never replays the ratchet from a stale clone of it). Distinct from
+    /// the overlay data mutex so the short data-access sections never nest
+    /// inside it in both orders (no deadlock).
+    mls_decrypt_serial: Arc<Mutex<()>>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -1468,6 +1549,8 @@ impl Default for LocalStateStore {
             flush_suspended: 0,
             flush_pending: Cell::new(false),
             persist_health: Arc::new(Mutex::new(None)),
+            mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
+            mls_decrypt_serial: Arc::new(Mutex::new(())),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
         }
@@ -1490,13 +1573,27 @@ impl LocalStateStore {
         // Once reconciled with persistence, `cached` is authoritative (single
         // process) — skip the full-state `!= default` compare and the repeated
         // backing-store read that an empty account used to pay on every call.
-        if self.loaded.get() || self.cached != ClientLocalState::default() {
-            return self.cached.clone();
+        let mut state = if self.loaded.get() || self.cached != ClientLocalState::default() {
+            self.cached.clone()
+        } else {
+            self.read_persisted_state().unwrap_or_default()
+        };
+        // YOU-02-004: readers must observe receive-chain write-backs that the
+        // decrypt paths recorded through the interior-mutable overlay.
+        {
+            let overlay = self.mls_receive_overlay.lock().unwrap();
+            if !overlay.is_empty() {
+                overlay.apply_to(&mut state);
+            }
         }
-        self.read_persisted_state().unwrap_or_default()
+        state
     }
 
     pub fn save(&mut self, state: ClientLocalState) {
+        // Wholesale replacement: the incoming state is authoritative, so any
+        // pending receive-chain overlay entries derived from the OLD state
+        // must not survive to shadow it.
+        *self.mls_receive_overlay.lock().unwrap() = MlsReceiveOverlay::default();
         self.cached = state;
         self.loaded.set(true);
         let _ = self.flush();
@@ -1508,9 +1605,40 @@ impl LocalStateStore {
             self.flush_pending.set(true);
             return Ok(());
         }
-        let result = self.write_persisted_state(&self.cached);
+        let result = self.write_persisted_state(&self.effective_state_for_persist());
         self.record_persist_result(&result);
         result
+    }
+
+    /// YOU-02-004 — the state every persist must write: `cached` with the
+    /// receive-chain overlay merged over it. Without this, any unrelated
+    /// setter's flush would clobber the on-disk receive-chain advancement
+    /// that a decrypt recorded via the overlay (a §5.6 violation: the next
+    /// boot would replay the ratchet from the stale snapshot).
+    fn effective_state_for_persist(&self) -> ClientLocalState {
+        let overlay = self.mls_receive_overlay.lock().unwrap();
+        let mut state = self.cached.clone();
+        if !overlay.is_empty() {
+            overlay.apply_to(&mut state);
+        }
+        state
+    }
+
+    /// YOU-02-004 — drain the receive-chain overlay into `cached`. `&mut`
+    /// writers that touch `mls_snapshots` / `mls_decrypted_plaintext` call
+    /// this FIRST so their own write is ordered after (and therefore
+    /// supersedes) any decrypt write-backs recorded so far. Safe to call
+    /// from any `&mut self` context; no flush of its own (the caller's
+    /// flush persists the merged result).
+    fn absorb_mls_receive_overlay(&mut self) {
+        self.ensure_cached_loaded();
+        let mut overlay = self.mls_receive_overlay.lock().unwrap();
+        if overlay.is_empty() {
+            return;
+        }
+        let drained = std::mem::take(&mut *overlay);
+        drop(overlay);
+        drained.apply_to(&mut self.cached);
     }
 
     /// YOU-02-002: latch the outcome of a persist attempt so callers that
@@ -1549,7 +1677,7 @@ impl LocalStateStore {
         let result = body(self);
         self.flush_suspended = self.flush_suspended.saturating_sub(1);
         if self.flush_suspended == 0 && self.flush_pending.replace(false) {
-            let persisted = self.write_persisted_state(&self.cached);
+            let persisted = self.write_persisted_state(&self.effective_state_for_persist());
             self.record_persist_result(&persisted);
         }
         result
@@ -2047,6 +2175,10 @@ impl LocalStateStore {
         // this device keeps `cnf.jkt` stable; only the hard-logout flow
         // (`clear_device_scoped`) wipes it.
         let preserved_dpop = self.cached.dpop_device_key.clone();
+        // YOU-02-004: the MLS receive-chain overlay is account-scoped state —
+        // wipe it with the rest so a stale decrypt write-back can't resurrect
+        // the previous account's MLS snapshots through a later flush merge.
+        *self.mls_receive_overlay.lock().unwrap() = MlsReceiveOverlay::default();
         self.cached = ClientLocalState {
             local_identity: preserved_identity,
             push_registration: preserved_push,
@@ -2127,6 +2259,7 @@ impl LocalStateStore {
             let _ = secure_store.delete_secret(Self::SECURE_DPOP_DEVICE_KEY);
         }
         self.ensure_cached_loaded();
+        *self.mls_receive_overlay.lock().unwrap() = MlsReceiveOverlay::default();
         self.cached = ClientLocalState::default();
         let _ = self.flush();
     }
@@ -3401,7 +3534,10 @@ impl LocalStateStore {
         realm_id: impl Into<String>,
         envelope: crate::mls::persistence::MlsSnapshotEnvelope,
     ) {
-        self.ensure_cached_loaded();
+        // YOU-02-004: order this write after any decrypt write-backs so the
+        // overlay can never shadow it (overlay snapshots always derive from
+        // the state this caller just read via `mls_snapshot_for`).
+        self.absorb_mls_receive_overlay();
         self.cached.mls_snapshots.insert(realm_id.into(), envelope);
         let _ = self.flush();
     }
@@ -3429,10 +3565,94 @@ impl LocalStateStore {
     /// "rotate group" / "leave group" Move so the next boot doesn't
     /// try to rehydrate a stale leaf.
     pub fn drop_mls_snapshot(&mut self, realm_id: &str) {
-        self.ensure_cached_loaded();
-        if self.cached.mls_snapshots.remove(realm_id).is_some() {
+        self.absorb_mls_receive_overlay();
+        let dropped_snapshot = self.cached.mls_snapshots.remove(realm_id).is_some();
+        // The decrypted-plaintext cache is keyed to ciphertext minted under
+        // the dropped group state; it stays readable history (same lifetime
+        // policy as the author sidecar) and is NOT wiped here.
+        if dropped_snapshot {
             let _ = self.flush();
         }
+    }
+
+    // ── YOU-02-004: MLS receive-chain persistence + plaintext cache ──
+    //
+    // `encryption-and-audit.md` §5.6 (normative): after every successful
+    // decrypt of an application message the advanced MLS group state MUST
+    // be persisted — the ratchet must never be replayed from an earlier
+    // snapshot on the next decrypt. These entry points are deliberately
+    // `&self` (interior mutability through [`MlsReceiveOverlay`]) because
+    // the decrypt-on-read callers run inside render passes that only hold
+    // a read borrow of the `Signal<LocalStateStore>`.
+
+    /// Acquire the receive-chain serialization guard. The caller holds it
+    /// across the whole restore→decrypt→export→[`Self::advance_mls_receive_chain`]
+    /// sequence so concurrent views can't both advance the same group from
+    /// the same base snapshot.
+    pub fn mls_decrypt_serial_guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.mls_decrypt_serial.lock().unwrap()
+    }
+
+    /// Look up a previously decrypted plaintext by the envelope's canonical
+    /// `payload_digest`. Render paths consult this BEFORE attempting an MLS
+    /// decrypt — after the receive chain advanced past a message, this cache
+    /// is the only way to re-render it.
+    pub fn mls_decrypted_plaintext_for(
+        &self,
+        realm_id: &str,
+        payload_digest: &str,
+    ) -> Option<Vec<u8>> {
+        use base64::Engine as _;
+        let encoded = {
+            let overlay = self.mls_receive_overlay.lock().unwrap();
+            overlay
+                .plaintexts
+                .get(realm_id)
+                .and_then(|entries| entries.get(payload_digest))
+                .cloned()
+        };
+        let encoded = match encoded {
+            Some(encoded) => encoded,
+            None => self
+                .load()
+                .mls_decrypted_plaintext
+                .get(realm_id)?
+                .get(payload_digest)?
+                .clone(),
+        };
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded.as_bytes())
+            .ok()
+    }
+
+    /// Persist a successful decrypt: the advanced (post-decrypt) snapshot
+    /// envelope AND the decrypted plaintext (cached under `payload_digest`).
+    /// Both are recorded through the shared overlay and immediately flushed
+    /// to the backing store, so a restart never replays the ratchet from
+    /// the pre-decrypt snapshot (§5.6 MUST) and the message stays readable.
+    pub fn advance_mls_receive_chain(
+        &self,
+        realm_id: &str,
+        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        payload_digest: &str,
+        plaintext: &[u8],
+    ) {
+        use base64::Engine as _;
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext);
+        {
+            let mut overlay = self.mls_receive_overlay.lock().unwrap();
+            overlay.snapshots.insert(realm_id.to_owned(), envelope);
+            overlay
+                .plaintexts
+                .entry(realm_id.to_owned())
+                .or_default()
+                .insert(payload_digest.to_owned(), encoded);
+        }
+        // Persist NOW (merged via `effective_state_for_persist`). Failures
+        // are latched into `persist_health` like every other persist; the
+        // overlay still holds the advancement in memory so the session
+        // itself never regresses.
+        let _ = self.flush();
     }
 
     /// True once a `ck.mls.genesis` event has been submitted for this Realm.
@@ -3729,6 +3949,8 @@ impl LocalStateStore {
             flush_suspended: 0,
             flush_pending: Cell::new(false),
             persist_health: Arc::new(Mutex::new(None)),
+            mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
+            mls_decrypt_serial: Arc::new(Mutex::new(())),
             path: path.into(),
         }
     }

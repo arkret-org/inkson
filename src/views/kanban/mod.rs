@@ -8720,26 +8720,34 @@ mod tests {
     }
 
     /// T20 wire-up — `collection_projection_to_columns` adapter maps the
-    /// canonical SDK response into the renderer's KanbanColumn vec. This
+    /// spec-registered `collection_projection_view` response
+    /// (`view.schema.json`) into the renderer's KanbanColumn vec. This
     /// is the core integration point; if the spec wire shape changes,
     /// this test fails and points at the renderer adapter.
     #[test]
     fn collection_projection_maps_to_kanban_columns() {
-        use cokret_sdk::{
-            CollectionProjectionDiscussion, CollectionProjectionGroup, CollectionProjectionItem,
-            CollectionProjectionOutcome, ViewId, ViewKind, ViewRenderer,
+        use crate::api::{
+            CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
+            StateFrontierView,
         };
-        let projection = CollectionProjectionOutcome {
-            kind: ViewKind::Collection,
-            renderer: ViewRenderer::Board,
-            view_id: ViewId::new("ck:view:01904100-0000-7000-8000-000000000001").unwrap(),
-            frontier: vec!["ck:event:01904100-0000-7000-8000-000000000042".to_owned()],
+        let projection = CollectionProjectionView {
+            projection: "collection".to_owned(),
+            renderer: Some("board".to_owned()),
+            view_id: "ck:view:01904100-0000-7000-8000-000000000001".to_owned(),
+            realm_id: None,
+            frontier: StateFrontierView {
+                state_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_owned(),
+                event_ids: vec!["ck:event:01904100-0000-7000-8000-000000000042".to_owned()],
+                actor_frontiers: Vec::new(),
+            },
             groups: vec![
-                CollectionProjectionGroup {
-                    group_id: "ck:space:01c3b617-7000-7000-8000-000000000000".to_owned(),
+                CollectionProjectionGroupView {
+                    key: "ck:space:01c3b617-7000-7000-8000-000000000000".to_owned(),
                     title: "Review".to_owned(),
                     rank: Some("mV".to_owned()),
-                    items: vec![CollectionProjectionItem {
+                    source: None,
+                    items: vec![ProjectionItemView {
                         object: serde_json::json!({
                             "id": "ck:flow:01d2b330-0000-7000-8000-000000000000",
                             "type": "flow",
@@ -8750,23 +8758,38 @@ mod tests {
                                 "body": "Review processor wording before beta."
                             },
                         }),
+                        render: None,
+                        display: None,
                         position: None,
-                        discussion: Some(CollectionProjectionDiscussion {
-                            enabled: true,
-                            visibility: "locked".to_owned(),
-                            lazy_link: true,
-                        }),
+                        state: Some(serde_json::json!({
+                            "discussion": {
+                                "enabled": true,
+                                "visibility": "locked",
+                                "lazy_link": true,
+                            }
+                        })),
                     }],
-                    hidden_count: None,
+                    next_cursor: None,
+                    limited: false,
+                    wip_state: None,
+                    total_estimate: None,
                 },
-                CollectionProjectionGroup {
-                    group_id: "ck:space:01t0d0000000000000000000000".to_owned(),
+                CollectionProjectionGroupView {
+                    key: "ck:space:01t0d0000000000000000000000".to_owned(),
                     title: "To do".to_owned(),
                     rank: Some("aA".to_owned()),
+                    source: None,
                     items: Vec::new(),
-                    hidden_count: None,
+                    next_cursor: None,
+                    limited: false,
+                    wip_state: None,
+                    total_estimate: None,
                 },
             ],
+            items: Vec::new(),
+            next_cursor: None,
+            total_estimate: None,
+            stale: None,
         };
 
         let cols = collection_projection_to_columns(&projection, None);
@@ -8794,32 +8817,43 @@ mod tests {
 
     #[test]
     fn collection_projection_overlay_applies_remote_encrypted_flow_updates() {
-        use cokret_sdk::{
-            CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionOutcome,
-            ViewId, ViewKind, ViewRenderer,
+        use crate::api::{
+            CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
+            StateFrontierView,
         };
         let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
         let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000003";
-        let projection = CollectionProjectionOutcome {
-            kind: ViewKind::Collection,
-            renderer: ViewRenderer::Board,
-            view_id: ViewId::new("ck:view:01904100-0000-7000-8000-000000000001").unwrap(),
-            frontier: Vec::new(),
-            groups: vec![CollectionProjectionGroup {
-                group_id: board_id.to_owned(),
+        let projection = CollectionProjectionView {
+            projection: "collection".to_owned(),
+            renderer: Some("board".to_owned()),
+            view_id: "ck:view:01904100-0000-7000-8000-000000000001".to_owned(),
+            realm_id: None,
+            frontier: StateFrontierView::default(),
+            groups: vec![CollectionProjectionGroupView {
+                key: board_id.to_owned(),
                 title: "Todo".to_owned(),
                 rank: Some("U".to_owned()),
-                items: vec![CollectionProjectionItem {
+                source: None,
+                items: vec![ProjectionItemView {
                     object: json!({
                         "id": flow_id,
                         "type": "flow",
                         "title": "Encrypted card",
                     }),
+                    render: None,
+                    display: None,
                     position: None,
-                    discussion: None,
+                    state: None,
                 }],
-                hidden_count: None,
+                next_cursor: None,
+                limited: false,
+                wip_state: None,
+                total_estimate: None,
             }],
+            items: Vec::new(),
+            next_cursor: None,
+            total_estimate: None,
+            stale: None,
         };
         let envelope = json!({
             "scheme": "mls-rfc9420",
@@ -8867,18 +8901,21 @@ mod tests {
         assert!(card.synthesis_locked);
     }
 
-    /// T20 — when `discussion` is None on the projection item, the card
-    /// renders as synthesis-only without a locked_flow.
+    /// T20 — when no `state.discussion` metadata is present on the
+    /// registered projection item, the card renders as synthesis-only
+    /// without a locked_flow.
     #[test]
     fn projection_item_without_discussion_renders_synthesis_only() {
-        use cokret_sdk::CollectionProjectionItem;
-        let item = CollectionProjectionItem {
+        use crate::api::ProjectionItemView;
+        let item = ProjectionItemView {
             object: serde_json::json!({
                 "id": "ck:flow:01doc",
                 "title": "DID method allowlist",
             }),
+            render: None,
+            display: None,
             position: None,
-            discussion: None,
+            state: None,
         };
         let card = card_from_projection_item(&item, None);
         assert!(card.locked_flow.is_none());
@@ -10467,32 +10504,48 @@ mod tests {
     /// position, return `At { list_space_id, rank }`; absent ⇒ `Initial`.
     #[test]
     fn locate_flow_position_finds_present_flow_with_rank() {
-        use cokret_sdk::{
-            CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionOutcome,
-            CollectionProjectionPosition, ViewId, ViewKind, ViewRenderer,
+        use crate::api::{
+            CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
+            StateFrontierView,
         };
-        let projection = CollectionProjectionOutcome {
-            kind: ViewKind::Collection,
-            renderer: ViewRenderer::Board,
-            view_id: ViewId::new("ck:view:01904100-0000-7000-8000-000000000001").unwrap(),
-            frontier: Vec::new(),
-            groups: vec![CollectionProjectionGroup {
-                group_id: "ck:space:01list-review".to_owned(),
+        let projection = CollectionProjectionView {
+            projection: "collection".to_owned(),
+            renderer: Some("board".to_owned()),
+            view_id: "ck:view:01904100-0000-7000-8000-000000000001".to_owned(),
+            realm_id: None,
+            frontier: StateFrontierView::default(),
+            groups: vec![CollectionProjectionGroupView {
+                key: "ck:space:01list-review".to_owned(),
                 title: "Review".to_owned(),
                 rank: Some("U".to_owned()),
-                items: vec![CollectionProjectionItem {
+                source: None,
+                items: vec![ProjectionItemView {
                     object: serde_json::json!({
                         "id": "ck:flow:01wanted",
                         "title": "Find me",
                     }),
-                    position: Some(CollectionProjectionPosition {
-                        relation_id: "ck:relation:01rel".to_owned(),
-                        rank: "h3".to_owned(),
-                    }),
-                    discussion: None,
+                    render: None,
+                    display: None,
+                    // Registered `collection_position` relation model.
+                    position: Some(serde_json::json!({
+                        "model": "relation",
+                        "scope_container_id": "ck:space:01board",
+                        "container_id": "ck:space:01list-review",
+                        "relation_kind": "contains",
+                        "relation_id": "ck:relation:01rel",
+                        "rank": "h3",
+                    })),
+                    state: None,
                 }],
-                hidden_count: None,
+                next_cursor: None,
+                limited: false,
+                wip_state: None,
+                total_estimate: None,
             }],
+            items: Vec::new(),
+            next_cursor: None,
+            total_estimate: None,
+            stale: None,
         };
         let expected = locate_flow_position_in_projection(&projection, "ck:flow:01wanted");
         assert_eq!(
@@ -10509,13 +10562,18 @@ mod tests {
     /// is actually non-initial, which is the safe behaviour.
     #[test]
     fn locate_flow_position_missing_flow_returns_initial() {
-        use cokret_sdk::{CollectionProjectionOutcome, ViewId, ViewKind, ViewRenderer};
-        let projection = CollectionProjectionOutcome {
-            kind: ViewKind::Collection,
-            renderer: ViewRenderer::Board,
-            view_id: ViewId::new("ck:view:01904100-0000-7000-8000-000000000001").unwrap(),
-            frontier: Vec::new(),
+        use crate::api::{CollectionProjectionView, StateFrontierView};
+        let projection = CollectionProjectionView {
+            projection: "collection".to_owned(),
+            renderer: Some("board".to_owned()),
+            view_id: "ck:view:01904100-0000-7000-8000-000000000001".to_owned(),
+            realm_id: None,
+            frontier: StateFrontierView::default(),
             groups: Vec::new(),
+            items: Vec::new(),
+            next_cursor: None,
+            total_estimate: None,
+            stale: None,
         };
         let expected = locate_flow_position_in_projection(&projection, "ck:flow:01missing");
         assert_eq!(expected, FlowPositionExpectation::Initial);

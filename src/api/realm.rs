@@ -694,15 +694,18 @@ impl CokretApi {
             .await
     }
 
-    // ── Views — collection projection (T20) ─────────────────────────
+    // ── Views — collection projection (T20 / YOU-01-009 子项 3) ──────
     //
-    // Pairs with cokret-rust-sdk@9d02761 + soland@1cdab88.
-    // POST /_cokret/self/views/{view_id}/projection returns the typed
-    // CollectionProjectionOutcome defined in cokret_core::model.
+    // Spec-registered operation `ck.self.views.collection_projection`
+    // (`POST /_cokret/self/views/{view_id}/projection`, spec commit
+    // b0cfa89). The request body is the registered
+    // `view_projection_request_body` (`{cursor?, limit?}` — an empty
+    // object is valid) and the response is parsed as the registered
+    // `collection_projection_view` shape (`super::CollectionProjectionView`).
     pub async fn collection_projection(
         &self,
         view_id: &str,
-    ) -> anyhow::Result<cokret_sdk::CollectionProjectionOutcome> {
+    ) -> anyhow::Result<super::CollectionProjectionView> {
         self.post_json(
             &format!("_cokret/self/views/{view_id}/projection"),
             json!({}),

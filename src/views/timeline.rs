@@ -2341,14 +2341,20 @@ fn try_local_mls_decrypt(
     )
 }
 
-/// Shared MLS decrypt core used by both the timeline audit emitter
-/// (`try_local_mls_decrypt`, which holds a `Signal<LocalStateStore>`) and
-/// the kanban decrypt-on-read path (which already holds a borrowed
-/// `&LocalStateStore`). Restores the Realm's MLS group from the local
-/// snapshot + this device's snapshot secret and decrypts `payload_value`
-/// (a typed `EncryptedPayload` envelope). Every soft failure (no snapshot,
+/// Shared MLS decrypt core used by the timeline audit emitter
+/// (`try_local_mls_decrypt`, which holds a `Signal<LocalStateStore>`), the
+/// chat decrypt-on-read path and the kanban decrypt-on-read path (which
+/// already hold a borrowed `&LocalStateStore`).
+///
+/// YOU-02-004 (`encryption-and-audit.md` §5.6): this is no longer a
+/// read-only replay — a successful decrypt persists the advanced MLS
+/// receive chain (via the store's interior-mutable receive-chain overlay)
+/// and caches the plaintext under the envelope's `payload_digest`, so
+/// re-renders and restarts are served from the cache instead of replaying
+/// the ratchet from a stale snapshot. Every soft failure (no snapshot,
 /// wrong/absent device secret, payload that doesn't deserialize or
-/// decrypt) returns `None`.
+/// decrypt — including the author's own ciphertext, which OpenMLS rejects)
+/// returns `None`.
 pub(crate) fn try_local_mls_decrypt_core(
     state_store: &LocalStateStore,
     realm_id: &str,
@@ -2356,18 +2362,17 @@ pub(crate) fn try_local_mls_decrypt_core(
     device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
-    let envelope = state_store.mls_snapshot_for(realm_id)?;
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    let secret = crate::mls::runtime::load_device_snapshot_secret(
-        secure_store.as_ref(),
-        actor_id,
-        device_id,
-    )
-    .ok()?;
-    let mut group = crate::mls::persistence::restore_envelope(&envelope, &secret, 0).ok()?;
     let payload: cokret_sdk::EncryptedPayload =
         serde_json::from_value(payload_value.clone()).ok()?;
-    group.decrypt_payload(&payload).ok()
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    crate::mls::runtime::decrypt_application_payload(
+        state_store,
+        secure_store.as_ref(),
+        realm_id,
+        actor_id,
+        device_id,
+        &payload,
+    )
 }
 
 #[cfg(test)]

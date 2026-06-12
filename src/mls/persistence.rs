@@ -131,6 +131,18 @@ pub struct MlsSnapshotEnvelope {
     /// fail-safe direction (more commits, never fewer).
     #[serde(default = "epoch_started_at_default")]
     pub epoch_started_at: DateTime<Utc>,
+    /// YOU-02-004 (`encryption-and-audit.md` §5.6) — number of MLS
+    /// application messages observed (sent OR successfully decrypted) on
+    /// this device within the CURRENT epoch. Drives the spec's
+    /// self-preservation commit SHOULD trigger ("epoch 内已观测 application
+    /// message 数 ≥ 1000"). Resets to the in-flight message count whenever
+    /// the epoch advances; carried forward (and bumped) by epoch-preserving
+    /// re-snapshots. Like [`Self::epoch_started_at`] it is a local
+    /// scheduling hint, not a confidentiality boundary, so it is not bound
+    /// into the AEAD AAD. Legacy envelopes deserialize to 0, which simply
+    /// restarts the count (the 7-day age trigger still covers old epochs).
+    #[serde(default)]
+    pub app_messages_observed: u64,
     /// AEAD scheme tag. New envelopes always serialize with
     /// [`AEAD_VERSION_CHACHA20_POLY1305`].
     pub aead_version: u8,
@@ -243,6 +255,7 @@ pub fn encrypt_state(
         // via [`MlsSnapshotEnvelope::carry_epoch_started_at`] so the §2.9 1h cap
         // measures true epoch age, not last-write time.
         epoch_started_at: recorded_at,
+        app_messages_observed: 0,
         aead_version: AEAD_VERSION_CHACHA20_POLY1305,
     }
 }
@@ -422,6 +435,16 @@ impl MlsSnapshotEnvelope {
         if self.epoch == previous.epoch {
             self.epoch_started_at = previous.epoch_started_at;
         }
+        self
+    }
+
+    /// YOU-02-004 (§5.6) — set the per-epoch observed application-message
+    /// count on a freshly minted envelope. Callers compute the value as
+    /// `previous.app_messages_observed + new_messages` when the epoch is
+    /// unchanged, or just `new_messages` after a commit advanced the epoch.
+    #[must_use]
+    pub fn with_app_messages_observed(mut self, count: u64) -> Self {
+        self.app_messages_observed = count;
         self
     }
 

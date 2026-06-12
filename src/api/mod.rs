@@ -198,6 +198,109 @@ pub struct AssignedToRelationProjectionView {
     pub actor_id: String,
 }
 
+/// YOU-01-009 子项 3 — spec-registered collection projection response
+/// (`view.schema.json#/$defs/collection_projection_view`, operation
+/// `ck.self.views.collection_projection`,
+/// `POST /_cokret/self/views/{view_id}/projection`). Defined locally
+/// because the SDK still carries its pre-registration draft DTO
+/// (`CollectionProjectionOutcome`, with `kind`/`group_id`/`discussion`
+/// fields that are not on the registered wire shape).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CollectionProjectionView {
+    /// Always the literal `"collection"` per the schema const.
+    pub projection: String,
+    /// Renderer hint (`board` / `list` / `table` / …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renderer: Option<String>,
+    pub view_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realm_id: Option<String>,
+    /// Registered `state_frontier` object (NOT a bare event-id list).
+    pub frontier: StateFrontierView,
+    #[serde(default)]
+    pub groups: Vec<CollectionProjectionGroupView>,
+    /// Flat item list for group-less renderers (schema `anyOf` requires
+    /// `groups` or `items`).
+    #[serde(default)]
+    pub items: Vec<ProjectionItemView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_estimate: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<bool>,
+}
+
+/// Registered `view.schema.json#/$defs/state_frontier`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct StateFrontierView {
+    pub state_digest: String,
+    #[serde(default)]
+    pub event_ids: Vec<String>,
+    #[serde(default)]
+    pub actor_frontiers: Vec<Value>,
+}
+
+/// Registered `view.schema.json#/$defs/collection_projection_group`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CollectionProjectionGroupView {
+    /// Stable group key (registered name is `key`, not `group_id`).
+    pub key: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<String>,
+    /// Registered `collection_group_source` (oneOf) — kept opaque.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Value>,
+    #[serde(default)]
+    pub items: Vec<ProjectionItemView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Required by the registered schema: whether this group's item list
+    /// was truncated by policy/limit.
+    pub limited: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wip_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_estimate: Option<u64>,
+}
+
+/// Registered `view.schema.json#/$defs/projection_item`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectionItemView {
+    /// Registered `projection_object` (`{id, type, morph_type?, facets?,
+    /// title?, fields?}`). Kept as a `Value` — readers fall back through
+    /// `title`/`fields.*` leniently.
+    pub object: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<Value>,
+    /// Registered `collection_position` (oneOf field_value / relation /
+    /// time_bucket). Kept opaque; use [`Self::position_rank`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Value>,
+    /// Free-form per-item read-model state (registered as an open object).
+    /// Discussion lock metadata, when a server provides it, is read
+    /// leniently from `state.discussion`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<Value>,
+}
+
+impl ProjectionItemView {
+    /// Rank from the registered `collection_position` variants: the
+    /// `field_value` / `relation` models carry `rank`; the `time_bucket`
+    /// model carries `sort_key`.
+    pub fn position_rank(&self) -> Option<String> {
+        let position = self.position.as_ref()?;
+        position
+            .get("rank")
+            .or_else(|| position.get("sort_key"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    }
+}
+
 /// Server-side Morph row from
 /// `GET /_cokret/self/projection/morphs`. Same enum as Flow per spec §5.1.
 #[derive(Clone, Debug, Deserialize)]

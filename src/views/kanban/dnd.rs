@@ -1195,17 +1195,17 @@ pub(super) fn rebase_flow_position_after_conflict(
 /// the cell is in initial state) so the next CAS Move uses
 /// `head_eq null`.
 pub(super) fn locate_flow_position_in_projection(
-    projection: &cokret_sdk::CollectionProjectionOutcome,
+    projection: &crate::api::CollectionProjectionView,
     flow_id: &str,
 ) -> FlowPositionExpectation {
     for group in &projection.groups {
         for item in &group.items {
             let item_id = item.object.get("id").and_then(|v| v.as_str()).unwrap_or("");
             if item_id == flow_id {
-                if let Some(position) = item.position.as_ref() {
+                if let Some(rank) = item.position_rank() {
                     return FlowPositionExpectation::At {
-                        list_space_id: group.group_id.clone(),
-                        rank: position.rank.clone(),
+                        list_space_id: group.key.clone(),
+                        rank,
                     };
                 }
                 // Item present but no position metadata → treat as if

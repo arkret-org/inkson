@@ -784,6 +784,104 @@ pub fn force_epoch_rotation_commit(
     Ok((commit_envelope, new_envelope))
 }
 
+/// YOU-02-004 (`encryption-and-audit.md` §5.6, normative) — decrypt a remote
+/// member's MLS application message AND persist the advanced receive chain.
+///
+/// "第一义务是接收链持久化": after a successful decrypt the advanced group
+/// state (including OpenMLS's bounded skipped-message-key cache) MUST be
+/// persisted so the next decrypt never replays the ratchet from an earlier
+/// snapshot. Because persisting consumes the per-message ratchet key, the
+/// decrypted plaintext is simultaneously cached (keyed by the envelope's
+/// canonical `payload_digest`) and re-renders are served from that cache.
+///
+/// Flow:
+///   1. plaintext-cache hit → return without touching MLS state;
+///   2. otherwise, under the store's decrypt serialization guard:
+///      restore the latest snapshot → `decrypt_payload` → export the
+///      advanced state → [`LocalStateStore::advance_mls_receive_chain`]
+///      (persists snapshot + plaintext atomically with respect to readers).
+///
+/// Soft failures (no snapshot, missing device secret, author's own
+/// ciphertext — which OpenMLS rejects before advancing any ratchet — or an
+/// undecryptable payload) return `None` and leave persisted state untouched.
+pub fn decrypt_application_payload(
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload: &cokret_sdk::EncryptedPayload,
+) -> Option<Vec<u8>> {
+    let digest = payload.payload_digest.as_str();
+    if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
+        return Some(plaintext);
+    }
+    // Serialize the whole decrypt→write-back sequence per store so two views
+    // can't advance the same group from the same base snapshot concurrently.
+    let _serial = state_store.mls_decrypt_serial_guard();
+    // Double-check under the guard: a racing call may have already decrypted
+    // and persisted this exact payload.
+    if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
+        return Some(plaintext);
+    }
+    let snapshot = state_store.mls_snapshot_for(realm_id)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    let plaintext = group.decrypt_payload(payload).ok()?;
+    // §5.6 MUST: persist the advanced receive chain. A failure to export /
+    // serialize the post-decrypt state is NOT a soft failure we may swallow
+    // silently — without the write-back the consumed message key would make
+    // this very plaintext unrecoverable after restart — so fall back to
+    // returning the plaintext only after latching a loud error.
+    let advanced = export_receive_chain_envelope(&group, realm_id, &secret, &snapshot);
+    match advanced {
+        Ok(envelope) => {
+            state_store.advance_mls_receive_chain(realm_id, envelope, digest, &plaintext);
+        }
+        Err(err) => {
+            tracing::error!(
+                %realm_id,
+                error = %err.user_message(),
+                "MLS receive-chain write-back failed after successful decrypt \
+                 (spec §5.6 violation risk: message may be unreadable after restart)",
+            );
+        }
+    }
+    Some(plaintext)
+}
+
+/// Export + re-encrypt the post-decrypt group state as a snapshot envelope,
+/// carrying the epoch clock and bumping the §5.6 observed-message counter.
+fn export_receive_chain_envelope(
+    group: &cokret_sdk::CokretMlsGroup,
+    realm_id: &str,
+    secret: &str,
+    previous: &crate::mls::persistence::MlsSnapshotEnvelope,
+) -> Result<crate::mls::persistence::MlsSnapshotEnvelope, MlsRuntimeError> {
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    let serialized_state = serde_json::to_vec(&post_state)
+        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    let observed = if post_state.epoch == previous.epoch {
+        previous.app_messages_observed.saturating_add(1)
+    } else {
+        1
+    };
+    Ok(crate::mls::persistence::encrypt_state(
+        realm_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized_state,
+        secret,
+        &salt,
+    )
+    .carry_epoch_started_at(previous)
+    .with_app_messages_observed(observed))
+}
+
 pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
     // Spec form is `{ messages: [ { kind, content, … } ] }`
     // (`DeviceMessagesGetOutcome` / `DeviceMessageEnvelope`); the discriminator
@@ -934,6 +1032,8 @@ pub fn encrypt_values_with_device_snapshot(
         state_store.realm_projection_is_minimal_metadata(realm_id),
         snapshot.epoch_started_at,
         crate::clock::now_utc(),
+        snapshot.app_messages_observed,
+        state_store.realm_has_pending_mls_binding(realm_id),
     );
     let commit_envelope = if should_commit {
         Some(
@@ -963,6 +1063,7 @@ pub fn encrypt_values_with_device_snapshot(
         .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    let sent = plaintext_values.len() as u64;
     let mut new_envelope = crate::mls::persistence::encrypt_state(
         realm_id,
         &post_state.group_id,
@@ -973,16 +1074,20 @@ pub fn encrypt_values_with_device_snapshot(
     );
     if commit_envelope.is_some() {
         // Persist-on-accept: forced epoch advances must only be saved after the
-        // server accepts the matching `ck.mls.commit`.
+        // server accepts the matching `ck.mls.commit`. The messages encrypted
+        // above already ride the NEW epoch, so the §5.6 observed-message
+        // counter restarts at their count.
         return Ok((
             schedule_hash,
             member_dids,
             encrypted_values,
             commit_envelope,
-            Some(new_envelope),
+            Some(new_envelope.with_app_messages_observed(sent)),
         ));
     }
-    new_envelope = new_envelope.carry_epoch_started_at(&snapshot);
+    new_envelope = new_envelope
+        .carry_epoch_started_at(&snapshot)
+        .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
     state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
     Ok((schedule_hash, member_dids, encrypted_values, None, None))
 }
@@ -1032,6 +1137,8 @@ pub fn encrypt_message_with_device_snapshot(
         is_minimal_metadata,
         snapshot.epoch_started_at,
         crate::clock::now_utc(),
+        snapshot.app_messages_observed,
+        state_store.realm_has_pending_mls_binding(realm_id),
     );
     let commit_envelope = if should_commit {
         Some(
@@ -1064,37 +1171,66 @@ pub fn encrypt_message_with_device_snapshot(
     );
     if commit_envelope.is_some() {
         // Persist-on-accept: forced epoch advances must only be saved after the
-        // server accepts the matching `ck.mls.commit`.
+        // server accepts the matching `ck.mls.commit`. The single message
+        // encrypted above rides the NEW epoch (§5.6 counter restarts at 1).
         return Ok((
             schedule_hash,
             member_dids,
             encrypted,
             commit_envelope,
-            Some(new_envelope),
+            Some(new_envelope.with_app_messages_observed(1)),
         ));
     }
-    new_envelope = new_envelope.carry_epoch_started_at(&snapshot);
+    new_envelope = new_envelope
+        .carry_epoch_started_at(&snapshot)
+        .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
     state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
     Ok((schedule_hash, member_dids, encrypted, None, None))
 }
 
-/// SEC-08 (`encryption-and-audit.md` §2.9) — pure committer decision: should a
+/// `encryption-and-audit.md` §5.6 — normal-Realm self-preservation commit
+/// SHOULD trigger: epoch 内已观测 application message 数 ≥ 1000(实现 MAY 声明
+/// 更小阈值)。
+pub const SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES: u64 = 1000;
+/// §5.6 — normal-Realm self-preservation commit SHOULD trigger: epoch 存活
+/// 时长 ≥ 7 天(实现 MAY 声明更短)。
+pub const SELF_PRESERVATION_MAX_EPOCH_AGE_DAYS: i64 = 7;
+
+/// SEC-08 (§2.9) + YOU-02-004 (§5.6) — pure committer decision: should a
 /// send force-advance the MLS epoch *before* riding the current epoch?
 ///
-/// For a `minimal_metadata_realm` Realm the §2.9 epoch-lifetime SHOULD is a MUST
-/// of ≤1h. Within-epoch reaction frequency is the observable this bounds, so a
-/// send (especially a reaction, which otherwise reuses the current epoch's
-/// application key without committing) MUST roll the epoch once the current one
-/// has outlived the cap. Non-minimal Realms never force a commit here
-/// (`false`), preserving their existing behaviour. Clock skew (`now` earlier
-/// than `epoch_started_at`) is never reported as overdue — delegated to the
-/// SDK's [`cokret_sdk::minimal_metadata_epoch_overdue`].
+/// For a `minimal_metadata_realm` Realm the §2.9 epoch-lifetime SHOULD is a
+/// MUST of ≤1h (delegated to the SDK's
+/// [`cokret_sdk::minimal_metadata_epoch_overdue`], which never reports clock
+/// skew as overdue).
+///
+/// For a normal Realm this implements the §5.6 self-preservation SHOULD: a
+/// self-update Commit is due once the current epoch has observed ≥ 1000
+/// application messages OR has lived ≥ 7 days. §5.6 重复 commit 抑制
+/// (normative): when a pending `ck.mls.commit` for this scope is already in
+/// flight (`has_pending_commit`), a new self-preservation commit MUST NOT be
+/// initiated — the pending commit will achieve the same epoch advance.
+/// Clock skew (`now < epoch_started_at`) never reads as overdue.
 pub fn should_force_epoch_advance(
     is_minimal_metadata: bool,
     epoch_started_at: chrono::DateTime<chrono::Utc>,
     now: chrono::DateTime<chrono::Utc>,
+    app_messages_observed: u64,
+    has_pending_commit: bool,
 ) -> bool {
-    is_minimal_metadata && cokret_sdk::minimal_metadata_epoch_overdue(epoch_started_at, now)
+    if is_minimal_metadata {
+        // §2.9 MUST ≤1h — kept independent of the pending-commit suppression
+        // so the stricter profile's fail-safe direction is preserved.
+        return cokret_sdk::minimal_metadata_epoch_overdue(epoch_started_at, now);
+    }
+    if has_pending_commit {
+        return false;
+    }
+    if app_messages_observed >= SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES {
+        return true;
+    }
+    now.signed_duration_since(epoch_started_at)
+        >= chrono::Duration::days(SELF_PRESERVATION_MAX_EPOCH_AGE_DAYS)
 }
 
 /// SEC-08 — fail-closed committer-side assertion that a `minimal_metadata_realm`
@@ -1265,16 +1401,21 @@ pub fn encrypt_reaction_with_device_snapshot(
     // frequency to a ≤1h window. The forced `ck.mls.commit` is surfaced to the
     // caller (X14 persist-on-accept) rather than persisted optimistically.
     let now = chrono::Utc::now();
-    let forced_commit =
-        if should_force_epoch_advance(is_minimal_metadata, snapshot.epoch_started_at, now) {
-            Some(
-                group
-                    .self_update_commit()
-                    .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
-            )
-        } else {
-            None
-        };
+    let forced_commit = if should_force_epoch_advance(
+        is_minimal_metadata,
+        snapshot.epoch_started_at,
+        now,
+        snapshot.app_messages_observed,
+        state_store.realm_has_pending_mls_binding(realm_id),
+    ) {
+        Some(
+            group
+                .self_update_commit()
+                .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
+        )
+    } else {
+        None
+    };
 
     // Routing tag is derived from the post-(optional-commit) epoch exporter
     // secret; the application message below does not change the epoch further.
@@ -1324,14 +1465,16 @@ pub fn encrypt_reaction_with_device_snapshot(
             routing_tag,
             encrypted_payload,
             forced_commit,
-            forced_commit_snapshot: Some(new_envelope),
+            forced_commit_snapshot: Some(new_envelope.with_app_messages_observed(1)),
         })
     } else {
         // No epoch change → persist the advanced application ratchet now (no
         // epoch-skew risk, and persisting prevents nonce reuse on the next
         // reaction). Carry the epoch-start clock forward so a stream of
         // reactions can never reset the §2.9 1h cap.
-        let new_envelope = new_envelope.carry_epoch_started_at(&snapshot);
+        let new_envelope = new_envelope
+            .carry_epoch_started_at(&snapshot)
+            .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
         state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
         Ok(EncryptedReaction {
             routing_tag,
@@ -1403,35 +1546,100 @@ mod tests {
     fn force_epoch_advance_only_for_overdue_minimal_metadata_realm() {
         use chrono::{Duration, Utc};
         let started = Utc::now();
-        // Non-minimal Realm: never forced, regardless of age.
+        // Non-minimal Realm: hours-old epoch with few messages is not forced.
         assert!(!should_force_epoch_advance(
             false,
             started,
-            started + Duration::hours(5)
+            started + Duration::hours(5),
+            10,
+            false,
         ));
         // Minimal Realm under the 1h cap: not forced.
         assert!(!should_force_epoch_advance(
             true,
             started,
-            started + Duration::minutes(59)
+            started + Duration::minutes(59),
+            0,
+            false,
         ));
         // Exactly 1h is the inclusive cap (overdue is strictly >1h).
         assert!(!should_force_epoch_advance(
             true,
             started,
-            started + Duration::hours(1)
+            started + Duration::hours(1),
+            0,
+            false,
         ));
         // Minimal Realm past 1h: forced.
         assert!(should_force_epoch_advance(
             true,
             started,
-            started + Duration::hours(1) + Duration::seconds(1)
+            started + Duration::hours(1) + Duration::seconds(1),
+            0,
+            false,
         ));
         // Clock skew (now < started) is never overdue.
         assert!(!should_force_epoch_advance(
             true,
             started,
-            started - Duration::minutes(10)
+            started - Duration::minutes(10),
+            0,
+            false,
+        ));
+    }
+
+    #[test]
+    fn self_preservation_commit_triggers_for_normal_realm_per_spec_5_6() {
+        // YOU-02-004 — `encryption-and-audit.md` §5.6 self-preservation
+        // SHOULD triggers for a normal (non-minimal-metadata) Realm.
+        use chrono::{Duration, Utc};
+        let started = Utc::now();
+        // ≥1000 observed application messages in the epoch → forced.
+        assert!(should_force_epoch_advance(
+            false,
+            started,
+            started + Duration::minutes(1),
+            SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES,
+            false,
+        ));
+        assert!(!should_force_epoch_advance(
+            false,
+            started,
+            started + Duration::minutes(1),
+            SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES - 1,
+            false,
+        ));
+        // Epoch alive ≥7 days → forced (message count irrelevant).
+        assert!(should_force_epoch_advance(
+            false,
+            started,
+            started + Duration::days(7),
+            0,
+            false,
+        ));
+        assert!(!should_force_epoch_advance(
+            false,
+            started,
+            started + Duration::days(7) - Duration::seconds(1),
+            0,
+            false,
+        ));
+        // §5.6 重复 commit 抑制 (MUST): a pending `ck.mls.commit` for the
+        // scope suppresses a new self-preservation commit on both triggers.
+        assert!(!should_force_epoch_advance(
+            false,
+            started,
+            started + Duration::days(30),
+            10 * SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES,
+            true,
+        ));
+        // Clock skew never reads as overdue for the age trigger.
+        assert!(!should_force_epoch_advance(
+            false,
+            started,
+            started - Duration::days(30),
+            0,
+            false,
         ));
     }
 
@@ -1755,6 +1963,233 @@ mod tests {
         // Same epoch persisted in place (no skew), epoch clock carried forward.
         let after = state.mls_snapshot_for(realm).unwrap();
         assert_eq!(after.epoch, base_epoch);
+    }
+
+    // ── YOU-02-004: receive-chain persistence (§5.6) ─────────────────
+
+    /// Build a two-member group: alice (in-memory sender) + bob, whose
+    /// post-Welcome group state is persisted into `state` under `realm` the
+    /// same way `apply_welcome_messages_with_device_snapshot` would.
+    /// Returns alice's live group for minting application messages.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn two_member_group_with_bob_snapshot(
+        state: &mut crate::local_state::LocalStateStore,
+        secure: &MemorySecureKeyStore,
+        realm: &str,
+        bob_actor: &str,
+        bob_device: &str,
+    ) -> cokret_sdk::CokretMlsGroup {
+        let alice = cokret_sdk::CokretMlsIdentity::new_basic(
+            cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+            cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+                .unwrap(),
+        )
+        .unwrap();
+        let bob = cokret_sdk::CokretMlsIdentity::new_basic(
+            cokret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
+            cokret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let bob_key_package = bob.key_package_record().unwrap();
+        let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
+        let add = alice_group.add_member(&bob_key_package).unwrap();
+        let bob_group = cokret_sdk::CokretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
+
+        let secret = load_or_create_device_snapshot_secret(secure, bob_actor, bob_device).unwrap();
+        let post_state = bob_group.export_state_record().unwrap();
+        let serialized = serde_json::to_vec(&post_state).unwrap();
+        let mut salt = [0u8; 16];
+        getrandom::fill(&mut salt).unwrap();
+        let envelope = crate::mls::persistence::encrypt_state(
+            realm,
+            &post_state.group_id,
+            post_state.epoch,
+            &serialized,
+            &secret,
+            &salt,
+        );
+        state.save_mls_snapshot(realm.to_owned(), envelope);
+        alice_group
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn receive_chain_persists_across_restart_and_serves_plaintext_cache() {
+        // §5.6 MUST: after a successful decrypt the advanced group state is
+        // persisted; the same-epoch NEXT message decrypts after a "restart"
+        // (fresh store over the same backing file), and the already-decrypted
+        // message re-renders from the plaintext cache (its ratchet key was
+        // deliberately consumed by the write-back).
+        let path = std::env::temp_dir().join(format!(
+            "yougen-test-receive-chain-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
+        let secure = MemorySecureKeyStore::new();
+        let realm = "ck:realm:01904100-0000-7000-8000-0000000000b1";
+        let bob_actor = "did:web:bob.example";
+        let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b2";
+
+        let mut alice_group =
+            two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+        let base_envelope = state.mls_snapshot_for(realm).unwrap();
+
+        let m1 = alice_group
+            .encrypt_payload("application/json", br#"{"body":"m1"}"#)
+            .unwrap();
+        let m2 = alice_group
+            .encrypt_payload("application/json", br#"{"body":"m2"}"#)
+            .unwrap();
+
+        // Decrypt m1: plaintext returned AND the persisted snapshot advanced
+        // (same epoch, new ciphertext, observed-message counter bumped).
+        let plain1 =
+            decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
+                .expect("bob decrypts m1");
+        assert_eq!(plain1, br#"{"body":"m1"}"#);
+        let advanced = state.mls_snapshot_for(realm).unwrap();
+        assert_eq!(advanced.epoch, base_envelope.epoch);
+        assert_ne!(advanced.ciphertext_hex, base_envelope.ciphertext_hex);
+        assert_eq!(advanced.app_messages_observed, 1);
+
+        // "Restart": a brand-new store over the same backing file must see
+        // the advanced receive chain (NOT the pre-decrypt snapshot).
+        let restarted = crate::local_state::LocalStateStore::with_path(path.clone());
+        let reloaded = restarted.mls_snapshot_for(realm).unwrap();
+        assert_eq!(reloaded.ciphertext_hex, advanced.ciphertext_hex);
+        // m1 re-renders from the persisted plaintext cache (a ratchet replay
+        // would fail — its message key was consumed before the write-back).
+        let replay1 =
+            decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m1)
+                .expect("m1 served from the plaintext cache after restart");
+        assert_eq!(replay1, br#"{"body":"m1"}"#);
+        // m2 (the next generation in the same epoch) decrypts from the
+        // persisted advanced chain.
+        let plain2 =
+            decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m2)
+                .expect("bob decrypts m2 after restart");
+        assert_eq!(plain2, br#"{"body":"m2"}"#);
+        assert_eq!(
+            restarted.mls_snapshot_for(realm).unwrap().app_messages_observed,
+            2
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn out_of_order_skipped_keys_survive_restart() {
+        // §5.6: the persisted state includes the bounded skipped-message-key
+        // cache. Bob decrypts m3 first (m1/m2 keys become skipped keys),
+        // restarts, then decrypts the earlier m1 — which requires the
+        // skipped keys to have been persisted with the advanced chain.
+        let path = std::env::temp_dir().join(format!(
+            "yougen-test-skipped-keys-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
+        let secure = MemorySecureKeyStore::new();
+        let realm = "ck:realm:01904100-0000-7000-8000-0000000000c1";
+        let bob_actor = "did:web:bob.example";
+        let bob_device = "ck:device:01904100-0000-7000-8000-0000000000c2";
+
+        let mut alice_group =
+            two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+        let m1 = alice_group
+            .encrypt_payload("application/json", br#""one""#)
+            .unwrap();
+        let _m2 = alice_group
+            .encrypt_payload("application/json", br#""two""#)
+            .unwrap();
+        let m3 = alice_group
+            .encrypt_payload("application/json", br#""three""#)
+            .unwrap();
+
+        // Out-of-order: m3 first (within OpenMLS's default
+        // out_of_order_tolerance of 5).
+        let plain3 = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m3)
+            .expect("bob decrypts m3 ahead of m1/m2");
+        assert_eq!(plain3, br#""three""#);
+
+        // Restart, then decrypt the skipped earlier message.
+        let restarted = crate::local_state::LocalStateStore::with_path(path.clone());
+        let plain1 =
+            decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m1)
+                .expect("persisted skipped key decrypts m1 after restart");
+        assert_eq!(plain1, br#""one""#);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
+        // OpenMLS forbids an author from decrypting their own application
+        // message; the receive-chain path must surface that as a soft `None`
+        // without polluting the plaintext cache or regressing the snapshot.
+        // (The author's own visibility keeps flowing through the existing
+        // send-time plaintext sidecar — `mls_private_plaintext`.)
+        let mut state = temp_state_store("own-ciphertext-soft-fail");
+        let secure = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        let device = "ck:device:01904100-0000-7000-8000-0000000000d1";
+        let realm = "ck:realm:01904100-0000-7000-8000-0000000000d2";
+
+        ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
+        let (_, _, encrypted_values, _, _) = encrypt_values_with_device_snapshot(
+            &mut state,
+            &secure,
+            realm,
+            actor,
+            device,
+            "application/json",
+            &[br#""mine""#.to_vec()],
+        )
+        .unwrap();
+        let payload: cokret_sdk::EncryptedPayload =
+            serde_json::from_value(encrypted_values[0].clone()).unwrap();
+        let after_send = state.mls_snapshot_for(realm).unwrap();
+
+        let decrypted =
+            decrypt_application_payload(&state, &secure, realm, actor, device, &payload);
+        assert!(decrypted.is_none(), "author must not decrypt own message");
+        // No cache entry and no snapshot churn from the failed attempt.
+        assert!(
+            state
+                .mls_decrypted_plaintext_for(realm, payload.payload_digest.as_str())
+                .is_none()
+        );
+        assert_eq!(
+            state.mls_snapshot_for(realm).unwrap().ciphertext_hex,
+            after_send.ciphertext_hex
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn plaintext_cache_outlives_group_state() {
+        // Once decrypted, a message stays renderable from the cache even if
+        // the MLS snapshot is later dropped (e.g. leave/rotate) — the cache,
+        // not a ratchet replay, is the §5.6-compliant re-render path.
+        let mut state = temp_state_store("plaintext-cache-outlives");
+        let secure = MemorySecureKeyStore::new();
+        let realm = "ck:realm:01904100-0000-7000-8000-0000000000e1";
+        let bob_actor = "did:web:bob.example";
+        let bob_device = "ck:device:01904100-0000-7000-8000-0000000000e2";
+
+        let mut alice_group =
+            two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+        let m1 = alice_group
+            .encrypt_payload("application/json", br#""cached""#)
+            .unwrap();
+        let first = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
+            .expect("first decrypt");
+        assert_eq!(first, br#""cached""#);
+
+        state.drop_mls_snapshot(realm);
+        assert!(state.mls_snapshot_for(realm).is_none());
+        let cached = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
+            .expect("cache hit requires no group state");
+        assert_eq!(cached, br#""cached""#);
     }
 
     fn genesis_governance_binding(group_id: &str) -> cokret_sdk::MlsGovernanceBindingPayload {

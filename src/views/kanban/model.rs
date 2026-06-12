@@ -807,20 +807,22 @@ pub(super) fn containers_with_local_space_creates(
     merged
 }
 
-/// T20 — Map a SDK [`CollectionProjectionOutcome`] into the yougen
+/// T20 / YOU-01-009 子项 3 — Map a spec-registered
+/// [`crate::api::CollectionProjectionView`]
+/// (`view.schema.json#/$defs/collection_projection_view`) into the yougen
 /// renderer's [`Vec<KanbanColumn>`] shape.
 ///
 /// Pure adapter so it's unit-testable without a live HTTP client.
 /// Position rank, when present, drives stable ordering inside a column.
 pub(super) fn collection_projection_to_columns(
-    projection: &cokret_sdk::CollectionProjectionOutcome,
+    projection: &crate::api::CollectionProjectionView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<KanbanColumn> {
     projection
         .groups
         .iter()
         .map(|group| KanbanColumn {
-            id: group.group_id.clone(),
+            id: group.key.clone(),
             title: group.title.clone(),
             rank: group.rank.clone().unwrap_or_default(),
             cards: group
@@ -833,12 +835,17 @@ pub(super) fn collection_projection_to_columns(
         .collect()
 }
 
-/// Map a single projection item to a [`KanbanCard`]. Discussion metadata
-/// is honoured: `visibility="locked"` produces a [`LockedFlow`] with an
+/// Map a single registered `projection_item` to a [`KanbanCard`].
+///
+/// Discussion lock metadata is read leniently from the item's free-form
+/// `state.discussion` object (`{enabled, visibility, lazy_link}` — the
+/// registered `projection_item.state` is an open object; the dedicated
+/// `discussion` field of the SDK's draft DTO is not on the registered
+/// wire shape): `visibility="locked"` produces a [`LockedFlow`] with an
 /// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
 /// without leaking room contents.
 pub(super) fn card_from_projection_item(
-    item: &cokret_sdk::CollectionProjectionItem,
+    item: &crate::api::ProjectionItemView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> KanbanCard {
     let id = item
@@ -854,18 +861,24 @@ pub(super) fn card_from_projection_item(
         .unwrap_or("(untitled)")
         .to_owned();
     let primary_flow_id = id.clone();
-    let (external_visibility, history_visibility) = item
-        .discussion
+    let discussion = item
+        .state
         .as_ref()
+        .and_then(|state| state.get("discussion"))
+        .filter(|d| d.is_object());
+    let (external_visibility, history_visibility) = discussion
         .map(|d| {
-            let ext = match d.visibility.as_str() {
+            let visibility = d.get("visibility").and_then(Value::as_str).unwrap_or("");
+            let enabled = d.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+            let lazy_link = d.get("lazy_link").and_then(Value::as_bool).unwrap_or(false);
+            let ext = match visibility {
                 "locked" => "Locked discussion (lazy_link)".to_owned(),
                 "readable" => "Discussion readable to current member".to_owned(),
                 other => format!("discussion: {other}"),
             };
-            let hist = if d.lazy_link {
+            let hist = if lazy_link {
                 "lazy_link (cross-Realm)".to_owned()
-            } else if d.enabled {
+            } else if enabled {
                 // Tracks do not carry independent access; a private
                 // discussion uses a Circle-scoped Flow.
                 "Circle-scoped discussion".to_owned()
@@ -880,8 +893,8 @@ pub(super) fn card_from_projection_item(
                 "synthesis-only".to_owned(),
             )
         });
-    let locked_flow = item.discussion.as_ref().and_then(|d| {
-        if d.visibility == "locked" {
+    let locked_flow = discussion.and_then(|d| {
+        if d.get("visibility").and_then(Value::as_str) == Some("locked") {
             Some(LockedFlow {
                 flow_id_hash: format!("sha256:{}", id),
                 reason: "Locked discussion: title and members are not disclosed.".to_owned(),
@@ -890,38 +903,31 @@ pub(super) fn card_from_projection_item(
             None
         }
     });
-    // Per CollectionProjectionItem.position.rank: this is the
-    // card's authoritative rank in the column from the API's view of
-    // the cas-register cell. Falls back to "" so the seed-conversion
-    // path still works when the projection omits position metadata
-    // (e.g. group-level rank only).
-    let rank = item
-        .position
-        .as_ref()
-        .map(|p| p.rank.clone())
-        .unwrap_or_default();
-    let created_by = item
-        .object
-        .get("created_by")
-        .or_else(|| item.object.get("actor_id"))
-        .or_else(|| item.object.get("author"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-    let created_at = item
-        .object
-        .get("created_at")
-        .or_else(|| item.object.get("timestamp"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-    let updated_at = item
-        .object
-        .get("updated_at")
-        .or_else(|| item.object.get("edited_at"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
+    // Registered `collection_position` rank: the card's authoritative rank
+    // in the column from the API's view of the cas-register cell. Falls
+    // back to "" so the seed-conversion path still works when the
+    // projection omits position metadata (e.g. group-level rank only).
+    let rank = item.position_rank().unwrap_or_default();
+    // Registered `projection_object` keeps business metadata under the
+    // free-form `fields` object; read top-level keys leniently first for
+    // servers that flatten them.
+    let object_fields = item.object.get("fields");
+    let object_str = |keys: &[&str]| -> String {
+        for key in keys {
+            if let Some(value) = item
+                .object
+                .get(*key)
+                .or_else(|| object_fields.and_then(|fields| fields.get(*key)))
+                .and_then(Value::as_str)
+            {
+                return value.to_owned();
+            }
+        }
+        String::new()
+    };
+    let created_by = object_str(&["created_by", "actor_id", "author"]);
+    let created_at = object_str(&["created_at", "timestamp"]);
+    let updated_at = object_str(&["updated_at", "edited_at"]);
     // X10.2: bind the private-field value exprs once so the text + locked
     // checks read the same source.
     let item_body_field =
@@ -938,13 +944,7 @@ pub(super) fn card_from_projection_item(
         id,
         rank,
         title,
-        description: item
-            .object
-            .get("summary")
-            .or_else(|| item.object.get("description"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_owned(),
+        description: object_str(&["summary", "description"]),
         body: private_flow_field_text(
             decrypt_ctx,
             &primary_flow_id,
@@ -1586,7 +1586,7 @@ pub(super) fn overlay_local_card_creates_with_decrypt(
 }
 
 pub(super) fn overlay_collection_projection_with_operations(
-    projection: &cokret_sdk::CollectionProjectionOutcome,
+    projection: &crate::api::CollectionProjectionView,
     state_store: &LocalStateStore,
     board_space_id: &str,
     remote_operations: &[RawOperationRecord],
