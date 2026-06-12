@@ -7,12 +7,12 @@
 //! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
-//! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke hits
-//!   the soland deployment-local scaffold `POST /_soland/self/devices/{device_id}/revoke` via
+//! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke
+//!   submits the spec-canonical durable `ck.device.revoke` Control Move on the principal control
+//!   stream (envelope `seal_basis` minted from `ck.self.events.frontier`, SPEC-SOL-003) with a
+//!   best-effort legacy `POST /_soland/self/devices/{device_id}/revoke` follow-up via
 //!   [`crate::api::CokretApi::revoke_device`], then rotates the account MLS history secret and
-//!   rewraps local `mls_history` backups. (Spec-canonical revoke is the durable `ck.device.revoke`
-//!   event; blocked on a client-reachable `revocation_frontier` digest source — see
-//!   `api/keys.rs::revoke_device`.)
+//!   rewraps local `mls_history` backups.
 //!
 //! The pair flow on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — on the device being added, generates a pairing request payload.
