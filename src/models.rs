@@ -12,13 +12,6 @@ pub struct HealthOutcome {
     pub storage: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LogoutResult {
-    pub ok: bool,
-    #[serde(default)]
-    pub revoked: bool,
-}
-
 /// App-local current-account projection derived from the spec
 /// `ck.self.account.viewer` response. `handle` is populated only from a
 /// signed `primary_handle_claim.handle`; an empty string means the server did
@@ -240,38 +233,6 @@ pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
             low_trust: Some(DisclosureLevel::Opaque),
         }),
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ConsentCellView {
-    pub ok: bool,
-    pub cell_id: String,
-    pub holder_did: String,
-    pub peer_did: String,
-    // Spec consent-model.md §3: domain-prefixed `consent_scope` on the wire
-    // (soland's consent admin/holder surface emits this name). Rust field
-    // kept as `scope` so callers/views are unchanged.
-    #[serde(rename = "consent_scope")]
-    pub scope: String,
-    pub state: String,
-    #[serde(default)]
-    pub expires_at: Option<String>,
-    #[serde(default)]
-    pub requested_at: Option<String>,
-    pub updated_at: String,
-    #[serde(default)]
-    pub active_grant_dots: Vec<String>,
-    #[serde(default)]
-    pub grant_dots: Vec<String>,
-    #[serde(default)]
-    pub revoked_dots: Vec<String>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ConsentCellsView {
-    pub ok: bool,
-    #[serde(default)]
-    pub cells: Vec<ConsentCellView>,
 }
 
 /// R15: result of `ck.realm.create`. Carries a `ck:realm:*` id under the

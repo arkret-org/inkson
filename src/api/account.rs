@@ -390,63 +390,15 @@ impl CokretApi {
             .await
     }
 
-    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsView> {
-        anyhow::bail!(
-            "consent cell projection is not a Cokret HTTP self endpoint; derive it from account subscribe/events"
-        )
-    }
-
-    pub async fn grant_consent_cell(
-        &self,
-        holder: &str,
-        peer: &str,
-        scope: &str,
-        expires_at: Option<&str>,
-    ) -> anyhow::Result<ConsentCellView> {
-        let _ = (holder, peer, scope, expires_at);
-        anyhow::bail!(
-            "consent grants must be submitted as Cokret events; yougen must not call private soland consent cells"
-        )
-    }
-
-    pub async fn revoke_consent_cell(
-        &self,
-        holder: &str,
-        peer: &str,
-        scope: &str,
-    ) -> anyhow::Result<ConsentCellView> {
-        let _ = (holder, peer, scope);
-        anyhow::bail!(
-            "consent revokes must be submitted as Cokret events; yougen must not call private soland consent cells"
-        )
-    }
-
-    /// Open a scoped consent request toward `holder` (`ck.consent.request`).
-    pub async fn request_consent_cell(
-        &self,
-        holder: &str,
-        scope: &str,
-    ) -> anyhow::Result<ConsentCellView> {
-        let _ = (holder, scope);
-        anyhow::bail!(
-            "consent requests must be submitted as Cokret events; yougen must not call private soland consent requests"
-        )
-    }
-
-    pub async fn logout(&self) -> anyhow::Result<LogoutResult> {
+    pub async fn logout(&self) -> anyhow::Result<cokret_sdk::model::SessionRevokeOutcome> {
         let body = cokret_sdk::model::SessionRevokeRequestBody {
             target_grant_id: None,
             target_device_id: None,
             all_sessions: None,
             proof: None,
         };
-        let outcome: cokret_sdk::model::SessionRevokeOutcome = self
-            .post_json("_cokret/gate/account/session-grants/revoke", &body)
-            .await?;
-        Ok(LogoutResult {
-            ok: true,
-            revoked: outcome.revoked_count > 0,
-        })
+        self.post_json("_cokret/gate/account/session-grants/revoke", &body)
+            .await
     }
 
     /// Submit a per-account `ck.account_data.set` event so settings UIs can

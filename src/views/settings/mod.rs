@@ -2,13 +2,12 @@
 //!
 //! Territory split (preserved from former sibling files):
 //! - G3.Y1 (device management): [`devices`].
-//! - G3.Y3 (policy / consent / capabilities): [`blocklist`], [`capabilities`], [`consent`].
+//! - G3.Y3 (policy / capabilities): [`blocklist`], [`capabilities`].
 //! The aggregate routing entry + the generic profile card live in
 //! this `mod.rs`.
 
 pub mod blocklist;
 pub mod capabilities;
-pub mod consent;
 pub mod devices;
 /// U4 — "谁可以邀请我" invite_receive_policy editor.
 pub mod invite_policy;
@@ -917,8 +916,6 @@ enum SettingsSection {
     Privacy,
     /// U4 invite_receive_policy (`/settings/invite-policy`).
     InvitePolicy,
-    /// G3.Y3 — consent grants (`/settings/consent`).
-    Consent,
     /// G3.Y3 — personal blocklist (`/settings/blocklist`).
     Blocklist,
     /// G3.Y3 — capability delegation viewer (`/settings/capabilities`).
@@ -941,7 +938,6 @@ impl SettingsSection {
             "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
             "invite-policy" | "invite_policy" => Self::InvitePolicy,
-            "consent" => Self::Consent,
             "blocklist" | "blocked-users" => Self::Blocklist,
             "capabilities" => Self::Capabilities,
             "timeline" | "composer" => Self::Timeline,
@@ -964,7 +960,6 @@ impl SettingsSection {
             Self::Notifications => "notifications",
             Self::Privacy => "privacy",
             Self::InvitePolicy => "invite-policy",
-            Self::Consent => "consent",
             Self::Blocklist => "blocklist",
             Self::Capabilities => "capabilities",
             Self::Timeline => "timeline",
@@ -986,7 +981,6 @@ impl SettingsSection {
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy & sharing",
             Self::InvitePolicy => "Who can invite me",
-            Self::Consent => "Consent grants",
             Self::Blocklist => "Blocked actors",
             Self::Capabilities => "Capabilities",
             Self::Timeline => "Timeline & composer",
@@ -1048,10 +1042,8 @@ const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     // U4 invite_receive_policy is an actor-private
     // disclosure control, so it sits with the other privacy surfaces.
     SettingsSection::InvitePolicy,
-    // G3.Y3 — consent + blocklist sit next to Privacy because both are
-    // actor-private disclosure controls (spec
-    // identity/consent-model.md §2, governance/content-moderation.md §4).
-    SettingsSection::Consent,
+    // G3.Y3 blocklist sits next to Privacy because it is an actor-private
+    // disclosure control (spec governance/content-moderation.md §4).
     SettingsSection::Blocklist,
 ];
 const SETTINGS_CLIENT_GROUP: &[SettingsSection] =
@@ -1069,7 +1061,7 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
     ),
     (
         "Notifications & privacy",
-        "Notification delivery behavior, actor-private disclosure controls, and consent/blocklist.",
+        "Notification delivery behavior and actor-private disclosure controls.",
         SETTINGS_DELIVERY_GROUP,
     ),
     ("App", "Appearance and locale.", SETTINGS_CLIENT_GROUP),
@@ -3518,18 +3510,6 @@ pub fn SettingsPanel(
                                 base_url,
                                 token,
                                 account_did,
-                            }
-                        }
-                    }
-
-                    // ── G3.Y3 consent grants ─────────────────────────────
-                    if active_section == SettingsSection::Consent {
-                        div { class: "settings-content-stack",
-                            crate::views::settings::consent::ConsentSettingsCard {
-                                base_url,
-                                account_did,
-                                token,
-                                state_store,
                             }
                         }
                     }

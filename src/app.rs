@@ -4281,8 +4281,8 @@ pub fn RouterView() -> Element {
                                                     let logout_message = match api_result {
                                                         Ok(api) => match api.logout().await {
                                                             Ok(response) => format!(
-                                                                "Logout ok: revoked {}",
-                                                                response.revoked
+                                                                "Logout ok: revoked {} session(s)",
+                                                                response.revoked_count
                                                             ),
                                                             Err(error) => {
                                                                 format!("Logout failed: {error}")
@@ -6038,7 +6038,6 @@ fn settings_route_label(section: &str) -> &'static str {
         "push" | "notifications" => "Notifications",
         "privacy" => "Privacy & sharing",
         "invite-policy" | "invite_policy" => "Who can invite me",
-        "consent" => "Consent grants",
         "blocklist" | "blocked-users" => "Blocked actors",
         "capabilities" => "Capabilities",
         "timeline" | "composer" => "Timeline & composer",
