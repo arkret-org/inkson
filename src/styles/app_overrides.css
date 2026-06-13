@@ -44,8 +44,7 @@
   --primary-strong: var(--accent-strong);
   --primary-2: var(--accent-2);
   --primary-foreground: var(--text-on-accent);
-  --ring: var(--accent);
-  --focused-border-color: var(--ring);
+  --focused-border-color: var(--accent);
 
   --success: #317d6a;
   --success-soft: #e5f3ee;
@@ -119,8 +118,7 @@
   --primary-strong: var(--accent-strong);
   --primary-2: var(--accent-2);
   --primary-foreground: var(--text-on-accent);
-  --ring: var(--accent);
-  --focused-border-color: var(--ring);
+  --focused-border-color: var(--accent);
 
   --success: #7bc9b5;
   --success-soft: rgba(123, 201, 181, 0.16);
