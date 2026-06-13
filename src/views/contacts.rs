@@ -287,12 +287,13 @@ fn ContactRow(
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
+                            let request_event_ref = contact.request_event_ref.clone();
                             let service = peer_service_did.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
                                     token(),
-                                    ContactRowAction::Respond { requester: peer.clone(), verb: "accept".to_owned(), requester_service_did: service.clone() },
+                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "accept".to_owned(), requester_service_did: service.clone() },
                                     tr("contacts.action.accepting"),
                                     busy,
                                     row_status,
@@ -309,12 +310,13 @@ fn ContactRow(
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
+                            let request_event_ref = contact.request_event_ref.clone();
                             let service = peer_service_did.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
                                     token(),
-                                    ContactRowAction::Respond { requester: peer.clone(), verb: "reject".to_owned(), requester_service_did: service.clone() },
+                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "reject".to_owned(), requester_service_did: service.clone() },
                                     tr("contacts.action.rejecting"),
                                     busy,
                                     row_status,
@@ -379,7 +381,10 @@ fn ContactRow(
                                             match (outcome.realm_id, outcome.main_flow_id) {
                                                 (Some(realm_id), Some(flow_id)) => {
                                                     row_status.set(String::new());
-                                                    nav.push(Route::DirectConversation { realm_id, flow_id });
+                                                    nav.push(Route::DirectConversation {
+                                                        realm_id: realm_id.to_string(),
+                                                        flow_id: flow_id.to_string(),
+                                                    });
                                                 }
                                                 _ => row_status.set(tr("contacts.dm.not_ready")),
                                             }
@@ -464,6 +469,7 @@ fn ContactRow(
 enum ContactRowAction {
     Respond {
         requester: String,
+        request_event_ref: Option<String>,
         verb: String,
         /// Cross-PS reverse-delivery target; `None` for same-PS contacts.
         requester_service_did: Option<String>,
@@ -492,15 +498,29 @@ fn run_contact_action(
         let result = match action {
             ContactRowAction::Respond {
                 requester,
+                request_event_ref,
                 verb,
                 requester_service_did,
             } => with_authed_api(&base, api_token, |api| async move {
-                api.respond_contact_with_service(
-                    &requester,
-                    &verb,
-                    requester_service_did.as_deref(),
-                )
-                .await
+                match request_event_ref {
+                    Some(request_event_ref) => {
+                        api.respond_contact_with_request_id_and_service(
+                            &requester,
+                            &request_event_ref,
+                            &verb,
+                            requester_service_did.as_deref(),
+                        )
+                        .await
+                    }
+                    None => {
+                        api.respond_contact_with_service(
+                            &requester,
+                            &verb,
+                            requester_service_did.as_deref(),
+                        )
+                        .await
+                    }
+                }
             })
             .await
             .map(|_| ()),

@@ -1,12 +1,37 @@
 use super::*;
 
-#[derive(Debug, serde::Deserialize)]
-struct PrincipalRealmLookupOutcome {
-    realm_id: String,
+fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<cokret_sdk::Did> {
+    let value = value.trim();
+    cokret_sdk::Did::new(value.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid {field} DID `{value}`: {err}"))
+}
+
+fn device_id_for_request_field(field: &str, value: &str) -> anyhow::Result<cokret_sdk::DeviceId> {
+    let value = value.trim();
+    cokret_sdk::DeviceId::new(value.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid {field} `{value}`: {err}"))
+}
+
+fn contact_response_action(action: &str) -> anyhow::Result<String> {
+    match action.trim() {
+        "accept" | "reject" => Ok(action.trim().to_owned()),
+        other => anyhow::bail!("unsupported contact response action `{other}`"),
+    }
+}
+
+fn optional_did_for_request_field(
+    field: &str,
+    value: Option<&str>,
+) -> anyhow::Result<Option<cokret_sdk::Did>> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| did_for_request_field(field, value))
+        .transpose()
 }
 
 impl CokretApi {
-    pub async fn health(&self) -> anyhow::Result<HealthOutcome> {
+    pub async fn health(&self) -> anyhow::Result<HealthView> {
         self.get_json("health").await
     }
 
@@ -20,22 +45,21 @@ impl CokretApi {
             .await
     }
 
-    pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeOutcome> {
+    pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeView> {
         anyhow::bail!(
             "principal auth bridge describe is not part of the Cokret spec; yougen must not call private bridge paths"
         )
     }
 
-    pub async fn dev_login(&self, actor: &str, device_id: &str) -> anyhow::Result<DevLoginOutcome> {
-        self.post_json(
-            "_soland/gate/auth/dev-login",
-            json!({
-                "actor": actor,
-                "device_id": device_id,
-                "display_name": crate::device_name::default_device_display_name(),
-            }),
+    pub async fn dev_login(
+        &self,
+        actor: &str,
+        device_id: &str,
+    ) -> anyhow::Result<SessionLoginView> {
+        let _ = (actor, device_id);
+        anyhow::bail!(
+            "dev_login is a soland private development path; yougen must not call private soland paths"
         )
-        .await
     }
 
     pub async fn exchange_session_grant_at(
@@ -44,7 +68,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<DevLoginOutcome> {
+    ) -> anyhow::Result<SessionLoginView> {
         self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_id, device_id, None)
             .await
     }
@@ -56,17 +80,15 @@ impl CokretApi {
         principal_id: &str,
         device_id: &str,
         introspection_proof: Option<&SessionGrantIntrospectionProof>,
-    ) -> anyhow::Result<DevLoginOutcome> {
-        let mut body = json!({
-            "grant_jwt": grant_jwt,
-            "principal_id": principal_id,
-            "device_id": device_id,
-            "display_name": crate::device_name::default_device_display_name(),
-        });
-        if let Some(introspection_proof) = introspection_proof {
-            body["introspection_proof"] = serde_json::to_value(introspection_proof)?;
-        }
-        self.post_json(path, body).await
+    ) -> anyhow::Result<SessionLoginView> {
+        let body = cokret_sdk::SessionGrantExchangeRequestBody {
+            grant_jwt: grant_jwt.to_owned(),
+            principal_id: did_for_request_field("principal_id", principal_id)?,
+            device_id: device_id_for_request_field("device_id", device_id)?,
+            display_name: Some(crate::device_name::default_device_display_name()),
+            introspection_proof: introspection_proof.cloned(),
+        };
+        self.post_json(path, &body).await
     }
 
     pub async fn exchange_session_grant(
@@ -74,7 +96,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<DevLoginOutcome> {
+    ) -> anyhow::Result<SessionLoginView> {
         self.exchange_session_grant_at(
             "_cokret/gate/account/session-grants",
             grant_jwt,
@@ -87,61 +109,91 @@ impl CokretApi {
     pub async fn register_account(
         &self,
         did: &str,
-        handle: &str,
+        _handle: &str,
         display_name: Option<&str>,
         device_id: Option<&str>,
-    ) -> anyhow::Result<SolandAccountRegisterOutcome> {
-        self.post_json(
-            "_soland/self/account/register",
-            json!({
-                "did": did,
-                "handle": handle,
-                "display_name": display_name,
-                "device_id": device_id
-            }),
-        )
-        .await
+    ) -> anyhow::Result<cokret_sdk::model::AccountRegisterOutcome> {
+        let body = cokret_sdk::model::AccountRegisterRequestBody {
+            principal_id: did_for_request_field("principal_id", did)?,
+            display_name: display_name
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            device_id: device_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| device_id_for_request_field("device_id", value))
+                .transpose()?,
+            proof: None,
+        };
+        self.post_json("_cokret/gate/account/register", &body).await
     }
 
     pub async fn account_viewer(&self) -> anyhow::Result<cokret_sdk::model::AccountView> {
         self.get_json("_cokret/self/account/viewer").await
     }
 
-    pub async fn account_me(&self) -> anyhow::Result<CurrentAccountOutcome> {
+    pub async fn account_me(&self) -> anyhow::Result<CurrentAccountView> {
         let viewer = self.account_viewer().await?;
         Ok(current_account_from_viewer(viewer))
     }
 
     /// A4b — update the authenticated principal's public profile
-    /// (display_name / bio / avatar_url). Mirrors soland's
+    /// (display_name / bio / avatar_blob_ref). Mirrors the
     /// `ck.self.account.update_profile` wire shape: each field is
     /// `Option<String>`; `None` leaves the field untouched server-side,
     /// `Some("")` explicitly clears it. The server normalises empty
     /// strings to `None` on write.
-    ///
-    /// `avatar_url` MUST be either an `http://` / `https://` URL or
-    /// empty — soland rejects other shapes with `invalid_avatar_url`.
-    /// To publish a yougen-uploaded blob, the caller constructs the
-    /// download URL via [`Self::blob_download_url`] before passing it
-    /// here.
     pub async fn update_profile(
         &self,
         display_name: Option<&str>,
         bio: Option<&str>,
-        avatar_url: Option<&str>,
-    ) -> anyhow::Result<SolandAccountUpdateProfileOutcome> {
-        self.post_json(
-            "_soland/self/account/profile",
-            json!({
-                "display_name": display_name,
-                "bio": bio,
-                "avatar_url": avatar_url,
-            }),
-        )
-        .await
+        avatar_blob_ref: Option<&str>,
+    ) -> anyhow::Result<cokret_sdk::model::AccountUpdateProfileOutcome> {
+        let mut patch = cokret_sdk::Patch::new();
+        if let Some(display_name) = display_name {
+            let display_name = display_name.trim();
+            if display_name.is_empty() {
+                patch.insert_op("display_name", cokret_sdk::PatchOp::unset())?;
+            } else {
+                patch.insert("display_name", display_name)?;
+            }
+        }
+        if let Some(bio) = bio {
+            let bio = bio.trim();
+            if bio.is_empty() {
+                patch.insert_op("profile_fields.bio", cokret_sdk::PatchOp::unset())?;
+            } else {
+                patch.insert("profile_fields.bio", bio)?;
+            }
+        }
+        if let Some(avatar_blob_ref) = avatar_blob_ref {
+            let avatar_blob_ref = avatar_blob_ref.trim();
+            if avatar_blob_ref.is_empty() {
+                patch.insert_op("avatar_blob_ref", cokret_sdk::PatchOp::unset())?;
+            } else {
+                cokret_sdk::BlobRef::new(avatar_blob_ref.to_owned()).map_err(|err| {
+                    anyhow::anyhow!("invalid avatar_blob_ref `{avatar_blob_ref}`: {err}")
+                })?;
+                patch.insert("avatar_blob_ref", avatar_blob_ref)?;
+            }
+        }
+        if patch.is_empty() {
+            anyhow::bail!("profile update patch is empty");
+        }
+        patch
+            .validate()
+            .map_err(|err| anyhow::anyhow!("invalid profile patch: {err}"))?;
+        let body = cokret_sdk::model::AccountUpdateProfileRequestBody {
+            patch: serde_json::to_value(&patch)?,
+        };
+        self.post_json("_cokret/self/account/profile", &body).await
     }
 
-    pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactOutcome> {
+    pub async fn request_contact(
+        &self,
+        target: &str,
+    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
         self.request_contact_scoped(target, "direct_message").await
     }
 
@@ -149,7 +201,7 @@ impl CokretApi {
         &self,
         target: &str,
         scope: &str,
-    ) -> anyhow::Result<ContactOutcome> {
+    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
         self.request_contact_with_message(target, &[scope.to_owned()], None, None)
             .await
     }
@@ -171,32 +223,52 @@ impl CokretApi {
         scopes: &[String],
         message: Option<&str>,
         recipient_service_did: Option<&str>,
-    ) -> anyhow::Result<ContactOutcome> {
-        let scopes: Vec<&str> = scopes
+    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
+        let requested_scopes: Vec<String> = scopes
             .iter()
             .map(|scope| scope.trim())
             .filter(|scope| !scope.is_empty())
+            .map(ToOwned::to_owned)
             .collect();
-        let mut body = json!({"target": target, "requested_scopes": scopes});
-        if let Some(message) = message.map(str::trim).filter(|message| !message.is_empty()) {
-            body["message"] = json!(message);
-        }
-        if let Some(service_did) = recipient_service_did
-            .map(str::trim)
-            .filter(|service_did| !service_did.is_empty())
-        {
-            body["recipient_service_did"] = json!(service_did);
-        }
-        self.post_json("_cokret/self/contacts/request", body).await
+        let body = cokret_sdk::ContactRequestRequestBody {
+            target: did_for_request_field("target", target)?,
+            requested_scopes,
+            message: message
+                .map(str::trim)
+                .filter(|message| !message.is_empty())
+                .map(ToOwned::to_owned),
+            idempotency_key: None,
+            recipient_service_did: optional_did_for_request_field(
+                "recipient_service_did",
+                recipient_service_did,
+            )?,
+        };
+        self.post_json("_cokret/self/contacts/request", &body).await
     }
 
     pub async fn respond_contact(
         &self,
         requester: &str,
         action: &str,
-    ) -> anyhow::Result<ContactOutcome> {
+    ) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
         self.respond_contact_with_service(requester, action, None)
             .await
+    }
+
+    async fn contact_request_event_id_for_requester(
+        &self,
+        requester: &str,
+    ) -> anyhow::Result<String> {
+        let requester = requester.trim();
+        let contacts = self.contacts().await?;
+        contacts
+            .contacts
+            .into_iter()
+            .find(|row| row.peer == requester && row.request_event_ref.is_some())
+            .and_then(|row| row.request_event_ref)
+            .ok_or_else(|| {
+                anyhow::anyhow!("contact request_id is required for responding to `{requester}`")
+            })
     }
 
     /// Respond to an incoming contact request, optionally carrying the
@@ -211,19 +283,44 @@ impl CokretApi {
         requester: &str,
         action: &str,
         requester_service_did: Option<&str>,
-    ) -> anyhow::Result<ContactOutcome> {
-        let mut body = json!({"requester": requester, "action": action});
-        if let Some(service_did) = requester_service_did
-            .map(str::trim)
-            .filter(|service_did| !service_did.is_empty())
-        {
-            body["requester_service_did"] = json!(service_did);
-        }
-        self.post_json("_cokret/self/contacts/respond", body).await
+    ) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
+        let request_event_ref = self
+            .contact_request_event_id_for_requester(requester)
+            .await?;
+        self.respond_contact_with_request_id_and_service(
+            requester,
+            &request_event_ref,
+            action,
+            requester_service_did,
+        )
+        .await
     }
 
-    pub async fn contacts(&self) -> anyhow::Result<ContactsOutcome> {
-        self.get_json("_cokret/self/contacts").await
+    pub async fn respond_contact_with_request_id_and_service(
+        &self,
+        requester: &str,
+        request_event_ref: &str,
+        action: &str,
+        requester_service_did: Option<&str>,
+    ) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
+        let body = cokret_sdk::ContactRespondRequestBody {
+            request_id: cokret_sdk::EventId::new(request_event_ref.trim().to_owned()).map_err(
+                |err| anyhow::anyhow!("invalid contact request_id `{request_event_ref}`: {err}"),
+            )?,
+            requester: did_for_request_field("requester", requester)?,
+            action: contact_response_action(action)?,
+            granted_scopes: Vec::new(),
+            requester_service_did: optional_did_for_request_field(
+                "requester_service_did",
+                requester_service_did,
+            )?,
+        };
+        self.post_json("_cokret/self/contacts/respond", &body).await
+    }
+
+    pub async fn contacts(&self) -> anyhow::Result<ContactListView> {
+        let response: cokret_sdk::ContactList = self.get_json("_cokret/self/contacts").await?;
+        ContactListView::from_sdk(response)
     }
 
     /// Tombstone a contact relationship via `contacts/tombstone`. When
@@ -236,12 +333,15 @@ impl CokretApi {
         &self,
         peer: &str,
         block_peer: bool,
-    ) -> anyhow::Result<ContactOutcome> {
-        let mut body = json!({"peer": peer});
-        if block_peer {
-            body["block_peer"] = json!(true);
-        }
-        self.post_json("_cokret/self/contacts/tombstone", body)
+    ) -> anyhow::Result<cokret_sdk::ContactTombstone> {
+        let body = cokret_sdk::ContactTombstoneRequestBody {
+            contact: did_for_request_field("contact", peer)?,
+            revoke_scopes: Vec::new(),
+            full_peer_revoke: false,
+            block_peer,
+            peer_service_did: None,
+        };
+        self.post_json("_cokret/self/contacts/tombstone", &body)
             .await
     }
 
@@ -272,30 +372,28 @@ impl CokretApi {
         &self,
         policy: &crate::models::InviteReceivePolicy,
     ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-        self.post_json(
-            "_cokret/self/invite-receive-policy",
-            serde_json::to_value(policy)?,
-        )
-        .await
+        self.post_json("_cokret/self/invite-receive-policy", policy)
+            .await
     }
 
     pub async fn direct_conversation_resolve(
         &self,
         peer: &str,
         create: bool,
-    ) -> anyhow::Result<crate::models::DirectConversationResolveOutcome> {
-        self.post_json(
-            "_cokret/self/direct-conversations/resolve",
-            json!({
-                "peer": peer,
-                "create": create,
-            }),
-        )
-        .await
+    ) -> anyhow::Result<cokret_sdk::DirectConversationResolveOutcome> {
+        let body = cokret_sdk::DirectConversationResolveRequestBody {
+            peer: did_for_request_field("peer", peer)?,
+            create,
+            idempotency_key: None,
+        };
+        self.post_json("_cokret/self/direct-conversations/resolve", &body)
+            .await
     }
 
-    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsOutcome> {
-        self.get_json("_soland/self/consent/cells").await
+    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsView> {
+        anyhow::bail!(
+            "consent cell projection is not a Cokret HTTP self endpoint; derive it from account subscribe/events"
+        )
     }
 
     pub async fn grant_consent_cell(
@@ -304,20 +402,11 @@ impl CokretApi {
         peer: &str,
         scope: &str,
         expires_at: Option<&str>,
-    ) -> anyhow::Result<ConsentCellOutcome> {
-        self.post_json(
-            &format!(
-                "_soland/self/consent/cells/{}/grant",
-                url::form_urlencoded::byte_serialize(holder.as_bytes()).collect::<String>()
-            ),
-            json!({
-                "peer_did": peer,
-                // Spec consent-model.md §3: domain-prefixed `consent_scope`.
-                "consent_scope": scope,
-                "expires_at": expires_at,
-            }),
+    ) -> anyhow::Result<ConsentCellView> {
+        let _ = (holder, peer, scope, expires_at);
+        anyhow::bail!(
+            "consent grants must be submitted as Cokret events; yougen must not call private soland consent cells"
         )
-        .await
     }
 
     pub async fn revoke_consent_cell(
@@ -325,42 +414,39 @@ impl CokretApi {
         holder: &str,
         peer: &str,
         scope: &str,
-    ) -> anyhow::Result<ConsentCellOutcome> {
-        self.post_json(
-            &format!(
-                "_soland/self/consent/cells/{}/revoke",
-                url::form_urlencoded::byte_serialize(holder.as_bytes()).collect::<String>()
-            ),
-            json!({
-                "peer_did": peer,
-                "consent_scope": scope,
-            }),
+    ) -> anyhow::Result<ConsentCellView> {
+        let _ = (holder, peer, scope);
+        anyhow::bail!(
+            "consent revokes must be submitted as Cokret events; yougen must not call private soland consent cells"
         )
-        .await
     }
 
     /// Open a scoped consent request toward `holder` (`ck.consent.request`).
-    /// The authenticated actor is the requester/peer, so `peer_did` is left to
-    /// soland's default (the session actor); only the `holder` and scope are
-    /// sent. Records a pending cell the holder can later grant.
     pub async fn request_consent_cell(
         &self,
         holder: &str,
         scope: &str,
-    ) -> anyhow::Result<ConsentCellOutcome> {
-        self.post_json(
-            "_soland/self/consent/request",
-            json!({
-                "holder_did": holder,
-                // Spec consent-model.md §3: domain-prefixed `consent_scope`.
-                "consent_scope": scope,
-            }),
+    ) -> anyhow::Result<ConsentCellView> {
+        let _ = (holder, scope);
+        anyhow::bail!(
+            "consent requests must be submitted as Cokret events; yougen must not call private soland consent requests"
         )
-        .await
     }
 
-    pub async fn logout(&self) -> anyhow::Result<LogoutOutcome> {
-        self.post_json("_soland/gate/auth/logout", json!({})).await
+    pub async fn logout(&self) -> anyhow::Result<LogoutResult> {
+        let body = cokret_sdk::model::SessionRevokeRequestBody {
+            target_grant_id: None,
+            target_device_id: None,
+            all_sessions: None,
+            proof: None,
+        };
+        let outcome: cokret_sdk::model::SessionRevokeOutcome = self
+            .post_json("_cokret/gate/account/session-grants/revoke", &body)
+            .await?;
+        Ok(LogoutResult {
+            ok: true,
+            revoked: outcome.revoked_count > 0,
+        })
     }
 
     /// Submit a per-account `ck.account_data.set` event so settings UIs can
@@ -372,7 +458,7 @@ impl CokretApi {
         &self,
         type_key: &str,
         content: Value,
-    ) -> anyhow::Result<AccountDataSetOutcome> {
+    ) -> anyhow::Result<AccountDataSetResult> {
         let (actor, principal_realm_id) = match self.account_data_actor_scope().await {
             Ok(scope) => scope,
             Err(error) => {
@@ -381,7 +467,7 @@ impl CokretApi {
                         "principal-realm lookup for account_data returned {status}; \
                          keeping local state authoritative"
                     );
-                    return Ok(AccountDataSetOutcome::Unsupported { status });
+                    return Ok(AccountDataSetResult::Unsupported { status });
                 }
                 return Err(error);
             }
@@ -392,7 +478,7 @@ impl CokretApi {
                 .build("yougen-account-data");
         let result = self.submit_event_envelope(&event).await;
         match result {
-            Ok(value) => Ok(AccountDataSetOutcome::Stored {
+            Ok(value) => Ok(AccountDataSetResult::Stored {
                 response: serde_json::to_value(value)?,
             }),
             Err(error) => {
@@ -401,7 +487,7 @@ impl CokretApi {
                         "ck.account_data.set submit for {type_key} returned {status}; \
                          keeping local state authoritative"
                     );
-                    return Ok(AccountDataSetOutcome::Unsupported { status });
+                    return Ok(AccountDataSetResult::Unsupported { status });
                 }
                 Err(error)
             }
@@ -447,11 +533,7 @@ impl CokretApi {
             did: subject,
             requested_evidence_kinds: Vec::new(),
         };
-        self.post_json(
-            "_cokret/root/identity/resolve",
-            serde_json::to_value(&body)?,
-        )
-        .await
+        self.post_json("_cokret/root/identity/resolve", &body).await
     }
 
     pub async fn profile_presence(&self, did: &str) -> anyhow::Result<Value> {
@@ -487,16 +569,13 @@ impl CokretApi {
 
     async fn account_data_actor_scope(&self) -> anyhow::Result<(String, String)> {
         let account = self.account_me().await?;
-        let lookup: PrincipalRealmLookupOutcome = self
-            .get_json(&format!(
-                "_soland/self/account/{}/principal-realm",
-                path_component(&account.did)
-            ))
-            .await?;
-        Ok((account.did, lookup.realm_id))
+        let principal = cokret_sdk::Did::new(account.did.clone())
+            .map_err(|err| anyhow::anyhow!("invalid account DID `{}`: {err}", account.did))?;
+        let realm_id = cokret_sdk::auth::principal_control_realm_id(&principal);
+        Ok((account.did, realm_id.to_string()))
     }
 
-    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeOutcome> {
+    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeView> {
         self.get_json("_cokret/self/account/describe").await
     }
 
@@ -510,8 +589,8 @@ impl CokretApi {
         after: Option<&str>,
     ) -> anyhow::Result<ClientSyncOutcome> {
         match self.account_subscribe_snapshot_outcome(after).await? {
-            AccountSubscribeSnapshotOutcome::Delta(response) => Ok(response),
-            AccountSubscribeSnapshotOutcome::ReconnectAfter {
+            AccountSubscribeSnapshotResult::Delta(response) => Ok(response),
+            AccountSubscribeSnapshotResult::ReconnectAfter {
                 reconnect_after_ms,
                 reason,
                 reset_cursor,
@@ -527,7 +606,7 @@ impl CokretApi {
     pub async fn account_subscribe_snapshot_outcome(
         &self,
         after: Option<&str>,
-    ) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
+    ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
         // H3 — enforce `ck:cursor:*` prefix on non-nil values. nil
         // (`None`) is the boot bootstrap case and stays untouched.
         if let Some(token) = after {
@@ -588,12 +667,12 @@ impl CokretApi {
     pub async fn submit_read_cursor_advance(
         &self,
         marker: &crate::local_state::ReadMarkerRecord,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let event = build_read_cursor_advance_event(marker);
         self.submit_event_envelope(&event).await
     }
 
-    pub async fn invites(&self) -> anyhow::Result<InvitesOutcome> {
+    pub async fn invites(&self) -> anyhow::Result<InvitesView> {
         self.get_json("_cokret/self/authz/invites").await
     }
 }
@@ -612,7 +691,7 @@ fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
         })
 }
 
-fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccountOutcome {
+fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccountView {
     let display_name = viewer.profile.as_ref().and_then(|profile| {
         let value = profile.display_name.trim();
         (!value.is_empty()).then(|| value.to_owned())
@@ -626,7 +705,7 @@ fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> Curren
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         })
         .unwrap_or_default();
-    CurrentAccountOutcome {
+    CurrentAccountView {
         did: viewer.principal_id.as_str().to_owned(),
         handle: primary_handle_from_viewer(&viewer),
         display_name,

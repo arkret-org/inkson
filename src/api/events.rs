@@ -2,7 +2,7 @@ use super::*;
 
 impl CokretApi {
     /// Query durable events through the current `/_cokret/self/events` surface.
-    pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillOutcome> {
+    pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillView> {
         self.get_json(&events_query_path(realm_id)).await
     }
 
@@ -74,10 +74,10 @@ impl CokretApi {
         actor: &str,
         device_id: Option<&str>,
         typing: bool,
-    ) -> anyhow::Result<TypingOutcome> {
+    ) -> anyhow::Result<TypingResult> {
         let envelope = build_typing_envelope(realm_id, actor, device_id, typing)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
-        Ok(TypingOutcome {
+        Ok(TypingResult {
             ok: response.accepted,
         })
     }
@@ -92,7 +92,7 @@ impl CokretApi {
         actor: &str,
         event_id: &str,
         receipt_type: &str,
-    ) -> anyhow::Result<ReceiptOutcome> {
+    ) -> anyhow::Result<ReceiptResult> {
         // Only `ck.receipt.read` is an ephemeral receipt; other receipt
         // types (delivered/franking/etc.) stay on their own paths. Guard
         // the kind here so we don't accidentally widen the contract.
@@ -101,7 +101,7 @@ impl CokretApi {
         }
         let envelope = build_receipt_read_envelope(realm_id, actor, event_id)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
-        Ok(ReceiptOutcome {
+        Ok(ReceiptResult {
             ok: response.accepted,
         })
     }
@@ -155,7 +155,9 @@ impl CokretApi {
                 anyhow::anyhow!("events/frontier account_client decode failed: {err}")
             })?;
         let cokret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
-            anyhow::bail!("events/frontier for actor_id={actor_id} did not return an actor frontier");
+            anyhow::bail!(
+                "events/frontier for actor_id={actor_id} did not return an actor frontier"
+            );
         };
         Ok(view)
     }
@@ -195,7 +197,7 @@ impl CokretApi {
     pub async fn submit_event_envelope(
         &self,
         event: &EventEnvelope,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let mut signed = event.clone();
 
         // Real seal_ref for reducer-input kinds. The simple heuristic
@@ -235,25 +237,27 @@ impl CokretApi {
     async fn post_signed_event_envelope(
         &self,
         signed: &EventEnvelope,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         if signed.proofs.is_empty() {
             anyhow::bail!("no active signer configured \u{2014} cannot submit unsigned event");
         }
         ensure_event_proofs_are_domain_bound(signed)?;
         validate_outgoing_registered_payload(signed)?;
+        let sdk_event = signed.to_sdk_event_for_submit()?;
 
         let idempotency_key = signed
             .local_operation_idempotency_alias()
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
-        let value = serde_json::to_value(signed)?;
         let request = self
             .http
             .post(self.endpoint("_cokret/self/events")?)
-            .json(&value);
+            .json(&sdk_event);
         let request = self.with_write_request_headers(request, &idempotency_key);
-        self.send_json_retryable(self.prepare_request(request), Method::POST)
-            .await
+        let response: cokret_sdk::EventsSubmitOutcome = self
+            .send_json_retryable(self.prepare_request(request), Method::POST)
+            .await?;
+        Ok(SubmitEventResult::from(response))
     }
 
     /// `ck.self.events.submit` in batch form over typed envelopes. Spec binds
@@ -292,7 +296,11 @@ impl CokretApi {
         // body is one of the three spec-defined `ck.self.events.submit`
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
-        let events_value: Vec<Value> = envelopes
+        let sdk_events: Vec<cokret_sdk::Event> = envelopes
+            .iter()
+            .map(EventEnvelope::to_sdk_event_for_submit)
+            .collect::<anyhow::Result<_>>()?;
+        let events_value: Vec<Value> = sdk_events
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<_, _>>()?;
@@ -300,18 +308,18 @@ impl CokretApi {
             events: events_value,
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
-        let value = serde_json::to_value(&body)?;
         let request = self
             .http
             .post(self.endpoint("_cokret/self/events")?)
-            .json(&value);
+            .json(&body);
         let idem = idempotency_key
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
         let request = self.with_write_request_headers(request, &idem);
-        let response: Value = self
+        let response: cokret_sdk::EventsSubmitOutcome = self
             .send_json_retryable(self.prepare_request(request), Method::POST)
             .await?;
+        let response = serde_json::to_value(response)?;
         ensure_events_submit_batch_accepted(&response)?;
         Ok(response)
     }
@@ -327,7 +335,7 @@ impl CokretApi {
     pub async fn submit_ephemeral_envelope(
         &self,
         envelope: &cokret_sdk::EphemeralEnvelope,
-    ) -> anyhow::Result<EphemeralSubmitOutcome> {
+    ) -> anyhow::Result<EphemeralSubmitResult> {
         // Defensive re-validation. The constructor already enforced this,
         // but a caller could mutate a raw envelope in place between build
         // and submit. Fail fast with the canonical error code rather than
@@ -349,8 +357,7 @@ impl CokretApi {
                 "ephemeral submit: expires_at - sent_at = {window_ms} ms violates 5-minute ceiling"
             );
         }
-        let body = serde_json::to_value(envelope)?;
-        self.post_json("_cokret/self/ephemeral", body).await
+        self.post_json("_cokret/self/ephemeral", envelope).await
     }
 
     /// Round R2/R3 (T02) — point-to-point to-device signals (the

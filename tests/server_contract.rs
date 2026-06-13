@@ -256,7 +256,7 @@ fn yougen_accepts_server_contract_payloads() {
         "did:web:server.local"
     );
 
-    let submit: yougen::models::SubmitEventOutcome = serde_json::from_value(json!({
+    let submit: yougen::models::SubmitEventResult = serde_json::from_value(json!({
         "status": "accepted",
         "accepted": ["ck:event:019640ca-0000-7000-8000-000000000000"],
         "duplicate": [],
@@ -297,7 +297,7 @@ fn yougen_accepts_server_contract_payloads() {
         .is_err()
     );
 
-    let login: yougen::models::DevLoginOutcome = serde_json::from_value(json!({
+    let login: yougen::models::SessionLoginView = serde_json::from_value(json!({
         "access_token": "sx_token",
         "token_type": "Bearer",
         "actor": "did:web:alice.example",
@@ -339,7 +339,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(grants.grants.len(), 1);
 
-    let invites: yougen::models::InvitesOutcome = serde_json::from_value(json!({
+    let invites: yougen::models::InvitesView = serde_json::from_value(json!({
         "invites": [],
         "next_cursor": null
     }))
@@ -377,7 +377,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(!device_receive.limited);
 
-    let push: yougen::models::PushRegisterOutcome = serde_json::from_value(json!({
+    let push: yougen::models::PushRegisterView = serde_json::from_value(json!({
         "ok": true,
         "registration_id": "ck:push:dev_alice",
         "expires_at": null
@@ -461,17 +461,14 @@ fn server_description_gates_event_envelope_write_plane() {
             .is_empty()
     );
 
-    let soland_compat_surface = serde_json::to_value(
-        cokret_sdk::CompatSurfaceEntry::external_interop("soland_private_local_routes")
-            .with_extra_string("base_path", "/_soland")
-            .with_extra_string("status", "soland_private_local")
-            .with_notes(
-                "non-registry REST routes were moved out of /_cokret; clients should prefer \
-                 operation-registry canonical paths",
-            ),
+    let external_compat_surface = serde_json::to_value(
+        cokret_sdk::CompatSurfaceEntry::external_interop("external_mimi_provider")
+            .with_extra_string("base_path", "https://mimi.example.com/_cokret/open/mimi")
+            .with_extra_string("status", "external_interop")
+            .with_notes("external interop surfaces must not redefine principal-server routes"),
     )
     .unwrap();
-    let soland_with_local_compat_surface = parse_server_description(json!({
+    let described_with_external_compat_surface = parse_server_description(json!({
         "service_did": "did:web:local.host",
         "trust_domain": "ck:trust_domain:local.host",
         "service_type": "principal_server",
@@ -498,13 +495,13 @@ fn server_description_gates_event_envelope_write_plane() {
         ],
         "verified_profiles": [],
         "experimental_features": [],
-        "compat_surfaces": [soland_compat_surface],
+        "compat_surfaces": [external_compat_surface],
         "development_mode": true,
     }))
     .unwrap();
     assert_eq!(
-        soland_with_local_compat_surface.compat_surfaces[0].name,
-        "soland_private_local_routes"
+        described_with_external_compat_surface.compat_surfaces[0].name,
+        "external_mimi_provider"
     );
 
     // A partial / pre-v2 describe payload now fails to deserialize at all —
@@ -687,7 +684,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     validate_blind_wakeup_payload(&json!({"local_name": secret}))
         .expect_err("blind push must reject local remark fields");
 
-    let search = yougen::models::IndexSearchOutcome {
+    let search = yougen::models::IndexSearchView {
         query: "hello".to_owned(),
         results: vec![json!({
             "kind": "message",
@@ -714,7 +711,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     );
     assert_no_secret("log", &log_entry, secret);
 
-    let directory = yougen::models::SearchRealmsOutcome {
+    let directory = yougen::models::SearchRealmsView {
         results: vec![yougen::models::RealmTreeNode {
             id: "ck:realm:contract".to_owned(),
             title: "Contract Realm".to_owned(),
@@ -790,7 +787,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 }
 
 // (Move/Seal pipeline tests removed — all writes now go through
-// ck.self.events.submit; the SubmitEventOutcome wire shape is exercised by
+// ck.self.events.submit; the SubmitEventResult decoder is exercised by
 // soland's own integration tests and the cokret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401

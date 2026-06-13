@@ -1283,7 +1283,7 @@ pub fn SetupPanel(
                                                             ).await {
                                                             Ok(realm) => {
                                                                 // R15: ck.realm.create now returns
-                                                                // RealmCreateOutcome with the new
+                                                                // RealmCreateResult with the new
                                                                 // `ck:realm:*` id under `realm_id`.
                                                                 let realm_id = realm.realm_id.clone();
                                                                 selected_realm_id.set(realm_id.clone());

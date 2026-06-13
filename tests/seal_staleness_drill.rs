@@ -18,7 +18,7 @@
 //!   4. `seal_ref` is `Some(_)` for reducer-input kinds AND matches
 //!      `^ck:seal:sha256:[0-9a-f]{64}$`. The fake seal is NOT the all-zero hash.
 //!
-//! The `roundtrip_through_live_soland_endpoint` test below is the live
+//! The `roundtrip_through_live_principal_endpoint` test below is the live
 //! variant — it is marked `#[ignore]` because it requires a soland
 //! server running locally. Run with:
 //!
@@ -235,7 +235,7 @@ fn assert_seal_ref_is_real(envelope: &EventEnvelope) {
 /// that's the desired behaviour for a live drill on CI.
 #[test]
 #[ignore]
-fn roundtrip_through_live_soland_endpoint() {
+fn roundtrip_through_live_principal_endpoint() {
     let url = match std::env::var("YOUGEN_TEST_SOLAND_URL") {
         Ok(u) if !u.is_empty() => u,
         _ => {

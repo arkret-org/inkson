@@ -24,14 +24,14 @@
 //! ## Canonical bytes alignment
 //!
 //! The SDK's `EventProofBuilder` operates over an opaque `T: Serialize`.
-//! Yougen's [`crate::operation::EventEnvelope`] is **not** the same
-//! struct as `cokret_core::Event` — yougen's wire shape evolved
-//! independently before the SDK pipeline landed. To keep the SDK as the
-//! single canonical-bytes source, this module re-serializes the
-//! envelope into a `serde_json::Value` with `proofs` + `unsigned`
-//! stripped (the same projection
-//! [`crate::operation::EventEnvelope::sign_ed25519`] used) and feeds
-//! that into `EventProofBuilder::canonical_bytes`.
+//! Yougen's [`crate::operation::EventEnvelope`] is still a legacy builder
+//! wrapper, but the HTTP submit boundary decodes it through
+//! `cokret_sdk::Event` before serialising the request. To keep the SDK as the
+//! single canonical-bytes source, this module re-serializes the envelope into
+//! a `serde_json::Value` with `proofs` + `unsigned` stripped (the same
+//! projection [`crate::operation::EventEnvelope::sign_ed25519`] used) and feeds
+//! that into `EventProofBuilder::canonical_bytes`; submit then verifies that
+//! this digest matches `cokret_sdk::Event::event_digest()`.
 //!
 //! ## Wiring contract
 //!

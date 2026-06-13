@@ -15,7 +15,7 @@ use crate::coauth::{
 use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant};
 #[cfg(test)]
-use crate::models::DevLoginOutcome;
+use crate::models::SessionLoginView;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
 use crate::ui::input::Input;
@@ -588,7 +588,7 @@ async fn finish_oidc_callback(
 #[cfg(test)]
 fn persisted_session_grant_from_login(
     grant: &CoauthSessionGrantInfo,
-    session: &DevLoginOutcome,
+    session: &SessionLoginView,
     principal_server_url: &str,
     actor: &str,
     session_grant_exchange_path: &str,
@@ -704,7 +704,7 @@ mod tests {
             scopes: vec!["urn:cokret:principal-server:session.bind".to_owned()],
             principal_server: None,
         };
-        let session = DevLoginOutcome {
+        let session = SessionLoginView {
             access_token: "sx-bridge".to_owned(),
             token_type: "Bearer".to_owned(),
             actor: "did:web:alice.example".to_owned(),

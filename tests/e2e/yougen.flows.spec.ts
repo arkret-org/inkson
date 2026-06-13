@@ -857,7 +857,7 @@ test("settings avatar upload crops local image before publishing profile URL", a
   });
 
   const uploadRequest = page.waitForRequest("**/_cokret/self/blob/upload");
-  const profileRequest = page.waitForRequest("**/_soland/self/account/profile");
+  const profileRequest = page.waitForRequest("**/_cokret/self/account/profile");
   await page.getByTestId("settings-avatar-upload-cropped").click();
 
   const upload = await uploadRequest;
@@ -865,10 +865,9 @@ test("settings avatar upload crops local image before publishing profile URL", a
   expect(upload.postDataBuffer()?.length ?? 0).toBeGreaterThan(100);
 
   const profileBody = await profileRequest.then((request) => request.postDataJSON());
-  expect(profileBody.avatar_url).toContain(
-    "blob_ref=ck%3Ablob%3Asha256%3A01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+  expect(profileBody.patch.avatar_blob_ref).toBe(
+    "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
   );
-  expect(profileBody.avatar_url).toContain("purpose=profile_avatar");
   await expect(page.getByTestId("settings-avatar-crop-editor")).toHaveCount(0);
 });
 

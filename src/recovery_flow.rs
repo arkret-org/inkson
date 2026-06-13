@@ -10,8 +10,13 @@
 //! The wire shapes match `cokret-spec` `recovery-session.schema.json`
 //! (`create_request` / `proof_submit_request` / `complete_request`).
 
+use cokret_sdk::model::{
+    RecoveryPolicyRef, RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
+    RecoverySessionProofSubmitRequestBody,
+};
+use cokret_sdk::{DeviceId, Did, EventId, PolicyId, TypedTrustDomainId};
 use ed25519_dalek::SigningKey;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::api::CokretApi;
 
@@ -138,18 +143,20 @@ pub fn create_session_body(
     trust_domain: &str,
     ssk_generation: u64,
     expected_recovery_policy_ref: Option<(&str, u64)>,
-) -> Value {
-    let mut body = json!({
-        "principal_id": principal_id,
-        "requesting_device_id": requesting_device_id,
-        "trust_domain": trust_domain,
-        "ssk_generation": ssk_generation,
-    });
-    if let Some((policy_id, policy_version)) = expected_recovery_policy_ref {
-        body["expected_recovery_policy_ref"] =
-            json!({ "policy_id": policy_id, "policy_version": policy_version });
-    }
-    body
+) -> anyhow::Result<RecoverySessionCreateRequestBody> {
+    Ok(RecoverySessionCreateRequestBody {
+        principal_id: Did::new(principal_id.trim().to_owned())?,
+        requesting_device_id: DeviceId::new(requesting_device_id.trim().to_owned())?,
+        trust_domain: TypedTrustDomainId::new(trust_domain.trim().to_owned())?,
+        ssk_generation,
+        expected_recovery_policy_ref: match expected_recovery_policy_ref {
+            Some((policy_id, policy_version)) => Some(RecoveryPolicyRef {
+                policy_id: PolicyId::new(policy_id.trim().to_owned())?,
+                policy_version,
+            }),
+            None => None,
+        },
+    })
 }
 
 /// 6.3 — open a recovery session. Returns the session JSON (carries the
@@ -168,8 +175,8 @@ pub async fn open_recovery_session(
         trust_domain,
         ssk_generation,
         expected_recovery_policy_ref,
-    );
-    api.create_recovery_session(body).await
+    )?;
+    api.create_recovery_session(&body).await
 }
 
 /// 6.3 — sign a `principal_signing` proof for `session` (with the principal
@@ -189,8 +196,8 @@ pub async fn submit_principal_signing_proof(
         .get("recovery_session_id")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("session missing recovery_session_id"))?;
-    api.submit_recovery_proof(session_id, json!({ "proof": proof }))
-        .await
+    let body = RecoverySessionProofSubmitRequestBody { proof };
+    api.submit_recovery_proof(session_id, &body).await
 }
 
 /// 6.3 — complete a verified session by REFERENCING the durable control events
@@ -203,14 +210,12 @@ pub async fn complete_recovery_session(
     authorization_event_id: &str,
     device_list_update_event_id: &str,
 ) -> anyhow::Result<Value> {
-    api.complete_recovery_session(
-        recovery_session_id,
-        json!({
-            "authorization_event_id": authorization_event_id,
-            "device_list_update_event_id": device_list_update_event_id,
-        }),
-    )
-    .await
+    let body = RecoverySessionCompleteRequestBody {
+        authorization_event_id: EventId::new(authorization_event_id.trim().to_owned())?,
+        device_list_update_event_id: EventId::new(device_list_update_event_id.trim().to_owned())?,
+    };
+    api.complete_recovery_session(recovery_session_id, &body)
+        .await
 }
 
 /// 6.3 — `principal_signing` recovery driver: open session → sign + submit proof
@@ -258,6 +263,8 @@ pub async fn run_principal_signing_recovery(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -268,7 +275,9 @@ mod tests {
             "ck:trust_domain:soland.local",
             2,
             None,
-        );
+        )
+        .unwrap();
+        let body = serde_json::to_value(body).unwrap();
         assert_eq!(body["principal_id"], "did:web:alice.example");
         assert_eq!(body["ssk_generation"], 2);
         assert!(body.get("expected_recovery_policy_ref").is_none());
@@ -282,7 +291,9 @@ mod tests {
             "ck:trust_domain:soland.local",
             1,
             Some(("ck:policy:019a6aa0-0000-7000-8000-0000000000bb", 1)),
-        );
+        )
+        .unwrap();
+        let body = serde_json::to_value(body).unwrap();
         assert_eq!(
             body["expected_recovery_policy_ref"]["policy_id"],
             "ck:policy:019a6aa0-0000-7000-8000-0000000000bb"

@@ -3111,22 +3111,28 @@ pub fn RouterView() -> Element {
                                                         let base = base.clone();
                                                         let peer_for_task = peer.clone();
                                                         spawn(async move {
-                                                            match crate::views::helpers::with_authed_api(
+                                                            let result = crate::views::helpers::with_authed_api(
                                                                 &base,
                                                                 api_token,
                                                                 |api| async move {
                                                                     api.direct_conversation_resolve(&peer_for_task, true).await
                                                                 },
-                                                            )
-                                                            .await
-                                                            {
+                                                            ).await;
+                                                            match result {
                                                                 Ok(response) => {
-                                                                    if matches!(response.state.as_str(), "found" | "created")
+                                                                    if matches!(
+                                                                        response.state,
+                                                                        cokret_sdk::DirectConversationResolveState::Found
+                                                                            | cokret_sdk::DirectConversationResolveState::Created
+                                                                    )
                                                                         && let (Some(realm_id), Some(flow_id)) = (response.realm_id, response.main_flow_id)
                                                                     {
-                                                                        let _ = navigator.push(Route::DirectConversation { realm_id, flow_id });
+                                                                        let _ = navigator.push(Route::DirectConversation {
+                                                                            realm_id: realm_id.to_string(),
+                                                                            flow_id: flow_id.to_string(),
+                                                                        });
                                                                     } else {
-                                                                        status.set(format!("direct conversation: {}", response.state));
+                                                                        status.set(format!("direct conversation: {:?}", response.state));
                                                                     }
                                                                 }
                                                                 Err(err) => status.set(format!("direct conversation: {}", err.display())),
@@ -6614,7 +6620,7 @@ async fn reissue_development_session(
     principal_server_url: &str,
     actor_id: &str,
     device_id: &str,
-) -> Option<crate::models::DevLoginOutcome> {
+) -> Option<crate::models::SessionLoginView> {
     if !can_attempt_development_session_reissue(principal_server_url, actor_id, device_id) {
         return None;
     }

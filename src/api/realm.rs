@@ -36,7 +36,7 @@ impl CokretApi {
         trust_domain: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
-    ) -> anyhow::Result<RealmCreateOutcome> {
+    ) -> anyhow::Result<RealmCreateResult> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
@@ -95,7 +95,7 @@ impl CokretApi {
             }
         }
 
-        Ok(RealmCreateOutcome {
+        Ok(RealmCreateResult {
             ok: true,
             realm_id,
             owner: actor_id.to_owned(),
@@ -118,7 +118,7 @@ impl CokretApi {
         kind: &str,
         parent_space_id: Option<&str>,
         default_realm_id: Option<&str>,
-    ) -> anyhow::Result<SpaceCreateOutcome> {
+    ) -> anyhow::Result<SpaceCreateResult> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!("actor_id is required for ck.space.create"));
@@ -146,164 +146,13 @@ impl CokretApi {
         )?;
         self.submit_event_envelope(&event).await?;
 
-        Ok(SpaceCreateOutcome {
+        Ok(SpaceCreateResult {
             ok: true,
             space_id,
             owner: actor_id.to_owned(),
             members: vec![actor_id.to_owned()],
             state: "active".to_owned(),
         })
-    }
-
-    /// CKP-0007 P3B.2.6 — POST a new Circle to soland's
-    /// `/_soland/self/circles` administrative surface. Circle 是 CKP-0014 §5
-    /// 的候选操作,未入正式 catalog 前 MUST 走 `/_soland`(实测 `/_cokret`
-    /// 端点 404),待 circle 入 catalog 后迁回 `/_cokret`。The strict-subset
-    /// invariant (`Circle.members ⊆ Realm.members`) is enforced by the
-    /// reducer; this client also runs
-    /// [`crate::components::validate_strict_subset`] before sending so
-    /// the user sees a `circle_member_must_be_realm_member` failure
-    /// inline rather than as a round-tripped reducer rejection.
-    ///
-    /// The wire body is built from the SDK's typed
-    /// [`cokret_sdk::model::circle::CircleDisplay`] struct so the
-    /// enum values (`color_token`, glyph names) stay in sync with
-    /// `spec/v1/artifacts/schemas/circle.schema.json` instead of being
-    /// hand-rolled JSON strings.
-    pub async fn create_circle(
-        &self,
-        realm_id: &str,
-        actor_id: &str,
-        title: &str,
-        short_name: &str,
-        color_token: &str,
-        symbol_glyph: &str,
-        directory_visibility: &str,
-        initial_members: &[String],
-    ) -> anyhow::Result<serde_json::Value> {
-        use cokret_sdk::model::{
-            CircleColorToken, CircleDirectoryVisibility, CircleDisplay, CircleGlyph, CircleSymbol,
-        };
-
-        let realm_id = realm_id.trim();
-        let actor_id = actor_id.trim();
-        let title = title.trim();
-        if realm_id.is_empty() || actor_id.is_empty() || title.is_empty() {
-            return Err(anyhow::anyhow!(
-                "realm_id / actor_id / title are all required for ck.circle.create"
-            ));
-        }
-
-        let color: CircleColorToken =
-            serde_json::from_value(serde_json::Value::String(color_token.trim().to_owned()))
-                .map_err(|err| {
-                    anyhow::anyhow!("invalid Circle color_token `{color_token}`: {err}")
-                })?;
-        let glyph: CircleGlyph =
-            serde_json::from_value(serde_json::Value::String(symbol_glyph.trim().to_owned()))
-                .map_err(|err| {
-                    anyhow::anyhow!("invalid Circle symbol glyph `{symbol_glyph}`: {err}")
-                })?;
-        let visibility: CircleDirectoryVisibility = serde_json::from_value(
-            serde_json::Value::String(directory_visibility.trim().to_owned()),
-        )
-        .map_err(|err| {
-            anyhow::anyhow!("invalid Circle directory_visibility `{directory_visibility}`: {err}")
-        })?;
-
-        let display = CircleDisplay {
-            short_name: short_name.trim().to_owned(),
-            color_token: color,
-            symbol: CircleSymbol::Glyph { glyph },
-        };
-
-        let body = serde_json::json!({
-            "realm_id": realm_id,
-            "actor_id": actor_id,
-            "title": title,
-            "display": serde_json::to_value(&display)?,
-            "directory_visibility": serde_json::to_value(visibility)?,
-            "initial_members": initial_members,
-        });
-        self.post_json("/_soland/self/circles", body).await
-    }
-
-    /// CKP-0007 P3B.2.1 — fetch the Circle directory for a Realm. The
-    /// projection is filtered server-side by the caller's
-    /// `directory_visibility` (members-only Circles only return when
-    /// the caller is a Circle member). Returns the raw JSON shape; the
-    /// caller decodes into [`crate::circle::CircleSummary`].
-    pub async fn list_circles(&self, realm_id: &str) -> anyhow::Result<serde_json::Value> {
-        let realm_id = realm_id.trim();
-        if realm_id.is_empty() {
-            return Err(anyhow::anyhow!(
-                "realm_id is required for /_soland/self/circles"
-            ));
-        }
-        let path = format!("/_soland/self/circles?realm_id={}", realm_id);
-        self.get_json(&path).await
-    }
-
-    /// CKP-0007 P3B.2.6 — fetch a single Circle's detail (metadata +
-    /// member roster) from `GET /_soland/self/circles/{id}`. Returns the
-    /// raw JSON shape; the caller decodes the summary via
-    /// [`crate::circle::circle_summary_from_json`] and the roster via
-    /// [`crate::circle::circle_members_from_json`].
-    pub async fn get_circle(&self, circle_id: &str) -> anyhow::Result<serde_json::Value> {
-        let circle_id = circle_id.trim();
-        if circle_id.is_empty() {
-            return Err(anyhow::anyhow!(
-                "circle_id is required for /_soland/self/circles/{{id}}"
-            ));
-        }
-        self.get_json(&format!("/_soland/self/circles/{circle_id}"))
-            .await
-    }
-
-    /// CKP-0007 P3B.2.6 — add a Realm member to a Circle via
-    /// `POST /_soland/self/circles/{id}/members`.
-    ///
-    /// This is a **one-way pull**: the added member joins the Circle
-    /// immediately (`state: "active"`) with no consent / acceptance step
-    /// from their side. The reducer still enforces the strict-subset
-    /// invariant (`circle_member_must_be_realm_member`) — the target DID
-    /// MUST already be an active member of the parent Realm.
-    pub async fn add_circle_member(
-        &self,
-        circle_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        let circle_id = circle_id.trim();
-        let actor_id = actor_id.trim();
-        if circle_id.is_empty() || actor_id.is_empty() {
-            return Err(anyhow::anyhow!(
-                "circle_id and actor_id are required to add a Circle member"
-            ));
-        }
-        let body = json!({ "actor_id": actor_id, "state": "active" });
-        self.post_json(&format!("/_soland/self/circles/{circle_id}/members"), body)
-            .await
-    }
-
-    /// CKP-0007 P3B.2.6 — remove a member from a Circle via
-    /// `DELETE /_soland/self/circles/{id}/members/{actor_id}`. Leaving the
-    /// Circle does not affect the actor's parent-Realm membership.
-    pub async fn remove_circle_member(
-        &self,
-        circle_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        let circle_id = circle_id.trim();
-        let actor_id = actor_id.trim();
-        if circle_id.is_empty() || actor_id.is_empty() {
-            return Err(anyhow::anyhow!(
-                "circle_id and actor_id are required to remove a Circle member"
-            ));
-        }
-        self.delete_json(&format!(
-            "/_soland/self/circles/{circle_id}/members/{actor_id}"
-        ))
-        .await
     }
 
     /// Send a Space lifecycle action (`archive` / `restore` /
@@ -345,7 +194,7 @@ impl CokretApi {
         from_state: Option<&str>,
         to_state: &str,
         reason: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let event = build_member_state_transition_event(
             realm_id, actor_id, member, from_state, to_state, reason,
         )?;
@@ -360,8 +209,8 @@ impl CokretApi {
     /// `Result::Err` arm should surface a clear "endpoint unavailable"
     /// message rather than blocking the page.
     pub async fn admin_notary_describe(&self, realm_id: &str) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("_soland/admin/realms/{realm_id}/notary"))
-            .await
+        let _ = realm_id;
+        anyhow::bail!("admin notary describe has no spec-defined Cokret HTTP endpoint")
     }
 
     pub async fn authz_check(
@@ -370,15 +219,13 @@ impl CokretApi {
         action: &str,
         realm_id: &str,
     ) -> anyhow::Result<AuthzCheckOutcome> {
-        self.post_json(
-            "_cokret/self/authz/check",
-            json!({
-                "actor_id": actor,
-                "action": action,
-                "resource": {"kind": "realm", "realm_id": realm_id}
-            }),
-        )
-        .await
+        let body = cokret_sdk::model::AuthzCheckRequestBody {
+            actor_id: cokret_sdk::Did::new(actor.trim().to_owned())?,
+            action: action.trim().to_owned(),
+            resource: Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
+            context: None,
+        };
+        self.post_json("_cokret/self/authz/check", &body).await
     }
 
     pub async fn authz_check_raw(
@@ -387,15 +234,8 @@ impl CokretApi {
         action: &str,
         realm_id: &str,
     ) -> anyhow::Result<Value> {
-        self.post_json(
-            "_cokret/self/authz/check",
-            json!({
-                "actor_id": actor,
-                "action": action,
-                "resource": {"kind": "realm", "realm_id": realm_id}
-            }),
-        )
-        .await
+        let response = self.authz_check(actor, action, realm_id).await?;
+        Ok(serde_json::to_value(response)?)
     }
 
     pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<GrantList> {
@@ -415,7 +255,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         patch: Value,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         if patch_touches_create_locked_encryption_profile(&patch) {
             anyhow::bail!(
                 "Realm encryption_profile is locked at creation; create a new Realm to change E2EE mode."
@@ -436,7 +276,7 @@ impl CokretApi {
         space_id: &str,
         actor_id: &str,
         patch: Value,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let envelope =
             crate::operation::ck_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
                 .build("yougen");
@@ -476,7 +316,7 @@ impl CokretApi {
         history_visibility: &str,
         join_policy: Option<Value>,
         preserve_recommended_encryption_floor: bool,
-    ) -> anyhow::Result<RealmPolicyOutcome> {
+    ) -> anyhow::Result<RealmPolicyResult> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
@@ -517,7 +357,7 @@ impl CokretApi {
         for event in events {
             self.submit_event_envelope(&event).await?;
         }
-        Ok(RealmPolicyOutcome {
+        Ok(RealmPolicyResult {
             ok: true,
             realm_id: realm_id.to_owned(),
             join_rule: join_rule.to_owned(),
@@ -535,7 +375,7 @@ impl CokretApi {
         invite_id: &str,
         target: &str,
         role: Option<&str>,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let invitee = self
             .resolve_invitee_for_invite(target, realm_id, actor_id)
             .await?;
@@ -558,7 +398,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         invite_id: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let envelope =
             crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?.build("yougen");
         let resolved = self.resolve_realm(realm_id).await?;
@@ -576,7 +416,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         invite_id: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
@@ -589,7 +429,7 @@ impl CokretApi {
         &self,
         candidate: &RealmJoinCandidate,
         event: &EventEnvelope,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let Some(endpoint) = candidate
             .endpoint
             .as_deref()
@@ -620,7 +460,7 @@ impl CokretApi {
         actor_id: &str,
         invite_id: &str,
         reason: Option<&str>,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let envelope =
             crate::operation::ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?
                 .build("yougen");
@@ -632,7 +472,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor_id: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         self.transition_member_state(
             realm_id,
             actor_id,
@@ -649,7 +489,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor_id: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let envelope =
             build_realm_archive_event(realm_id, actor_id, true, Some("operator_request"))?;
         self.submit_event_envelope(&envelope).await
@@ -660,7 +500,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor_id: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let envelope =
             build_realm_archive_event(realm_id, actor_id, false, Some("operator_request"))?;
         self.submit_event_envelope(&envelope).await
@@ -673,7 +513,7 @@ impl CokretApi {
         actor_id: &str,
         successor_realm_id: &str,
         reason: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let envelope = build_realm_tombstone_event(realm_id, actor_id, successor_realm_id, reason)?;
         self.submit_event_envelope(&envelope).await
     }
@@ -684,7 +524,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         reason: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let envelope = build_realm_destroy_event(realm_id, actor_id, reason)?;
         self.submit_event_envelope(&envelope).await
     }
@@ -695,7 +535,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         member: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         self.transition_member_state(realm_id, actor_id, member, Some("join"), "ban", "admin_ban")
             .await
     }
@@ -712,11 +552,9 @@ impl CokretApi {
         &self,
         view_id: &str,
     ) -> anyhow::Result<super::CollectionProjectionView> {
-        self.post_json(
-            &format!("_cokret/self/views/{view_id}/projection"),
-            json!({}),
-        )
-        .await
+        let body = cokret_sdk::model::ViewProjectionRequestBody::default();
+        self.post_json(&format!("_cokret/self/views/{view_id}/projection"), &body)
+            .await
     }
 
     // Pull the canonical Space-container / Flow lifecycle state for a Realm so the
@@ -725,7 +563,7 @@ impl CokretApi {
     pub async fn list_space_container_projections(
         &self,
         realm_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionOutcome<SpaceContainerProjectionView>> {
+    ) -> anyhow::Result<LifecycleProjectionView<SpaceContainerProjectionView>> {
         // `ck:realm:<uuid>` is RFC-3986-safe in query string position
         // (colon + hyphen + alpha-digit), so no percent-encoding needed.
         let realm_id = trim_realm_id(realm_id);
@@ -736,7 +574,7 @@ impl CokretApi {
     pub async fn list_flow_projections(
         &self,
         realm_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionOutcome<FlowProjectionView>> {
+    ) -> anyhow::Result<LifecycleProjectionView<FlowProjectionView>> {
         let realm_id = trim_realm_id(realm_id);
         let path = format!("_cokret/self/projection/flows?realm_id={realm_id}");
         self.get_json(&path).await

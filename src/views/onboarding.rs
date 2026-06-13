@@ -241,7 +241,10 @@ pub fn OnboardingPanel(
                                             Some(&display),
                                             Some(&device),
                                         ).await {
-                                            Ok(account) => account_state.set(format!("registered {}", account.handle)),
+                                            Ok(account) => account_state.set(format!(
+                                                "registered {}",
+                                                account.principal_id
+                                            )),
                                             Err(error) => account_state.set(format!("register failed: {error}")),
                                         },
                                         Err(error) => account_state.set(format!("invalid server URL: {error}")),
