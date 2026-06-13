@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use chime::{
-    GatewayBinding, PushBridgeDescribeOutcome, PushDeviceConfig,
-    PushGatewayIntegrationDescribeOutcome, PushGatewayType, PushPreferences,
-    PushRegisterDeviceOutcome, PushRegisterDeviceRequestBody, PushRegistrationState,
-    PushUnregisterDeviceRequestBody, build_register_device_request, build_registration_state,
-    build_unregister_device_request, push_bridge_describe_url, push_integration_describe_url,
+    ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
+    ChimePushUnregisterDeviceRequest, GatewayBinding, PushBridgeDescribeOutcome, PushDeviceConfig,
+    PushGatewayIntegrationDescribeOutcome, PushGatewayType, PushPreferences, PushRegistrationState,
+    build_register_device_request, build_registration_state, build_unregister_device_request,
+    push_bridge_describe_url, push_integration_describe_url,
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -77,7 +77,7 @@ pub fn is_placeholder_push_key(key: &str) -> bool {
 /// settings flow should funnel through this helper before POSTing a register
 /// request to a non-loopback push gateway.
 pub fn ensure_production_register_request(
-    request: &PushRegisterDeviceRequestBody,
+    request: &ChimePushRegisterDeviceRequest,
 ) -> anyhow::Result<()> {
     if is_placeholder_push_key(&request.push_key) {
         anyhow::bail!(
@@ -165,14 +165,14 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
     }
 }
 
-pub fn build_register_request(device_id: &str) -> anyhow::Result<PushRegisterDeviceRequestBody> {
+pub fn build_register_request(device_id: &str) -> anyhow::Result<ChimePushRegisterDeviceRequest> {
     build_register_request_for_actor(device_id, None)
 }
 
 pub fn build_register_request_for_actor(
     device_id: &str,
     principal_id: Option<&str>,
-) -> anyhow::Result<PushRegisterDeviceRequestBody> {
+) -> anyhow::Result<ChimePushRegisterDeviceRequest> {
     let push_key = acquire_platform_push_key();
     let platform = current_platform();
     let prefs = push_preferences();
@@ -198,7 +198,7 @@ pub fn build_register_request_for_actor(
 pub fn build_unregister_request(
     device_id: &str,
     existing: Option<&PushRegistrationState>,
-) -> anyhow::Result<PushUnregisterDeviceRequestBody> {
+) -> anyhow::Result<ChimePushUnregisterDeviceRequest> {
     let platform = current_platform();
     let idempotency_key = format!("yougen-push-unregister-{device_id}");
     let registration_id = existing.and_then(|state| state.registration_id.as_deref());
@@ -233,8 +233,8 @@ pub fn build_unregister_request(
 }
 
 pub fn registration_state_from_response(
-    request: &PushRegisterDeviceRequestBody,
-    response: &PushRegisterDeviceOutcome,
+    request: &ChimePushRegisterDeviceRequest,
+    response: &ChimePushRegisterDeviceOutcome,
 ) -> PushRegistrationState {
     let binding = GatewayBinding::new(PushGatewayType::Standard, request.push_gateway.clone());
     let registered_at = Utc::now().to_rfc3339();
@@ -925,7 +925,7 @@ pub fn resolve_provider_push_token(
 // ═══════════════════════════════════════════════════════════════════════════
 // SecureKeyStore-backed push-token binding.
 //
-// The push token (`PushRegisterDeviceRequestBody::push_key`) is a long-lived
+// The push token (`ChimePushRegisterDeviceRequest::push_key`) is a long-lived
 // platform identifier that we would otherwise persist plaintext in
 // `LocalStateStore` so a register/unregister retry can find it. By
 // routing the persistence through the [`SecureKeyStore`] tier and
@@ -1124,7 +1124,7 @@ impl std::fmt::Debug for PushTokenBinding {
     }
 }
 
-/// Build a chime [`PushRegisterDeviceRequestBody`] for `device_id`, persisting
+/// Build a chime [`ChimePushRegisterDeviceRequest`] for `device_id`, persisting
 /// the resolved push token through [`PushTokenBinding`] for future
 /// idempotency / rotation. The returned request is wire-identical to
 /// [`build_register_request_for_actor`] — the binding effect is purely
@@ -1137,7 +1137,7 @@ pub fn build_register_request_with_secure_store(
     device_id: &str,
     principal_id: Option<&str>,
     store: &Arc<dyn SecureKeyStore>,
-) -> anyhow::Result<PushRegisterDeviceRequestBody> {
+) -> anyhow::Result<ChimePushRegisterDeviceRequest> {
     let request = build_register_request_for_actor(device_id, principal_id)?;
     let binding = PushTokenBinding::new(store.clone(), device_id);
     // Best-effort persist. A backend failure here should not block
@@ -1192,7 +1192,7 @@ mod tests {
     #[test]
     fn builds_persistable_registration_state() {
         let request = build_register_request("dev_yougen").unwrap();
-        let mut response = PushRegisterDeviceOutcome::default();
+        let mut response = ChimePushRegisterDeviceOutcome::default();
         response.ok = true;
         response.registration_id = Some("ck:push:test".to_owned());
         let state = registration_state_from_response(&request, &response);
@@ -1206,7 +1206,7 @@ mod tests {
     #[test]
     fn builds_unregister_request_from_existing_state() {
         let request = build_register_request("dev_yougen").unwrap();
-        let mut response = PushRegisterDeviceOutcome::default();
+        let mut response = ChimePushRegisterDeviceOutcome::default();
         response.ok = true;
         response.registration_id = Some("ck:push:test".to_owned());
         let state = registration_state_from_response(&request, &response);
@@ -1302,7 +1302,7 @@ mod tests {
     #[test]
     fn push_status_label_treats_state_without_registration_id_as_registered() {
         let request = build_register_request("dev_yougen").unwrap();
-        let mut response = PushRegisterDeviceOutcome::default();
+        let mut response = ChimePushRegisterDeviceOutcome::default();
         response.ok = true;
         let state = registration_state_from_response(&request, &response);
 

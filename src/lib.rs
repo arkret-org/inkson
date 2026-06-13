@@ -115,11 +115,12 @@ pub mod session_refresh;
 pub mod snapshot;
 pub mod sync_engine;
 pub mod telemetry;
-/// dioxus-components(shadcn 式)样式化组件层 — 经 `dx components add
-/// … --module-path src/ui` 生成,基于 `dioxus-primitives` 的无样式
-/// primitive。与现有手写 `components` 模块并存:`ui` 承载逐步迁移到
-/// 该组件库的视图;主题 CSS 见 `assets/dx-components-theme.css`。
-pub mod ui;
+/// C3:共享 UI 组件层。原本地 `src/ui/` 已原样迁入 `yoface` crate(13 个
+/// `#[css_module]` 封装 + 后台实用控件);此处 re-export 使全仓既有的
+/// `crate::ui::button::Button` 等引用路径保持不变,组件颜色走第一层语义
+/// 令牌(`--primary/--background/...`),由 `yoface::TOKENS_CSS` 提供(绿色
+/// 调色板,注入见 `app.rs`)。
+pub use yoface::ui;
 pub mod views;
 pub mod webrtc;
 pub mod workflows;

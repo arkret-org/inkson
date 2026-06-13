@@ -104,6 +104,11 @@ chrono = {workspace = true,features = ["serde"]}
 dioxus-icons = {workspace = true,default-features = false}
 dioxus-primitives = {workspace = true,default-features = false}
 dioxus-router = {workspace = true}
+# C3: Cokret 共享前端组件库。yougen 原 `src/ui/` 的 13 个 css_module 封装已
+# 原样迁入 yoface 并 re-export `dioxus_primitives`/`dioxus_icons`;yougen 改用
+# `yoface::ui::*`(`src/lib.rs` 把 `pub mod ui` 改为 `pub use yoface::ui`)。
+# patch 段与 yoface README 单一真相源完全一致(见本文件 [patch] 两段)。
+yoface = {path = "../yoface"}
 ed25519-dalek = {workspace = true,features = ["pem", "pkcs8"]}
 getrandom = {workspace = true,features = ["wasm_js"]}
 getrandom_02 = {workspace = true,features = ["js"]}

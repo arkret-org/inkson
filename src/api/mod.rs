@@ -5,7 +5,10 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use base64::Engine;
-use chime::{CokretPushClient, PushRegisterDeviceRequestBody, PushUnregisterDeviceRequestBody};
+use chime::{
+    ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
+    ChimePushUnregisterDeviceRequest, CokretPushClient,
+};
 use cokret_sdk::ErrorEnvelope;
 use reqwest::header::{ACCEPT, HeaderMap, RETRY_AFTER};
 use reqwest::{Client, Method, StatusCode};
@@ -1410,10 +1413,10 @@ fn canonical_blob_ref(blob_ref: &str) -> &str {
     blob_ref.split('#').next().unwrap_or(blob_ref).trim()
 }
 
-/// Project chime's full [`PushRegisterDeviceOutcome`](chime::PushRegisterDeviceOutcome)
+/// Project chime's full [`ChimePushRegisterDeviceOutcome`](chime::ChimePushRegisterDeviceOutcome)
 /// onto yougen's slimmer `PushRegisterView` view (the upstream
 /// fields not modelled here are intentionally dropped for now).
-fn map_chime_register_response(response: chime::PushRegisterDeviceOutcome) -> PushRegisterView {
+fn map_chime_register_response(response: ChimePushRegisterDeviceOutcome) -> PushRegisterView {
     PushRegisterView {
         ok: response.ok,
         registration_id: response.registration_id,

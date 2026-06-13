@@ -9,7 +9,7 @@ impl CokretApi {
     pub async fn register_push_device_with_request_at(
         &self,
         path: &str,
-        request: &PushRegisterDeviceRequestBody,
+        request: &ChimePushRegisterDeviceRequest,
     ) -> anyhow::Result<PushRegisterView> {
         let response = self
             .push_client(Some(path), None)
@@ -21,7 +21,7 @@ impl CokretApi {
 
     pub async fn register_push_device_with_request(
         &self,
-        request: &PushRegisterDeviceRequestBody,
+        request: &ChimePushRegisterDeviceRequest,
     ) -> anyhow::Result<PushRegisterView> {
         // Default register path is hardcoded in chime; pass `None` so it's used.
         let response = self
@@ -39,7 +39,7 @@ impl CokretApi {
 
     pub async fn unregister_push_device_with_request(
         &self,
-        request: &PushUnregisterDeviceRequestBody,
+        request: &ChimePushUnregisterDeviceRequest,
     ) -> anyhow::Result<OkOutcome> {
         let response = self
             .push_client(None, None)

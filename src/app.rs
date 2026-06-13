@@ -59,11 +59,15 @@ const DESIGN_STYLE: &str = include_str!("styles/design.css");
 
 const APP_OVERRIDES: &str = include_str!("styles/app_overrides.css");
 
-/// dioxus-components 主题变量(`--primary-color` / `--dxc-*` 等),供
-/// `src/ui` 下样式化组件的 `#[css_module]` 样式引用。遵循本仓 CSS idiom
-/// 以 `include_str!` 内联注入,而非 `asset!`/`<link>`;注入顺序排在三段
-/// 现有样式之前,使现有设计系统在任何冲突时取胜(共存、旧样式优先)。
-const DXC_THEME: &str = include_str!("../assets/dx-components-theme.css");
+/// C3:yoface 共享组件的设计令牌(第一层 shadcn 语义令牌
+/// `--primary/--background/--foreground/...` + 第二层 dioxus-components 兼容
+/// 别名 `--primary-color-N/--focused-border-color/...`),供 `yoface::ui::*`
+/// 的 `#[css_module]` 样式引用。色值即 yougen 绿色调色板(yoface tokens.css
+/// 取值「参照 yougen design.css」),故沿用 `var(--dark,…) var(--light,…)`
+/// 与 `[data-theme]` 开关,直接保留 yougen 现有绿色观感。替换了原 vendored
+/// `assets/dx-components-theme.css`(黑白默认色)。注入顺序排在三段现有样式
+/// 之前,令牌可被后续 design.css/app_overrides 覆盖。
+const DXC_THEME: &str = yoface::TOKENS_CSS;
 
 fn pinned_realm_ids_from_store(store: &LocalStateStore) -> BTreeSet<String> {
     store
