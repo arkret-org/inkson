@@ -585,6 +585,55 @@ impl SessionBootState {
     }
 }
 
+fn should_wait_for_secure_store_session_restore(
+    session_token: &str,
+    can_restore_session: bool,
+    account_did: &str,
+    secure_store_ready: bool,
+) -> bool {
+    session_token.trim().is_empty()
+        && !can_restore_session
+        && !account_did.trim().is_empty()
+        && !secure_store_ready
+}
+
+fn session_boot_state_from_bootstrap_material(
+    session_token: &str,
+    can_restore_session: bool,
+    can_reissue_development_session: bool,
+    account_did: &str,
+    secure_store_ready: bool,
+) -> SessionBootState {
+    let can_restore_now = can_restore_session || can_reissue_development_session;
+    if should_wait_for_secure_store_session_restore(
+        session_token,
+        can_restore_now,
+        account_did,
+        secure_store_ready,
+    ) {
+        SessionBootState::Restoring
+    } else {
+        SessionBootState::from_boot_material(session_token, can_restore_now)
+    }
+}
+
+fn rehydrated_session_token_for_active_config(
+    config: &ClientConfig,
+    base_url: &str,
+    account_did: &str,
+    device_id: &str,
+) -> Option<String> {
+    if config.session_token.trim().is_empty()
+        || normalize_server_url(&config.server_url) != normalize_server_url(base_url)
+        || config.account_did.trim() != account_did.trim()
+        || config.device_id.trim() != device_id.trim()
+    {
+        None
+    } else {
+        Some(config.session_token.clone())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AuthSurface {
     AppShell,
@@ -656,9 +705,13 @@ pub fn RouterView() -> Element {
         &initial_config.account_did,
         &initial_config.device_id,
     );
-    let initial_session_boot_state = SessionBootState::from_boot_material(
+    let initial_secure_store_bootstrap_ready = !cfg!(target_arch = "wasm32");
+    let initial_session_boot_state = session_boot_state_from_bootstrap_material(
         &initial_session_token,
-        initial_can_restore_session || initial_can_reissue_development_session,
+        initial_can_restore_session,
+        initial_can_reissue_development_session,
+        &initial_config.account_did,
+        initial_secure_store_bootstrap_ready,
     );
     let initial_realm_tree_nodes =
         realm_tree_nodes_from_sync_realms(&initial_local_state.realm_tree_projections);
@@ -759,7 +812,7 @@ pub fn RouterView() -> Element {
     let server_description = use_signal(|| Option::<ServerDescription>::None);
     let server_probe_status = use_signal(|| "server not probed".to_owned());
     let locale = use_signal(move || initial_locale);
-    let secure_store_bootstrap_ready = use_signal(|| !cfg!(target_arch = "wasm32"));
+    let secure_store_bootstrap_ready = use_signal(move || initial_secure_store_bootstrap_ready);
     #[cfg(target_arch = "wasm32")]
     {
         let mut state_store_for_secure_upgrade = state_store;
@@ -1169,9 +1222,25 @@ pub fn RouterView() -> Element {
     // account viewer probes and the initial server-authoritative full
     // sync. After that, the SyncEngine (below) owns continuous sync.
     let mut bootstrap_pending = use_signal(|| true);
+    let secure_store_ready = secure_store_bootstrap_ready();
     if bootstrap_pending() {
         let base = base_url();
         let mut session = token();
+        if session.trim().is_empty() && secure_store_ready {
+            let rehydrated = {
+                let loaded = config_store.read().load();
+                rehydrated_session_token_for_active_config(
+                    &loaded,
+                    &base,
+                    &account_did(),
+                    &device_id(),
+                )
+            };
+            if let Some(rehydrated) = rehydrated {
+                token.set(rehydrated.clone());
+                session = rehydrated;
+            }
+        }
         if !session.trim().is_empty() {
             let (has_oidc_bundle, stale_for_selected_server) = {
                 let store = state_store.read();
@@ -1219,9 +1288,12 @@ pub fn RouterView() -> Element {
         {
             bootstrap_pending.set(false);
             sync_bootstrap_complete.set(false);
-            session_boot_state.set(SessionBootState::from_boot_material(
+            session_boot_state.set(session_boot_state_from_bootstrap_material(
                 &session,
-                can_restore_session || can_reissue_development_session,
+                can_restore_session,
+                can_reissue_development_session,
+                &account_did(),
+                secure_store_ready,
             ));
             connect(
                 base,
@@ -1256,7 +1328,13 @@ pub fn RouterView() -> Element {
                 },
             );
         } else if !base.trim().is_empty() {
-            session_boot_state.set(SessionBootState::Unauthenticated);
+            session_boot_state.set(session_boot_state_from_bootstrap_material(
+                &session,
+                can_restore_session,
+                can_reissue_development_session,
+                &account_did(),
+                secure_store_ready,
+            ));
         }
     }
 

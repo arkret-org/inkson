@@ -615,6 +615,77 @@ fn boot_state_restores_when_refresh_material_exists_without_token() {
 }
 
 #[test]
+fn boot_state_waits_for_secure_store_before_known_account_is_signed_out() {
+    assert_eq!(
+        session_boot_state_from_bootstrap_material(
+            "",
+            false,
+            false,
+            "did:web:alice.example",
+            false
+        ),
+        SessionBootState::Restoring
+    );
+    assert_eq!(
+        session_boot_state_from_bootstrap_material("", false, false, "", false),
+        SessionBootState::Unauthenticated
+    );
+    assert_eq!(
+        session_boot_state_from_bootstrap_material("", false, false, "did:web:alice.example", true),
+        SessionBootState::Unauthenticated
+    );
+    assert_eq!(
+        session_boot_state_from_bootstrap_material(
+            "sx-live",
+            false,
+            false,
+            "did:web:alice.example",
+            false
+        ),
+        SessionBootState::Checking
+    );
+}
+
+#[test]
+fn rehydrated_session_token_only_matches_active_config() {
+    let config = ClientConfig::from_fields(
+        "https://local.host",
+        "did:web:alice.example",
+        "ck:device:01964137-0000-7000-8000-000000000001",
+        "sx-live",
+    );
+
+    assert_eq!(
+        rehydrated_session_token_for_active_config(
+            &config,
+            "https://local.host",
+            "did:web:alice.example",
+            "ck:device:01964137-0000-7000-8000-000000000001",
+        )
+        .as_deref(),
+        Some("sx-live")
+    );
+    assert!(
+        rehydrated_session_token_for_active_config(
+            &config,
+            "https://other.local.host",
+            "did:web:alice.example",
+            "ck:device:01964137-0000-7000-8000-000000000001",
+        )
+        .is_none()
+    );
+    assert!(
+        rehydrated_session_token_for_active_config(
+            &config,
+            "https://local.host",
+            "did:web:bob.example",
+            "ck:device:01964137-0000-7000-8000-000000000001",
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn auth_surface_hides_login_while_session_is_restoring() {
     assert_eq!(
         auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Restoring),
