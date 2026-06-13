@@ -170,7 +170,7 @@ impl CokretApi {
         let body = cokret_sdk::model::DirectorySearchRealmsRequestBody {
             query: Some(query.to_owned()),
             organization_did: None,
-            parent_space_id: None,
+            source_realm_id: None,
             requester: None,
             proofs: Vec::new(),
             cursor: next_cursor.map(ToOwned::to_owned),

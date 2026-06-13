@@ -301,7 +301,10 @@ mod tests {
             recovery_unconfigured: true,
             ..healthy()
         };
-        assert_eq!(resolve(reminder), AccountHealthPrompt::RecoverySetupReminder);
+        assert_eq!(
+            resolve(reminder),
+            AccountHealthPrompt::RecoverySetupReminder
+        );
         // Not yet prompted -> fire.
         assert!(should_autoprompt_recovery_setup(reminder, false));
         // Already prompted -> never fire again, even though still unconfigured.
