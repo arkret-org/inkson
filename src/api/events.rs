@@ -66,8 +66,8 @@ impl CokretApi {
 
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
     /// (`ck.typing`). They MUST flow through the canonical
-    /// `ck.self.ephemeral.send` operation (`POST /_cokret/self/ephemeral`), never
-    /// through `ck.self.events.submit` or a deployment-local typing shim.
+    /// `ck.self.ephemeral.command.send` operation (`POST /_cokret/self/ephemeral`), never
+    /// through `ck.self.events.command.submit` or a deployment-local typing shim.
     pub async fn send_typing(
         &self,
         realm_id: &str,
@@ -83,8 +83,8 @@ impl CokretApi {
     }
 
     /// Round R2/R3 (T02) — read receipts (`ck.receipt.read`) are wire-scope-
-    /// ephemeral. They MUST flow through `ck.self.ephemeral.send`; the
-    /// `ck.self.events.submit` durable path and deployment-local `/receipts`
+    /// ephemeral. They MUST flow through `ck.self.ephemeral.command.send`; the
+    /// `ck.self.events.command.submit` durable path and deployment-local `/receipts`
     /// shims MUST NOT be used.
     pub async fn send_receipt(
         &self,
@@ -163,7 +163,7 @@ impl CokretApi {
     }
 
     /// `GET /_cokret/self/events/describe` — spec binds the response to the
-    /// canonical `ServiceDescribe` shape (OpenAPI `ck.self.events.describe`).
+    /// canonical `ServiceDescribe` shape (OpenAPI `ck.self.events.query.describe`).
     /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
     /// mirror (with its non-spec `capabilities` blob) was removed.
     pub async fn events_describe(&self) -> anyhow::Result<cokret_sdk::ServiceDescribe> {
@@ -185,7 +185,7 @@ impl CokretApi {
         Ok(event_proof_context_from_description(describe))
     }
 
-    /// Submit a typed [`EventEnvelope`] over `ck.self.events.submit`. The
+    /// Submit a typed [`EventEnvelope`] over `ck.self.events.command.submit`. The
     /// active-signer registry is the SINGLE source of detached JWS
     /// proofs — if no signer is installed this fails closed with
     /// `no active signer configured` rather than sending an unsigned
@@ -260,7 +260,7 @@ impl CokretApi {
         Ok(SubmitEventResult::from(response))
     }
 
-    /// `ck.self.events.submit` in batch form over typed envelopes. Spec binds
+    /// `ck.self.events.command.submit` in batch form over typed envelopes. Spec binds
     /// events.submit to `POST /_cokret/self/events` and distinguishes the three
     /// accepted body shapes (single envelope,
     /// [`cokret_sdk::EventsSubmitBatchRequestBody`],
@@ -293,7 +293,7 @@ impl CokretApi {
 
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
-        // body is one of the three spec-defined `ck.self.events.submit`
+        // body is one of the three spec-defined `ck.self.events.command.submit`
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
         let sdk_events: Vec<cokret_sdk::Event> = envelopes
@@ -330,7 +330,7 @@ impl CokretApi {
     /// `ck.schema.ephemeral_envelope.v1` (kind in
     /// {`ck.call.signal`, `ck.presence`, `ck.typing`, `ck.receipt.read`}, and
     /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
-    /// signal kinds MUST NOT travel via `ck.self.events.submit`; this method is
+    /// signal kinds MUST NOT travel via `ck.self.events.command.submit`; this method is
     /// the single approved network path.
     pub async fn submit_ephemeral_envelope(
         &self,
@@ -362,7 +362,7 @@ impl CokretApi {
 
     /// Round R2/R3 (T02) — point-to-point to-device signals (the
     /// `ck.key.verification.*` family) MUST travel on the device-message
-    /// channel, NOT through `ck.self.events.submit` or the broadcast ephemeral
+    /// channel, NOT through `ck.self.events.command.submit` or the broadcast ephemeral
     /// channel. Thin convenience wrapper around
     /// [`Self::send_device_message_envelope`] that asserts the kind belongs
     /// to the to-device ephemeral family.
@@ -442,8 +442,8 @@ mod tests {
                 "ck.profile.principal_server_events_api.v1"
             ],
             "supported_operations": [
-                "ck.self.events.describe",
-                "ck.self.events.submit"
+                "ck.self.events.query.describe",
+                "ck.self.events.command.submit"
             ],
             "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
             "supported_features": ["ck.feature.soland.events.describe"],

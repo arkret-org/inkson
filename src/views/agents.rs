@@ -1205,7 +1205,7 @@ pub fn PersonalAgentAdminPanel(
             }
 
             // ───────────────────────────────────────────────────────
-            // List + refresh (ck.self.agent.list)
+            // List + refresh (ck.self.agent.query.list)
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-list",
                 div { class: "event-head",
@@ -1316,7 +1316,7 @@ pub fn PersonalAgentAdminPanel(
                                         },
                                         "Select"
                                     }
-                                    // ck.self.agent.get
+                                    // ck.self.agent.resource.get
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "agent-admin-get-button",
@@ -1362,14 +1362,14 @@ pub fn PersonalAgentAdminPanel(
             }
 
             // ───────────────────────────────────────────────────────
-            // Provision (ck.self.agent.provision)
+            // Provision (ck.self.agent.command.provision)
             // TODO(P3-impl): expand to a full form with initial_grants
             // picker driven by the 14-capability-action registry.
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-provision",
                 div { class: "event-head",
                     span { "Provision agent" }
-                    span { class: "badge blue", "ck.self.agent.provision" }
+                    span { class: "badge blue", "ck.self.agent.command.provision" }
                 }
                 div { class: "muted",
                     "Provisions a new native personal agent: DID issuance + first agent-key authorize + controller grant attach (orchestrated server-side)."
@@ -1586,12 +1586,12 @@ pub fn PersonalAgentAdminPanel(
             }
 
             // ───────────────────────────────────────────────────────
-            // Rotate key (ck.self.agent.rotate_key)
+            // Rotate key (ck.self.agent.command.rotate_key)
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-rotate-key",
                 div { class: "event-head",
                     span { "Rotate runtime key" }
-                    span { class: "badge blue", "ck.self.agent.rotate_key" }
+                    span { class: "badge blue", "ck.self.agent.command.rotate_key" }
                 }
                 div { class: "workflow-form",
                     Input {
@@ -1658,7 +1658,7 @@ pub fn PersonalAgentAdminPanel(
 
             // ───────────────────────────────────────────────────────
             // Grant attach / detach
-            // (ck.self.agent.grant.attach / ck.self.agent.grant.detach)
+            // (ck.self.agent.grant.command.attach / ck.self.agent.grant.resource.delete)
             // TODO(P3-impl): wire a 14-capability-action picker
             // (CAP_ACTION_AGENT_*); for now the grant_kind is a
             // free-form input so cotest journey vectors can drive the
@@ -1667,7 +1667,7 @@ pub fn PersonalAgentAdminPanel(
             div { class: "event", "data-testid": "agent-admin-grants",
                 div { class: "event-head",
                     span { "Capability grants" }
-                    span { class: "badge blue", "ck.self.agent.grant.attach / detach" }
+                    span { class: "badge blue", "ck.self.agent.grant.command.attach / detach" }
                 }
                 div { class: "muted",
                     "Spec agent_grant_attach_request_body carries the full grant object under the single `grant` property; the scaffold takes that object as raw JSON so cotest journey vectors can drive the wire shape."
@@ -1778,12 +1778,12 @@ pub fn PersonalAgentAdminPanel(
 
             // ───────────────────────────────────────────────────────
             // Sidecar thread ensure
-            // (ck.self.agent.sidecar_thread.ensure)
+            // (ck.self.agent.sidecar_thread.command.ensure)
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-sidecar-ensure",
                 div { class: "event-head",
                     span { "Sidecar thread (ensure)" }
-                    span { class: "badge blue", "ck.self.agent.sidecar_thread.ensure" }
+                    span { class: "badge blue", "ck.self.agent.sidecar_thread.command.ensure" }
                 }
                 div { class: "muted",
                     "Ensures the controller-private sidecar objects for the selected agent in a Realm."
@@ -1884,7 +1884,7 @@ pub fn PersonalAgentAdminPanel(
             div { class: "event", "data-testid": "agent-admin-participation",
                 div { class: "event-head",
                     span { "Participation policy" }
-                    span { class: "badge blue", "ck.self.agent.participation.set" }
+                    span { class: "badge blue", "ck.self.agent.participation.resource.replace" }
                 }
                 div { class: "muted",
                     "Per Realm: let the selected agent reply as itself, accept @mentions from other users, or act on your behalf. Each switch is capped by the Realm / Circle / Flow ceiling."

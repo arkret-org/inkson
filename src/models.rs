@@ -13,7 +13,7 @@ pub struct HealthOutcome {
 }
 
 /// App-local current-account projection derived from the spec
-/// `ck.self.account.viewer` response. `handle` is populated only from a
+/// `ck.self.account.query.viewer` response. `handle` is populated only from a
 /// signed `primary_handle_claim.handle`; an empty string means the server did
 /// not include handle evidence in the viewer response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -264,7 +264,7 @@ pub struct SpaceCreateResult {
 }
 
 // (Move/Seal pipeline DTOs deleted; all writes now go through
-// ck.self.events.submit via SubmitEventResult.)
+// ck.self.events.command.submit via SubmitEventResult.)
 
 /// Result of [`crate::api::CokretApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
@@ -284,9 +284,9 @@ pub enum AccountDataSetResult {
 
 pub const PROFILE_CORE_EVENT_STORE: &str = "ck.profile.core_event_store.v1";
 pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ck.profile.principal_server_events_api.v1";
-pub const OP_EVENTS_DESCRIBE: &str = "ck.self.events.describe";
-pub const OP_EVENTS_SUBMIT: &str = "ck.self.events.submit";
-pub const OP_SNAPSHOT_HEAD: &str = "ck.self.snapshot.head";
+pub const OP_EVENTS_DESCRIBE: &str = "ck.self.events.query.describe";
+pub const OP_EVENTS_SUBMIT: &str = "ck.self.events.command.submit";
+pub const OP_SNAPSHOT_HEAD: &str = "ck.self.snapshot.query.manifest_head";
 
 /// Yougen-side convenience methods over the SDK's [`ServerDescription`].
 ///
@@ -391,7 +391,7 @@ pub use cokret_sdk::model::{
     IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
-/// `ck.self.account.describe` response (lenient local read of the spec
+/// `ck.self.account.query.describe` response (lenient local read of the spec
 /// `ServiceDescribe` body; `frontier` is an authenticated extension field
 /// whose shape is deployment-defined, hence `Value`). Follows the local
 /// `*Outcome` DTO suffix convention (YOU-04-001).
@@ -820,14 +820,14 @@ pub struct BackfillView {
 
 // The yougen-local `SnapshotHeadState` mirror was deleted with the
 // 2026-06-11 spec resolution (`renames.json` migration group
-// `snapshot_head_returns_manifest`, hard_reject): `ck.self.snapshot.head`
+// `snapshot_head_returns_manifest`, hard_reject): `ck.self.snapshot.query.manifest_head`
 // now returns the full signed `ck.schema.snapshot.v1` manifest, and the
 // old head-pointer DTO (`snapshot_ref` / `state_digest` / `frontier` /
 // `signature`) MUST NOT appear on current wire. See
 // `api::CokretApi::snapshot_head`.
 
 pub use cokret_sdk::model::AuthzCheckOutcome;
-/// `ck.self.authz.get_effective_grants` response. soland serialises the SDK
+/// `ck.self.authz.grants.query.effective` response. soland serialises the SDK
 /// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
 /// decodes the same authoritative wire contract instead of a weakly-typed
 /// local mirror.
@@ -1018,7 +1018,7 @@ pub struct VerifyDeviceResult {
     pub trust_state: String,
 }
 
-/// `ck.self.events.submit` response.
+/// `ck.self.events.command.submit` response.
 ///
 /// Decodes **only** the canonical `EventsSubmitOutcome` wire shape —
 /// `{status, accepted[], duplicate[], rejected[], actor_frontier,

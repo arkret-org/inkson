@@ -25,7 +25,7 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
 /// delegated to someone else). Mapped from the authoritative SDK
-/// [`Capability`] grant rows that `ck.self.authz.get_effective_grants`
+/// [`Capability`] grant rows that `ck.self.authz.grants.query.effective`
 /// returns (soland serialises the SDK `GrantList` verbatim).
 #[derive(Clone, Debug, PartialEq)]
 struct CapabilityRow {

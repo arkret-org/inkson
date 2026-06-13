@@ -243,7 +243,7 @@ pub(super) fn submit_kanban_move(
         effect_summary: effect_summary.clone(),
         seal_ref: seal_ref.clone(),
         hlc: hlc.clone(),
-        note: format!("submitting {wire_kind} event via ck.self.events.submit"),
+        note: format!("submitting {wire_kind} event via ck.self.events.command.submit"),
         signed_move_json: None,
         rebase_attempts: 0,
     };
@@ -936,7 +936,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
         seal_ref: seal_ref.clone(),
         hlc: hlc.clone(),
         note: if attempt == 0 {
-            format!("submitting {kind} via ck.self.events.submit")
+            format!("submitting {kind} via ck.self.events.command.submit")
         } else {
             format!("rebase attempt {attempt} of {kind}")
         },
@@ -1240,7 +1240,7 @@ pub(super) fn replay_first_move(
     if let Some(record) = write_records.write().get_mut(idx) {
         record.state = CardState::Quarantined;
         record.note =
-            "replay via ck.self.events.submit not yet wired; quarantining for manual review"
+            "replay via ck.self.events.command.submit not yet wired; quarantining for manual review"
                 .to_owned();
     }
     board_status.set(

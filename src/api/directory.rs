@@ -200,7 +200,7 @@ impl CokretApi {
     }
 
     /// R3.3 (CKP-0011) — resolve a shareable object address (Realm / Flow /
-    /// Message) to a directory preview via `ck.find.directory.resolve_target`
+    /// Message) to a directory preview via `ck.find.directory.query.resolve_target`
     /// (`POST /_cokret/find/directory/resolve-target`).
     ///
     /// `address` is the canonical `web+cokret:` (or HTTPS-fragment) string
@@ -230,7 +230,7 @@ impl CokretApi {
             .await
     }
 
-    /// `ck.self.snapshot.head`.
+    /// `ck.self.snapshot.query.manifest_head`.
     ///
     /// Snapshot bootstrap is an acceleration layer. If the server does not
     /// advertise or serve the operation, callers silently fall back to event
@@ -471,7 +471,7 @@ impl CokretApi {
         anyhow::bail!("invite target must be an invite locator URL or principal locator JSON")
     }
 
-    /// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.list_handles_for_subject`.
+    /// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.query.list_handles_for_subject`.
     ///
     /// Inverse of [`Self::resolve_handle`]: given a known holder/principal
     /// DID, return the current context-visible signed handle claims +

@@ -37,7 +37,7 @@ impl CokretApi {
     /// Describe-gated tus endpoint discovery. Returns the binding
     /// `base_url` only when the server advertises both the protocol
     /// feature id and a `kind="tus"` binding that covers
-    /// `ck.self.blob.upload`.
+    /// `ck.self.blob.upload.create`.
     pub async fn resumable_upload_base_url(&self) -> Option<Url> {
         let describe = self.describe_cached().await.ok()?;
         if !describe
@@ -54,7 +54,7 @@ impl CokretApi {
         if let Some(operations) = binding.get("operations").and_then(Value::as_array)
             && !operations
                 .iter()
-                .any(|op| op.as_str() == Some("ck.self.blob.upload"))
+                .any(|op| op.as_str() == Some("ck.self.blob.upload.create"))
         {
             return None;
         }

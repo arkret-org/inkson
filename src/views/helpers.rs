@@ -167,7 +167,7 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
 /// `did:web:<domain>:users:<localpart>` and
 /// `did:webvh:<scid>:<domain>:users:<localpart>`. Verified handle display
 /// still comes from signed `ck.schema.handle_claim.v1` evidence or
-/// `ck.find.directory.list_handles_for_subject`; this helper only keeps UI
+/// `ck.find.directory.query.list_handles_for_subject`; this helper only keeps UI
 /// rows readable while soland's roster handle-claim inline path is still
 /// being wired.
 pub fn handle_display_from_did(did: &str) -> Option<String> {
@@ -517,7 +517,7 @@ pub struct RenderedMention {
 /// `accepted_issuers` policy. When a verified primary handle wins it is
 /// shown as `@{localpart}:{domain}`.
 ///
-/// Step 2 (live `ck.find.directory.list_handles_for_subject` resolution) is
+/// Step 2 (live `ck.find.directory.query.list_handles_for_subject` resolution) is
 /// wired through [`crate::views::helpers::list_handles_for_subject_ui`] /
 /// the "Why am I seeing this handle?" panel and feeds the same
 /// `claim_set_snapshot` — `TODO(R3.2.1)`: plumb the live result back into
@@ -636,7 +636,7 @@ pub fn handle_claim_rows(
 
 /// R3.2 (YG-DIR-1/2) — "Why am I seeing this handle?" transparency
 /// panel. Given a subject (principal) DID it calls the directory
-/// `ck.find.directory.list_handles_for_subject` op and renders the visible
+/// `ck.find.directory.query.list_handles_for_subject` op and renders the visible
 /// signed handle claims (issuer / binding_state / created_at / expiry /
 /// claim_digest) plus the §3.2.1 primary handle. This is the user-facing
 /// disclosure surface mandated by §3.8 — handles are never authoritative
@@ -696,7 +696,7 @@ pub fn WhyThisHandlePanel(
         div { class: "why-this-handle", "data-testid": "why-this-handle-panel",
             div { class: "why-this-handle-head",
                 strong { "Why am I seeing this handle?" }
-                span { class: "muted", "ck.find.directory.list_handles_for_subject" }
+                span { class: "muted", "ck.find.directory.query.list_handles_for_subject" }
             }
             div { class: "muted",
                 "Handles are not authoritative roster fields — they come from signed "

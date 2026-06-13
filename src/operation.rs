@@ -1385,7 +1385,7 @@ pub mod ck_ops {
 
     // YOU-01-011: the former `ck.moderation.report.submit` builder was
     // removed — the kind is not in the spec event-kind-registry (the
-    // registered reporting surface is `ck.self.moderation.report` over
+    // registered reporting surface is `ck.self.moderation.command.report` over
     // the HTTP path via `api::Client::report_moderation`). Re-add only
     // if an event-stream report kind is registered via CKP.
 

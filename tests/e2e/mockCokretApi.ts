@@ -270,40 +270,40 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           "events.submit",
         ],
         supported_operations: [
-          "ck.self.account.subscribe",
-          "ck.self.events.query",
-          "ck.self.events.subscribe",
-          "ck.find.directory.search_realms",
-          "ck.find.directory.resolve_realm",
+          "ck.self.account.stream.subscribe",
+          "ck.self.events.query.scan",
+          "ck.self.events.stream.subscribe",
+          "ck.find.directory.query.search_realms",
+          "ck.find.directory.query.resolve_realm",
           ...(advertiseListHandlesForSubject
-            ? ["ck.find.directory.list_handles_for_subject"]
+            ? ["ck.find.directory.query.list_handles_for_subject"]
             : []),
-          "ck.self.authz.check",
+          "ck.self.authz.query.check",
           "ck.realm.create",
           "ck.space.create",
           "ck.member.state",
           "ck.invite.create",
           "ck.invite.accept",
           "ck.invite.cancel",
-          "ck.self.events.submit",
+          "ck.self.events.command.submit",
           "ck.message.create",
           "ck.message.revise",
           "ck.message.redact",
           "ck.reaction.add",
-          "ck.self.keys.upload",
-          "ck.self.keys.query",
-          "ck.self.keys.claim",
-          "ck.self.keys.backups.list",
-          "ck.self.keys.backups.put",
-          "ck.root.identity.recovery_policy.get",
-          "ck.root.identity.recovery_policy.put",
-          "ck.self.device_messages.get",
-          "ck.self.device_messages.put",
-          "ck.self.device_messages.ack",
-          "ck.edge.push.register_device",
-          "ck.open.mimi.provider_directory",
-          "ck.self.events.describe",
-          "ck.self.events.submit",
+          "ck.self.keys.upload.create",
+          "ck.self.keys.query.lookup",
+          "ck.self.keys.command.claim",
+          "ck.self.keys.backups.query.list",
+          "ck.self.keys.backups.resource.replace",
+          "ck.root.identity.recovery_policy.resource.get",
+          "ck.root.identity.recovery_policy.command.publish",
+          "ck.self.device_messages.query.list",
+          "ck.self.device_messages.command.send",
+          "ck.self.device_messages.command.ack",
+          "ck.edge.push.command.register_device",
+          "ck.open.mimi.query.provider_directory",
+          "ck.self.events.query.describe",
+          "ck.self.events.command.submit",
         ],
         supported_schema_profiles: ["ck.schema.core.v1"],
         supported_reducer_profiles: ["ck.reducer.v1"],
@@ -347,7 +347,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
 
     if (url.pathname === "/_cokret/self/events/describe") {
-      // Spec ck.self.events.describe -> canonical ServiceDescribe shape
+      // Spec ck.self.events.query.describe -> canonical ServiceDescribe shape
       // (17 required fields; yougen decodes the SDK ServerDescription).
       return json(route, {
         service_did: "did:web:server.local",
@@ -355,7 +355,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         service_type: "principal_server",
         protocol_version: "1.0",
         supported_profiles: ["ck.profile.core_event_store.v1"],
-        supported_operations: ["ck.self.events.submit", "ck.self.events.describe"],
+        supported_operations: ["ck.self.events.command.submit", "ck.self.events.query.describe"],
         supported_bindings: [{ kind: "http_json" }],
         supported_features: [],
         auth_metadata: {
@@ -512,7 +512,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, {
         ok: true,
         key_packages: [{ key_package_ref: "mimi:key-package:e2e", target: "mimi://remote.example/alice" }],
-        receipt: { kind: "ck.open.mimi.key_material", profile: "ck.profile.mimi_interop.v1" },
+        receipt: { kind: "ck.open.mimi.exchange.request_key_material", profile: "ck.profile.mimi_interop.v1" },
       });
     }
 
@@ -521,7 +521,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, {
         ok: true,
         room_id: roomId,
-        receipt: { kind: "ck.open.mimi.room_update", operation_id: "ck:operation:mimi-room-update" },
+        receipt: { kind: "ck.open.mimi.command.update_room", operation_id: "ck:operation:mimi-room-update" },
       });
     }
 
@@ -529,7 +529,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, {
         ok: true,
         accepted: ["did:web:remote.example"],
-        receipt: { kind: "ck.open.mimi.notify", notification_id: "ck:mimi:notify:e2e" },
+        receipt: { kind: "ck.open.mimi.command.notify", notification_id: "ck:mimi:notify:e2e" },
       });
     }
 
@@ -554,7 +554,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, {
         group_info: { epoch: 7, mls_group_id: "mls-group-01", policy_root: "sha256:e2e-policy-root" },
         room_binding_ref: "ck:event:01964137-0000-7000-8000-00000000d0ab",
-        proofs: [{ kind: "ck.open.mimi.group_info", profile: "ck.profile.mimi_interop.v1" }],
+        proofs: [{ kind: "ck.open.mimi.query.group_info", profile: "ck.profile.mimi_interop.v1" }],
       });
     }
 
@@ -563,7 +563,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         ok: true,
         consent_id: "ck:mimi-consent:e2e",
         state: "requested",
-        receipt: { kind: "ck.open.mimi.request_consent" },
+        receipt: { kind: "ck.open.mimi.command.request_consent" },
       });
     }
 
@@ -572,7 +572,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         ok: true,
         consent_id: "ck:mimi-consent:e2e",
         state: "accepted",
-        receipt: { kind: "ck.open.mimi.update_consent" },
+        receipt: { kind: "ck.open.mimi.command.update_consent" },
       });
     }
 
@@ -597,7 +597,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         ok: true,
         report_id: "ck:report:mimi-e2e",
         status: "queued",
-        receipt: { kind: "ck.open.mimi.report_abuse" },
+        receipt: { kind: "ck.open.mimi.command.report_abuse" },
       });
     }
 
@@ -926,7 +926,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
 
     // NB: no `/_cokret/self/snapshot/head` route. The mock's describe does
-    // not advertise `ck.self.snapshot.head`, so the client falls back to
+    // not advertise `ck.self.snapshot.query.manifest_head`, so the client falls back to
     // event replay before issuing the request. The current wire shape is the
     // full signed `ck.schema.snapshot.v1` manifest (self-id field `id`); the
     // legacy `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
@@ -1421,7 +1421,7 @@ function joinCandidate() {
     service_type: "principal_server",
     role: "primary",
     endpoint: null,
-    operations: ["ck.self.events.submit"],
+    operations: ["ck.self.events.command.submit"],
     join_methods: ["invite_accept", "member_join"],
     priority: 0,
     source: "directory_ingest",

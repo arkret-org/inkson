@@ -755,7 +755,7 @@ mod tests {
         // Server advertises exactly the operations SDK's
         // `requirements_for(PROFILE_MINIMAL_CLIENT)` requires — minimal
         // client should be ready. `chat_mvp` additionally requires
-        // `ck.self.account.subscribe` which the fixture intentionally omits, so
+        // `ck.self.account.stream.subscribe` which the fixture intentionally omits, so
         // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",
@@ -765,9 +765,9 @@ mod tests {
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
             "supported_features": [],
             "supported_operations": [
-                "ck.self.events.get",
-                "ck.self.events.query",
-                "ck.server.describe",
+                "ck.self.events.resource.get",
+                "ck.self.events.query.scan",
+                "ck.server.query.describe",
             ],
             "supported_bindings": [],
             "auth_metadata": {},
@@ -798,8 +798,8 @@ mod tests {
         assert!(
             chat.missing
                 .iter()
-                .any(|missing| missing.contains("ck.self.account.subscribe")),
-            "expected chat_mvp to flag missing ck.self.account.subscribe, got {:?}",
+                .any(|missing| missing.contains("ck.self.account.stream.subscribe")),
+            "expected chat_mvp to flag missing ck.self.account.stream.subscribe, got {:?}",
             chat.missing
         );
     }

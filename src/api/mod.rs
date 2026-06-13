@@ -191,7 +191,7 @@ pub struct AssignedToRelationProjectionView {
 
 /// YOU-01-009 子项 3 — spec-registered collection projection response
 /// (`view.schema.json#/$defs/collection_projection_view`, operation
-/// `ck.self.views.collection_projection`,
+/// `ck.self.views.collection_projection.command.materialize`,
 /// `POST /_cokret/self/views/{view_id}/projection`). Defined locally
 /// because the SDK still carries its pre-registration draft DTO
 /// (`CollectionProjectionOutcome`, with `kind`/`group_id`/`discussion`
@@ -404,7 +404,7 @@ impl Default for RetryPolicy {
     }
 }
 
-/// Context for `ck.find.directory.resolve_handle`.
+/// Context for `ck.find.directory.query.resolve_handle`.
 ///
 /// Protocol distinction: `lookup` / `mention` are display-safe resolves;
 /// `member_add` / `invite` request Realm/audience-bound membership-builder
@@ -1830,7 +1830,7 @@ fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOu
     }
 }
 
-/// Incremental folder for `ck.self.account.subscribe` NDJSON frames.
+/// Incremental folder for `ck.self.account.stream.subscribe` NDJSON frames.
 ///
 /// YOU-01-010: consumes EVERY frame instead of returning at the first
 /// `delta` — catchup deltas are merged in order, and per client-sync.md
@@ -2067,7 +2067,7 @@ fn select_join_candidate<'a>(
             candidate
                 .operations
                 .iter()
-                .any(|op| op == "ck.self.events.submit")
+                .any(|op| op == "ck.self.events.command.submit")
         })
         .filter(|candidate| {
             candidate
@@ -2440,7 +2440,7 @@ mod tests {
             "protocol_version": "1.0",
             "supported_profiles": [],
             "supported_features": ["account.subscribe"],
-            "supported_operations": ["ck.self.account.subscribe"],
+            "supported_operations": ["ck.self.account.stream.subscribe"],
             "supported_bindings": [{"kind": "http_json"}],
             "auth_metadata": {},
             "limits": {"storage": "memory"},

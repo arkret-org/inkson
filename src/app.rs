@@ -49,7 +49,7 @@ const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const BOOT_ACCESS_TOKEN_SKEW_SECS: i64 = 30;
 const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
-const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.list_handles_for_subject";
+const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.query.list_handles_for_subject";
 const MIN_SIDEBAR_WIDTH: f64 = 280.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 

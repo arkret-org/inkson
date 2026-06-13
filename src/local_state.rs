@@ -64,7 +64,7 @@ pub struct NotificationClientState {
     pub archived: bool,
 }
 
-/// Realm-scoped cache for `ck.find.directory.list_handles_for_subject`.
+/// Realm-scoped cache for `ck.find.directory.query.list_handles_for_subject`.
 ///
 /// Handles are display evidence, not identity keys. Cache entries are
 /// therefore bound to the visible subject DID, the Realm context, and the
@@ -456,7 +456,7 @@ impl MoveSubmissionState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveSubmissionRecord {
     pub move_id: String,
-    /// Server-assigned Event id returned by `ck.self.events.submit`. Older
+    /// Server-assigned Event id returned by `ck.self.events.command.submit`. Older
     /// records may only have `move_id` (the local idempotency alias);
     /// sync `event_states[]` uses this id, so new records persist it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1162,7 +1162,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
     /// Display-only cache for reverse handle lookup by subject DID. Entries
-    /// come from validated `ck.find.directory.list_handles_for_subject` responses
+    /// come from validated `ck.find.directory.query.list_handles_for_subject` responses
     /// or equivalent roster evidence and are never used as authority for
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]

@@ -2,7 +2,7 @@ use super::*;
 
 impl CokretApi {
     /// Build + submit the spec-canonical `ck.realm.create` event bundle
-    /// (and its facet follow-ups) via `ck.self.events.submit`
+    /// (and its facet follow-ups) via `ck.self.events.command.submit`
     /// (`POST /_cokret/self/events`).
     ///
     /// Per spec realm-and-space.md §2.6 the create event itself is the
@@ -184,7 +184,7 @@ impl CokretApi {
 
     /// Member-state FSM transition (kick / ban / unban / leave) on the
     /// Realm's `ck.component.member.state.v1` cell. Submits a `ck.member.state`
-    /// event via `ck.self.events.submit`; deployment-local member REST shims are
+    /// event via `ck.self.events.command.submit`; deployment-local member REST shims are
     /// intentionally not used.
     pub async fn transition_member_state(
         &self,
@@ -245,7 +245,7 @@ impl CokretApi {
         .await
     }
 
-    // ── Space / Realm Management (all writes go through ck.self.events.submit) ─
+    // ── Space / Realm Management (all writes go through ck.self.events.command.submit) ─
 
     /// Update a Realm's metadata via `ck.realm.update` event (spec-canonical).
     /// `patch` carries the merge-shape body the server reducer applies to the
@@ -542,7 +542,7 @@ impl CokretApi {
 
     // ── Views — collection projection (T20 / YOU-01-009 子项 3) ──────
     //
-    // Spec-registered operation `ck.self.views.collection_projection`
+    // Spec-registered operation `ck.self.views.collection_projection.command.materialize`
     // (`POST /_cokret/self/views/{view_id}/projection`, spec commit
     // b0cfa89). The request body is the registered
     // `view_projection_request_body` (`{cursor?, limit?}` — an empty
@@ -589,7 +589,7 @@ impl CokretApi {
     /// outgoing reducer-input events as `seal_ref`.
     ///
     /// Spec resolution (2026-06-12, SPEC-SOL-003): the registered
-    /// account-client sourcing is `ck.self.events.frontier?realm_id=`,
+    /// account-client sourcing is `ck.self.events.query.frontier?realm_id=`,
     /// whose Realm Seal view carries `{seal_id, control_event_set_root,
     /// state_root, hlc?}`. `seal_id` is the DataEvent `seal_ref`; the
     /// full view mints a single-leaf Control Move `seal_basis` (use
