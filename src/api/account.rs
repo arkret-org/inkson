@@ -140,7 +140,7 @@ impl CokretApi {
 
     /// A4b — update the authenticated principal's public profile
     /// (display_name / bio / avatar_blob_ref). Mirrors the
-    /// `ck.self.account.update_profile` wire shape: each field is
+    /// `ck.self.account.command.update_profile` wire shape: each field is
     /// `Option<String>`; `None` leaves the field untouched server-side,
     /// `Some("")` explicitly clears it. The server normalises empty
     /// strings to `None` on write.
@@ -348,7 +348,7 @@ impl CokretApi {
     /// Read the actor's `invite_receive_policy` ("谁可以邀请我", U4).
     ///
     /// Spec `invite-addressing.md` §5 / OpenAPI
-    /// `ck.self.invite_receive_policy.get`: served from the self plane at
+    /// `ck.self.invite_receive_policy.resource.get`: served from the self plane at
     /// `GET /_cokret/self/invite-receive-policy` and returns the bare
     /// `cokret_sdk::InviteReceivePolicy` (soland echoes the stored override or
     /// its recommended default). When the deployment does not yet wire this
@@ -362,7 +362,7 @@ impl CokretApi {
 
     /// Persist the actor's `invite_receive_policy` (U4).
     ///
-    /// Spec `ck.self.invite_receive_policy.set`:
+    /// Spec `ck.self.invite_receive_policy.resource.replace`:
     /// `POST /_cokret/self/invite-receive-policy` with the bare
     /// `cokret_sdk::InviteReceivePolicy` as the body. The handler enforces
     /// `subject_id == session actor` and requires the `schema` constant, so the
@@ -531,7 +531,7 @@ impl CokretApi {
         self.get_json("_cokret/self/account/describe").await
     }
 
-    /// `ck.self.account.subscribe` snapshot fold. The server returns NDJSON frames;
+    /// `ck.self.account.stream.subscribe` snapshot fold. The server returns NDJSON frames;
     /// this consumes EVERY frame of the response (merging catchup deltas and
     /// advancing the cursor to the last cursor-bearing frame per
     /// client-sync.md §2.2) and keeps the rest of the app on the existing

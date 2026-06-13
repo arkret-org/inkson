@@ -11,7 +11,7 @@ impl CokretApi {
     // mirrors were removed.
     // ────────────────────────────────────────────────────────────────
 
-    /// `POST /_cokret/gate/account/agent-key-pair` — `ck.gate.account.agent_key_pair`.
+    /// `POST /_cokret/gate/account/agent-key-pair` — `ck.gate.account.command.pair_agent_key`.
     /// Authorizes a fresh agent runtime key pair against an agent
     /// principal.
     pub async fn agent_key_pair(
@@ -22,7 +22,7 @@ impl CokretApi {
             .await
     }
 
-    /// `POST /_cokret/self/agents` — `ck.self.agent.provision`. Provisions a new
+    /// `POST /_cokret/self/agents` — `ck.self.agent.command.provision`. Provisions a new
     /// personal agent principal; the spec outcome is the pairing handle
     /// (`agent_principal_id` + `pairing_request_id` + `expires_at`).
     pub async fn agent_provision(
@@ -32,13 +32,13 @@ impl CokretApi {
         self.post_json("_cokret/self/agents", body).await
     }
 
-    /// `GET /_cokret/self/agents` — `ck.self.agent.list`. Returns the
+    /// `GET /_cokret/self/agents` — `ck.self.agent.query.list`. Returns the
     /// controller-self list of agent views (soland enforces caller binding).
     pub async fn agent_list(&self) -> anyhow::Result<cokret_sdk::AgentList> {
         self.get_json("_cokret/self/agents").await
     }
 
-    /// `GET /_cokret/self/agents/{id}` — `ck.self.agent.get`.
+    /// `GET /_cokret/self/agents/{id}` — `ck.self.agent.resource.get`.
     pub async fn agent_get(
         &self,
         agent_principal_id: &str,
@@ -48,9 +48,9 @@ impl CokretApi {
             .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/pause` — `ck.self.agent.pause` (durable
-    /// reducer-input event). Auth Server flushes capability cache with
-    /// reason `agent_paused`. The spec response is
+    /// `POST /_cokret/self/agents/{id}/pause` — `ck.self.agent.command.pause`.
+    /// The accepted reducer-input event remains `ck.self.agent.pause`. Auth Server flushes
+    /// capability cache with reason `agent_paused`. The spec response is
     /// `operation_status_outcome` (`{ok, status}`).
     pub async fn agent_pause(
         &self,
@@ -65,7 +65,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/resume` — `ck.self.agent.resume`.
+    /// `POST /_cokret/self/agents/{id}/resume` — `ck.self.agent.command.resume`.
     pub async fn agent_resume(
         &self,
         agent_principal_id: &str,
@@ -79,7 +79,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/deactivate` — `ck.self.agent.deactivate`.
+    /// `POST /_cokret/self/agents/{id}/deactivate` — `ck.self.agent.command.deactivate`.
     /// Triggers a cascade: `ck.agent.key.revoke` +
     /// `ck.capability.revoke` + runtime endpoint revocation on the
     /// soland side. Destructive — callers MUST gate this on an
@@ -97,7 +97,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/rotate-key` — `ck.self.agent.rotate_key`.
+    /// `POST /_cokret/self/agents/{id}/rotate-key` — `ck.self.agent.command.rotate_key`.
     /// Writes the `ck.agent.key.{revoke,authorize}` pair atomically.
     pub async fn agent_rotate_key(
         &self,
@@ -112,7 +112,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/grants` — `ck.self.agent.grant.attach`.
+    /// `POST /_cokret/self/agents/{id}/grants` — `ck.self.agent.grant.command.attach`.
     /// Attaches a capability grant scoped to the agent. The spec body
     /// carries the full grant object under the single `grant` property.
     pub async fn agent_grant_attach(
@@ -129,7 +129,7 @@ impl CokretApi {
     }
 
     /// `DELETE /_cokret/self/agents/{id}/grants/{grant_id}` —
-    /// `ck.self.agent.grant.detach`.
+    /// `ck.self.agent.grant.resource.delete`.
     pub async fn agent_grant_detach(
         &self,
         agent_principal_id: &str,
@@ -144,7 +144,7 @@ impl CokretApi {
     }
 
     /// `PUT /_cokret/self/agents/{id}/participation` —
-    /// `ck.self.agent.participation.set` (CKP-0010). Sets the
+    /// `ck.self.agent.participation.resource.replace` (CKP-0010). Sets the
     /// controller's participation selection for one scope; soland
     /// rejects selections that exceed the effective ceiling.
     pub async fn agent_participation_set(
@@ -161,7 +161,7 @@ impl CokretApi {
     }
 
     /// `GET /_cokret/self/agents/{id}/participation` —
-    /// `ck.self.agent.participation.get` (CKP-0010). Returns the
+    /// `ck.self.agent.participation.resource.get` (CKP-0010). Returns the
     /// resolved per-scope selection / ceiling / effective triples.
     pub async fn agent_participation_get(
         &self,
@@ -175,7 +175,7 @@ impl CokretApi {
     }
 
     /// `POST /_cokret/self/agent-sidecar-threads:ensure` —
-    /// `ck.self.agent.sidecar_thread.ensure`. Idempotently derives the
+    /// `ck.self.agent.sidecar_thread.command.ensure`. Idempotently derives the
     /// controller_agent_circle_key and ensures a sidecar Circle exists
     /// between the controller and the native agent.
     pub async fn agent_sidecar_thread_ensure(

@@ -7,7 +7,7 @@
 //! Re-exports the SDK's [`Attachment`] / [`MediaMetadata`] / [`Thumbnail`]
 //! structures and provides operation builders for blob register / revoke
 //! events. The actual upload bytes go to the Principal Server's
-//! `ck.self.blob.upload` endpoint; this module covers the durable event side.
+//! `ck.self.blob.upload.create` endpoint; this module covers the durable event side.
 //!
 //! # Attachment AEAD is the SDK's canonical codec
 //!

@@ -67,7 +67,7 @@ impl CokretApi {
     /// Submit a durable `ck.call.recording.start` event marking opt-in
     /// recording (webrtc-signaling.md §7 / event-kind-registry). The
     /// envelope is signed and submitted through the unified
-    /// `ck.self.events.submit` path.
+    /// `ck.self.events.command.submit` path.
     pub async fn submit_call_recording_start(
         &self,
         realm_id: &str,

@@ -37,7 +37,7 @@ const MEMBER_SEARCH_THRESHOLD: usize = 8;
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to
-// ck.self.events.submit via the ck_ops::* event builders. The original
+// ck.self.events.command.submit via the ck_ops::* event builders. The original
 // helpers (and their tests) are preserved in git history.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

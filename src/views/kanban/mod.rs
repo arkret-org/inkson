@@ -1588,7 +1588,7 @@ pub fn KanbanPanel(
                                     onclick: {
                                         // Lists are Space containers in v1. The local column is
                                         // visible immediately but remains in sending/failed state
-                                        // until `ck.self.events.submit` returns.
+                                        // until `ck.self.events.command.submit` returns.
                                         let base = base_url.clone();
                                         let realm = selected_realm_id.clone();
                                         let actor = account_did.clone();
