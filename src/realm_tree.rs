@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::models::{RealmTreeNode, RealmTreeNodeKind};
@@ -19,6 +20,188 @@ pub(crate) struct RealmTreeItem {
     pub(crate) node: RealmTreeNode,
     pub(crate) depth: usize,
     pub(crate) descendant_count: usize,
+}
+
+/// Caller-supplied fields for an optimistic Realm projection body.
+///
+/// A named struct rather than a positional argument list because every
+/// field here is a `String`/`Vec<String>`, which made the old constructor
+/// trivially easy to call with two arguments swapped.
+pub(crate) struct RealmProjectionInput {
+    pub owner: String,
+    pub admins: Vec<String>,
+    pub members: Vec<String>,
+    pub title: String,
+    pub summary: String,
+    pub discoverability: String,
+    /// Wire value the user picked from `ENCRYPTION_PROFILE_OPTIONS`
+    /// (e.g. `mls_rfc9420`). Written through verbatim — the optimistic
+    /// body must match exactly what the user chose.
+    pub encryption_profile: String,
+    pub plaintext_visible_services: Vec<String>,
+    /// Recommended content/metadata floor (e.g. `e2ee_required`), or `None`
+    /// to omit the floor keys entirely. The caller decides this via
+    /// [`crate::api::encryption_profile_uses_recommended_floor`] so the
+    /// "which profile recommends which floor" rule stays single-sourced in
+    /// `crate::api` instead of being duplicated here.
+    pub encryption_floor: Option<String>,
+}
+
+/// Caller-supplied fields for an optimistic Space projection body.
+pub(crate) struct SpaceProjectionInput {
+    pub realm_id: String,
+    pub kind: String,
+    pub title: String,
+    pub summary: String,
+    pub parent_space_id: Option<String>,
+    pub default_realm_id: Option<String>,
+}
+
+/// Optimistic local Realm/Space projection body written to the sidebar
+/// store the instant a create succeeds, before the authoritative sync
+/// projection lands.
+///
+/// Internally tagged on `__kind` (the yougen-local Realm/Space marker read
+/// by [`projection_tree_node_kind`]; legacy bodies without it default to
+/// "realm"). Each variant flattens its own typed body, so a Realm can never
+/// carry Space-only fields and a Space can never carry Realm-only fields —
+/// the discriminant and the field set can't disagree. The tag lives at
+/// `__kind` rather than `kind` because `kind` is already the Space's own
+/// space-kind field.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "__kind", rename_all = "snake_case")]
+pub(crate) enum OptimisticRealmTreeProjection {
+    Realm(RealmProjectionBody),
+    Space(SpaceProjectionBody),
+}
+
+impl OptimisticRealmTreeProjection {
+    pub(crate) fn realm(input: RealmProjectionInput) -> Self {
+        let RealmProjectionInput {
+            owner,
+            admins,
+            members,
+            title,
+            summary,
+            discoverability,
+            encryption_profile,
+            plaintext_visible_services,
+            encryption_floor,
+        } = input;
+        // Realm metadata is mirrored at the body top level *and* under
+        // `summary` because downstream readers (e.g.
+        // `realm_projection_is_encrypted`) probe both containers.
+        Self::Realm(RealmProjectionBody {
+            owner: owner.clone(),
+            admins: admins.clone(),
+            members: members.clone(),
+            encryption_profile: encryption_profile.clone(),
+            plaintext_visible_services: plaintext_visible_services.clone(),
+            content_encryption_floor: encryption_floor.clone(),
+            metadata_encryption_floor: encryption_floor.clone(),
+            summary: RealmProjectionSummary {
+                title,
+                summary,
+                category: "collaboration",
+                tags: Vec::new(),
+                discoverability,
+                encryption_profile,
+                plaintext_visible_services,
+                owner,
+                admins,
+                members,
+                content_encryption_floor: encryption_floor.clone(),
+                metadata_encryption_floor: encryption_floor,
+            },
+            timeline: ProjectionTimeline::default(),
+        })
+    }
+
+    pub(crate) fn space(input: SpaceProjectionInput) -> Self {
+        let SpaceProjectionInput {
+            realm_id,
+            kind,
+            title,
+            summary,
+            parent_space_id,
+            default_realm_id,
+        } = input;
+        Self::Space(SpaceProjectionBody {
+            realm_id,
+            space_kind: kind.clone(),
+            parent_space_id,
+            default_realm_id,
+            summary: SpaceProjectionSummary {
+                title,
+                summary,
+                space_kind: kind,
+            },
+            timeline: ProjectionTimeline::default(),
+        })
+    }
+
+    pub(crate) fn into_value(self) -> Value {
+        serde_json::to_value(self).expect("optimistic realm tree projection serializes")
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct RealmProjectionBody {
+    owner: String,
+    admins: Vec<String>,
+    members: Vec<String>,
+    encryption_profile: String,
+    plaintext_visible_services: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_encryption_floor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata_encryption_floor: Option<String>,
+    summary: RealmProjectionSummary,
+    timeline: ProjectionTimeline,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RealmProjectionSummary {
+    title: String,
+    summary: String,
+    category: &'static str,
+    tags: Vec<String>,
+    discoverability: String,
+    encryption_profile: String,
+    plaintext_visible_services: Vec<String>,
+    owner: String,
+    admins: Vec<String>,
+    members: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_encryption_floor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata_encryption_floor: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct SpaceProjectionBody {
+    realm_id: String,
+    #[serde(rename = "kind")]
+    space_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_space_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_realm_id: Option<String>,
+    summary: SpaceProjectionSummary,
+    timeline: ProjectionTimeline,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SpaceProjectionSummary {
+    title: String,
+    summary: String,
+    #[serde(rename = "kind")]
+    space_kind: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct ProjectionTimeline {
+    events: Vec<Value>,
 }
 
 pub(crate) fn non_empty_string(value: Option<&Value>) -> Option<String> {
@@ -768,6 +951,79 @@ mod tests {
         let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(id.to_owned(), patched)]));
 
         assert_eq!(nodes[0].title, "Server Realm");
+    }
+
+    #[test]
+    fn optimistic_realm_projection_serializes_typed_encryption_floor() {
+        let body = OptimisticRealmTreeProjection::realm(RealmProjectionInput {
+            owner: "did:web:alice.example".to_owned(),
+            admins: vec!["did:web:alice.example".to_owned()],
+            members: vec![
+                "did:web:alice.example".to_owned(),
+                "did:web:bob.example".to_owned(),
+            ],
+            title: "Launch".to_owned(),
+            summary: "Launch planning".to_owned(),
+            discoverability: "restricted".to_owned(),
+            encryption_profile: "mls_rfc9420".to_owned(),
+            plaintext_visible_services: vec!["directory".to_owned()],
+            encryption_floor: Some("e2ee_required".to_owned()),
+        })
+        .into_value();
+
+        assert_eq!(body["__kind"], "realm");
+        assert_eq!(body["encryption_profile"], "mls_rfc9420");
+        assert_eq!(body["content_encryption_floor"], "e2ee_required");
+        assert_eq!(body["metadata_encryption_floor"], "e2ee_required");
+        assert_eq!(body["summary"]["content_encryption_floor"], "e2ee_required");
+        assert_eq!(
+            body["summary"]["metadata_encryption_floor"],
+            "e2ee_required"
+        );
+        assert_eq!(body["timeline"]["events"], json!([]));
+    }
+
+    #[test]
+    fn optimistic_realm_projection_omits_plaintext_floor() {
+        let body = OptimisticRealmTreeProjection::realm(RealmProjectionInput {
+            owner: "did:web:alice.example".to_owned(),
+            admins: vec!["did:web:alice.example".to_owned()],
+            members: vec!["did:web:alice.example".to_owned()],
+            title: "Public".to_owned(),
+            summary: String::new(),
+            discoverability: "public".to_owned(),
+            encryption_profile: "none".to_owned(),
+            plaintext_visible_services: Vec::new(),
+            encryption_floor: None,
+        })
+        .into_value();
+
+        assert_eq!(body["encryption_profile"], "none");
+        assert!(body.get("content_encryption_floor").is_none());
+        assert!(body.get("metadata_encryption_floor").is_none());
+        assert!(body["summary"].get("content_encryption_floor").is_none());
+        assert!(body["summary"].get("metadata_encryption_floor").is_none());
+    }
+
+    #[test]
+    fn optimistic_space_projection_serializes_optional_parent_links() {
+        let body = OptimisticRealmTreeProjection::space(SpaceProjectionInput {
+            realm_id: "ck:realm:root".to_owned(),
+            kind: "collection".to_owned(),
+            title: "Specs".to_owned(),
+            summary: "Spec work".to_owned(),
+            parent_space_id: Some("ck:space:parent".to_owned()),
+            default_realm_id: Some("ck:realm:default".to_owned()),
+        })
+        .into_value();
+
+        assert_eq!(body["__kind"], "space");
+        assert_eq!(body["realm_id"], "ck:realm:root");
+        assert_eq!(body["kind"], "collection");
+        assert_eq!(body["parent_space_id"], "ck:space:parent");
+        assert_eq!(body["default_realm_id"], "ck:realm:default");
+        assert_eq!(body["summary"]["kind"], "collection");
+        assert_eq!(body["timeline"]["events"], json!([]));
     }
 
     #[test]
