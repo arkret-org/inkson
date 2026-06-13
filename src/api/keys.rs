@@ -4,21 +4,22 @@ impl CokretApi {
     #[cfg(feature = "demo-crypto")]
     pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload demo device_signature")?;
-        self.post_json(
-            "_cokret/self/keys/upload",
+        let mut one_time_keys = BTreeMap::new();
+        one_time_keys.insert(
+            "signed_curve25519:yougen-otk-1".to_owned(),
             json!({
-                "device_id": device_id,
-                "one_time_keys": {
-                    "signed_curve25519:yougen-otk-1": {
-                        "key_id": "yougen-otk-1",
-                        "key": "yougen-one-time"
-                    }
-                },
-                "fallback_keys": {},
-                "device_signature": {"alg": "EdDSA", "signature": "yougen-dev-signature"}
+                "key_id": "yougen-otk-1",
+                "key": "yougen-one-time"
             }),
-        )
-        .await
+        );
+        let body = cokret_sdk::model::KeysUploadRequestBody {
+            device_id: cokret_sdk::DeviceId::new(device_id.to_owned())
+                .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?,
+            one_time_keys,
+            fallback_keys: BTreeMap::new(),
+            device_signature: json!({"alg": "EdDSA", "signature": "yougen-dev-signature"}),
+        };
+        self.post_json("_cokret/self/keys/upload", &body).await
     }
 
     #[cfg(not(feature = "demo-crypto"))]
@@ -34,11 +35,16 @@ impl CokretApi {
         device_id: &str,
         algorithm: &str,
     ) -> anyhow::Result<KeysClaimOutcome> {
-        self.post_json(
-            "_cokret/self/keys/claim",
-            json!({"one_time_keys": {actor: {device_id: algorithm}}}),
-        )
-        .await
+        let actor = cokret_sdk::Did::new(actor.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid actor DID `{actor}`: {err}"))?;
+        let device_id = cokret_sdk::DeviceId::new(device_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;
+        let mut device_map = BTreeMap::new();
+        device_map.insert(device_id, algorithm.to_owned());
+        let mut one_time_keys = BTreeMap::new();
+        one_time_keys.insert(actor, device_map);
+        let body = cokret_sdk::model::KeysClaimRequestBody { one_time_keys };
+        self.post_json("_cokret/self/keys/claim", &body).await
     }
 
     pub async fn query_keys(
@@ -46,11 +52,17 @@ impl CokretApi {
         actor: &str,
         device_id: &str,
     ) -> anyhow::Result<KeysQueryOutcome> {
-        self.post_json(
-            "_cokret/self/keys/query",
-            json!({"device_keys": {actor: [device_id]}}),
-        )
-        .await
+        let actor = cokret_sdk::Did::new(actor.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid actor DID `{actor}`: {err}"))?;
+        let device_id = cokret_sdk::DeviceId::new(device_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;
+        let mut device_keys = BTreeMap::new();
+        device_keys.insert(actor, vec![device_id]);
+        let body = cokret_sdk::model::KeysQueryRequestBody {
+            device_keys,
+            timeout_ms: None,
+        };
+        self.post_json("_cokret/self/keys/query", &body).await
     }
 
     #[cfg(feature = "demo-crypto")]
@@ -110,7 +122,7 @@ impl CokretApi {
             kind,
             expires_at,
             content,
-        );
+        )?;
         let request = self
             .http
             .post(self.endpoint(path)?)
@@ -148,13 +160,11 @@ impl CokretApi {
         &self,
         ack_token: &str,
     ) -> anyhow::Result<DeviceMessagesAckOutcome> {
-        self.post_json(
-            "_cokret/self/device_messages/ack",
-            serde_json::to_value(DeviceMessagesAckRequestBody {
-                ack_token: ack_token.to_owned(),
-            })?,
-        )
-        .await
+        let body = DeviceMessagesAckRequestBody {
+            ack_token: ack_token.to_owned(),
+        };
+        self.post_json("_cokret/self/device_messages/ack", &body)
+            .await
     }
 
     pub async fn put_key_backup(
@@ -164,7 +174,9 @@ impl CokretApi {
     ) -> anyhow::Result<serde_json::Value> {
         crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
             .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
-        self.put_json(&format!("_cokret/self/keys/backups/{backup_id}"), payload)
+        let record: cokret_sdk::KeyBackup = serde_json::from_value(payload)?;
+        let body = cokret_sdk::KeysBackupsPutRequestBody(record);
+        self.put_json(&format!("_cokret/self/keys/backups/{backup_id}"), &body)
             .await
     }
 
@@ -186,7 +198,7 @@ impl CokretApi {
     /// optional `expected_recovery_policy_ref`). Returns the session JSON.
     pub async fn create_recovery_session(
         &self,
-        body: serde_json::Value,
+        body: &cokret_sdk::model::RecoverySessionCreateRequestBody,
     ) -> anyhow::Result<serde_json::Value> {
         self.post_json("_cokret/root/identity/recovery-sessions", body)
             .await
@@ -198,7 +210,7 @@ impl CokretApi {
     pub async fn submit_recovery_proof(
         &self,
         recovery_session_id: &str,
-        body: serde_json::Value,
+        body: &cokret_sdk::model::RecoverySessionProofSubmitRequestBody,
     ) -> anyhow::Result<serde_json::Value> {
         self.post_json(
             &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
@@ -212,7 +224,7 @@ impl CokretApi {
     pub async fn complete_recovery_session(
         &self,
         recovery_session_id: &str,
-        body: serde_json::Value,
+        body: &cokret_sdk::model::RecoverySessionCompleteRequestBody,
     ) -> anyhow::Result<serde_json::Value> {
         self.post_json(
             &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/complete"),
@@ -301,22 +313,7 @@ impl CokretApi {
     // ── Device & Crypto ─────────────────────────────────────────────
 
     /// User-driven device revoke over the spec-canonical durable Control
-    /// Move `ck.device.revoke` (`crypto-media/device-lifecycle.md` §2.2,
-    /// SPEC-SOL-003 已裁决落地,YOU-01-008 阻塞解除):
-    ///
-    /// 1. derive the principal control realm
-    ///    (`cokret_sdk::auth::principal_control_realm_id`);
-    /// 2. mint the single-leaf `seal_basis` from the registered sourcing
-    ///    `ck.self.events.frontier?realm_id=` (fail closed when
-    ///    unavailable — never fabricate a basis);
-    /// 3. submit the signed envelope via `submit_event_envelope`
-    ///    (payload carries no frontier field);
-    /// 4. best-effort call the legacy `_soland/` scaffold
-    ///    (`POST /_soland/self/devices/{id}/revoke`) so deployments whose
-    ///    submit pipeline does not yet enforce accepted `ck.device.revoke`
-    ///    on the device record still revoke. Scaffold failure after a
-    ///    successful event submit is logged, not fatal — current soland
-    ///    enforces the revocation at event accept.
+    /// Move `ck.device.revoke`.
     pub async fn revoke_device(
         &self,
         actor_id: &str,
@@ -350,42 +347,17 @@ impl CokretApi {
             state_root: basis.state_root.as_str().to_owned(),
         })
         .build(revoked_by_device_id);
-        let outcome = self.submit_event_envelope(&envelope).await?;
-
-        let scaffold: anyhow::Result<OkOutcome> = self
-            .post_json(
-                &format!("_soland/self/devices/{target_device_id}/revoke"),
-                json!({}),
-            )
-            .await;
-        if let Err(err) = scaffold {
-            tracing::warn!(
-                target_device_id,
-                error = %err,
-                "ck.device.revoke accepted but legacy device-revoke scaffold failed; \
-                 relying on event-accept enforcement"
-            );
-        }
-        Ok(outcome)
+        self.submit_event_envelope(&envelope).await
     }
 
-    /// Rename a device the caller controls by updating its user-facing
-    /// `display_name`. Hits soland's deployment-local scaffold
-    /// (`POST /_soland/self/devices/{device_id}/rename`). `display_name` is the
-    /// optional, mutable, UI-only device name per
-    /// `crypto-media/device-lifecycle.md` §4 — not a protocol event, so it
-    /// stays in the `_soland/` product namespace. The canonical id is always
-    /// `device_id`. Returns the updated device record JSON.
+    /// Rename is not exposed as a spec-defined Cokret HTTP endpoint.
     pub async fn rename_device(
         &self,
         device_id: &str,
         display_name: &str,
     ) -> anyhow::Result<Value> {
-        self.post_json(
-            &format!("_soland/self/devices/{device_id}/rename"),
-            json!({ "display_name": display_name }),
-        )
-        .await
+        let _ = (device_id, display_name);
+        anyhow::bail!("rename_device has no spec-defined Cokret HTTP endpoint")
     }
 
     /// List the principal's active devices from the spec account viewer
@@ -398,24 +370,20 @@ impl CokretApi {
     }
 
     /// Pair a new sibling device through the spec account-auth gate.
-    pub async fn account_device_pair(&self, body: Value) -> anyhow::Result<Value> {
+    pub async fn account_device_pair(
+        &self,
+        body: &cokret_sdk::AccountDevicePairRequestBody,
+    ) -> anyhow::Result<Value> {
         self.post_json("_cokret/gate/account/device-pair", body)
             .await
     }
 
-    /// Deployment-local device trust table read. The spec-canonical device
-    /// key verification flow runs over the `ck.key.verification.*`
-    /// device-messages channel (device-lifecycle.md §10, see
-    /// `api/events.rs`); this `_soland/`-namespaced view is a soland scaffold
-    /// surfacing the resulting trust states for the verify_device UI table.
+    /// Device trust must be derived from the spec device-message flow.
     pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustOutcome> {
-        self.get_json("_soland/self/devices/trust").await
+        anyhow::bail!("device trust table has no spec-defined Cokret HTTP endpoint")
     }
 
-    /// Deployment-local device-verification scaffold. The signed proof is
-    /// also (and authoritatively) exchanged over the spec
-    /// `ck.key.verification.*` device-messages channel; this `_soland/`
-    /// scaffold records the resulting trust transition for the UI table.
+    /// Device verification must use the spec device-message flow.
     pub async fn verify_device(
         &self,
         device_id: &str,
@@ -423,10 +391,9 @@ impl CokretApi {
         proof: Value,
     ) -> anyhow::Result<VerifyDeviceOutcome> {
         ensure_device_verification_proof_is_signed(&proof)?;
-        self.post_json(
-            &format!("_soland/self/devices/{device_id}/verify"),
-            json!({"method": method, "proof": proof}),
+        let _ = (device_id, method, proof);
+        anyhow::bail!(
+            "verify_device must use device messages; there is no spec HTTP verify endpoint"
         )
-        .await
     }
 }

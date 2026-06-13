@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -62,11 +63,7 @@ pub struct PrincipalAuthBridgeExamples {
     pub unregister_device_request: Value,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct SessionGrantIntrospectionProof {
-    pub challenge: String,
-    pub proof_jwt: String,
-}
+pub use cokret_sdk::SessionGrantIntrospectionProof;
 
 impl CancellationToken {
     pub fn new() -> Self {
@@ -101,14 +98,10 @@ use crate::models::{
     DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustOutcome, EphemeralSubmitOutcome,
     GrantList, HealthOutcome, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchOutcome,
     InvitesOutcome, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutOutcome,
-    MediaIceConfigOutcome, MediaIceConfigRequestBody, MimiGroupInfoOutcome,
-    MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome, MimiProviderDirectory,
-    MimiProxyDownloadOutcome, MimiReportAbuseOutcome, MimiRequestConsentOutcome,
-    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, ModerationReportOutcome, OP_SNAPSHOT_HEAD,
+    MediaIceConfigOutcome, MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD,
     OkOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate, RealmPolicyOutcome,
     ReceiptOutcome, ResolveHandleOutcome, ResolveRealmOutcome, SearchActorsOutcome,
     SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
-    SolandAccountRegisterOutcome, SolandAccountUpdateProfileOutcome,
     SolandDirectoryDescribeResBody, SpaceCreateOutcome, SubmitEventOutcome, SyncDescribeOutcome,
     TypingOutcome, VerifyDeviceOutcome,
 };
@@ -450,9 +443,7 @@ static ACCOUNT_SUBSCRIBE_NETWORK_GATE: LazyLock<Mutex<()>> = LazyLock::new(|| Mu
 /// True when a discovery probe failed because the endpoint does not exist on
 /// this server — i.e. the routing layer returned `404 unrecognized_endpoint`
 /// (see `service-http-binding.md` routing rules) rather than a transport,
-/// auth, or server error. Used during bootstrap to fall back from a canonical
-/// protocol-namespace path (`/_cokret/gate/...`) to a legacy vendor path
-/// (`/_soland/gate/...`) only when the canonical alias is genuinely absent.
+/// auth, or server error.
 #[cfg(test)]
 pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
     error
@@ -695,7 +686,7 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
 fn resolve_handle_request_body(
     handle: &str,
     context: ResolveHandleContext<'_>,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<cokret_sdk::model::DirectoryResolveHandleRequestBody> {
     let non_empty = |value: Option<&str>| {
         value
             .map(str::trim)
@@ -723,7 +714,7 @@ fn resolve_handle_request_body(
         ),
         None => None,
     };
-    let body = cokret_sdk::model::DirectoryResolveHandleRequestBody {
+    Ok(cokret_sdk::model::DirectoryResolveHandleRequestBody {
         handle: handle.to_owned(),
         expected_did,
         proof_challenge: non_empty(context.proof_challenge),
@@ -738,8 +729,7 @@ fn resolve_handle_request_body(
             .filter(|proof| !proof.is_empty())
             .map(ToOwned::to_owned)
             .collect(),
-    };
-    Ok(serde_json::to_value(&body)?)
+    })
 }
 
 fn canonical_invitee_handle(target: &str) -> anyhow::Result<String> {
@@ -868,14 +858,9 @@ impl CokretApi {
 
     pub fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
         let normalized = path.trim().trim_start_matches('/');
-        // 红线(写死,不可绕过):yougen 只能走 `/_cokret/` 协议面。除
-        // `SOLAND_LEGACY_ALLOWLIST` 登记的递减存量外,任何 `_soland/` 产品/
-        // legacy 面调用都在这里 fail-closed。所有请求路径都收口于本函数
-        // (`get_json` / `post_json` / 直接 `endpoint()` 调用),故这是唯一守卫点。
         if !soland_path_allowed(normalized) {
             anyhow::bail!(
-                "yougen 红线:禁止调用 soland 产品/legacy 面 `{normalized}`;\
-                 yougen 只能使用 `/_cokret/` 协议面(存量见 SOLAND_LEGACY_ALLOWLIST)"
+                "yougen redline: forbidden soland private path `{normalized}`; use only spec-defined `/_cokret/` endpoints"
             );
         }
         Ok(self.base_url.join(normalized)?)
@@ -953,14 +938,22 @@ impl CokretApi {
             .await
     }
 
-    async fn post_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
-        let request = self.http.post(self.endpoint(path)?).json(&body);
+    async fn post_json<T, B>(&self, path: &str, body: &B) -> anyhow::Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let request = self.http.post(self.endpoint(path)?).json(body);
         self.send_json(self.prepare_request(request), Method::POST)
             .await
     }
 
-    async fn put_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
-        let request = self.http.put(self.endpoint(path)?).json(&body);
+    async fn put_json<T, B>(&self, path: &str, body: &B) -> anyhow::Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let request = self.http.put(self.endpoint(path)?).json(body);
         self.send_json(self.prepare_request(request), Method::PUT)
             .await
     }
@@ -2438,18 +2431,25 @@ pub fn build_device_message_envelope(
     kind: &str,
     expires_at: &str,
     content: serde_json::Value,
-) -> serde_json::Value {
-    json!({
-        "messages": {
-            target_actor: {
-                target_device_id: {
-                    "kind": kind,
-                    "expires_at": expires_at,
-                    "content": content,
-                }
-            }
-        }
-    })
+) -> anyhow::Result<cokret_sdk::model::DeviceMessagesPutRequestBody> {
+    let target_actor = cokret_sdk::Did::new(target_actor.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid device-message target actor: {err}"))?;
+    let target_device_id = cokret_sdk::DeviceId::new(target_device_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid device-message target device_id: {err}"))?;
+    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)
+        .map_err(|err| anyhow::anyhow!("invalid device-message expires_at: {err}"))?
+        .with_timezone(&chrono::Utc);
+
+    let target = cokret_sdk::model::DeviceMessageTarget {
+        kind: kind.to_owned(),
+        content,
+        expires_at,
+    };
+    let mut by_device = BTreeMap::new();
+    by_device.insert(target_device_id, target);
+    let mut messages = BTreeMap::new();
+    messages.insert(target_actor, by_device);
+    Ok(cokret_sdk::model::DeviceMessagesPutRequestBody { messages })
 }
 
 pub fn build_signed_device_verification_proof(
@@ -3235,90 +3235,16 @@ fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
         .is_some_and(|fields| fields.contains_key("encryption_profile"))
 }
 
-/// 红线递减白名单 —— yougen 对 soland 产品/legacy 面(`_soland/...`)的**存量**调用。
-///
-/// 背景:旧原则「优先 `/_cokret/`、404 再回退 `/_soland/` legacy」是**错误**的 ——
-/// 它给协议↔产品耦合留了永久后门。正确约束是:yougen 是 Cokret 协议客户端,
-/// `_soland/` access is restricted at runtime by [`endpoint`](CokretApi::endpoint),
-/// which fails closed for paths outside the legacy allowlist.
-///
-/// 本表是**递减**的:每把一处 `_soland/` 调用迁走,就删掉对应行;清零后此表为空,
-/// 红线即对所有 `_soland/` 永久生效。**严禁**为新代码新增 `_soland/` 条目。
-///
-/// 迁移去向(详见 spec):
-/// - 投影派生类(notifications / contacts 列表 / consent 列表)→ 订阅 `account/subscribe`
-///   事件流,客户端本地 reduce;
-/// - 写状态类(contacts request/respond、consent grant/revoke、profile、mark-all-read) → 提交 `ck.*`
-///   事件(`/_cokret/self/events`);
-/// - 真·协议原语(register / principal-realm / logout / bridge-describe) → 待 soland 在 `/_cokret/`
-///   暴露后切换;
-/// - 运维/遥测(audit/user-action、admin notary、dev-login)→ 评估是否保留为本地面。
-///
-/// 模板中以 `{` 开头的路径段为通配(匹配单段),其余段逐字相等。
-const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
-    // identity/account —— account::router(),仅 legacy 面,`/_cokret/` 下无等价
-    "_soland/self/account/register",
-    "_soland/self/account/profile",
-    "_soland/self/account/{did}/principal-realm",
-    // consent cells —— consent dots 的投影 + 写
-    "_soland/self/consent/cells",
-    "_soland/self/consent/cells/{holder}/grant",
-    "_soland/self/consent/cells/{holder}/revoke",
-    // index/search —— 对 projection 的子串扫描
-    "_soland/self/index/search",
-    // audit —— 客户端遥测上报,部署本地非 self 面
-    "_soland/admin/audit/user-action",
-    // gate/auth —— dev-login / logout / bridge-describe(`/_cokret/gate` 下暂无等价)
-    "_soland/gate/auth/dev-login",
-    "_soland/gate/auth/logout",
-    "_soland/gate/auth/bridge/describe",
-    // admin —— 运维面,deployment-local(按设计不入协议)
-    "_soland/admin/realms/{realm_id}/notary",
-    // identity/device —— 设备生命周期 scaffold(deployment-local)。
-    // YOU-01-008:这些是 soland 部署本地的设备管理 shim,不是 spec 协议面,
-    // 故从 `/_cokret/` 迁回 `/_soland/`。revoke/rename 由 soland
-    // `device::router()` 在 legacy 树下服务;trust/verify 的权威验证走
-    // `ck.key.verification.*` device-messages 通道,这两条是 UI 信任表的本地
-    // scaffold。spec-canonical 吊销(durable `ck.device.revoke` + `revocation_frontier`)
-    // 因缺 client-reachable seal-frontier digest 来源,留待跨仓(soland/spec)补齐。
-    "_soland/self/devices/{device_id}/revoke",
-    "_soland/self/devices/{device_id}/rename",
-    "_soland/self/devices/trust",
-    "_soland/self/devices/{device_id}/verify",
-    // circles —— CKP-0014 §5 候选操作(产品面)。circle 尚未入正式 catalog,
-    // 未入前 MUST 走 `/_soland`、MUST NOT 挂 `/_cokret`(实测 `/_cokret/self/circles`
-    // 返回 404)。待 circle 入 catalog 后,这几行连同 realm.rs 调用一起迁回 `/_cokret`。
-    "_soland/self/circles",
-    "_soland/self/circles/{circle_id}",
-    "_soland/self/circles/{circle_id}/members",
-    "_soland/self/circles/{circle_id}/members/{actor_id}",
-];
-
-/// 规整后的请求路径是否被红线放行:非 `_soland/` 一律放行;`_soland/` 仅当命中
-/// [`SOLAND_LEGACY_ALLOWLIST`] 中某条模板时放行,否则拒绝。
 fn soland_path_allowed(normalized_path: &str) -> bool {
     let path = normalized_path
         .split(['?', '#'])
         .next()
         .unwrap_or(normalized_path);
     // Keep the marker split so this helper does not carry a direct product-path token.
-    if !path.starts_with(concat!("_so", "land", "/")) {
-        return true;
-    }
-    SOLAND_LEGACY_ALLOWLIST
-        .iter()
-        .any(|template| path_matches_template(path, template))
-}
-
-/// 分段匹配:`path` 与 `template` 段数相等,且模板中以 `{` 开头的段视为通配(匹配
-/// 任意单段),其余段必须逐字相等。
-fn path_matches_template(path: &str, template: &str) -> bool {
-    if path.split('/').count() != template.split('/').count() {
+    if path.starts_with(concat!("_so", "land", "/")) {
         return false;
     }
-    path.split('/')
-        .zip(template.split('/'))
-        .all(|(segment, tmpl)| tmpl.starts_with('{') || segment == tmpl)
+    true
 }
 
 #[cfg(test)]
@@ -3337,26 +3263,22 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_enforces_soland_redline() {
+    fn endpoint_enforces_private_path_redline() {
         let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
-        // 非 soland(协议面)→ 放行
         assert!(api.endpoint("_cokret/self/events").is_ok());
-        // 白名单内的存量 soland → 放行(含 `{}` 通配段)
-        assert!(
-            api.endpoint("_soland/self/consent/cells/alice/grant")
-                .is_ok()
-        );
-        let retired_account_me = ["_soland", "self", "account", "me"].join("/");
+        let private_prefix = concat!("_so", "land");
+        let legacy_consent =
+            [private_prefix, "self", "consent", "cells", "alice", "grant"].join("/");
+        assert!(api.endpoint(&legacy_consent).is_err());
+        let retired_account_me = [private_prefix, "self", "account", "me"].join("/");
         assert!(api.endpoint(&retired_account_me).is_err());
-        // 白名单外的 soland → 拒绝。用拼接构造负样例,避免静态守卫把它当成
-        // 一处真实的违规调用字面量。
-        let unlisted = format!("{}/self/spaces/ck:space:1", "_soland");
+        let unlisted = format!("{private_prefix}/self/spaces/ck:space:1");
         let error = api
             .endpoint(&unlisted)
-            .expect_err("白名单外的 soland 路径必须被红线拒绝");
+            .expect_err("soland private paths must be rejected");
         assert!(
-            error.to_string().contains("红线"),
-            "拒绝原因应指明红线: {error}"
+            error.to_string().contains("redline"),
+            "error should mention the redline: {error}"
         );
     }
 
@@ -3434,6 +3356,7 @@ mod tests {
             },
         )
         .expect("resolve_handle request body builds");
+        let body = serde_json::to_value(body).expect("request body serializes");
 
         assert_eq!(body["handle"], "bob:local.host");
         assert_eq!(body["intent"], "lookup");
@@ -4490,7 +4413,9 @@ mod tests {
                 "method": "sas",
                 "transaction_id": "verify-001"
             }),
-        );
+        )
+        .expect("device message envelope builds");
+        let envelope = serde_json::to_value(envelope).expect("device message envelope serializes");
         assert_eq!(
             envelope,
             json!({
@@ -4522,7 +4447,9 @@ mod tests {
             "ck.key.verification.done",
             "2026-04-26T00:10:00Z",
             json!({"transaction_id": "verify-done-001"}),
-        );
+        )
+        .expect("device message envelope builds");
+        let envelope = serde_json::to_value(envelope).expect("device message envelope serializes");
         let inner = &envelope["messages"]["did:web:bob.example"]["device-bbbb-2222"];
         assert_eq!(inner["kind"], "ck.key.verification.done");
         assert_eq!(inner["expires_at"], "2026-04-26T00:10:00Z");

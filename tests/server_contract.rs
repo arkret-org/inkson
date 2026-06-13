@@ -461,17 +461,14 @@ fn server_description_gates_event_envelope_write_plane() {
             .is_empty()
     );
 
-    let soland_compat_surface = serde_json::to_value(
-        cokret_sdk::CompatSurfaceEntry::external_interop("soland_private_local_routes")
-            .with_extra_string("base_path", "/_soland")
-            .with_extra_string("status", "soland_private_local")
-            .with_notes(
-                "non-registry REST routes were moved out of /_cokret; clients should prefer \
-                 operation-registry canonical paths",
-            ),
+    let external_compat_surface = serde_json::to_value(
+        cokret_sdk::CompatSurfaceEntry::external_interop("external_mimi_provider")
+            .with_extra_string("base_path", "https://mimi.example.com/_cokret/open/mimi")
+            .with_extra_string("status", "external_interop")
+            .with_notes("external interop surfaces must not redefine principal-server routes"),
     )
     .unwrap();
-    let soland_with_local_compat_surface = parse_server_description(json!({
+    let described_with_external_compat_surface = parse_server_description(json!({
         "service_did": "did:web:local.host",
         "trust_domain": "ck:trust_domain:local.host",
         "service_type": "principal_server",
@@ -498,13 +495,13 @@ fn server_description_gates_event_envelope_write_plane() {
         ],
         "verified_profiles": [],
         "experimental_features": [],
-        "compat_surfaces": [soland_compat_surface],
+        "compat_surfaces": [external_compat_surface],
         "development_mode": true,
     }))
     .unwrap();
     assert_eq!(
-        soland_with_local_compat_surface.compat_surfaces[0].name,
-        "soland_private_local_routes"
+        described_with_external_compat_surface.compat_surfaces[0].name,
+        "external_mimi_provider"
     );
 
     // A partial / pre-v2 describe payload now fails to deserialize at all —

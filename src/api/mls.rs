@@ -12,26 +12,18 @@ impl CokretApi {
         &self,
         device_id: &str,
         record: &cokret_sdk::MlsKeyPackageRecord,
-    ) -> anyhow::Result<KeysUploadOutcome> {
+    ) -> anyhow::Result<cokret_sdk::KeyPackagesUploadOutcome> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload MLS demo device_signature")?;
-        self.post_json(
-            "_cokret/self/keys/upload",
-            json!({
-                "device_id": device_id,
-                "one_time_keys": {
-                    "signed_curve25519:yougen-otk-1": {
-                        "key_id": "yougen-otk-1",
-                        "key": "yougen-one-time"
-                    }
-                },
-                "fallback_keys": {},
-                "device_signature": {"alg": "EdDSA", "signature": "yougen-dev-signature"},
-                "mls_key_packages": {
-                    record.keypackage_id.clone(): serde_json::to_value(record)?,
-                },
-            }),
-        )
-        .await
+        let body = cokret_sdk::KeyPackagesUploadRequestBody {
+            device_id: cokret_sdk::DeviceId::new(device_id.trim().to_owned())?,
+            key_packages: vec![serde_json::to_value(record)?],
+            device_signature: json!({"alg": "EdDSA", "signature": "yougen-dev-signature"}),
+            expires_at: None,
+            flow_id: None,
+            mls_group_id: None,
+        };
+        self.post_json("_cokret/self/keys/keypackages/upload", &body)
+            .await
     }
 
     #[cfg(not(feature = "demo-crypto"))]
@@ -89,14 +81,16 @@ impl CokretApi {
 
     // ── MIMI Provider Facade ─────────────────────────────────────
 
-    pub async fn mimi_provider_directory(&self) -> anyhow::Result<MimiProviderDirectory> {
+    pub async fn mimi_provider_directory(
+        &self,
+    ) -> anyhow::Result<cokret_sdk::MimiProviderDirectory> {
         self.get_json("_cokret/open/mimi/provider-directory").await
     }
 
     pub async fn mimi_key_material(
         &self,
-        request: Value,
-    ) -> anyhow::Result<MimiKeyMaterialOutcome> {
+        request: &cokret_sdk::MimiKeyMaterialRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiKeyMaterialOutcome> {
         self.post_json("_cokret/open/mimi/key-material", request)
             .await
     }
@@ -104,8 +98,8 @@ impl CokretApi {
     pub async fn mimi_room_update(
         &self,
         room_id: &str,
-        request: Value,
-    ) -> anyhow::Result<MimiRoomUpdateOutcome> {
+        request: &cokret_sdk::MimiRoomUpdateRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiRoomUpdateOutcome> {
         self.put_json(
             &format!("_cokret/open/mimi/flows/{room_id}/update"),
             request,
@@ -116,8 +110,8 @@ impl CokretApi {
     pub async fn mimi_notify(
         &self,
         room_id: &str,
-        request: Value,
-    ) -> anyhow::Result<MimiNotifyOutcome> {
+        request: &cokret_sdk::MimiNotifyRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiNotifyOutcome> {
         self.post_json(
             &format!("_cokret/open/mimi/flows/{room_id}/notify"),
             request,
@@ -128,8 +122,8 @@ impl CokretApi {
     pub async fn mimi_submit_message(
         &self,
         room_id: &str,
-        request: Value,
-    ) -> anyhow::Result<MimiSubmitMessageOutcome> {
+        request: &cokret_sdk::MimiSubmitMessageRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiSubmitMessageOutcome> {
         self.post_json(
             &format!("_cokret/open/mimi/flows/{room_id}/messages"),
             request,
@@ -137,47 +131,50 @@ impl CokretApi {
         .await
     }
 
-    pub async fn mimi_group_info(&self, room_id: &str) -> anyhow::Result<MimiGroupInfoOutcome> {
+    pub async fn mimi_group_info(
+        &self,
+        room_id: &str,
+    ) -> anyhow::Result<cokret_sdk::MimiGroupInfoOutcome> {
         self.get_json(&format!("_cokret/open/mimi/flows/{room_id}/group-info"))
             .await
     }
 
     pub async fn mimi_request_consent(
         &self,
-        request: Value,
-    ) -> anyhow::Result<MimiRequestConsentOutcome> {
+        request: &cokret_sdk::MimiRequestConsentRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiRequestConsentOutcome> {
         self.post_json("_cokret/open/mimi/consent/request", request)
             .await
     }
 
     pub async fn mimi_update_consent(
         &self,
-        request: Value,
-    ) -> anyhow::Result<MimiRequestConsentOutcome> {
+        request: &cokret_sdk::MimiUpdateConsentRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiUpdateConsentOutcome> {
         self.post_json("_cokret/open/mimi/consent/update", request)
             .await
     }
 
     pub async fn mimi_identifier_query(
         &self,
-        request: Value,
-    ) -> anyhow::Result<MimiIdentifierQueryOutcome> {
+        request: &cokret_sdk::MimiIdentifierQueryRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiIdentifierQueryOutcome> {
         self.post_json("_cokret/open/mimi/identifiers/query", request)
             .await
     }
 
     pub async fn mimi_report_abuse(
         &self,
-        request: Value,
-    ) -> anyhow::Result<MimiReportAbuseOutcome> {
+        request: &cokret_sdk::MimiReportAbuseRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiReportAbuseOutcome> {
         self.post_json("_cokret/open/mimi/report-abuse", request)
             .await
     }
 
     pub async fn mimi_proxy_download(
         &self,
-        request: Value,
-    ) -> anyhow::Result<MimiProxyDownloadOutcome> {
+        request: &cokret_sdk::MimiProxyDownloadRequestBody,
+    ) -> anyhow::Result<cokret_sdk::MimiProxyDownloadOutcome> {
         self.post_json("_cokret/open/mimi/proxy-download", request)
             .await
     }

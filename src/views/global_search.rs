@@ -2,11 +2,9 @@
 //!
 //! Spec: yougen UX backlog (see `_claude_todos.md` lane A). Pressing
 //! `Cmd+F` (or `Ctrl+F` off-mac), the `topbar-search-button`, or
-//! navigating directly to `/search` opens this panel. The query
-//! round-trips through soland's `POST /_soland/self/index/search` substring
-//! scan (the only cross-Realm message search endpoint we have for v1);
-//! cross-Realm coverage will improve once the durable projection
-//! lands.
+//! navigating directly to `/search` opens this panel. The Cokret HTTP
+//! catalog currently has no spec-defined global index search endpoint, so
+//! the request path fails closed until the durable projection lands.
 //!
 //! UI states surfaced:
 //! - empty (no query typed yet) — `global-search-results-empty`

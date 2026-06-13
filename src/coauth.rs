@@ -910,7 +910,7 @@ pub fn summarize_coauth_integration_manifest(manifest: &CoauthIntegrationManifes
     )
 }
 
-pub fn build_soland_session_grant_plan(
+pub fn build_session_grant_plan(
     topology: &CoauthTopologySnapshot,
     principal_server_url: &str,
     actor_id: &str,

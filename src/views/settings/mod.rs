@@ -1156,10 +1156,8 @@ pub fn SettingsPanel(
     let mut new_contact_remark_name = use_signal(String::new);
     // A4b — profile (display_name / bio / avatar) state.
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
-    // `ck.account_data.set("client.ui", { avatar_blob_ref })` and is
-    // *also* published publicly to soland's
-    // `POST /_soland/self/account/profile { avatar_url }` so the directory
-    // can index it.
+    // `ck.account_data.set("client.ui", { avatar_blob_ref })` and is also
+    // published through the spec profile endpoint so directory projections can index it.
     let initial_avatar_blob_ref = state_store
         .read()
         .load_private_data(&account_did(), "avatar_blob_ref")
@@ -1615,12 +1613,11 @@ pub fn SettingsPanel(
                                                                         match api.upload_blob_bytes(bytes, "image/jpeg").await {
                                                                             Ok(resp) => {
                                                                                 let blob_ref = resp.blob_ref.to_string();
-                                                                                let avatar_url = api.blob_download_url(&blob_ref);
                                                                                 // Publish publicly first; only then refresh the
                                                                                 // local mirror so a failed profile update does not
                                                                                 // display an avatar that never became active.
                                                                                 match api
-                                                                                    .update_profile(None, None, Some(&avatar_url))
+                                                                                    .update_profile(None, None, Some(&blob_ref))
                                                                                     .await
                                                                                 {
                                                                                     Ok(_) => {
@@ -2111,12 +2108,11 @@ pub fn SettingsPanel(
                                         .await
                                         {
                                             Ok(directory) => {
-                                                let features = directory.mimi.features.join(", ");
+                                                let features = serde_json::to_string_pretty(&directory.features)
+                                                    .unwrap_or_else(|_| directory.features.to_string());
                                                 mimi_directory.set(format!(
-                                                    "{}\n{}\n{}\n{}",
-                                                    directory.mimi.provider_id,
-                                                    directory.supported_profiles.join(", "),
-                                                    directory.mimi.protocol_draft,
+                                                    "providers {}\nfeatures {}",
+                                                    directory.providers.len(),
                                                     features,
                                                 ));
                                                 status.set(
@@ -2154,11 +2150,14 @@ pub fn SettingsPanel(
                                                 // Cokret app side it identifies a Flow, so we
                                                 // bind it to a `flow_id`-named local to keep
                                                 // the "Room" term confined to the interop layer.
-                                                let flow_id = &response.room_id;
                                                 mimi_receipt.set(format!(
-                                                    "group-info {} participants {}",
-                                                    flow_id,
-                                                    response.participants.len()
+                                                    "group-info 01JSMIMI binding {} proofs {}",
+                                                    response
+                                                        .room_binding_ref
+                                                        .as_ref()
+                                                        .map(ToString::to_string)
+                                                        .unwrap_or_else(|| "none".to_owned()),
+                                                    response.proofs.len()
                                                 ));
                                                 status.set("MIMI groupInfo loaded".to_owned());
                                             }
@@ -2182,19 +2181,29 @@ pub fn SettingsPanel(
                                     let api_token = token();
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.mimi_identifier_query(json!({
-                                                "query": "mimi://remote.example/alice",
-                                                "privacy_mode": "private_identifier_query"
-                                            })).await
+                                            let request = cokret_sdk::MimiIdentifierQueryRequestBody {
+                                                identifiers: vec![json!({"mimi_uri": "mimi://remote.example/alice"})],
+                                                requester: None,
+                                                privacy_profile: Some("private_identifier_query".to_owned()),
+                                                proofs: Vec::new(),
+                                            };
+                                            api.mimi_identifier_query(&request).await
                                         })
                                         .await
                                         {
                                             Ok(response) => {
+                                                let first = response
+                                                    .results
+                                                    .first()
+                                                    .map(|value| {
+                                                        serde_json::to_string(value)
+                                                            .unwrap_or_else(|_| value.to_string())
+                                                    })
+                                                    .unwrap_or_else(|| "none".to_owned());
                                                 mimi_receipt.set(format!(
-                                                    "identifier {} reachable {} mapped {}",
-                                                    response.query,
-                                                    response.reachable,
-                                                    response.mapped_did.unwrap_or_else(|| "none".to_owned())
+                                                    "identifier results {} first {}",
+                                                    response.results.len(),
+                                                    first
                                                 ));
                                                 status.set("MIMI identifier query completed".to_owned());
                                             }
@@ -2216,21 +2225,35 @@ pub fn SettingsPanel(
                                 move |_| {
                                     let base = base_url();
                                     let api_token = token();
+                                    let actor = account_did();
+                                    let device = device_id();
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.mimi_submit_message("01JSMIMI", json!({
-                                                "source_format": "text/markdown;variant=GFM-MIMI",
-                                                "body": "MIMI interop test from yougen",
-                                                "mimi_room_uri": "mimi://mimi.example.com/rooms/01JSMIMI"
-                                            })).await
+                                            let request = cokret_sdk::MimiSubmitMessageRequestBody {
+                                                sender_actor_id: cokret_sdk::Did::new(actor.trim().to_owned())?,
+                                                device_id: cokret_sdk::DeviceId::new(device.trim().to_owned())?,
+                                                ciphertext: json!({
+                                                    "source_format": "text/markdown;variant=GFM-MIMI",
+                                                    "body": "MIMI interop test from yougen",
+                                                    "mimi_room_uri": "mimi://mimi.example.com/rooms/01JSMIMI"
+                                                }),
+                                                mls_group_id: None,
+                                                epoch: None,
+                                                associated_data: serde_json::Value::Null,
+                                            };
+                                            api.mimi_submit_message("01JSMIMI", &request).await
                                         })
                                         .await
                                         {
                                             Ok(response) => {
                                                 mimi_receipt.set(format!(
-                                                    "submit-message {} {}",
-                                                    response.mimi_message_id.unwrap_or_else(|| "no-message-id".to_owned()),
-                                                    response.mapped_operation_id.unwrap_or_else(|| "no-operation".to_owned())
+                                                    "submit-message event {} rejected {}",
+                                                    response
+                                                        .event_ref
+                                                        .as_ref()
+                                                        .map(ToString::to_string)
+                                                        .unwrap_or_else(|| "no-event".to_owned()),
+                                                    response.rejected.len()
                                                 ));
                                                 status.set("MIMI test message submitted".to_owned());
                                             }
@@ -2252,20 +2275,25 @@ pub fn SettingsPanel(
                                 move |_| {
                                     let base = base_url();
                                     let api_token = token();
+                                    let actor = account_did();
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.mimi_proxy_download(json!({
-                                                "blob_ref": "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
-                                                "asset_privacy_policy": "provider_proxy"
-                                            })).await
+                                            let request = cokret_sdk::MimiProxyDownloadRequestBody {
+                                                asset_ref: "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91".to_owned(),
+                                                requester: cokret_sdk::Did::new(actor.trim().to_owned())?,
+                                                flow_id: None,
+                                                ohttp_context: serde_json::Value::Null,
+                                                range: None,
+                                            };
+                                            api.mimi_proxy_download(&request).await
                                         })
                                         .await
                                         {
                                             Ok(response) => {
                                                 mimi_receipt.set(format!(
-                                                    "proxy-download {} {}",
-                                                    response.blob_ref,
-                                                    response.media_type.unwrap_or_else(|| "unknown".to_owned())
+                                                    "proxy-download {} headers {}",
+                                                    response.download_ref,
+                                                    response.headers.len()
                                                 ));
                                                 status.set("MIMI proxy download prepared".to_owned());
                                             }
@@ -2358,9 +2386,8 @@ pub fn SettingsPanel(
                                     "Pick a Realm and how much it should notify you. This overrides the global defaults above for that Realm only."
                                 }
                                 div { class: "actions",
-                                    // Each picker lives in its own `label.field` wrapper (the same
-                                    // shape create_circle_modal uses for multiple dxc Selects) — never
-                                    // a raw id box, and never two bare-adjacent Selects. Isolating each
+                                    // Each picker lives in its own `label.field` wrapper — never a raw
+                                    // id box, and never two bare-adjacent Selects. Isolating each
                                     // Select keeps the VNode tree stable so opening one doesn't remount
                                     // (and snap shut) its neighbour.
                                     label { class: "field",

@@ -20,41 +20,15 @@ impl CokretApi {
             reporter: reporter_did,
             evidence_refs: Vec::new(),
         };
-        self.post_json(
-            "_cokret/self/moderation/report",
-            serde_json::to_value(&body)?,
-        )
-        .await
+        self.post_json("_cokret/self/moderation/report", &body)
+            .await
     }
 
-    /// Ship a single client-side telemetry entry to
-    /// soland's deployment-local audit ingest endpoint.
-    ///
-    /// The endpoint shape mirrors sodmin's audit feed: a plain JSON
-    /// body keyed by actor/action/outcome/note/recorded_at. The
-    /// 404-tolerant return type lets the caller distinguish "not
-    /// wired" (re-buffer) from "rejected" (drop) without parsing
-    /// error strings.
+    /// Client-side telemetry has no spec-defined Cokret ingest endpoint.
+    /// Callers should keep the local buffer instead of reaching into
+    /// deployment-private server surfaces.
     pub async fn post_audit_user_action(&self, payload: Value) -> Result<(), AuditPostError> {
-        let request = self
-            .http
-            .post(
-                self.endpoint("_soland/admin/audit/user-action")
-                    .map_err(|err| AuditPostError::Other(err.to_string()))?,
-            )
-            .json(&payload);
-        let response = self
-            .prepare_request(request)
-            .send()
-            .await
-            .map_err(|err| AuditPostError::Other(err.to_string()))?;
-        let status = response.status();
-        if status.is_success() {
-            return Ok(());
-        }
-        if status == StatusCode::NOT_FOUND {
-            return Err(AuditPostError::NotWired);
-        }
-        Err(AuditPostError::Other(format!("HTTP {status}")))
+        let _ = payload;
+        Err(AuditPostError::NotWired)
     }
 }

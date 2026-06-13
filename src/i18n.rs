@@ -1219,9 +1219,6 @@ pub fn english_translations() -> TranslationDict {
     // in `chinese_translations()`.
     add_contacts_keys(&mut dict);
 
-    // CKP-0007 — Circle list / create / add-member UI strings.
-    add_circle_ui_keys(&mut dict);
-
     dict
 }
 
@@ -2315,9 +2312,6 @@ pub fn chinese_translations() -> TranslationDict {
     // Contacts / invite-receive policy / realm invite-from-contacts.
     add_contacts_keys_zh(&mut dict);
 
-    // CKP-0007 — Circle list / create / add-member UI strings.
-    add_circle_ui_keys_zh(&mut dict);
-
     dict
 }
 
@@ -2475,97 +2469,6 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("realm_admin.invite_selected", "邀请所选联系人");
     dict.set("realm_admin.invite_divider", "或邀请陌生人(粘贴邀请链接)");
     dict.set("realm_admin.invite_bad_server", "无效的服务器地址:{error}");
-}
-
-/// CKP-0007 — Circle list / create / add-member UI strings (English,
-/// authoritative). The `circle.*` prefix groups every string the
-/// RealmMembersPanel Circles section renders.
-fn add_circle_ui_keys(dict: &mut TranslationDict) {
-    dict.set("circle.section_title", "Circles");
-    dict.set(
-        "circle.section_hint",
-        "Circles are sub-groups inside this Realm. Members you add join immediately — no approval needed from them.",
-    );
-    dict.set("circle.new_button", "New circle");
-    dict.set("circle.loading", "Loading circles\u{2026}");
-    dict.set("circle.load_failed", "Could not load circles: {error}");
-    dict.set("circle.empty", "No circles in this Realm yet.");
-    dict.set("circle.member_count", "{count} members");
-    dict.set("circle.creating", "Creating circle\u{2026}");
-    dict.set("circle.create_failed", "Could not create circle: {error}");
-    dict.set("circle.created", "Circle \u{201c}{title}\u{201d} created.");
-
-    // Add-to-circle flow.
-    dict.set("circle.add_member_button", "Add to circle");
-    dict.set("circle.add_member_title", "Add Realm members to {circle}");
-    dict.set(
-        "circle.add_member_hint",
-        "Members you add join immediately — they do not have to accept.",
-    );
-    dict.set("circle.add_member_pick_label", "Select Realm members");
-    dict.set(
-        "circle.add_member_none",
-        "No Realm members are available to add.",
-    );
-    dict.set("circle.add_member_submit", "Add selected");
-    dict.set("circle.add_member_cancel", "Cancel");
-    dict.set(
-        "circle.add_member_adding",
-        "Adding {count} member(s)\u{2026}",
-    );
-    dict.set(
-        "circle.add_member_added",
-        "Added {ok} member(s) to the circle.",
-    );
-    dict.set(
-        "circle.add_member_partial",
-        "Added {ok}/{total} member(s); some failed: {error}",
-    );
-    dict.set("circle.add_member_failed", "Could not add members: {error}");
-    dict.set(
-        "circle.add_member_empty_selection",
-        "Select at least one member first.",
-    );
-}
-
-/// CKP-0007 — Circle list / create / add-member UI strings (Chinese).
-fn add_circle_ui_keys_zh(dict: &mut TranslationDict) {
-    dict.set("circle.section_title", "圈子");
-    dict.set(
-        "circle.section_hint",
-        "圈子是该领域内的子分组。你添加的成员会立即加入,无需对方同意。",
-    );
-    dict.set("circle.new_button", "新建圈子");
-    dict.set("circle.loading", "正在加载圈子…");
-    dict.set("circle.load_failed", "加载圈子失败:{error}");
-    dict.set("circle.empty", "该领域还没有圈子。");
-    dict.set("circle.member_count", "{count} 名成员");
-    dict.set("circle.creating", "正在创建圈子…");
-    dict.set("circle.create_failed", "创建圈子失败:{error}");
-    dict.set("circle.created", "圈子“{title}”已创建。");
-
-    // 拉成员入圈
-    dict.set("circle.add_member_button", "拉入圈子");
-    dict.set("circle.add_member_title", "把领域成员拉进 {circle}");
-    dict.set(
-        "circle.add_member_hint",
-        "你添加的成员会立即加入,无需对方接受。",
-    );
-    dict.set("circle.add_member_pick_label", "选择领域成员");
-    dict.set("circle.add_member_none", "没有可添加的领域成员。");
-    dict.set("circle.add_member_submit", "添加所选");
-    dict.set("circle.add_member_cancel", "取消");
-    dict.set("circle.add_member_adding", "正在添加 {count} 名成员…");
-    dict.set("circle.add_member_added", "已将 {ok} 名成员加入圈子。");
-    dict.set(
-        "circle.add_member_partial",
-        "已添加 {ok}/{total} 名成员;部分失败:{error}",
-    );
-    dict.set("circle.add_member_failed", "添加成员失败:{error}");
-    dict.set(
-        "circle.add_member_empty_selection",
-        "请先至少选择一名成员。",
-    );
 }
 
 /// English i18n strings for the 6 CKP-0007 reason / error codes

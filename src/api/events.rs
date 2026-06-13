@@ -155,7 +155,9 @@ impl CokretApi {
                 anyhow::anyhow!("events/frontier account_client decode failed: {err}")
             })?;
         let cokret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
-            anyhow::bail!("events/frontier for actor_id={actor_id} did not return an actor frontier");
+            anyhow::bail!(
+                "events/frontier for actor_id={actor_id} did not return an actor frontier"
+            );
         };
         Ok(view)
     }
@@ -246,11 +248,10 @@ impl CokretApi {
             .local_operation_idempotency_alias()
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
-        let value = serde_json::to_value(signed)?;
         let request = self
             .http
             .post(self.endpoint("_cokret/self/events")?)
-            .json(&value);
+            .json(signed);
         let request = self.with_write_request_headers(request, &idempotency_key);
         self.send_json_retryable(self.prepare_request(request), Method::POST)
             .await
@@ -300,11 +301,10 @@ impl CokretApi {
             events: events_value,
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
-        let value = serde_json::to_value(&body)?;
         let request = self
             .http
             .post(self.endpoint("_cokret/self/events")?)
-            .json(&value);
+            .json(&body);
         let idem = idempotency_key
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
@@ -349,8 +349,7 @@ impl CokretApi {
                 "ephemeral submit: expires_at - sent_at = {window_ms} ms violates 5-minute ceiling"
             );
         }
-        let body = serde_json::to_value(envelope)?;
-        self.post_json("_cokret/self/ephemeral", body).await
+        self.post_json("_cokret/self/ephemeral", envelope).await
     }
 
     /// Round R2/R3 (T02) — point-to-point to-device signals (the

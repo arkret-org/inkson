@@ -4,9 +4,8 @@ impl CokretApi {
     /// A4b — resolve a `ck:blob:sha256:<hex>` reference to its
     /// authenticated download URL on this Principal Server. Returns the
     /// `<base>/_cokret/self/blob/get?blob_ref=<…>&purpose=profile_avatar`
-    /// shape that soland's
-    /// `/blob/get` handler answers — callers can plug this directly
-    /// into `<img src=…>` or `ck.self.account.update_profile { avatar_url }`.
+    /// shape answered by the spec blob handler; callers can plug this
+    /// directly into `<img src=…>`.
     pub fn blob_download_url(&self, blob_ref: &str) -> String {
         blob_download_url_for(self.base_url.as_str(), blob_ref)
     }
@@ -20,21 +19,29 @@ impl CokretApi {
     /// headers) for the caller to PUT against.
     pub async fn blob_presign(
         &self,
-        realm_id: &str,
-        content_type: &str,
-        content_length: u64,
+        blob_ref: &str,
+        realm_id: Option<&str>,
+        purpose: Option<&str>,
     ) -> anyhow::Result<Value> {
-        let realm = cokret_sdk::RealmId::new(realm_id)
-            .map_err(|err| anyhow::anyhow!("invalid realm_id for /blob/presign: {err}"))?;
-        self.post_json(
-            "_cokret/self/blob/presign",
-            json!({
-                "realm_id": realm.as_str(),
-                "content_type": content_type,
-                "content_length": content_length,
-            }),
-        )
-        .await
+        let realm = realm_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                cokret_sdk::RealmId::new(value.to_owned()).map_err(|err| {
+                    anyhow::anyhow!("invalid realm_id for /blob/presign `{value}`: {err}")
+                })
+            })
+            .transpose()?;
+        let body = cokret_sdk::model::BlobPresignRequestBody {
+            blob_ref: canonical_blob_ref(blob_ref).to_owned(),
+            realm_id: realm,
+            max_age_seconds: None,
+            purpose: purpose
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+        };
+        self.post_json("_cokret/self/blob/presign", &body).await
     }
 
     /// YOU-01-007 — build the spec `blob_upload_request_body`

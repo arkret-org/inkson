@@ -10,7 +10,6 @@
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke
 //!   submits the spec-canonical durable `ck.device.revoke` Control Move on the principal control
 //!   stream (envelope `seal_basis` minted from `ck.self.events.frontier`, SPEC-SOL-003) with a
-//!   best-effort legacy `POST /_soland/self/devices/{device_id}/revoke` follow-up via
 //!   [`crate::api::CokretApi::revoke_device`], then rotates the account MLS history secret and
 //!   rewraps local `mls_history` backups.
 //!
@@ -27,10 +26,9 @@
 //!   (cross-signing binding), §6 (device list)
 //! - `identity/key-management.md` §5.0–§5.2 (`ck.device.authorize` / `ck.device.revoke`)
 //!
-//! ## Soland / coauth endpoints
+//! ## Endpoints
 //!
 //! - `GET /_cokret/self/account/viewer` — implemented (soland)
-//! - `POST /_soland/self/devices/{device_id}/revoke` — deployment-local revoke scaffold (soland)
 //! - `POST /_cokret/gate/account/device-pair` — spec-level device pairing.
 
 use dioxus::prelude::*;
@@ -1236,7 +1234,12 @@ fn render_pair_flow(
                                                 spawn(async move {
                                                     match with_authed_api(&base, api_token, |api| {
                                                         let request_payload = request_payload.clone();
-                                                        async move { api.account_device_pair(request_payload).await }
+                                                        async move {
+                                                            let body: cokret_sdk::AccountDevicePairRequestBody =
+                                                                serde_json::from_value(request_payload)
+                                                                    .map_err(|err| anyhow::anyhow!("invalid device-pair request payload: {err}"))?;
+                                                            api.account_device_pair(&body).await
+                                                        }
                                                     })
                                                     .await
                                                     {
@@ -1351,19 +1354,15 @@ fn render_pair_flow(
                             "Approving sibling device pairing…"
                         ));
                         spawn(async move {
-                            let mut body = json!({
-                                "pairing_code": pairing_code,
-                                "new_device_pubkey": new_device_pubkey,
-                                "challenge_signature": challenge_signature,
-                                "device_metadata": device_metadata,
-                            });
-                            if let Some(display_name) = display_name
-                                && let Some(object) = body.as_object_mut()
-                            {
-                                object.insert("display_name".to_owned(), json!(display_name));
-                            }
+                            let body = cokret_sdk::AccountDevicePairRequestBody {
+                                pairing_code,
+                                new_device_pubkey,
+                                challenge_signature,
+                                display_name,
+                                device_metadata,
+                            };
                             match with_authed_api(&base, api_token, |api| async move {
-                                api.account_device_pair(body).await
+                                api.account_device_pair(&body).await
                             })
                             .await
                             {

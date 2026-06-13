@@ -195,7 +195,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         scope: "openid profile",
       });
     }
-    if (!url.pathname.startsWith("/_cokret/") && !url.pathname.startsWith("/_soland/")) {
+    if (!url.pathname.startsWith("/_cokret/")) {
       return route.continue();
     }
 
@@ -529,11 +529,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/messages$/)) {
       return json(route, {
-        ok: true,
-        mimi_message_id: "mimi-msg-e2e",
-        mapped_operation_id: "ck:operation:mimi-submit-e2e",
-        cokret_event_id: "ck:event:mimi-submit-e2e",
-        receipt: {
+        event_ref: "ck:event:01964137-0000-7000-8000-00000000d0aa",
+        delivery: {
           kind: "ck.mimi.mapping_receipt",
           profile: "ck.profile.mimi_interop.v1",
           mimi_room_uri: "mimi://mimi.example.com/rooms/01JSMIMI",
@@ -543,20 +540,15 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           mapped_operation_id: "ck:operation:mimi-submit-e2e",
           mimi_message_id: "mimi-msg-e2e",
         },
+        rejected: [],
       });
     }
 
     if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/group-info$/)) {
-      const roomId = decodeURIComponent(url.pathname.split("/")[5]);
       return json(route, {
-        room_id: roomId,
-        mimi_room_uri: "mimi://mimi.example.com/rooms/01JSMIMI",
         group_info: { epoch: 7, mls_group_id: "mls-group-01", policy_root: "sha256:e2e-policy-root" },
-        participants: [
-          { identifier: "mimi://mimi.example.com/alice", did: "did:web:alice.example", role: "admin" },
-          { identifier: "mimi://remote.example/bob", did: "did:web:bob.example", role: "member" },
-        ],
-        receipt: { kind: "ck.open.mimi.group_info", profile: "ck.profile.mimi_interop.v1" },
+        room_binding_ref: "ck:event:01964137-0000-7000-8000-00000000d0ab",
+        proofs: [{ kind: "ck.open.mimi.group_info", profile: "ck.profile.mimi_interop.v1" }],
       });
     }
 
@@ -581,12 +573,15 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     if (url.pathname === "/_cokret/open/mimi/identifiers/query") {
       const body = await route.request().postDataJSON();
       return json(route, {
-        query: body.query,
-        reachable: true,
-        mapped_did: "did:web:alice.example",
-        provider_id: "mimi://mimi.example.com",
+        results: [
+          {
+            identifier: body.identifiers?.[0] ?? { mimi_uri: "mimi://remote.example/alice" },
+            reachable: true,
+            mapped_did: "did:web:alice.example",
+            provider_id: "mimi://mimi.example.com",
+          },
+        ],
         proofs: [{ type: "private_identifier_query", expires_at: "2026-04-30T12:00:00Z" }],
-        receipt: { kind: "ck.open.mimi.identifier_query", privacy_mode: body.privacy_mode },
       });
     }
 
@@ -601,49 +596,65 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname === "/_cokret/open/mimi/proxy-download") {
       return json(route, {
-        ok: true,
-        blob_ref: DEMO_BLOB_REF,
-        media_type: "application/octet-stream",
-        size: 23,
-        proxy_url: `https://mimi.example.com/proxy/${DEMO_BLOB_REF}`,
-        receipt: { kind: "ck.open.mimi.proxy_download", direct_object_store_url: null },
+        download_ref: `https://mimi.example.com/proxy/${DEMO_BLOB_REF}`,
+        headers: { "content-type": "application/octet-stream" },
+        expires_at: "2026-04-30T12:00:00Z",
       });
     }
 
-    if (url.pathname === "/_soland/gate/auth/dev-login") {
+    if (url.pathname === "/_cokret/gate/account/register") {
       const body = await route.request().postDataJSON();
       return json(route, {
-        access_token: "sx_playwright_token",
-        token_type: "Bearer",
-        actor: body.actor,
-        device_id: body.device_id,
-        expires_at: "2026-04-28T12:00:00Z",
-      });
-    }
-
-    if (url.pathname === "/_soland/self/account/register") {
-      const body = await route.request().postDataJSON();
-      return json(route, {
-        did: body.did,
-        handle: body.handle,
-        display_name: body.display_name,
-        created_at: "2026-04-28T12:00:00Z",
+        principal_id: body.principal_id,
+        state: "active",
+        devices: body.device_id
+          ? [
+              {
+                device_id: body.device_id,
+                status: "active",
+                display_name: "Current device",
+                authorized_at: "2026-04-28T12:00:00Z",
+              },
+            ]
+          : [],
+        profile: {
+          id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
+          schema: "ck.schema.actor_profile.v1",
+          principal_id: body.principal_id,
+          actor_kind: "user",
+          display_name: body.display_name ?? "yougen",
+          profile_fields: {},
+          accountable_principal_ids: [],
+          created_at: "2026-04-28T12:00:00Z",
+        },
       }, 201);
     }
 
-    if (url.pathname === "/_soland/self/account/profile") {
+    if (url.pathname === "/_cokret/self/account/profile") {
       const body = await route.request().postDataJSON();
+      const patch = body.patch ?? {};
+      const displayName = typeof patch.display_name === "string" ? patch.display_name : "yougen";
+      const avatarBlobRef = typeof patch.avatar_blob_ref === "string" ? patch.avatar_blob_ref : undefined;
+      const bio = typeof patch["profile_fields.bio"] === "string" ? patch["profile_fields.bio"] : undefined;
       return json(route, {
-        did: "did:web:alice.example",
-        handle: "alice.example",
-        display_name: body.display_name ?? "yougen",
-        bio: body.bio ?? null,
-        avatar_url: body.avatar_url ?? null,
+        profile: {
+          id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
+          schema: "ck.schema.actor_profile.v1",
+          principal_id: "did:web:alice.example",
+          actor_kind: "user",
+          display_name: displayName,
+          handle: "alice.example",
+          avatar_blob_ref: avatarBlobRef,
+          profile_fields: bio ? { bio } : {},
+          accountable_principal_ids: [],
+          created_at: "2026-04-28T12:00:00Z",
+          updated_at: "2026-04-28T12:10:00Z",
+        },
       });
     }
 
-    if (url.pathname === "/_soland/gate/auth/logout") {
-      return json(route, { ok: true });
+    if (url.pathname === "/_cokret/gate/account/session-grants/revoke") {
+      return json(route, { revoked_count: 1, revoked_grant_ids: [] });
     }
 
     if (url.pathname === "/_cokret/self/account/subscribe") {
@@ -1373,17 +1384,18 @@ function joinCandidate() {
 
 function mimiProviderDirectory() {
   return {
-    schema: "ck.schema.mimi_interop.v1",
-    service_did: "did:web:mimi.example.com",
-    service_type: "mimi_provider_facade",
-    supported_profiles: ["ck.profile.mimi_interop.v1"],
-    mimi: {
+    providers: [
+      {
+        service_did: "did:web:mimi.example.com",
+        service_type: "mimi_provider_facade",
+        provider_id: "mimi://mimi.example.com",
+        base_url: "https://mimi.example.com/_cokret/open/mimi",
+        supported_profiles: ["ck.profile.mimi_interop.v1"],
+      },
+    ],
+    features: {
       protocol_draft: "draft-ietf-mimi-protocol-06",
       content_draft: "draft-ietf-mimi-content-08",
-      room_policy_draft: "draft-ietf-mimi-room-policy-03",
-      identifier_draft: "draft-kohbrok-mimi-identifiers-01",
-      base_url: "https://mimi.example.com/_cokret/open/mimi",
-      provider_id: "mimi://mimi.example.com",
       features: [
         "key_material",
         "room_update",
@@ -1404,7 +1416,7 @@ function mimiProviderDirectory() {
       ],
       room_policy_components: ["roles", "join_rules", "history_visibility"],
     },
-    proof: { type: "mock-http-message-signature" },
+    expires_at: "2026-04-30T12:00:00Z",
   };
 }
 

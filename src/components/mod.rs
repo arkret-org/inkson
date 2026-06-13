@@ -13,9 +13,6 @@ pub mod circle_error_toast;
 /// discussion-of cross-link banner. Shared between the new-Flow form,
 /// the composer header, and the Flow detail view.
 pub mod circle_scope_picker;
-/// CKP-0007 P3B.2 — Create-Circle modal surfaced from the Realm-detail
-/// page. Strict-subset validation runs client-side before submit.
-pub mod create_circle_modal;
 pub mod device_authorization_prompt;
 pub mod dismissible_popup;
 pub mod empty_state;
@@ -72,7 +69,6 @@ pub use circle_error_toast::{
 pub use circle_scope_picker::{
     CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };
-pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
 pub use device_authorization_prompt::DeviceAuthorizationPrompt;
 pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
 pub use empty_state::{EmptyState, EmptyStateKind};

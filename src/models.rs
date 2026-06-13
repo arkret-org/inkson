@@ -27,21 +27,6 @@ pub struct LogoutOutcome {
     pub revoked: bool,
 }
 
-/// Mirror of soland's product-face `SolandAccountRegisterOutcome` wire shape
-/// (`POST /_soland/self/account/register`).
-/// Named with the `Soland` prefix because the SDK core
-/// `AccountRegisterOutcome` (`api.rs`) has a different, principal-centric
-/// shape (`principal_id` / `state` / `devices` / handle-claim fields);
-/// sharing the SDK name would mislead readers into expecting the same wire
-/// contract.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SolandAccountRegisterOutcome {
-    pub did: String,
-    pub handle: String,
-    pub display_name: Option<String>,
-    pub created_at: String,
-}
-
 /// App-local current-account projection derived from the spec
 /// `ck.self.account.viewer` response. `handle` is populated only from a
 /// signed `primary_handle_claim.handle`; an empty string means the server did
@@ -56,31 +41,9 @@ pub struct CurrentAccountOutcome {
     pub created_at: String,
 }
 
-/// A4b — response shape for `POST /_soland/self/account/profile`. Mirrors
-/// soland's product-face `SolandAccountUpdateProfileOutcome` wire shape so
-/// the settings UI can reconcile its local cache with whatever the server
-/// actually stored (the server normalises empty strings to `None`). Named
-/// with the `Soland` prefix because the SDK core
-/// `AccountUpdateProfileOutcome` has a different shape
-/// (`{ profile: ActorProfile }`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SolandAccountUpdateProfileOutcome {
-    pub did: String,
-    pub handle: String,
-    #[serde(default)]
-    pub display_name: Option<String>,
-    #[serde(default)]
-    pub bio: Option<String>,
-    #[serde(default)]
-    pub avatar_url: Option<String>,
-}
-
-/// A6.1 — response shape for `POST /_soland/self/index/search`. Mirrors
-/// soland's index search payload: each result row carries a `kind`
-/// (`message` | `space`), an `object_id`, and surface-specific extras
-/// (sender / thread_id / content for messages, title / summary for
-/// spaces). Unknown fields are ignored so forward additions do not
-/// break the client.
+/// A6.1 — app-local global search projection. The Cokret HTTP catalog
+/// currently has no spec-defined endpoint for this query; the shape is
+/// retained for the search UI state model and contract tests.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IndexSearchOutcome {
     pub query: String,
@@ -230,28 +193,6 @@ pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
             low_trust: Some(DisclosureLevel::Opaque),
         }),
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct DirectConversationResolveRequestBody {
-    pub peer: String,
-    #[serde(default)]
-    pub create: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idempotency_key: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-pub struct DirectConversationResolveOutcome {
-    pub state: String,
-    #[serde(default)]
-    pub realm_id: Option<String>,
-    #[serde(default)]
-    pub main_flow_id: Option<String>,
-    #[serde(default)]
-    pub binding_event_ref: Option<String>,
-    #[serde(default)]
-    pub created: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

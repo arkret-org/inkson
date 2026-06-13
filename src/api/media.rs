@@ -98,10 +98,6 @@ impl CokretApi {
         &self,
         request: &MediaIceConfigRequestBody,
     ) -> anyhow::Result<MediaIceConfigOutcome> {
-        self.post_json(
-            "_cokret/self/rtc/ice-config",
-            serde_json::to_value(request)?,
-        )
-        .await
+        self.post_json("_cokret/self/rtc/ice-config", request).await
     }
 }

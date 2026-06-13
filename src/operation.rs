@@ -2037,7 +2037,7 @@ mod tests {
             });
     }
 
-    fn assert_payload_field_names_are_soland_canonical(value: &serde_json::Value) {
+    fn assert_payload_field_names_are_spec_canonical(value: &serde_json::Value) {
         fn check(value: &serde_json::Value) -> Result<(), String> {
             match value {
                 serde_json::Value::Array(values) => {
@@ -2214,7 +2214,7 @@ mod tests {
         );
         assert!(op.payload["object"]["facets"]["documentable"].is_object());
         assert_registered_payload_valid(&op);
-        assert_payload_field_names_are_soland_canonical(&op.payload);
+        assert_payload_field_names_are_spec_canonical(&op.payload);
     }
 
     #[test]
@@ -2259,7 +2259,7 @@ mod tests {
         assert!(op.payload.get("components").is_none());
         assert!(op.payload.get("patch").is_none());
         assert_registered_payload_valid(&op);
-        assert_payload_field_names_are_soland_canonical(&op.payload);
+        assert_payload_field_names_are_spec_canonical(&op.payload);
     }
 
     #[test]
@@ -2307,7 +2307,7 @@ mod tests {
         assert!(op.payload.get("preconditions").is_none());
         assert!(op.payload.get("effects").is_none());
         assert_registered_payload_valid(&op);
-        assert_payload_field_names_are_soland_canonical(&op.payload);
+        assert_payload_field_names_are_spec_canonical(&op.payload);
     }
 
     #[test]
@@ -2329,7 +2329,7 @@ mod tests {
         assert!(op.payload.get("morph_id").is_none());
         assert!(op.payload["patch"]["fields"]["value"]["document"]["blocks"].is_array());
         assert_registered_payload_valid(&op);
-        assert_payload_field_names_are_soland_canonical(&op.payload);
+        assert_payload_field_names_are_spec_canonical(&op.payload);
     }
 
     #[test]
@@ -2354,7 +2354,7 @@ mod tests {
         assert_eq!(op.payload["content"]["anchor_range"]["start"], 4);
         assert_eq!(op.payload["content"]["anchor_range"]["end"], 9);
         assert_registered_payload_valid(&op);
-        assert_payload_field_names_are_soland_canonical(&op.payload);
+        assert_payload_field_names_are_spec_canonical(&op.payload);
     }
 
     #[test]
@@ -2378,7 +2378,7 @@ mod tests {
             "mitigated"
         );
         assert_registered_payload_valid(&op);
-        assert_payload_field_names_are_soland_canonical(&op.payload);
+        assert_payload_field_names_are_spec_canonical(&op.payload);
     }
 
     #[test]

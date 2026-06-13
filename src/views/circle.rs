@@ -5,11 +5,8 @@
 //! rules) and the leave / archive / scope-rotate controls the viewer
 //! has permission to execute.
 //!
-//! The view is pure projection — writes go out through
-//! [`crate::api::CokretApi`] handlers that are wired up by the
-//! follow-up P3B.2 commits. The Realm-detail entry point lives in
-//! [`crate::views::realm_admin`] (see the "create Circle" modal section
-//! at the bottom).
+//! The view is pure projection. Yougen does not expose a Circle management
+//! HTTP surface unless a spec-defined Cokret catalog entry exists.
 
 use dioxus::prelude::*;
 
@@ -46,9 +43,7 @@ pub struct CirclePanelProps {
 }
 
 /// One row in the member list. Stays a small struct so the parent route
-/// can build it from either a synchronous projection or an async
-/// product-plane `/_soland/self/circles/:id/members` fetch(CKP-0014
-/// 落地后迁 `/_cokret`).
+/// can build it from a synchronized projection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CircleMemberRow {
     pub actor_id: String,

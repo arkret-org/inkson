@@ -175,8 +175,9 @@ pub enum Route {
 
     /// A6.1 — global cross-Space message search. Triggered by Cmd+F
     /// (Ctrl+F on non-Mac), the topbar `topbar-search-button`, or by
-    /// directly navigating to `/search`. Backed by soland's
-    /// `POST /_soland/self/index/search` substring scan.
+    /// directly navigating to `/search`. The current Cokret catalog has no
+    /// spec-defined HTTP endpoint for global index search, so the panel fails
+    /// closed until a catalog entry lands.
     #[route("/search", crate::app::RouterView)]
     Search,
 }

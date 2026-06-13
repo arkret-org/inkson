@@ -18,11 +18,8 @@ impl CokretApi {
         &self,
         body: &cokret_sdk::AgentKeyPairRequestBody,
     ) -> anyhow::Result<cokret_sdk::AgentKeyPairOutcome> {
-        self.post_json(
-            "_cokret/gate/account/agent-key-pair",
-            serde_json::to_value(body)?,
-        )
-        .await
+        self.post_json("_cokret/gate/account/agent-key-pair", body)
+            .await
     }
 
     /// `POST /_cokret/self/agents` — `ck.self.agent.provision`. Provisions a new
@@ -32,8 +29,7 @@ impl CokretApi {
         &self,
         body: &cokret_sdk::AgentProvisionRequestBody,
     ) -> anyhow::Result<cokret_sdk::AgentProvisionOutcome> {
-        self.post_json("_cokret/self/agents", serde_json::to_value(body)?)
-            .await
+        self.post_json("_cokret/self/agents", body).await
     }
 
     /// `GET /_cokret/self/agents` — `ck.self.agent.list`. Returns the
@@ -64,7 +60,7 @@ impl CokretApi {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/pause"),
-            serde_json::to_value(body)?,
+            body,
         )
         .await
     }
@@ -78,7 +74,7 @@ impl CokretApi {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/resume"),
-            serde_json::to_value(body)?,
+            body,
         )
         .await
     }
@@ -96,7 +92,7 @@ impl CokretApi {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/deactivate"),
-            serde_json::to_value(body)?,
+            body,
         )
         .await
     }
@@ -111,7 +107,7 @@ impl CokretApi {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/rotate-key"),
-            serde_json::to_value(body)?,
+            body,
         )
         .await
     }
@@ -127,7 +123,7 @@ impl CokretApi {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("_cokret/self/agents/{agent_principal_id}/grants"),
-            serde_json::to_value(body)?,
+            body,
         )
         .await
     }
@@ -159,7 +155,7 @@ impl CokretApi {
         let agent_principal_id = path_component(agent_principal_id);
         self.put_json(
             &format!("_cokret/self/agents/{agent_principal_id}/participation"),
-            serde_json::to_value(body)?,
+            body,
         )
         .await
     }
@@ -196,10 +192,7 @@ impl CokretApi {
         if body.controller_principal_id.as_str().trim().is_empty() {
             anyhow::bail!("controller_principal_id is required");
         }
-        self.post_json(
-            "_cokret/self/agent-sidecar-threads:ensure",
-            serde_json::to_value(body)?,
-        )
-        .await
+        self.post_json("_cokret/self/agent-sidecar-threads:ensure", body)
+            .await
     }
 }
