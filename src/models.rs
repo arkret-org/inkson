@@ -801,14 +801,21 @@ mod tests {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BackfillView {
+    // `events` stays untyped: yougen's chat/kanban/poll parsers walk each event
+    // tree tolerantly (recursive `collect_message_candidates` over
+    // `payload`/`content`/… with multi-key field lookup), so the same view
+    // deserializes both the legacy projection-row shape and the canonical
+    // `EventsQueryOutcome` full-Event-envelope shape (SOL-05-003: soland's
+    // realm-scoped `ck.self.events.query` now returns full envelopes).
     #[serde(default)]
     pub events: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_bootstrap: Option<Value>,
     pub prev_cursor: Option<String>,
     pub next_cursor: Option<String>,
-    #[serde(default)]
-    pub limited: bool,
+    // Spec `EventsQueryOutcome.has_more` (was the soland-local `limited`).
+    #[serde(default, alias = "limited")]
+    pub has_more: bool,
 }
 
 // The yougen-local `SnapshotHeadState` mirror was deleted with the
