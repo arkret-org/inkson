@@ -134,8 +134,12 @@ pub(crate) fn recovery_auto_prompt_already_prompted(
     actor: &str,
     account_recovery_configured: Option<bool>,
 ) -> bool {
-    if recovery_auto_prompt_pending_local_only_fingerprint(store, actor, account_recovery_configured)
-        .is_some()
+    if recovery_auto_prompt_pending_local_only_fingerprint(
+        store,
+        actor,
+        account_recovery_configured,
+    )
+    .is_some()
     {
         return false;
     }

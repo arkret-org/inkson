@@ -154,6 +154,16 @@ pub fn build_signed_genesis_recovery_policy(
     principal_id: &str,
     trust_domain: &str,
 ) -> anyhow::Result<Value> {
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active signer is required for recovery policy"))?;
+    build_signed_genesis_recovery_policy_with_signer(principal_id, trust_domain, &signer)
+}
+
+fn build_signed_genesis_recovery_policy_with_signer(
+    principal_id: &str,
+    trust_domain: &str,
+    signer: &crate::event_signer::YougenEventSigner,
+) -> anyhow::Result<Value> {
     let principal_id = principal_id.trim();
     let trust_domain = trust_domain.trim();
     if principal_id.is_empty() {
@@ -162,8 +172,8 @@ pub fn build_signed_genesis_recovery_policy(
     if trust_domain.is_empty() {
         anyhow::bail!("trust_domain is required");
     }
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active device signer is required for recovery policy"))?;
+    let verification_method =
+        principal_scoped_recovery_policy_verification_method(principal_id, signer)?;
     let issued_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let mut policy = json!({
         "schema": "ck.schema.recovery_policy.v1",
@@ -176,7 +186,7 @@ pub fn build_signed_genesis_recovery_policy(
         "issued_at": issued_at,
         "expires_at": null,
         "auth_data": {
-            "verification_method": signer.verification_method(),
+            "verification_method": verification_method,
             "signature_algorithm": signer.algorithm(),
             "signed_fields": RECOVERY_POLICY_SIGNED_FIELDS,
             "signature": ""
@@ -189,6 +199,26 @@ pub fn build_signed_genesis_recovery_policy(
         .map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
     policy["auth_data"]["signature"] = Value::String(B64.encode(signature));
     Ok(policy)
+}
+
+fn principal_scoped_recovery_policy_verification_method<'a>(
+    principal_id: &str,
+    signer: &'a crate::event_signer::YougenEventSigner,
+) -> anyhow::Result<&'a str> {
+    let verification_method = signer.verification_method().trim();
+    if verification_method
+        .strip_prefix(principal_id)
+        .and_then(|rest| rest.strip_prefix('#'))
+        .is_some_and(|fragment| !fragment.trim().is_empty())
+    {
+        return Ok(verification_method);
+    }
+    anyhow::bail!(
+        "active signer verification_method `{}` is not scoped to principal_id `{}`; recovery policy requires a principal signing key such as `{}`",
+        verification_method,
+        principal_id,
+        format_args!("{principal_id}#did-key-1"),
+    )
 }
 
 fn recovery_policy_signature_transcript(payload: &Value, signed_fields: &[&str]) -> Value {
@@ -484,6 +514,46 @@ mod tests {
         assert_eq!(
             parsed.allowed_proof_kinds,
             vec!["principal_signing", "recovery_unlock"]
+        );
+    }
+
+    #[test]
+    fn genesis_recovery_policy_requires_principal_scoped_signer() {
+        let signer = crate::event_signer::build_ed25519_signer([7u8; 32], "did:key:zlocal");
+        let err = build_signed_genesis_recovery_policy_with_signer(
+            "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f",
+            "ck:trust_domain:local.host",
+            &signer,
+        )
+        .expect_err("did:key device signer must not publish a did:webvh policy");
+
+        assert!(
+            err.to_string().contains("is not scoped to principal_id"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn genesis_recovery_policy_uses_principal_scoped_verification_method() {
+        let signer = crate::event_signer::build_ed25519_signer(
+            [8u8; 32],
+            "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f",
+        );
+        let policy = build_signed_genesis_recovery_policy_with_signer(
+            "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f",
+            "ck:trust_domain:local.host",
+            &signer,
+        )
+        .expect("principal-scoped signer should build policy");
+
+        assert_eq!(
+            policy["auth_data"]["verification_method"],
+            "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f#device"
+        );
+        assert!(
+            policy["auth_data"]["signature"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
         );
     }
 
