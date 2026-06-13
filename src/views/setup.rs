@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 use dioxus_router::hooks::use_navigator;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::api::is_auth_expired_error;
 use crate::config::LocalConfigStore;
@@ -1310,45 +1310,33 @@ pub fn SetupPanel(
                                                                 } else {
                                                                     vec![actor.clone()]
                                                                 };
-                                                                let mut projection_body = json!({
-                                                                        // Yougen-local schema tag — used by the
-                                                                        // sidebar (M-SIDEBAR-TIER-1) to split
-                                                                        // Realms from Spaces. Legacy projections
-                                                                        // without the tag default to "realm".
-                                                                        "__kind": "realm",
-                                                                        "owner": actor.clone(),
-                                                                        "admins": projection_admins.clone(),
-                                                                        "members": projection_members.clone(),
-                                                                        "encryption_profile": encryption_profile.clone(),
-                                                                        "plaintext_visible_services": plaintext_services.clone(),
-                                                                        "summary": {
-                                                                            "title": title.clone(),
-                                                                            "summary": summary.clone(),
-                                                                            "category": "collaboration",
-                                                                            "tags": [],
-                                                                            "discoverability": discoverability.clone(),
-                                                                            "encryption_profile": encryption_profile.clone(),
-                                                                            "plaintext_visible_services": plaintext_services.clone(),
-                                                                            "owner": actor.clone(),
-                                                                            "admins": projection_admins,
-                                                                            "members": projection_members,
-                                                                        },
-                                                                        "timeline": {
-                                                                            "events": []
-                                                                        }
+                                                                // Single-source the "which profile
+                                                                // recommends which floor" rule in
+                                                                // crate::api; `None` omits the floor
+                                                                // keys for non-E2EE profiles.
+                                                                let projection_floor =
+                                                                    crate::api::encryption_profile_uses_recommended_floor(
+                                                                        &encryption_profile,
+                                                                    )
+                                                                    .then(|| {
+                                                                        crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR
+                                                                            .to_owned()
                                                                     });
-                                                                if crate::api::encryption_profile_uses_recommended_floor(
-                                                                    &encryption_profile,
-                                                                ) {
-                                                                    projection_body["content_encryption_floor"] =
-                                                                        json!(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR);
-                                                                    projection_body["metadata_encryption_floor"] =
-                                                                        json!(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR);
-                                                                    projection_body["summary"]["content_encryption_floor"] =
-                                                                        json!(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR);
-                                                                    projection_body["summary"]["metadata_encryption_floor"] =
-                                                                        json!(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR);
-                                                                }
+                                                                let projection_body =
+                                                                    crate::realm_tree::OptimisticRealmTreeProjection::realm(
+                                                                        crate::realm_tree::RealmProjectionInput {
+                                                                            owner: actor.clone(),
+                                                                            admins: projection_admins,
+                                                                            members: projection_members,
+                                                                            title: title.clone(),
+                                                                            summary: summary.clone(),
+                                                                            discoverability: discoverability.clone(),
+                                                                            encryption_profile: encryption_profile.clone(),
+                                                                            plaintext_visible_services: plaintext_services.clone(),
+                                                                            encryption_floor: projection_floor,
+                                                                        },
+                                                                    )
+                                                                    .into_value();
                                                                 state_store.write().save_realm_tree_projection(
                                                                     realm_id.clone(),
                                                                     projection_body,
@@ -1820,23 +1808,18 @@ pub fn SetupPanel(
                                                             // canonical `schema` field, but for the
                                                             // optimistic local write here we use the
                                                             // simpler marker.
-                                                            let mut projection_body = json!({
-                                                                "__kind": "space",
-                                                                "realm_id": realm_id.clone(),
-                                                                "kind": kind.clone(),
-                                                                "summary": {
-                                                                    "title": title.clone(),
-                                                                    "summary": summary.clone(),
-                                                                    "kind": kind.clone(),
-                                                                },
-                                                                "timeline": { "events": [] }
-                                                            });
-                                                            if let Some(parent) = parent_opt {
-                                                                projection_body["parent_space_id"] = json!(parent);
-                                                            }
-                                                            if let Some(default_realm) = default_realm_opt {
-                                                                projection_body["default_realm_id"] = json!(default_realm);
-                                                            }
+                                                            let projection_body =
+                                                                crate::realm_tree::OptimisticRealmTreeProjection::space(
+                                                                    crate::realm_tree::SpaceProjectionInput {
+                                                                        realm_id: realm_id.clone(),
+                                                                        kind: kind.clone(),
+                                                                        title: title.clone(),
+                                                                        summary: summary.clone(),
+                                                                        parent_space_id: parent_opt.map(str::to_owned),
+                                                                        default_realm_id: default_realm_opt.map(str::to_owned),
+                                                                    },
+                                                                )
+                                                                .into_value();
                                                             state_store.write().save_realm_tree_projection(
                                                                 space.space_id.clone(),
                                                                 projection_body,
