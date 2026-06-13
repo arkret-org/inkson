@@ -77,9 +77,9 @@ pub struct MimiProviderDirectorySummary {
     pub features: Vec<String>,
 }
 
-/// Parsed `identifier_query` response.
+/// Parsed legacy/draft `identifier_query` diagnostic response.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MimiIdentifierQueryOutcome {
+pub struct MimiIdentifierQuerySummary {
     pub query: String,
     pub reachable: bool,
     pub mapped_did: Option<String>,
@@ -168,7 +168,7 @@ impl MimiClient {
     pub async fn identifier_query(
         &self,
         query: &str,
-    ) -> Result<MimiIdentifierQueryOutcome, MimiClientError> {
+    ) -> Result<MimiIdentifierQuerySummary, MimiClientError> {
         let url = format!("{}/_cokret/open/mimi/identifiers/query", self.base_url);
         let body = json!({
             "query": query,
@@ -308,7 +308,7 @@ pub fn parse_provider_directory_summary(
 
 pub fn parse_identifier_query(
     value: &Value,
-) -> Result<MimiIdentifierQueryOutcome, MimiClientError> {
+) -> Result<MimiIdentifierQuerySummary, MimiClientError> {
     let query = value
         .get("query")
         .and_then(Value::as_str)
@@ -327,7 +327,7 @@ pub fn parse_identifier_query(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    Ok(MimiIdentifierQueryOutcome {
+    Ok(MimiIdentifierQuerySummary {
         query,
         reachable,
         mapped_did,

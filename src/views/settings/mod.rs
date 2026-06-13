@@ -2185,7 +2185,7 @@ pub fn SettingsPanel(
                                         {
                                             Ok(response) => {
                                                 let first = response
-                                                    .results
+                                                    .matches
                                                     .first()
                                                     .map(|value| {
                                                         serde_json::to_string(value)
@@ -2194,7 +2194,7 @@ pub fn SettingsPanel(
                                                     .unwrap_or_else(|| "none".to_owned());
                                                 mimi_receipt.set(format!(
                                                     "identifier results {} first {}",
-                                                    response.results.len(),
+                                                    response.matches.len(),
                                                     first
                                                 ));
                                                 status.set("MIMI identifier query completed".to_owned());

@@ -97,8 +97,8 @@ use crate::models::{
     MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD, OkOutcome,
     PushRegisterView, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ReceiptResult,
     ResolveHandleView, ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView,
-    SearchRealmsView, ServerDescription, SessionLoginOutcome, SolandDirectoryDescribeResBody,
-    SpaceCreateResult, SubmitEventResult, SyncDescribeView, TypingResult, VerifyDeviceResult,
+    ServerDescription, SessionLoginOutcome, SolandDirectoryDescribeResBody, SpaceCreateResult,
+    SubmitEventResult, SyncDescribeView, TypingResult, VerifyDeviceResult,
 };
 use crate::operation::{EventEnvelope, OperationBuilder, trim_realm_id, uuid_v7};
 

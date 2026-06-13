@@ -573,15 +573,16 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     if (url.pathname === "/_cokret/open/mimi/identifiers/query") {
       const body = await route.request().postDataJSON();
       return json(route, {
-        results: [
+        matches: [
           {
-            identifier: body.identifiers?.[0] ?? { mimi_uri: "mimi://remote.example/alice" },
-            reachable: true,
-            mapped_did: "did:web:alice.example",
-            provider_id: "mimi://mimi.example.com",
+            identifier_commitment: `sha256:${"2".repeat(64)}`,
+            matched: true,
+            mimi_uri: body.identifiers?.[0]?.mimi_uri ?? "mimi://remote.example/alice",
+            subject: "did:web:alice.example",
           },
         ],
         proofs: [{ type: "private_identifier_query", expires_at: "2026-04-30T12:00:00Z" }],
+        has_more: false,
       });
     }
 
@@ -758,40 +759,51 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname === "/_cokret/find/directory/search-realms") {
       return json(route, {
-        results: [realmPreview()],
+        realms: [realmPreview()],
         next_cursor: null,
+        has_more: false,
       });
     }
 
     if (url.pathname === "/_cokret/find/directory/search-organizations") {
       return json(route, {
-        results: [
+        organizations: [
           {
-            id: "did:web:org.cokret.example",
-            did: "did:web:org.cokret.example",
+            organization_did: "did:web:org.cokret.example",
             handle: "cokret.example",
-            name: "Cokret Labs",
-            description: "Protocol and client engineering for Cokret deployments.",
-            discoverability: "listed",
-            profile_visibility: "public",
-            directory_services: ["did:web:server.local"],
-            proofs: [{ type: "org_membership" }],
+            preview: {
+              id: "did:web:org.cokret.example",
+              did: "did:web:org.cokret.example",
+              handle: "cokret.example",
+              name: "Cokret Labs",
+              description: "Protocol and client engineering for Cokret deployments.",
+              discoverability: "listed",
+              profile_visibility: "public",
+              directory_services: ["did:web:server.local"],
+              proofs: [{ type: "org_membership" }],
+            },
           },
         ],
         next_cursor: null,
+        has_more: false,
       });
     }
 
     if (url.pathname === "/_cokret/find/directory/search-actors") {
       return json(route, {
-        results: [
+        actors: [
           {
-            did: "did:web:bob.example",
-            handle: "bob.example",
+            actor_id: "did:web:bob.example",
             display_name: "Bob Example",
+            preview: {
+              did: "did:web:bob.example",
+              handle: "bob.example",
+              display_name: "Bob Example",
+            },
           },
         ],
         next_cursor: null,
+        has_more: false,
       });
     }
 
@@ -1349,10 +1361,13 @@ function realmPreview() {
   return {
     realm_id: DEMO_REALM,
     title: "Cokret Demo Realm",
-    description: "Shared demo Realm served by mocked server",
-    tags: ["demo"],
-    public: true,
-    category: "collaboration",
+    summary: "Shared demo Realm served by mocked server",
+    discoverability: "public",
+    join_rule: "public",
+    member_count_bucket: "1-10",
+    as_of: "2026-06-13T00:00:00Z",
+    source_refs: ["ck:event:0196419b-0000-7000-8000-000000000001"],
+    policy_revision: "mock-policy-rev",
   };
 }
 
