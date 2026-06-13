@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{Datelike, Duration, NaiveDate};
 use dioxus::prelude::*;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
@@ -26,11 +25,14 @@ use crate::views::helpers::{
 };
 
 mod dnd;
+// YOU-07-001:卡片到期日历纯计算 helper 外迁至 `due_calendar`(仅移动)。
+mod due_calendar;
 /// Board Space id used only when the explicit demo seed fallback is
 /// enabled. Normal kanban routes render server projections instead of
 /// hard-coded cards.
 mod model;
 
+use due_calendar::*;
 use dnd::*;
 use model::*;
 
@@ -6025,75 +6027,6 @@ fn share_kanban_flow_link(path: &str) {
 }})()"#
     );
     let _ = document::eval(&script);
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct DueCalendarCell {
-    date: NaiveDate,
-    day: u32,
-    in_current_month: bool,
-    iso_date: String,
-}
-
-fn default_due_calendar_month() -> NaiveDate {
-    start_of_due_calendar_month(due_calendar_today())
-}
-
-fn due_calendar_today() -> NaiveDate {
-    chrono::Utc::now().date_naive()
-}
-
-fn start_of_due_calendar_month(date: NaiveDate) -> NaiveDate {
-    date.with_day(1).expect("every month has day one")
-}
-
-fn due_calendar_month_for_value(value: &str) -> NaiveDate {
-    parse_due_calendar_date(value)
-        .map(start_of_due_calendar_month)
-        .unwrap_or_else(default_due_calendar_month)
-}
-
-fn parse_due_calendar_date(value: &str) -> Option<NaiveDate> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
-        .ok()
-        .or_else(|| {
-            chrono::DateTime::parse_from_rfc3339(trimmed)
-                .ok()
-                .map(|timestamp| timestamp.date_naive())
-        })
-}
-
-fn due_calendar_month_label(month: NaiveDate) -> String {
-    month.format("%B %Y").to_string()
-}
-
-fn add_due_calendar_months(month: NaiveDate, delta: i32) -> NaiveDate {
-    let month = start_of_due_calendar_month(month);
-    let index = month.year() * 12 + month.month0() as i32 + delta;
-    let year = index.div_euclid(12);
-    let month0 = index.rem_euclid(12);
-    NaiveDate::from_ymd_opt(year, month0 as u32 + 1, 1).unwrap_or(month)
-}
-
-fn due_calendar_cells(month: NaiveDate) -> Vec<DueCalendarCell> {
-    let month = start_of_due_calendar_month(month);
-    let first_weekday_offset = month.weekday().num_days_from_sunday() as i64;
-    let first_cell = month - Duration::days(first_weekday_offset);
-    (0..42)
-        .map(|offset| {
-            let date = first_cell + Duration::days(offset);
-            DueCalendarCell {
-                date,
-                day: date.day(),
-                in_current_month: date.year() == month.year() && date.month() == month.month(),
-                iso_date: date.format("%Y-%m-%d").to_string(),
-            }
-        })
-        .collect()
 }
 
 fn card_summary_text(summary: &str) -> String {

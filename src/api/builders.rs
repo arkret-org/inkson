@@ -1,0 +1,1139 @@
+//! 领域事件 / 信封构造器(`build_*_event` / `build_*_envelope`)。
+//!
+//! YOU-07-001:从 `api/mod.rs` 机械外迁的连续块——realm / space / member /
+//! device 事件构造器及其私有 parse / notary / 派生 helper。仅移动,不改逻辑、
+//! 签名与 canonical 字节。`mod.rs` 通过 `pub use builders::*;` 重导出,使
+//! `crate::api::build_*` 等既有调用点与兄弟子模块的 `use super::*` 解析路径
+//! 均保持不变。
+
+use std::collections::BTreeMap;
+
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use ed25519_dalek::Signer;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
+use crate::operation::{
+    Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
+    trim_realm_id, uuid_v7,
+};
+
+use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
+
+/// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
+/// (renamed from `handle_uri` @ cokret-spec 7157ee8 — the `cokret://`
+/// URI handle form has been retired).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RealmBootstrapMember {
+    pub(crate) actor_id: String,
+    // NOTE: the parsed handle is intentionally NOT stored on the membership
+    // event — `membership_payload` is additionalProperties:false with no
+    // `handle` property. Handle evidence belongs on the signed HandleClaim /
+    // roster path, not the durable membership event. The handle is still used
+    // transiently to derive `delivery_binding.recipient_service_did`.
+    delivery_binding: Option<Value>,
+}
+
+impl RealmBootstrapMember {
+    fn from_did(did: &str) -> Self {
+        Self {
+            actor_id: did.trim().to_owned(),
+            delivery_binding: None,
+        }
+    }
+
+    fn from_handle(handle: ParsedUserHandle) -> Self {
+        let resolved_at = event_timestamp();
+        Self {
+            actor_id: handle.subject_did,
+            delivery_binding: Some(json!({
+                "recipient_service_did": handle.principal_server_did,
+                "recipient_service_type": "principal_server",
+                "binding_scope": "realm",
+                "binding_source": "invite",
+                "delivery_modes": ["events", "sync", "to_device", "push", "key_packages"],
+                "resolved_at": resolved_at,
+                "service_acceptance_ref": format!("ck:event:{}", uuid_v7()),
+            })),
+        }
+    }
+}
+
+fn parse_realm_bootstrap_member(input: &str) -> anyhow::Result<RealmBootstrapMember> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!("seed member is empty"));
+    }
+    if trimmed.starts_with("did:") {
+        return Ok(RealmBootstrapMember::from_did(trimmed));
+    }
+    if let Some(handle) = parse_user_handle(trimmed) {
+        return Ok(RealmBootstrapMember::from_handle(handle));
+    }
+    Err(anyhow::anyhow!(
+        "seed member must be a DID or handle like alice:example.com"
+    ))
+}
+
+pub(crate) fn parse_realm_bootstrap_members(
+    inputs: &[String],
+) -> anyhow::Result<Vec<RealmBootstrapMember>> {
+    let mut members = Vec::new();
+    for input in inputs {
+        let member = parse_realm_bootstrap_member(input)?;
+        if !members
+            .iter()
+            .any(|existing: &RealmBootstrapMember| existing.actor_id == member.actor_id)
+        {
+            members.push(member);
+        }
+    }
+    Ok(members)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_realm_bootstrap_events(
+    realm_id: &str,
+    actor_id: &str,
+    title: &str,
+    summary: Option<&str>,
+    discoverability: &str,
+    join_rule: &str,
+    history_visibility: &str,
+    encryption_profile: &str,
+    security_class: &str,
+    federation_policy: &str,
+    notary_profile: &str,
+    digest_algorithm: &str,
+    trust_domain: &str,
+    invitees: &[String],
+    plaintext_visible_services: &[String],
+) -> anyhow::Result<Vec<EventEnvelope>> {
+    // Spec realm-and-space.md §2.6: creator membership is auto-derived
+    // by the reducer from `ck.realm.create`'s `created_by == actor_id`
+    // (renamed from `created_by_principal` at spec head 37ce729).
+    // The bootstrap MUST NOT emit an explicit `ck.member.state{join}` for
+    // the creator — the reducer writes that cell atomically with the
+    // create event.
+    let mut events: Vec<EventEnvelope> = Vec::new();
+    if history_visibility.trim() == "restricted" {
+        return Err(anyhow::anyhow!(
+            "restricted history_visibility requires a ck.realm.history_sharing_policy event in the same ordered batch"
+        ));
+    }
+    let invitees = parse_realm_bootstrap_members(invitees)?;
+    events.push(build_realm_create_event(
+        realm_id,
+        actor_id,
+        title,
+        summary,
+        discoverability,
+        join_rule,
+        history_visibility,
+        encryption_profile,
+        security_class,
+        federation_policy,
+        notary_profile,
+        digest_algorithm,
+        trust_domain,
+        plaintext_visible_services,
+    )?);
+    if let Some(policy_components) =
+        recommended_realm_policy_components_for_profile(encryption_profile)
+    {
+        events.push(build_realm_state_event(
+            realm_id,
+            actor_id,
+            "ck.realm.policy_components",
+            policy_components,
+        )?);
+    }
+    events.push(build_realm_state_event(
+        realm_id,
+        actor_id,
+        "ck.realm.join_rule",
+        json!(join_rule),
+    )?);
+    events.push(build_realm_state_event(
+        realm_id,
+        actor_id,
+        "ck.realm.history_visibility",
+        json!(history_visibility),
+    )?);
+    events.push(build_realm_state_event(
+        realm_id,
+        actor_id,
+        "ck.realm.discovery",
+        json!(discoverability),
+    )?);
+
+    if let Some(event) =
+        build_plaintext_visible_services_event(realm_id, actor_id, plaintext_visible_services)?
+    {
+        events.push(event);
+    }
+
+    for invitee in invitees.iter() {
+        if invitee.actor_id != actor_id {
+            events.push(build_member_state_event(
+                realm_id, actor_id, invitee, "invite",
+            )?);
+        }
+    }
+    Ok(events)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_realm_create_event(
+    realm_id: &str,
+    actor_id: &str,
+    title: &str,
+    summary: Option<&str>,
+    discoverability: &str,
+    join_rule: &str,
+    history_visibility: &str,
+    encryption_profile: &str,
+    security_class: &str,
+    federation_policy: &str,
+    notary_profile: &str,
+    digest_algorithm: &str,
+    trust_domain: &str,
+    plaintext_visible_services: &[String],
+) -> anyhow::Result<EventEnvelope> {
+    // Per spec realm-and-space.md §2.3: high_assurance security_class
+    // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
+    let effective_federation_policy =
+        if security_class == "high_assurance" && federation_policy == "open" {
+            "restricted"
+        } else {
+            federation_policy
+        };
+    let realm_object_id = trim_realm_id(realm_id);
+    let envelope_realm_id = trim_realm_id(realm_id);
+    let cell = space_cell("ck.component.realm.create.v1", &envelope_realm_id);
+    let created_at_for_object = event_timestamp();
+    let mut object = json!({
+        "id": realm_object_id,
+        "schema": "ck.schema.realm.v1",
+        "title": title,
+        "trust_domain": trust_domain,
+        // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
+        // `created_by_principal` → `created_by`. No serde alias —
+        // aggressive migration.
+        "created_by": actor_id,
+        "schema_refs": ["ck.schema.realm.v1"],
+        "default_discoverability": discoverability,
+        "default_join_rule": join_rule,
+        "history_visibility": history_visibility,
+        "encryption_profile": encryption_profile,
+        "security_class": security_class,
+        "federation_policy": effective_federation_policy,
+        "notary_profile": notary_profile,
+        "digest_algorithm": digest_algorithm,
+        "notary": realm_genesis_notary(notary_profile, actor_id),
+        "created_at": created_at_for_object,
+    });
+    if let Some(summary) = summary
+        && !summary.trim().is_empty()
+    {
+        object["summary"] = Value::String(summary.trim().to_owned());
+    }
+    let plaintext_services = plaintext_visible_services
+        .iter()
+        .map(|service| service.trim())
+        .filter(|service| !service.is_empty())
+        .map(|service| Value::String(service.to_owned()))
+        .collect::<Vec<_>>();
+    if !plaintext_services.is_empty() {
+        object["plaintext_visible_services"] = Value::Array(plaintext_services);
+    }
+
+    // ck.component.realm.create.v1 is a cas-register cell; the
+    // genesis write asserts head_eq null and sets the realm metadata.
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::Null),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(object.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    // The Realm entity itself has no SDK `*CreateObject` strong type yet
+    // (the realm schema is large / lives outside the operation_payloads
+    // module); the `object` Value above is hand-built. But the `{object}`
+    // create-payload envelope is shared, so wrap it through the SDK
+    // `ObjectCreatePayload` to align the envelope shape with
+    // `realm_create_payload` (object, additionalProperties:false).
+    let realm_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
+        .to_value()
+        .map_err(|e| anyhow::anyhow!("ck.realm.create payload serialize: {e}"))?;
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.create")
+        .target_ref(realm_id)
+        .body(realm_body)
+        .preconditions(preconditions)
+        .effects(effects)
+        .requirements(EventRequirements {
+            schema: vec!["ck.schema.realm.v1".to_owned()],
+            reducer: None,
+            features: Vec::new(),
+            critical_extensions: Vec::new(),
+        })
+        .build("yougen");
+    envelope.created_at = created_at_for_object;
+    Ok(envelope)
+}
+
+pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
+    profile
+        .trim()
+        .eq_ignore_ascii_case(RECOMMENDED_REALM_ENCRYPTION_PROFILE)
+}
+
+pub fn recommended_realm_policy_components_value() -> Value {
+    json!({
+        "policy_revision": 1,
+        "content_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
+        "metadata_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
+    })
+}
+
+pub fn recommended_realm_policy_components_for_profile(profile: &str) -> Option<Value> {
+    encryption_profile_uses_recommended_floor(profile)
+        .then(recommended_realm_policy_components_value)
+}
+
+fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> Value {
+    match notary_profile {
+        "threshold" => json!({
+            "type": "threshold",
+            "members": [actor_id],
+            "threshold": 1,
+        }),
+        "open_set" => json!({
+            "type": "open_set",
+            "members": [actor_id],
+        }),
+        "mixed" => json!({
+            "type": "mixed",
+            "did": actor_id,
+            "recovery_members": [derived_recovery_member_did(actor_id)],
+        }),
+        _ => {
+            let controller = inferred_controller_organization_did(actor_id);
+            json!({
+                "type": "single_did",
+                "did": actor_id,
+                "recovery_members": [derived_recovery_member_did(&controller)],
+                "controller_organization": controller,
+                "recovery_controller_organizations": [derived_recovery_controller_organization_did(&controller)],
+            })
+        }
+    }
+}
+
+fn inferred_controller_organization_did(actor_id: &str) -> String {
+    let actor_id = actor_id.trim();
+    if let Some(web_specific_id) = actor_id.strip_prefix("did:web:")
+        && let Some(host) = web_specific_id.split(':').next()
+        && !host.is_empty()
+    {
+        return format!("did:web:{host}");
+    }
+    actor_id.to_owned()
+}
+
+fn derived_recovery_controller_organization_did(controller: &str) -> String {
+    format!("{}:recovery", controller.trim())
+}
+
+fn derived_recovery_member_did(controller_or_actor: &str) -> String {
+    format!("{}:recovery:notary", controller_or_actor.trim())
+}
+
+/// Build a `ck.space.create` event per spec realm-and-space.md §3.2.
+/// Space is the product-structure container (workspace / project /
+/// folder / board / list); it lives inside a Realm (`realm_id`) and
+/// has no membership / policy / E2EE of its own — all security
+/// semantics inherit from the home Realm.
+#[allow(clippy::too_many_arguments)]
+pub fn build_space_create_event(
+    space_id: &str,
+    realm_id: &str,
+    actor_id: &str,
+    title: &str,
+    summary: Option<&str>,
+    kind: &str,
+    parent_space_id: Option<&str>,
+    default_realm_id: Option<&str>,
+) -> anyhow::Result<EventEnvelope> {
+    let created_at = event_timestamp();
+    // Build the canonical Space object via the SDK strong type so that
+    // field names / shape stay aligned with `space_create_payload`
+    // (`object`, additionalProperties:false). `created_at` is overridden
+    // below with the envelope timestamp to keep wire identity with the
+    // effects copy.
+    let space_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+        .map_err(|e| anyhow::anyhow!("invalid realm_id for space.create: {e:?}"))?;
+    let space_object_id = cokret_sdk::SpaceId::new(space_id.to_owned())
+        .map_err(|e| anyhow::anyhow!("invalid space_id for space.create: {e:?}"))?;
+    let space_created_by = cokret_sdk::Did::new(actor_id.to_owned())
+        .map_err(|e| anyhow::anyhow!("invalid created_by DID for space.create: {e:?}"))?;
+    let mut space_object = cokret_sdk::SpaceCreateObject::new(
+        space_object_id,
+        space_realm_id,
+        kind,
+        title,
+        space_created_by,
+    );
+    space_object.state = Some(cokret_sdk::SpaceState::Active);
+    if let Some(summary) = summary
+        && !summary.trim().is_empty()
+    {
+        space_object.summary = Some(summary.trim().to_owned());
+    }
+    if let Some(parent) = parent_space_id
+        && !parent.trim().is_empty()
+    {
+        space_object.parent_space_id = Some(
+            cokret_sdk::SpaceId::new(parent.trim().to_owned())
+                .map_err(|e| anyhow::anyhow!("invalid parent_space_id: {e:?}"))?,
+        );
+    }
+    if let Some(default_realm) = default_realm_id
+        && !default_realm.trim().is_empty()
+    {
+        space_object.default_realm_id = Some(
+            cokret_sdk::RealmId::new(trim_realm_id(default_realm.trim()))
+                .map_err(|e| anyhow::anyhow!("invalid default_realm_id: {e:?}"))?,
+        );
+    }
+    let mut object = serde_json::to_value(&space_object)
+        .map_err(|e| anyhow::anyhow!("ck.space.create object serialize: {e}"))?;
+    // Preserve the envelope timestamp on the wire object (SDK defaults
+    // `created_at` to construction time).
+    object["created_at"] = Value::String(created_at.clone());
+
+    let cell = space_cell("ck.component.space.create.v1", space_id);
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::Null),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(object.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let space_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
+        .to_value()
+        .map_err(|e| anyhow::anyhow!("ck.space.create payload serialize: {e}"))?;
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.space.create")
+        .target_ref(space_id)
+        .body(space_body)
+        .preconditions(preconditions)
+        .effects(effects)
+        .requirements(EventRequirements {
+            schema: vec!["ck.schema.space.v1".to_owned()],
+            reducer: None,
+            features: Vec::new(),
+            critical_extensions: Vec::new(),
+        })
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+/// Build a Space lifecycle event (`ck.space.archive` /
+/// `ck.space.restore` / `ck.space.tombstone`) per spec
+/// realm-and-space.md §3.4. All three write the new `state` value
+/// into the `ck.component.space.state.v1` cell on the home Realm via
+/// an FSM transition.
+pub fn build_space_lifecycle_event(
+    space_id: &str,
+    realm_id: &str,
+    actor_id: &str,
+    kind: &str,
+) -> anyhow::Result<EventEnvelope> {
+    let (prior_state, next_state) = match kind {
+        "ck.space.archive" => ("active", "archived"),
+        "ck.space.restore" => ("archived", "active"),
+        // For tombstone, prior state may be either active or archived.
+        // We assert via head_in {active, archived}, but the typed
+        // helper only knows head_eq — so we model the explicit head_eq
+        // against the most common source state (active). Reducer-side
+        // FSM logic accepts the transition regardless of head form.
+        "ck.space.tombstone" => ("active", "tombstoned"),
+        other => {
+            return Err(anyhow::anyhow!(
+                "unsupported Space lifecycle event kind {other}"
+            ));
+        }
+    };
+    let created_at = event_timestamp();
+    let cell = space_cell("ck.component.space.state.v1", space_id);
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::String(prior_state.to_owned())),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "transition".to_owned(),
+            tag: None,
+            value: None,
+            from: Some(Value::String(prior_state.to_owned())),
+            to: Some(Value::String(next_state.to_owned())),
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, kind)
+        .target_ref(space_id)
+        .body(json!({ "space_id": space_id }))
+        .preconditions(preconditions)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+/// Build a Realm facet state event (`ck.realm.join_rule`,
+/// `ck.realm.history_visibility`, `ck.realm.discovery`, ...).
+pub fn build_realm_state_event(
+    realm_id: &str,
+    actor_id: &str,
+    kind: &str,
+    value: Value,
+) -> anyhow::Result<EventEnvelope> {
+    let cell_family = match kind {
+        "ck.realm.join_rule" => "ck.component.realm.join_rule.v1",
+        "ck.realm.history_visibility" => "ck.component.realm.history_visibility.v1",
+        "ck.realm.history_sharing_policy" => "ck.component.realm.history_sharing_policy.v1",
+        "ck.realm.preview_policy" => "ck.component.realm.preview_policy.v1",
+        "ck.realm.discovery" => "ck.component.realm.discovery.v1",
+        "ck.realm.schema" => "ck.component.realm.schema.v1",
+        "ck.realm.policy_components" => "ck.component.realm.policy_components.v1",
+        other => {
+            return Err(anyhow::anyhow!(
+                "unsupported Realm state event kind {other}"
+            ));
+        }
+    };
+    let created_at = event_timestamp();
+    let realm_id_wire = trim_realm_id(realm_id);
+    let cell = space_cell(cell_family, &realm_id_wire);
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::Null),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(value.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    // For `ck.realm.history_visibility` the body is the spec
+    // `history_visibility_payload` (`{value, restricted_policy_digest?,
+    // reason?}`, additionalProperties:false). Route it through the SDK strong
+    // type so the enum value + the `restricted ⇒ restricted_policy_digest`
+    // conditional are checked at construction; the cell effect keeps the bare
+    // enum string. Other facets (`join_rule`/`discovery`/...) have no dedicated
+    // spec payload def and keep the generic `{value}` body.
+    let body = if kind == "ck.realm.history_visibility" {
+        let visibility = value
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("history_visibility value must be a string"))?;
+        let typed: cokret_sdk::HistoryVisibility =
+            serde_json::from_value(Value::String(visibility.to_owned())).map_err(|err| {
+                anyhow::anyhow!("invalid history_visibility {visibility:?}: {err}")
+            })?;
+        cokret_sdk::HistoryVisibilityPayload::new(typed).to_value()?
+    } else {
+        json!({ "value": value })
+    };
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, kind)
+        .body(body)
+        .preconditions(preconditions)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+/// Build a `ck.realm.archive` lifecycle facet event. Realm archive is a
+/// reversible boolean register; there is no separate `ck.realm.restore`.
+pub fn build_realm_archive_event(
+    realm_id: &str,
+    actor_id: &str,
+    archived: bool,
+    reason: Option<&str>,
+) -> anyhow::Result<EventEnvelope> {
+    let created_at = event_timestamp();
+    let realm_id_wire = trim_realm_id(realm_id);
+    let cell = space_cell("ck.component.realm.archive.v1", &realm_id_wire);
+    // Strong type: realm_archive_payload (additionalProperties:false).
+    let mut typed = cokret_sdk::RealmArchivePayload::new(archived);
+    if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
+        typed = typed.with_reason(reason);
+    }
+    let payload = typed.to_value()?;
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(payload.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.archive")
+        .body(payload)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+/// Build a `ck.realm.tombstone` terminal lifecycle event. The successor Realm
+/// is required by spec; callers that do not have one must use
+/// [`build_realm_destroy_event`] instead.
+pub fn build_realm_tombstone_event(
+    realm_id: &str,
+    actor_id: &str,
+    successor_realm_id: &str,
+    reason: &str,
+) -> anyhow::Result<EventEnvelope> {
+    let successor_realm_id = successor_realm_id.trim();
+    if successor_realm_id.is_empty() {
+        return Err(anyhow::anyhow!(
+            "successor_realm_id is required for ck.realm.tombstone"
+        ));
+    }
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err(anyhow::anyhow!("reason is required for ck.realm.tombstone"));
+    }
+    let created_at = event_timestamp();
+    let realm_id_wire = trim_realm_id(realm_id);
+    let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
+    // Strong type: realm_tombstone_payload (reason + successor_realm_id both
+    // required by spec; additionalProperties:false).
+    let successor = cokret_sdk::RealmId::new(successor_realm_id)
+        .map_err(|err| anyhow::anyhow!("invalid successor_realm_id: {err}"))?;
+    let payload = cokret_sdk::RealmTombstonePayload::new(successor, reason).to_value()?;
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(payload.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.tombstone")
+        .body(payload)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+/// Build a `ck.realm.destroy` terminal lifecycle event.
+pub fn build_realm_destroy_event(
+    realm_id: &str,
+    actor_id: &str,
+    reason: &str,
+) -> anyhow::Result<EventEnvelope> {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err(anyhow::anyhow!("reason is required for ck.realm.destroy"));
+    }
+    let created_at = event_timestamp();
+    let realm_id_wire = trim_realm_id(realm_id);
+    let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
+    // Strong type: realm_destroy_payload (reason required; verification_stub
+    // _required omitted so the reducer applies its default; additionalProperties
+    // :false).
+    let payload = cokret_sdk::RealmDestroyPayload::new(reason).to_value()?;
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(payload.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.destroy")
+        .body(payload)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+pub fn build_realm_history_sharing_policy_event(
+    realm_id: &str,
+    actor_id: &str,
+    policy: Value,
+) -> anyhow::Result<EventEnvelope> {
+    build_realm_state_event(
+        realm_id,
+        actor_id,
+        "ck.realm.history_sharing_policy",
+        policy,
+    )
+}
+
+pub fn build_realm_preview_policy_event(
+    realm_id: &str,
+    actor_id: &str,
+    policy: Value,
+) -> anyhow::Result<EventEnvelope> {
+    build_realm_state_event(realm_id, actor_id, "ck.realm.preview_policy", policy)
+}
+
+/// Build a `ck.realm.plaintext_visible_services` event when the caller
+/// supplies at least one service DID. Returns `None` when the input
+/// list is empty so the bootstrap chain can skip emission entirely.
+pub fn build_plaintext_visible_services_event(
+    realm_id: &str,
+    actor_id: &str,
+    service_dids: &[String],
+) -> anyhow::Result<Option<EventEnvelope>> {
+    // Strong type: plaintext_visible_services_payload (top-level
+    // additionalProperties:false; item required fields strongly typed via the
+    // SDK PlaintextDataClassKind / PlaintextServiceVisibility enums).
+    //
+    // Spec rename (head 37ce729 / SDK 4d5a1af): privacy / service feature enums
+    // renamed `flow_body / message_body / body_only` → `flow_content /
+    // message_content / content_only`. No serde alias — aggressive migration.
+    use cokret_sdk::{PlaintextDataClassKind, PlaintextServiceVisibility, PlaintextVisibleService};
+    let services = service_dids
+        .iter()
+        .map(|service| service.trim())
+        .filter(|service| !service.is_empty())
+        .map(|service| -> anyhow::Result<PlaintextVisibleService> {
+            let service_did = cokret_sdk::Did::new(service.to_owned()).map_err(|err| {
+                anyhow::anyhow!("invalid plaintext service DID {service:?}: {err}")
+            })?;
+            Ok(PlaintextVisibleService::new(
+                service_did,
+                "principal_server",
+                vec![
+                    PlaintextDataClassKind::MessageContent,
+                    PlaintextDataClassKind::FullTextIndex,
+                    PlaintextDataClassKind::NotificationSummary,
+                    PlaintextDataClassKind::InboxPreview,
+                ],
+                vec!["message_index".to_owned(), "notification_fanout".to_owned()],
+                PlaintextServiceVisibility::PrivatePlaintext,
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if services.is_empty() {
+        return Ok(None);
+    }
+    let created_at = event_timestamp();
+    let realm_id_wire = trim_realm_id(realm_id);
+    let cell = space_cell(
+        "ck.component.realm.plaintext_visible_services.v1",
+        &realm_id_wire,
+    );
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::Null),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let body_value = cokret_sdk::PlaintextVisibleServicesPayload::new(services).to_value()?;
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(body_value.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    // Builder takes `Value` by move; reuse the value we already built for
+    // the effect rather than cloning `services` a second time.
+    let mut envelope =
+        OperationBuilder::new(realm_id, actor_id, "ck.realm.plaintext_visible_services")
+            .body(body_value)
+            .preconditions(preconditions)
+            .effects(effects)
+            .build("yougen");
+    envelope.created_at = created_at;
+    Ok(Some(envelope))
+}
+
+fn build_member_state_event(
+    realm_id: &str,
+    actor_id: &str,
+    member: &RealmBootstrapMember,
+    membership: &str,
+) -> anyhow::Result<EventEnvelope> {
+    build_member_state_transition_event_with_binding(
+        realm_id,
+        actor_id,
+        &member.actor_id,
+        None,
+        membership,
+        "space_create",
+        member.delivery_binding.clone(),
+    )
+}
+
+/// Build a generic `ck.member.state` event on `ck.component.member.state.v1`,
+/// modeling a single FSM transition (e.g. `join → leave` kick, `join → ban`
+/// member ban, `null → join` invite-accept). `reason` shows up in the audit
+/// trail.
+pub fn build_member_state_transition_event(
+    realm_id: &str,
+    actor_id: &str,
+    member_actor_id: &str,
+    from_state: Option<&str>,
+    to_state: &str,
+    reason: &str,
+) -> anyhow::Result<EventEnvelope> {
+    build_member_state_transition_event_with_binding(
+        realm_id,
+        actor_id,
+        member_actor_id,
+        from_state,
+        to_state,
+        reason,
+        None,
+    )
+}
+
+pub fn build_member_state_invite_accept_event(
+    realm_id: &str,
+    actor_id: &str,
+    invite_id: &str,
+) -> anyhow::Result<EventEnvelope> {
+    let invite_id = invite_id.trim();
+    if invite_id.is_empty() {
+        return Err(anyhow::anyhow!("invite_id is required for invite accept"));
+    }
+    let mut envelope = build_member_state_transition_event(
+        realm_id,
+        actor_id,
+        actor_id,
+        Some("invite"),
+        "join",
+        "invite_accept",
+    )?;
+    envelope.payload["invite_ref"] = json!(invite_id);
+    Ok(envelope)
+}
+
+fn build_member_state_transition_event_with_binding(
+    realm_id: &str,
+    actor_id: &str,
+    member_actor_id: &str,
+    from_state: Option<&str>,
+    to_state: &str,
+    reason: &str,
+    delivery_binding: Option<Value>,
+) -> anyhow::Result<EventEnvelope> {
+    use cokret_sdk::model::{DeliveryStatus, MembershipPayload, MembershipPayloadState};
+    let created_at = event_timestamp();
+    let realm_id_wire = trim_realm_id(realm_id);
+    let membership = match to_state {
+        "join" => MembershipPayloadState::Join,
+        "invite" => MembershipPayloadState::Invite,
+        "knock" => MembershipPayloadState::Knock,
+        "leave" => MembershipPayloadState::Leave,
+        "ban" => MembershipPayloadState::Ban,
+        other => return Err(anyhow::anyhow!("unknown membership state {other}")),
+    };
+    let member_did = cokret_sdk::Did::new(member_actor_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("member actor_id not a valid DID: {err}"))?;
+    // Strong `membership_payload` (`event-payload.schema.json`). The schema's
+    // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
+    // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
+    // transition (it is a valid property). Omitting it had made soland reject
+    // invite-accept with `schema_violation … requires field 'realm_id'`.
+    //
+    // NOTE: membership_payload is `additionalProperties:false` and has NO
+    // `handle` property — the prior `handle` write was an illegal field that
+    // soland's schema validator rejects. The member identity is carried by
+    // `actor_id`; handle evidence lives in signed HandleClaim objects on the
+    // roster, not the durable membership event. The `handle` param has been
+    // dropped accordingly (spec is the source of truth).
+    let realm_value = cokret_sdk::RealmId::new(realm_id_wire.clone())
+        .map_err(|err| anyhow::anyhow!("realm_id not canonical: {err}"))?;
+    let mut membership_payload = if membership == MembershipPayloadState::Join {
+        MembershipPayload::join(realm_value, member_did, DeliveryStatus::Unroutable, reason)
+    } else {
+        MembershipPayload::transition(membership, member_did, reason).with_realm_id(realm_value)
+    };
+    if let Some(delivery_binding) = delivery_binding {
+        membership_payload = membership_payload.with_delivery_binding(delivery_binding);
+    }
+    let payload = membership_payload.to_value()?;
+    let cell = format!(
+        "{}:{}",
+        space_cell("ck.component.member.state.v1", &realm_id_wire),
+        member_actor_id
+    );
+    let preconditions = if let Some(prior) = from_state {
+        vec![Precondition {
+            cell: cell.clone(),
+            predicate: Predicate {
+                op: "head_eq".to_owned(),
+                value: Some(Value::String(prior.to_owned())),
+                values: None,
+                predicate_id: None,
+            },
+        }]
+    } else {
+        vec![Precondition {
+            cell: cell.clone(),
+            predicate: Predicate {
+                op: "head_eq".to_owned(),
+                value: Some(Value::Null),
+                values: None,
+                predicate_id: None,
+            },
+        }]
+    };
+    let from_value = from_state
+        .map(|s| Value::String(s.to_owned()))
+        .unwrap_or(Value::Null);
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "transition".to_owned(),
+            tag: None,
+            value: None,
+            from: Some(from_value),
+            to: Some(Value::String(to_state.to_owned())),
+            reason: Some(reason.to_owned()),
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.member.state")
+        .target_ref(member_actor_id)
+        .body(payload)
+        .preconditions(preconditions)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+/// RFC3339 timestamp in the canonical wire form soland's
+/// `canonical::validate_timestamp_canonical` accepts: exactly
+/// `YYYY-MM-DDTHH:MM:SSZ` (20 chars, UTC `Z` suffix, NO fractional
+/// seconds — spec encoding.md §3.5).
+fn event_timestamp() -> String {
+    crate::clock::now_rfc3339_secs()
+}
+
+fn space_cell(cell_family: &str, space_id: &str) -> String {
+    format!("ck:cell:{cell_family}:{space_id}")
+}
+
+/// Build the canonical `ck.schema.device_message.v1` send envelope:
+///
+/// ```json
+/// {
+///   "messages": {
+///     "<target_actor_id>": {
+///       "<target_device_id>": {
+///         "kind": "<kind>",
+///         "expires_at": "<rfc3339>",
+///         "content": <content>
+///       }
+///     }
+///   }
+/// }
+/// ```
+///
+/// The per-target object MUST match the SDK `DeviceMessageTarget`
+/// (`kind` + `content` + `expires_at`) and `device-lifecycle.md` §7,
+/// which both make `kind` and `expires_at` required — the older
+/// `{type, content}` shape dropped `expires_at` and mislabelled `kind`
+/// as `type`, so soland had to fall back to defaults.
+///
+/// Pure function so the wire shape is testable without a live HTTP
+/// client; used by [`CokretApi::send_device_message_envelope`] (R3).
+pub fn build_device_message_envelope(
+    target_actor: &str,
+    target_device_id: &str,
+    kind: &str,
+    expires_at: &str,
+    content: serde_json::Value,
+) -> anyhow::Result<cokret_sdk::model::DeviceMessagesPutRequestBody> {
+    let target_actor = cokret_sdk::Did::new(target_actor.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid device-message target actor: {err}"))?;
+    let target_device_id = cokret_sdk::DeviceId::new(target_device_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid device-message target device_id: {err}"))?;
+    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)
+        .map_err(|err| anyhow::anyhow!("invalid device-message expires_at: {err}"))?
+        .with_timezone(&chrono::Utc);
+
+    let target = cokret_sdk::model::DeviceMessageTarget {
+        kind: kind.to_owned(),
+        content,
+        expires_at,
+    };
+    let mut by_device = BTreeMap::new();
+    by_device.insert(target_device_id, target);
+    let mut messages = BTreeMap::new();
+    messages.insert(target_actor, by_device);
+    Ok(cokret_sdk::model::DeviceMessagesPutRequestBody { messages })
+}
+
+pub fn build_signed_device_verification_proof(
+    from_actor: &str,
+    from_device: &str,
+    target_device: &str,
+    method: &str,
+    sas_decimal: Option<[u16; 3]>,
+    local_public_key: Option<&str>,
+    peer_public_key: Option<&str>,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> anyhow::Result<Value> {
+    let mut body = json!({
+        "type": "ck.device.verification.proof.v1",
+        "from_actor": from_actor,
+        "from_device": from_device,
+        "target_device": target_device,
+        "method": method,
+        "created_at": event_timestamp(),
+    });
+    if let Some(sas_decimal) = sas_decimal {
+        body["sas_decimal"] = json!(sas_decimal);
+    }
+    if let Some(local_public_key) = local_public_key {
+        body["local_public_key"] = Value::String(local_public_key.to_owned());
+    }
+    if let Some(peer_public_key) = peer_public_key {
+        body["peer_public_key"] = Value::String(peer_public_key.to_owned());
+    }
+    let canonical = cokret_sdk::canonical::canonical_json_bytes(&body)
+        .map_err(|error| anyhow::anyhow!("canonicalize device verification proof: {error}"))?;
+    let header = json!({
+        "alg": "EdDSA",
+        "typ": "JWT",
+        "verification_method": format!("{}#yougen-device", from_device),
+    });
+    let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
+    let payload_b64 = URL_SAFE_NO_PAD.encode(&canonical);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let signature = signing_key.sign(signing_input.as_bytes()).to_bytes();
+    let jws = format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature));
+    Ok(json!({
+        "device_envelope": body,
+        "signature": {
+            "kind": "detached_jws",
+            "alg": "EdDSA",
+            "verification_method": format!("{}#yougen-device", from_device),
+            "payload_digest": format!(
+                "sha256:{}",
+                crate::canonical::hex_encode(&Sha256::digest(&canonical))
+            ),
+            "jws": jws,
+        }
+    }))
+}
+
+pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Result<()> {
+    let Some(signature) = proof.get("signature") else {
+        anyhow::bail!("device verification proof must include a signed device envelope")
+    };
+    let alg = signature
+        .get("alg")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let jws = signature
+        .get("jws")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if alg != "EdDSA" || jws.split('.').count() != 3 {
+        anyhow::bail!("device verification proof must carry an EdDSA compact JWS")
+    }
+    if proof.get("device_envelope").is_none() {
+        anyhow::bail!("device verification proof missing device_envelope")
+    }
+    Ok(())
+}
