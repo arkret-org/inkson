@@ -1317,13 +1317,7 @@ pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoj
         .expect("HMAC-SHA256 accepts a key of any length");
     mac.update(nfc.as_bytes());
     let tag = mac.finalize().into_bytes();
-    let mut hex = String::with_capacity(7 + tag.len() * 2);
-    hex.push_str("sha256:");
-    for byte in tag.iter() {
-        use std::fmt::Write as _;
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
+    format!("sha256:{}", crate::canonical::hex_encode(&tag))
 }
 
 /// Restore this device's MLS group for `realm_id` and derive the §2.9 v1

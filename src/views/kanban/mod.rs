@@ -7222,13 +7222,16 @@ fn card_assignment_mutations(
     }
 
     let mut mutations = Vec::new();
-    for actor_id in selected_actor_ids.difference(&current_actor_ids) {
+    // `actor_id` (the acting user / event author, an account_did) signs the
+    // assignment events; `assignee_id` is the person being assigned/unassigned
+    // and only appears as the relation target.
+    for assignee_id in selected_actor_ids.difference(&current_actor_ids) {
         let operation = crate::operation::ck_ops::relation_create(
             realm_id,
             actor_id,
             "assigned_to",
             &current.id,
-            actor_id,
+            assignee_id,
         )
         .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
         .build("yougen");
@@ -7239,17 +7242,17 @@ fn card_assignment_mutations(
             )
         })?;
         mutations.push(CardAssignmentMutation::Create {
-            actor_id: actor_id.clone(),
+            actor_id: assignee_id.clone(),
             relation_id,
             operation,
         });
     }
 
-    for actor_id in current_actor_ids.difference(selected_actor_ids) {
-        let Some(relation_ids) = relation_ids_by_actor.get(actor_id) else {
+    for assignee_id in current_actor_ids.difference(selected_actor_ids) {
+        let Some(relation_ids) = relation_ids_by_actor.get(assignee_id) else {
             return Err(format!(
                 "assignment for {} is missing its relation_id; refresh before removing it",
-                short_protocol_id(actor_id)
+                short_protocol_id(assignee_id)
             ));
         };
         for relation_id in relation_ids {
@@ -7257,7 +7260,7 @@ fn card_assignment_mutations(
                 crate::operation::ck_ops::relation_tombstone(realm_id, actor_id, relation_id)
                     .build("yougen");
             mutations.push(CardAssignmentMutation::Tombstone {
-                actor_id: actor_id.clone(),
+                actor_id: assignee_id.clone(),
                 relation_id: relation_id.clone(),
                 operation,
             });

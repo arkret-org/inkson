@@ -380,9 +380,15 @@ pub fn RealmMembersPanel(
                         let invite = api
                             .authz_check_raw(&actor, "ck.invite.create", &realm)
                             .await;
-                        let remove = api
-                            .authz_check_raw(&actor, "ck.member.remove", &realm)
-                            .await;
+                        // Member removal has no standalone capability action in
+                        // v1; it is governed by Realm management authority. Probe
+                        // the registered `ck.realm.admin` action (management,
+                        // high-risk) instead of the unregistered placeholder
+                        // `ck.member.remove`, which is not in
+                        // capability-action-registry.json and would be treated as
+                        // an unknown high-risk action (fail-closed) by a
+                        // spec-conformant server.
+                        let remove = api.authz_check_raw(&actor, "ck.realm.admin", &realm).await;
                         let can_invite = invite.as_ref().map(authz_json_allowed).unwrap_or(false);
                         let can_remove = remove.as_ref().map(authz_json_allowed).unwrap_or(false);
                         if invite.is_err() && remove.is_err() {

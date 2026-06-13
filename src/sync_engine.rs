@@ -1156,15 +1156,35 @@ mod tests {
 
     #[test]
     fn device_revoke_event_in_state_events_invalidates_actor() {
-        // 事件在顶层 state.events[],actor 字段用 `actor`。
+        // 事件在顶层 state.events[],actor 字段用现行 `actor_id`(legacy
+        // `actor`/`sender` 为 forbidden-wire-fields hard_reject,见模块注释)。
         let (mut cache, did) = seed_cache("did:web:bob.example");
         let body = json!({
             "state": { "events": [
-                { "event_id": "e9", "kind": "ck.device.revoke", "actor": "did:web:bob.example" }
+                { "event_id": "e9", "kind": "ck.device.revoke", "actor_id": "did:web:bob.example" }
             ]}
         });
         invalidate_cache_for_revocation_events(&mut cache, &body);
         assert!(cache.get(&did, chrono::Utc::now()).is_none());
+    }
+
+    #[test]
+    fn device_revoke_event_with_legacy_actor_key_is_ignored() {
+        // 负向用例:撤销事件仅携带 spec 已禁用的 legacy `actor`/`sender` 键
+        // (forbidden-wire-fields hard_reject,replacement=actor_id/sender_actor_id)
+        // 时,`actor_id_str` 不应解析出 actor,失效钩子不触发,缓存保留。
+        let (mut cache, did) = seed_cache("did:web:dave.example");
+        let body = json!({
+            "state": { "events": [
+                { "event_id": "e10", "kind": "ck.device.revoke", "actor": "did:web:dave.example" },
+                { "event_id": "e11", "kind": "ck.device.revoke", "sender": "did:web:dave.example" }
+            ]}
+        });
+        invalidate_cache_for_revocation_events(&mut cache, &body);
+        assert!(
+            cache.get(&did, chrono::Utc::now()).is_some(),
+            "legacy actor/sender keys must not drive cache invalidation"
+        );
     }
 
     #[test]

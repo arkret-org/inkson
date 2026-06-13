@@ -314,12 +314,7 @@ impl LocalIdentity {
 
     /// Serialize to the on-disk record shape.
     pub fn to_record(&self) -> LocalIdentityRecord {
-        let seed_hex = self
-            .signing_key
-            .to_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let seed_hex = crate::canonical::hex_encode(&self.signing_key.to_bytes());
         LocalIdentityRecord {
             seed_hex,
             did_key: self.local_signing_did.clone(),
@@ -3321,7 +3316,7 @@ fn xor_encrypt(key: &str, data: &str) -> String {
         .map(|(i, b)| b ^ key_bytes[i % key_bytes.len()])
         .collect();
     // Encode as hex for safe storage
-    encrypted.iter().map(|b| format!("{b:02x}")).collect()
+    crate::canonical::hex_encode(&encrypted)
 }
 
 /// Decode hex-encoded XOR-encrypted data back to plaintext.

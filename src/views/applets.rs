@@ -46,15 +46,10 @@ pub fn applets_enabled() -> bool {
 /// rendered on `applet-row` via `data-applet-manifest-hash` so the
 /// harness can assert it survives reload.
 pub fn manifest_hash_for(manifest: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(manifest.as_bytes());
-    let bytes = h.finalize();
-    let mut out = String::from("sha256:");
-    for b in bytes.iter().take(8) {
-        out.push_str(&format!("{:02x}", b));
-    }
-    out
+    // Delegate to the SDK sha256-hex helper, then keep the leading 8 bytes
+    // (16 hex chars) as the short manifest pin.
+    let full = cokret_sdk::canonical::sha256_hex(manifest.as_bytes());
+    format!("sha256:{}", &full[..16])
 }
 
 /// Parse a manifest input as either a URL (returns Url variant) or

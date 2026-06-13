@@ -597,11 +597,7 @@ impl OobCodeAttemptTracker {
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
+    crate::canonical::hex_encode(bytes)
 }
 
 #[cfg(test)]

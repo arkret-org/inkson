@@ -1,6 +1,6 @@
 # yougen
 
-> **Spec target**: [cokret-spec @ c2848a4](../cokret-spec) (R3.4 sync 2026-05-31)
+> **Spec target**: [cokret-spec @ 0b80cc78](../cokret-spec) (R3.4 sync 2026-06-13; includes §5.6 receive-chain persistence MUST from 58d68c89)
 
 Cross-platform Cokret client built with Dioxus 0.7.
 

@@ -1,7 +1,4 @@
-pub mod cache;
 pub mod rtc;
-
-use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaPreviewPolicy {
@@ -23,12 +20,7 @@ impl MediaPreviewPolicy {
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut encoded = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        encoded.push_str(&format!("{byte:02x}"));
-    }
-    encoded
+    cokret_sdk::canonical::sha256_hex(bytes)
 }
 
 pub fn media_type_preview_policy(media_type: &str) -> MediaPreviewPolicy {

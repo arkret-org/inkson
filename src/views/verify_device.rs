@@ -511,13 +511,19 @@ pub fn VerifyDevicePanel(
                                     variant: ButtonVariant::Secondary,
                                     "data-testid": "sas-generate-keypair-button",
                                     onclick: move |_| {
-                                        let pair = std::sync::Arc::new(
-                                            cokret_sdk::key_verification::EphemeralX25519Keypair::generate(),
-                                        );
-                                        ephemeral_keypair.set(Some(pair));
-                                        sas_send_status.set(
-                                            "fresh X25519 keypair generated; click Send to push the public half to the peer".to_owned(),
-                                        );
+                                        match cokret_sdk::key_verification::EphemeralX25519Keypair::generate() {
+                                            Ok(keypair) => {
+                                                ephemeral_keypair.set(Some(std::sync::Arc::new(keypair)));
+                                                sas_send_status.set(
+                                                    "fresh X25519 keypair generated; click Send to push the public half to the peer".to_owned(),
+                                                );
+                                            }
+                                            Err(error) => {
+                                                sas_send_status.set(format!(
+                                                    "could not generate ephemeral X25519 keypair: {error}"
+                                                ));
+                                            }
+                                        }
                                     },
                                     "Generate my X25519 keypair"
                                 }

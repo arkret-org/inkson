@@ -1154,13 +1154,7 @@ pub fn build_register_request_with_secure_store(
 /// hashing surface from chime's wire module.
 #[cfg(test)]
 fn sha256_hex(value: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(value.as_bytes());
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    cokret_sdk::canonical::sha256_hex(value.as_bytes())
 }
 
 #[cfg(test)]

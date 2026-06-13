@@ -149,12 +149,7 @@ pub fn mention_sidecar_hash(salt: &str, did: &str) -> String {
     hasher.update(b"|");
     hasher.update(did.as_bytes());
     let out = hasher.finalize();
-    let mut hex = String::with_capacity(out.len() * 2);
-    for byte in out {
-        use std::fmt::Write;
-        let _ = write!(&mut hex, "{byte:02x}");
-    }
-    hex
+    crate::canonical::hex_encode(&out)
 }
 
 /// Build the full sidecar hash list for a `ck.message.create` payload.
