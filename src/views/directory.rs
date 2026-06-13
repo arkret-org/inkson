@@ -29,6 +29,65 @@ struct PaginationState {
     loading_more: bool,
 }
 
+fn realm_member_count_bucket_text(bucket: &cokret_sdk::model::RealmMemberCountBucket) -> String {
+    match bucket {
+        cokret_sdk::model::RealmMemberCountBucket::Bucket(label) => match label {
+            cokret_sdk::model::RealmMemberCountBucketLabel::OneToTen => "1-10".to_owned(),
+            cokret_sdk::model::RealmMemberCountBucketLabel::ElevenToFifty => "11-50".to_owned(),
+            cokret_sdk::model::RealmMemberCountBucketLabel::FiftyOneToOneHundred => {
+                "51-100".to_owned()
+            }
+            cokret_sdk::model::RealmMemberCountBucketLabel::OneHundredOneToFiveHundred => {
+                "101-500".to_owned()
+            }
+            cokret_sdk::model::RealmMemberCountBucketLabel::FiveHundredOneToTwoThousand => {
+                "501-2000".to_owned()
+            }
+            cokret_sdk::model::RealmMemberCountBucketLabel::TwoThousandPlus => "2000+".to_owned(),
+        },
+        cokret_sdk::model::RealmMemberCountBucket::Exact(count) => count.to_string(),
+    }
+}
+
+fn realm_tree_node_from_preview(preview: cokret_sdk::model::RealmPreview) -> RealmTreeNode {
+    let id = preview.realm_id.as_str().to_owned();
+    let title = preview
+        .title
+        .or(preview.alias)
+        .unwrap_or_else(|| id.clone());
+    let mut tags = std::collections::BTreeSet::new();
+    if let Some(discoverability) = preview.discoverability.clone() {
+        tags.insert(discoverability);
+    }
+    if let Some(join_rule) = preview.join_rule.clone() {
+        tags.insert(join_rule);
+    }
+    if let Some(history_visibility) = preview.history_visibility.clone() {
+        tags.insert(history_visibility);
+    }
+    if let Some(member_count_bucket) = preview.member_count_bucket.as_ref() {
+        tags.insert(format!(
+            "members:{}",
+            realm_member_count_bucket_text(member_count_bucket)
+        ));
+    }
+    RealmTreeNode {
+        id: id.clone(),
+        title,
+        description: preview.summary,
+        tags,
+        public: matches!(
+            preview.discoverability.as_deref(),
+            Some("public" | "listed")
+        ),
+        category: None,
+        parent_space_id: None,
+        child_space_ids: Vec::new(),
+        kind: RealmTreeNodeKind::Realm,
+        realm_id: id,
+    }
+}
+
 #[component]
 pub fn DirectoryPanel(
     base_url: String,
@@ -369,12 +428,17 @@ pub fn DirectoryPanel(
                                                 object_results.set(protocol_object_results(&q));
                                                 status.set("loaded protocol object diagnostic results".to_owned());
                                             }
-                                            DirectoryTab::Realms => {
-                                                match api.search_realms(&q, None).await {
+                                                    DirectoryTab::Realms => {
+                                                        match api.search_realms(&q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().realms_cursor = search.next_cursor.clone();
-                                                        let count = search.results.len();
-                                                        realm_results.set(search.results);
+                                                        let results = search
+                                                            .realms
+                                                            .into_iter()
+                                                            .map(realm_tree_node_from_preview)
+                                                            .collect::<Vec<_>>();
+                                                        let count = results.len();
+                                                        realm_results.set(results);
                                                         status.set(format!("loaded {count} realm result(s)"));
                                                     }
                                                     Err(error) => status.set(format!("search failed: {error}")),
@@ -384,7 +448,13 @@ pub fn DirectoryPanel(
                                                 match api.search_organizations(&q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().orgs_cursor = search.next_cursor.clone();
-                                                        org_results.set(search.results);
+                                                        org_results.set(
+                                                            search
+                                                                .organizations
+                                                                .into_iter()
+                                                                .map(|organization| organization.preview)
+                                                                .collect(),
+                                                        );
                                                     }
                                                     Err(error) => status.set(format!("org search failed: {error}")),
                                                 }
@@ -393,7 +463,13 @@ pub fn DirectoryPanel(
                                                 match api.search_actors(&q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().actors_cursor = search.next_cursor.clone();
-                                                        actor_results.set(search.results);
+                                                        actor_results.set(
+                                                            search
+                                                                .actors
+                                                                .into_iter()
+                                                                .map(|actor| actor.preview)
+                                                                .collect(),
+                                                        );
                                                     }
                                                     Err(error) => status.set(format!("actor search failed: {error}")),
                                                 }
@@ -437,8 +513,13 @@ pub fn DirectoryPanel(
                                                     match api.search_realms(&q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().realms_cursor = search.next_cursor.clone();
-                                                            let count = search.results.len();
-                                                            realm_results.set(search.results);
+                                                            let results = search
+                                                                .realms
+                                                                .into_iter()
+                                                                .map(realm_tree_node_from_preview)
+                                                                .collect::<Vec<_>>();
+                                                            let count = results.len();
+                                                            realm_results.set(results);
                                                             status.set(format!("loaded {count} realm result(s)"));
                                                         }
                                                         Err(error) => status.set(format!("search failed: {error}")),
@@ -448,7 +529,13 @@ pub fn DirectoryPanel(
                                                     match api.search_organizations(&q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().orgs_cursor = search.next_cursor.clone();
-                                                            org_results.set(search.results);
+                                                            org_results.set(
+                                                                search
+                                                                    .organizations
+                                                                    .into_iter()
+                                                                    .map(|organization| organization.preview)
+                                                                    .collect(),
+                                                            );
                                                         }
                                                         Err(error) => status.set(format!("org search failed: {error}")),
                                                     }
@@ -457,7 +544,13 @@ pub fn DirectoryPanel(
                                                     match api.search_actors(&q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().actors_cursor = search.next_cursor.clone();
-                                                            actor_results.set(search.results);
+                                                            actor_results.set(
+                                                                search
+                                                                    .actors
+                                                                    .into_iter()
+                                                                    .map(|actor| actor.preview)
+                                                                    .collect(),
+                                                            );
                                                         }
                                                         Err(error) => status.set(format!("actor search failed: {error}")),
                                                     }
@@ -678,7 +771,12 @@ pub fn DirectoryPanel(
                                                     Ok(search) => {
                                                         pagination.write().realms_cursor = search.next_cursor.clone();
                                                         let mut current = realm_results();
-                                                        current.extend(search.results);
+                                                        current.extend(
+                                                            search
+                                                                .realms
+                                                                .into_iter()
+                                                                .map(realm_tree_node_from_preview),
+                                                        );
                                                         realm_results.set(current);
                                                     }
                                                     Err(err) => status.set(format!(
@@ -837,7 +935,12 @@ pub fn DirectoryPanel(
                                                 Ok(search) => {
                                                     pagination.write().orgs_cursor = search.next_cursor.clone();
                                                     let mut current = org_results();
-                                                    current.extend(search.results);
+                                                    current.extend(
+                                                        search
+                                                            .organizations
+                                                            .into_iter()
+                                                            .map(|organization| organization.preview),
+                                                    );
                                                     org_results.set(current);
                                                 }
                                                 Err(err) => status.set(format!("load more failed: {}", err.display())),
@@ -987,7 +1090,12 @@ pub fn DirectoryPanel(
                                                 Ok(search) => {
                                                     pagination.write().actors_cursor = search.next_cursor.clone();
                                                     let mut current = actor_results();
-                                                    current.extend(search.results);
+                                                    current.extend(
+                                                        search
+                                                            .actors
+                                                            .into_iter()
+                                                            .map(|actor| actor.preview),
+                                                    );
                                                     actor_results.set(current);
                                                 }
                                                 Err(err) => status.set(format!("load more failed: {}", err.display())),

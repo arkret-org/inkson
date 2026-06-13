@@ -415,12 +415,6 @@ pub struct SyncDescribeView {
 /// disagreed with what soland actually emits.
 pub use cokret_sdk::model::SyncOutcome as ClientSyncOutcome;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchRealmsView {
-    pub results: Vec<RealmTreeNode>,
-    pub next_cursor: Option<String>,
-}
-
 /// soland's directory `describe` wire body. Named distinctly from the SDK
 /// core `cokret_sdk::model::DirectoryDescribeOutcome` (which wraps a typed
 /// `DirectoryDescription`) because this soland surface has a different,
@@ -860,17 +854,8 @@ pub use cokret_sdk::model::{
 
 // ── Directory ───────────────────────────────────────────────────
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchOrganizationsView {
-    pub results: Vec<Value>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchActorsView {
-    pub results: Vec<Value>,
-    pub next_cursor: Option<String>,
-}
+pub type SearchOrganizationsView = cokret_sdk::model::DirectoryOrganizationSearchOutcome;
+pub type SearchActorsView = cokret_sdk::model::DirectoryActorSearchOutcome;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveHandleView {

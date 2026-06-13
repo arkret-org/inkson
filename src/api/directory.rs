@@ -163,7 +163,7 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchRealmsView> {
+    ) -> anyhow::Result<cokret_sdk::model::DirectoryRealmSearchOutcome> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }

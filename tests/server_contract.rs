@@ -711,20 +711,34 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     );
     assert_no_secret("log", &log_entry, secret);
 
-    let directory = yougen::models::SearchRealmsView {
-        results: vec![yougen::models::RealmTreeNode {
-            id: "ck:realm:contract".to_owned(),
-            title: "Contract Realm".to_owned(),
-            description: Some("Public description".to_owned()),
-            tags: BTreeSet::from(["contract".to_owned()]),
-            public: true,
-            category: Some("collaboration".to_owned()),
-            parent_space_id: None,
-            child_space_ids: Vec::new(),
-            kind: yougen::models::RealmTreeNodeKind::Realm,
-            realm_id: "ck:realm:contract".to_owned(),
+    let directory = cokret_sdk::model::DirectoryRealmSearchOutcome {
+        realms: vec![cokret_sdk::model::RealmPreview {
+            realm_id: cokret_sdk::RealmId::new(
+                "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            )
+            .unwrap(),
+            alias: None,
+            title: Some("Contract Realm".to_owned()),
+            avatar_blob_ref: None,
+            organization_did: None,
+            join_rule: Some("public".to_owned()),
+            member_count_bucket: Some(cokret_sdk::model::RealmMemberCountBucket::Bucket(
+                cokret_sdk::model::RealmMemberCountBucketLabel::OneToTen,
+            )),
+            summary: Some("Public description".to_owned()),
+            owning_organizations: Vec::new(),
+            preview_ref: None,
+            discoverability: Some("public".to_owned()),
+            history_visibility: None,
+            join_candidates: Vec::new(),
+            as_of: Utc::now(),
+            source_refs: vec!["ck:event:01904100-0000-7000-8000-000000000002".to_owned()],
+            policy_revision: "contract-rev".to_owned(),
+            stale: None,
+            divergent: None,
         }],
         next_cursor: None,
+        has_more: false,
     };
     assert_no_secret("directory", &directory, secret);
 }

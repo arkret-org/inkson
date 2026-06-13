@@ -87,8 +87,9 @@ export function mockCokretContract(req) {
 
   if (method === "POST" && path === "/_cokret/find/directory/search-realms") {
     return json({
-      results: [realmPreview()],
+      realms: [realmPreview()],
       next_cursor: null,
+      has_more: false,
     });
   }
 
@@ -246,10 +247,12 @@ function realmPreview() {
   return {
     realm_id: DEMO_REALM,
     title: "Cokret Demo Realm",
-    description: "Shared demo Realm served by mocked server",
-    public: true,
-    category: null,
-    members: ["did:web:alice.example"],
-    tags: [],
+    summary: "Shared demo Realm served by mocked server",
+    discoverability: "public",
+    join_rule: "public",
+    member_count_bucket: "1-10",
+    as_of: "2026-06-13T00:00:00Z",
+    source_refs: ["ck:event:0196419b-0000-7000-8000-000000000001"],
+    policy_revision: "mock-policy-rev",
   };
 }
