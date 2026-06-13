@@ -11,7 +11,7 @@ function latestTestId(page: import("@playwright/test").Page, testId: string) {
 async function dismissBlockingRecoveryModal(page: import("@playwright/test").Page) {
   // Dismiss a CHAIN of blocking account-health modals. Dismissing the
   // recovery-missing modal can auto-open the one-time recovery-key setup nudge
-  // (account_health::should_autoprompt_recovery_setup); both expose a
+  // (account_health::should_auto_prompt_recovery_setup); both expose a
   // "Dismiss"/"Not now" button. Re-query each iteration and don't assert a
   // specific modal hidden — a freshly spawned modal must not fail the helper.
   for (let i = 0; i < 8; i += 1) {
@@ -371,7 +371,7 @@ test("first authenticated session surfaces a single recovery prompt by priority"
 
   // Dismissing the higher-priority prompt drops to RecoverySetupReminder, which
   // proactively AUTO-OPENS the 24-word Recovery Key setup modal once (the
-  // one-time new-user nudge — account_health::should_autoprompt_recovery_setup).
+  // one-time new-user nudge — account_health::should_auto_prompt_recovery_setup).
   await latestTestId(page, "mls-recovery-missing-dismiss").click();
   const setupModal = latestTestId(page, "recovery-key-setup-modal");
   await expect(setupModal).toBeVisible();

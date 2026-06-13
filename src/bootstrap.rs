@@ -20,6 +20,10 @@ use super::server_key;
 use crate::config::{is_valid_device_id, normalize_server_url};
 use crate::local_state::{ClientLocalState, LocalStateStore};
 
+pub(crate) const RECOVERY_AUTO_PROMPT_SHOWN_KEY: &str = "recovery.auto_prompt_shown.v1";
+pub(crate) const RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY: &str =
+    "recovery.auto_prompt_local_only_shown.v1";
+
 pub(crate) fn has_bootstrap_refresh_material(
     store: &LocalStateStore,
     principal_server_url: &str,
@@ -104,6 +108,40 @@ pub(crate) fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {
 
 pub(crate) fn recovery_setup_prompt_required(account_recovery_configured: Option<bool>) -> bool {
     matches!(account_recovery_configured, Some(false))
+}
+
+pub(crate) fn recovery_auto_prompt_pending_local_only_fingerprint(
+    store: &LocalStateStore,
+    actor: &str,
+    account_recovery_configured: Option<bool>,
+) -> Option<String> {
+    if !matches!(account_recovery_configured, Some(false)) {
+        return None;
+    }
+    let fingerprint = crate::views::recovery::local_recovery_key_fingerprint(store, actor)?;
+    let prompted_fingerprint = store
+        .load_private_data(actor, RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY)
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if prompted_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+        return None;
+    }
+    Some(fingerprint)
+}
+
+pub(crate) fn recovery_auto_prompt_already_prompted(
+    store: &LocalStateStore,
+    actor: &str,
+    account_recovery_configured: Option<bool>,
+) -> bool {
+    if recovery_auto_prompt_pending_local_only_fingerprint(store, actor, account_recovery_configured)
+        .is_some()
+    {
+        return false;
+    }
+    store
+        .load_private_data(actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY)
+        .is_some()
 }
 
 pub(crate) fn current_device_authorization_from_account_viewer(

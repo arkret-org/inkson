@@ -132,7 +132,7 @@ pub fn resolve(i: AccountHealthInputs) -> AccountHealthPrompt {
 /// not been auto-prompted before. The caller persists the "prompted" flag so
 /// this fires at most once per account — the passive dashboard banner still
 /// remains for subsequent sessions. See `docs/user-flows-key-lifecycle.md` §3/S1.
-pub fn should_autoprompt_recovery_setup(i: AccountHealthInputs, already_prompted: bool) -> bool {
+pub fn should_auto_prompt_recovery_setup(i: AccountHealthInputs, already_prompted: bool) -> bool {
     !already_prompted && resolve(i) == AccountHealthPrompt::RecoverySetupReminder
 }
 
@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn autoprompt_fires_once_in_reminder_state() {
+    fn auto_prompt_fires_once_in_reminder_state() {
         let reminder = AccountHealthInputs {
             recovery_unconfigured: true,
             ..healthy()
@@ -306,29 +306,29 @@ mod tests {
             AccountHealthPrompt::RecoverySetupReminder
         );
         // Not yet prompted -> fire.
-        assert!(should_autoprompt_recovery_setup(reminder, false));
+        assert!(should_auto_prompt_recovery_setup(reminder, false));
         // Already prompted -> never fire again, even though still unconfigured.
-        assert!(!should_autoprompt_recovery_setup(reminder, true));
+        assert!(!should_auto_prompt_recovery_setup(reminder, true));
     }
 
     #[test]
-    fn autoprompt_suppressed_outside_reminder_state() {
+    fn auto_prompt_suppressed_outside_reminder_state() {
         // A higher-priority prompt is active -> do not auto-open recovery setup.
         let floor = AccountHealthInputs {
             floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
-        assert!(!should_autoprompt_recovery_setup(floor, false));
+        assert!(!should_auto_prompt_recovery_setup(floor, false));
         // Healthy + configured -> nothing to prompt.
-        assert!(!should_autoprompt_recovery_setup(healthy(), false));
+        assert!(!should_auto_prompt_recovery_setup(healthy(), false));
         // Device probe not done -> wait.
         let pending = AccountHealthInputs {
             device_check_complete: false,
             recovery_unconfigured: true,
             ..healthy()
         };
-        assert!(!should_autoprompt_recovery_setup(pending, false));
+        assert!(!should_auto_prompt_recovery_setup(pending, false));
     }
 
     /// The derived `Ord` must agree with the documented priority chain.
