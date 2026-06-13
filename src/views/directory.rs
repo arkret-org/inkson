@@ -52,7 +52,7 @@ pub fn DirectoryPanel(
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
     let mut object_results = use_signal(Vec::<Value>::new);
-    let mut handle_result = use_signal(|| Option::<ResolveHandleOutcome>::None);
+    let mut handle_result = use_signal(|| Option::<ResolveHandleView>::None);
     let mut contact_target_did = use_signal(|| "did:web:bob.example".to_owned());
     let mut contact_requester_did = use_signal(|| "did:web:alice.example".to_owned());
     let mut contact_state = use_signal(|| "No contact operation yet".to_owned());
@@ -225,8 +225,8 @@ pub fn DirectoryPanel(
                                     .await
                                     {
                                         Ok(contact) => contact_state.set(format!(
-                                            "request {} -> {} {}",
-                                            contact.requester, contact.target, contact.status
+                                            "request {:?} {}",
+                                            contact.state, contact.request_event_ref
                                         )),
                                         Err(err) => contact_state
                                             .set(format!("request: {}", err.display())),
@@ -252,8 +252,8 @@ pub fn DirectoryPanel(
                                     .await
                                     {
                                         Ok(contact) => contact_state.set(format!(
-                                            "respond {} -> {} {}",
-                                            contact.requester, contact.target, contact.status
+                                            "respond {:?} {}",
+                                            contact.state, contact.response_event_ref
                                         )),
                                         Err(err) => contact_state
                                             .set(format!("accept: {}", err.display())),
@@ -279,8 +279,8 @@ pub fn DirectoryPanel(
                                     .await
                                     {
                                         Ok(contact) => contact_state.set(format!(
-                                            "respond {} -> {} {}",
-                                            contact.requester, contact.target, contact.status
+                                            "respond {:?} {}",
+                                            contact.state, contact.response_event_ref
                                         )),
                                         Err(err) => contact_state
                                             .set(format!("reject: {}", err.display())),

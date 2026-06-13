@@ -986,25 +986,25 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           {
             peer: "did:web:bob.example",
             state: "accepted",
-            request_event_ref: "ck:event:contact-bob-request",
-            response_event_ref: "ck:event:contact-bob-response",
+            request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000101",
+            response_event_ref: "ck:event:0196419b-0000-7000-8000-000000000102",
             granted_by_me: ["direct_message", "invite"],
             granted_to_me: ["direct_message", "invite"],
             bidirectional_scopes: ["direct_message", "invite"],
             effective_scopes: ["direct_message", "invite"],
             // U3 — consent grant the peer gave me for the invite scope.
-            invite_consent_grant_ref: "ck:event:contact-bob-response",
+            invite_consent_grant_ref: "ck:event:0196419b-0000-7000-8000-000000000102",
             direct_conversation: {
               realm_id: DIRECT_BOB_REALM,
               main_flow_id: DIRECT_BOB_FLOW,
-              binding_event_ref: "ck:event:direct-bob-binding",
+              binding_event_ref: "ck:event:0196419b-0000-7000-8000-000000000103",
               state: "active",
             },
           },
           {
             peer: "did:web:carol.example",
             state: "pending_outgoing",
-            request_event_ref: "ck:event:contact-carol-request",
+            request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000104",
             granted_by_me: ["invite"],
             granted_to_me: [],
             bidirectional_scopes: [],
@@ -1013,7 +1013,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           {
             peer: "did:web:dave.example",
             state: "pending_incoming",
-            request_event_ref: "ck:event:contact-dave-request",
+            request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000105",
             granted_by_me: [],
             granted_to_me: ["direct_message"],
             bidirectional_scopes: [],
@@ -1027,8 +1027,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
             // the realm-invite-from-contacts picker (no fallback ref).
             peer: "did:web:erin.example",
             state: "accepted",
-            request_event_ref: "ck:event:contact-erin-request",
-            response_event_ref: "ck:event:contact-erin-response",
+            request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000106",
+            response_event_ref: "ck:event:0196419b-0000-7000-8000-000000000107",
             granted_by_me: ["direct_message", "invite"],
             granted_to_me: ["direct_message", "invite"],
             bidirectional_scopes: ["direct_message", "invite"],
@@ -1042,14 +1042,10 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     // U2 — contact request (now accepts an optional `message`).
     if (url.pathname === "/_cokret/self/contacts/request" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
       return json(route, {
-        requester: "did:web:alice.example",
-        target: body.target ?? "did:web:unknown.example",
-        consent_scope: (body.requested_scopes ?? ["direct_message"])[0],
-        status: "pending_outgoing",
-        created_at: "2026-04-28T12:00:00Z",
-        updated_at: "2026-04-28T12:00:00Z",
+        request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000108",
+        requester_consent_refs: [],
+        state: "pending_outgoing",
       });
     }
 
@@ -1057,25 +1053,19 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     if (url.pathname === "/_cokret/self/contacts/respond" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       return json(route, {
-        requester: body.requester ?? "did:web:dave.example",
-        target: "did:web:alice.example",
-        consent_scope: "direct_message",
-        status: body.action === "accept" ? "accepted" : "rejected",
-        created_at: "2026-04-28T12:00:00Z",
-        updated_at: "2026-04-28T12:05:00Z",
+        response_event_ref: "ck:event:0196419b-0000-7000-8000-000000000109",
+        consent_grant_refs: body.action === "accept" ? ["ck:event:0196419b-0000-7000-8000-000000000110"] : [],
+        state: body.action === "accept" ? "accepted" : "rejected",
       });
     }
 
     // U5 — tombstone / block a contact.
     if (url.pathname === "/_cokret/self/contacts/tombstone" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
       return json(route, {
-        requester: "did:web:alice.example",
-        target: body.peer ?? "did:web:unknown.example",
-        consent_scope: "direct_message",
-        status: body.block_peer ? "blocked" : "tombstoned",
-        created_at: "2026-04-28T12:00:00Z",
-        updated_at: "2026-04-28T12:10:00Z",
+        tombstone_event_ref: "ck:event:0196419b-0000-7000-8000-000000000111",
+        consent_revoke_refs: [],
+        state: "tombstoned",
+        partial_revoke: false,
       });
     }
 
@@ -1105,7 +1095,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         state: "found",
         realm_id: DIRECT_BOB_REALM,
         main_flow_id: DIRECT_BOB_FLOW,
-        binding_event_ref: "ck:event:direct-bob-binding",
+        binding_event_ref: "ck:event:0196419b-0000-7000-8000-000000000103",
         created: false,
       });
     }

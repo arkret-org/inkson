@@ -450,6 +450,41 @@ impl OperationBuilder {
 }
 
 impl EventEnvelope {
+    /// Decode this legacy builder envelope through the SDK's canonical Event
+    /// model before it is allowed onto the HTTP wire.
+    ///
+    /// Yougen still builds envelopes with the local `OperationBuilder`, but
+    /// soland owns the accepted submit structure. This conversion keeps the
+    /// network boundary pinned to `cokret_sdk::Event` while the remaining
+    /// builder migration happens behind it.
+    pub fn to_sdk_event(&self) -> anyhow::Result<cokret_sdk::Event> {
+        let value = serde_json::to_value(self)?;
+        serde_json::from_value(value)
+            .map_err(|err| anyhow::anyhow!("event does not match SDK Event wire model: {err}"))
+    }
+
+    pub fn to_sdk_event_for_submit(&self) -> anyhow::Result<cokret_sdk::Event> {
+        let sdk_event = self.to_sdk_event()?;
+        let local_digest = self.canonical_digest()?;
+        let sdk_digest = sdk_event
+            .event_digest()
+            .map_err(|err| anyhow::anyhow!("SDK Event digest failed: {err}"))?;
+        if local_digest != sdk_digest {
+            anyhow::bail!(
+                "event digest drift between yougen builder and SDK Event: local={local_digest}, sdk={sdk_digest}"
+            );
+        }
+        for proof in &self.proofs {
+            if proof.event_digest != sdk_digest {
+                anyhow::bail!(
+                    "event proof digest {} does not match SDK Event digest {sdk_digest}",
+                    proof.event_digest
+                );
+            }
+        }
+        Ok(sdk_event)
+    }
+
     pub fn local_operation_idempotency_alias(&self) -> Option<&str> {
         self.unsigned
             .get("local_operation_idempotency_alias")
@@ -2716,6 +2751,32 @@ mod tests {
         // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
         assert_eq!(proof.jws.matches('.').count(), 2);
         assert!(op.require_proof().is_ok());
+    }
+
+    #[test]
+    fn sdk_submit_event_conversion_preserves_signed_digest() {
+        use ed25519_dalek::SigningKey;
+
+        let mut op = OperationBuilder::new(
+            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "ck.message.create",
+        )
+        .body(json!({"kind": "ck.content.text", "body": "hi"}))
+        .build("node");
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        op.sign_ed25519(
+            "did:web:alice.example",
+            "did:web:alice.example#k1",
+            &signing_key,
+        )
+        .expect("sign ok");
+
+        let local_digest = op.canonical_digest().unwrap();
+        let sdk_event = op.to_sdk_event_for_submit().unwrap();
+        assert_eq!(sdk_event.event_id.as_str(), op.event_id);
+        assert_eq!(sdk_event.event_digest().unwrap(), local_digest);
+        assert_eq!(op.proofs[0].event_digest, local_digest);
     }
 
     #[test]

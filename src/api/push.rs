@@ -1,7 +1,7 @@
 use super::*;
 
 impl CokretApi {
-    pub async fn register_push_device(&self) -> anyhow::Result<PushRegisterOutcome> {
+    pub async fn register_push_device(&self) -> anyhow::Result<PushRegisterView> {
         let request = crate::push::build_register_request("dev_yougen")?;
         self.register_push_device_with_request(&request).await
     }
@@ -10,7 +10,7 @@ impl CokretApi {
         &self,
         path: &str,
         request: &PushRegisterDeviceRequestBody,
-    ) -> anyhow::Result<PushRegisterOutcome> {
+    ) -> anyhow::Result<PushRegisterView> {
         let response = self
             .push_client(Some(path), None)
             .register_device_with_request(request, request.idempotency_key.as_deref(), None)
@@ -22,7 +22,7 @@ impl CokretApi {
     pub async fn register_push_device_with_request(
         &self,
         request: &PushRegisterDeviceRequestBody,
-    ) -> anyhow::Result<PushRegisterOutcome> {
+    ) -> anyhow::Result<PushRegisterView> {
         // Default register path is hardcoded in chime; pass `None` so it's used.
         let response = self
             .push_client(None, None)

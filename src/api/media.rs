@@ -26,7 +26,7 @@ impl CokretApi {
         signal_type: &str,
         seq: u64,
         data: Value,
-    ) -> anyhow::Result<EphemeralSubmitOutcome> {
+    ) -> anyhow::Result<EphemeralSubmitResult> {
         let mut envelope = build_call_signal_envelope_v1(
             realm_id,
             actor_id,
@@ -75,7 +75,7 @@ impl CokretApi {
         call_id: &str,
         recording_id: &str,
         consent_actors: Vec<String>,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let op = crate::webrtc::build_call_recording_start(
             realm_id,
             actor_id,

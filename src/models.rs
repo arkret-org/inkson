@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct HealthOutcome {
+pub struct HealthView {
     pub ok: bool,
     pub service: String,
     pub storage: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DevLoginOutcome {
+pub struct SessionLoginView {
     pub access_token: String,
     pub token_type: String,
     pub actor: String,
@@ -21,7 +21,7 @@ pub struct DevLoginOutcome {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LogoutOutcome {
+pub struct LogoutResult {
     pub ok: bool,
     #[serde(default)]
     pub revoked: bool,
@@ -32,7 +32,7 @@ pub struct LogoutOutcome {
 /// signed `primary_handle_claim.handle`; an empty string means the server did
 /// not include handle evidence in the viewer response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CurrentAccountOutcome {
+pub struct CurrentAccountView {
     pub did: String,
     #[serde(default)]
     pub handle: String,
@@ -45,24 +45,12 @@ pub struct CurrentAccountOutcome {
 /// currently has no spec-defined endpoint for this query; the shape is
 /// retained for the search UI state model and contract tests.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexSearchOutcome {
+pub struct IndexSearchView {
     pub query: String,
     #[serde(default)]
     pub results: Vec<Value>,
     #[serde(default)]
     pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContactOutcome {
-    pub requester: String,
-    pub target: String,
-    #[serde(default)]
-    #[serde(rename = "consent_scope")]
-    pub scope: String,
-    pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -140,13 +128,80 @@ impl ContactListRow {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContactsOutcome {
+pub struct ContactListView {
     #[serde(default)]
     pub contacts: Vec<ContactListRow>,
     #[serde(default)]
     pub has_more: bool,
     #[serde(default)]
     pub next_cursor: Option<String>,
+}
+
+impl ContactListView {
+    pub fn from_sdk(list: cokret_sdk::ContactList) -> anyhow::Result<Self> {
+        Ok(Self {
+            contacts: list
+                .contacts
+                .into_iter()
+                .map(ContactListRow::from_sdk)
+                .collect(),
+            has_more: list.has_more,
+            next_cursor: list.next_cursor.map(|cursor| cursor.encode()).transpose()?,
+        })
+    }
+}
+
+impl ContactListRow {
+    pub fn from_sdk(row: cokret_sdk::ContactListRow) -> Self {
+        Self {
+            peer: row.peer.to_string(),
+            state: contact_state_wire(row.state).to_owned(),
+            request_event_ref: row.request_event_ref.map(|value| value.to_string()),
+            response_event_ref: row.response_event_ref.map(|value| value.to_string()),
+            tombstone_event_ref: row.tombstone_event_ref.map(|value| value.to_string()),
+            granted_by_me: row.granted_by_me,
+            granted_to_me: row.granted_to_me,
+            bidirectional_scopes: row.bidirectional_scopes,
+            effective_scopes: row.effective_scopes,
+            direct_conversation: row
+                .direct_conversation
+                .map(DirectConversationSummary::from_sdk),
+            peer_service_did: row.peer_service_did.map(|value| value.to_string()),
+            invite_consent_grant_ref: row.invite_consent_grant_ref.map(|value| value.to_string()),
+        }
+    }
+}
+
+impl DirectConversationSummary {
+    pub fn from_sdk(summary: cokret_sdk::DirectConversationSummary) -> Self {
+        Self {
+            realm_id: summary.realm_id.to_string(),
+            main_flow_id: summary.main_flow_id.to_string(),
+            binding_event_ref: summary.binding_event_ref.map(|value| value.to_string()),
+            state: direct_conversation_binding_state_wire(summary.state).to_owned(),
+        }
+    }
+}
+
+fn contact_state_wire(state: cokret_sdk::ContactState) -> &'static str {
+    match state {
+        cokret_sdk::ContactState::PendingOutgoing => "pending_outgoing",
+        cokret_sdk::ContactState::PendingIncoming => "pending_incoming",
+        cokret_sdk::ContactState::Accepted => "accepted",
+        cokret_sdk::ContactState::Rejected => "rejected",
+        cokret_sdk::ContactState::Tombstoned => "tombstoned",
+    }
+}
+
+fn direct_conversation_binding_state_wire(
+    state: cokret_sdk::DirectConversationBindingState,
+) -> &'static str {
+    match state {
+        cokret_sdk::DirectConversationBindingState::Active => "active",
+        cokret_sdk::DirectConversationBindingState::Retired => "retired",
+        cokret_sdk::DirectConversationBindingState::Duplicate => "duplicate",
+        cokret_sdk::DirectConversationBindingState::NonCanonical => "non_canonical",
+    }
 }
 
 /// U4 — actor `invite_receive_policy` ("谁可以邀请我").
@@ -196,7 +251,7 @@ pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ConsentCellOutcome {
+pub struct ConsentCellView {
     pub ok: bool,
     pub cell_id: String,
     pub holder_did: String,
@@ -221,19 +276,19 @@ pub struct ConsentCellOutcome {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ConsentCellsOutcome {
+pub struct ConsentCellsView {
     pub ok: bool,
     #[serde(default)]
-    pub cells: Vec<ConsentCellOutcome>,
+    pub cells: Vec<ConsentCellView>,
 }
 
 /// R15: result of `ck.realm.create`. Carries a `ck:realm:*` id under the
 /// canonical `realm_id` field (was previously squeezed into a shared
-/// `space_id` on `SpaceLifecycleOutcome`). `state` replaces the old
+/// `space_id` on the old shared lifecycle result). `state` replaces the old
 /// `deleted: bool`, matching the spec lifecycle-state enum
 /// (`active` / `archived` / `tombstoned`, `common-fields.md §5.1`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RealmCreateOutcome {
+pub struct RealmCreateResult {
     pub ok: bool,
     pub realm_id: String,
     pub owner: String,
@@ -244,9 +299,9 @@ pub struct RealmCreateOutcome {
 
 /// R15: result of `ck.space.create`. A Space (`ck:space:*`) lives inside a
 /// Realm and inherits its membership / encryption. `state` mirrors the spec
-/// lifecycle enum (see [`RealmCreateOutcome`]).
+/// lifecycle enum (see [`RealmCreateResult`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpaceCreateOutcome {
+pub struct SpaceCreateResult {
     pub ok: bool,
     pub space_id: String,
     pub owner: String,
@@ -256,14 +311,14 @@ pub struct SpaceCreateOutcome {
 }
 
 // (Move/Seal pipeline DTOs deleted; all writes now go through
-// ck.self.events.submit via SubmitEventOutcome.)
+// ck.self.events.submit via SubmitEventResult.)
 
-/// Outcome of [`crate::api::CokretApi::set_account_data`]. Captures the
+/// Result of [`crate::api::CokretApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
 /// soland's principal-control lookup / event ingest may be absent on older
 /// deployments and the client must keep working when that path is not wired.
 #[derive(Debug, Clone)]
-pub enum AccountDataSetOutcome {
+pub enum AccountDataSetResult {
     /// Server accepted and stored the value. The caller may inspect the
     /// echoed body for any server-derived metadata, but most callers can
     /// ignore the `Value`.
@@ -388,7 +443,7 @@ pub use cokret_sdk::model::{
 /// whose shape is deployment-defined, hence `Value`). Follows the local
 /// `*Outcome` DTO suffix convention (YOU-04-001).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SyncDescribeOutcome {
+pub struct SyncDescribeView {
     pub service_did: String,
     #[serde(default)]
     pub supported_sync_profiles: Vec<String>,
@@ -408,7 +463,7 @@ pub struct SyncDescribeOutcome {
 pub use cokret_sdk::model::SyncOutcome as ClientSyncOutcome;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchRealmsOutcome {
+pub struct SearchRealmsView {
     pub results: Vec<RealmTreeNode>,
     pub next_cursor: Option<String>,
 }
@@ -627,7 +682,7 @@ mod tests {
             "realm_frontier": {},
             "cursor": "sx:cursor-1",
         });
-        let outcome: super::SubmitEventOutcome = serde_json::from_value(value).unwrap();
+        let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
         assert_eq!(
             outcome.event_id,
             "ck:event:0196419b-0000-7000-8000-000000000001"
@@ -645,7 +700,7 @@ mod tests {
             "status": "accepted",
             "sync_token": "sx:legacy",
         });
-        assert!(serde_json::from_value::<super::SubmitEventOutcome>(value).is_err());
+        assert!(serde_json::from_value::<super::SubmitEventResult>(value).is_err());
     }
 
     #[test]
@@ -658,7 +713,7 @@ mod tests {
             "accepted": [],
             "duplicate": ["ck:event:e2e"],
         });
-        let outcome: super::SubmitEventOutcome = serde_json::from_value(value).unwrap();
+        let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
         assert_eq!(outcome.event_id, "ck:event:e2e");
         assert_eq!(outcome.status, "duplicate");
         assert_eq!(outcome.cursor, "");
@@ -798,7 +853,7 @@ mod tests {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BackfillOutcome {
+pub struct BackfillView {
     #[serde(default)]
     pub events: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -825,14 +880,14 @@ pub use cokret_sdk::model::AuthzCheckOutcome;
 pub use cokret_sdk::model::GrantList;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InvitesOutcome {
+pub struct InvitesView {
     #[serde(default)]
     pub invites: Vec<Value>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PushRegisterOutcome {
+pub struct PushRegisterView {
     pub ok: bool,
     pub registration_id: Option<String>,
     #[serde(default)]
@@ -853,19 +908,19 @@ pub use cokret_sdk::model::{
 // ── Directory ───────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchOrganizationsOutcome {
+pub struct SearchOrganizationsView {
     pub results: Vec<Value>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchActorsOutcome {
+pub struct SearchActorsView {
     pub results: Vec<Value>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ResolveHandleOutcome {
+pub struct ResolveHandleView {
     #[serde(default, alias = "subject")]
     pub did: String,
     pub handle: String,
@@ -904,7 +959,7 @@ pub struct ResolveHandleOutcome {
     pub via_services: Vec<String>,
 }
 
-impl ResolveHandleOutcome {
+impl ResolveHandleView {
     pub fn subject_did(&self) -> Option<&str> {
         (!self.did.trim().is_empty())
             .then_some(self.did.as_str())
@@ -972,7 +1027,7 @@ pub struct MemberDeliveryBindingView {
 // ── Realm / Space Management ────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RealmPolicyOutcome {
+pub struct RealmPolicyResult {
     pub ok: bool,
     pub realm_id: String,
     pub join_rule: String,
@@ -980,26 +1035,26 @@ pub struct RealmPolicyOutcome {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TypingOutcome {
+pub struct TypingResult {
     pub ok: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReceiptOutcome {
+pub struct ReceiptResult {
     pub ok: bool,
 }
 
 // ── Device & Crypto ─────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RevokeDeviceOutcome {
+pub struct RevokeDeviceResult {
     pub ok: bool,
     pub device_id: String,
     pub revoked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceTrustOutcome {
+pub struct DeviceTrustView {
     pub devices: Vec<DeviceTrustEntry>,
 }
 
@@ -1012,7 +1067,7 @@ pub struct DeviceTrustEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VerifyDeviceOutcome {
+pub struct VerifyDeviceResult {
     pub ok: bool,
     pub device_id: String,
     pub trust_state: String,
@@ -1036,7 +1091,7 @@ pub struct VerifyDeviceOutcome {
 /// do not trip the strict `EventId` validator.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "EventsSubmitWire")]
-pub struct SubmitEventOutcome {
+pub struct SubmitEventResult {
     pub event_id: String,
     pub status: String,
     #[serde(default)]
@@ -1046,7 +1101,7 @@ pub struct SubmitEventOutcome {
 }
 
 /// Deserialization mirror for the canonical `EventsSubmitOutcome` wire
-/// shape. See [`SubmitEventOutcome`]. `status` and `accepted` are required
+/// shape. See [`SubmitEventResult`]. `status` and `accepted` are required
 /// per spec; the rest defaults.
 #[derive(Deserialize)]
 struct EventsSubmitWire {
@@ -1064,7 +1119,7 @@ struct EventsSubmitWire {
     cursor: Option<String>,
 }
 
-impl From<EventsSubmitWire> for SubmitEventOutcome {
+impl From<EventsSubmitWire> for SubmitEventResult {
     fn from(wire: EventsSubmitWire) -> Self {
         let event_id = wire
             .accepted
@@ -1088,13 +1143,43 @@ impl From<EventsSubmitWire> for SubmitEventOutcome {
     }
 }
 
+impl From<cokret_sdk::EventsSubmitOutcome> for SubmitEventResult {
+    fn from(outcome: cokret_sdk::EventsSubmitOutcome) -> Self {
+        let accepted: Vec<String> = outcome
+            .accepted
+            .into_iter()
+            .map(|event_id| event_id.as_str().to_owned())
+            .collect();
+        let duplicate: Vec<String> = outcome
+            .duplicate
+            .into_iter()
+            .map(|event_id| event_id.as_str().to_owned())
+            .collect();
+        let wire = EventsSubmitWire {
+            status: match outcome.status {
+                cokret_sdk::EventsSubmitStatus::Accepted => "accepted",
+                cokret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
+                cokret_sdk::EventsSubmitStatus::Partial => "partial",
+            }
+            .to_owned(),
+            accepted,
+            duplicate,
+            rejected: outcome.rejected,
+            actor_frontier: outcome.actor_frontier,
+            realm_frontier: outcome.realm_frontier,
+            cursor: outcome.cursor,
+        };
+        wire.into()
+    }
+}
+
 /// Round R2/R3 (T02) — server response shape for the
 /// `POST /_cokret/self/ephemeral` channel. The endpoint is fire-and-forget — the
 /// server's only obligation is to return `accepted: true` (signal entered
 /// the broadcast fanout) or surface a structured rejection. No event id is
 /// minted because ephemeral signals are never durable.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct EphemeralSubmitOutcome {
+pub struct EphemeralSubmitResult {
     #[serde(default)]
     pub accepted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1117,139 +1202,11 @@ pub use cokret_sdk::model::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 
 // WebRTC call signaling/recording no longer round-trips through bespoke
 // `/_cokret/self/webrtc/*` outcomes: signaling is a `ck.call.signal`
-// ephemeral envelope (EphemeralSubmitOutcome) and recording is a durable
-// `ck.call.recording.start` event (SubmitEventOutcome). See
+// ephemeral envelope (EphemeralSubmitResult) and recording is a durable
+// `ck.call.recording.start` event (SubmitEventResult). See
 // `crypto-media/webrtc-signaling.md` §5/§7. The former
 // CreateWebrtcSessionOutcome / WebrtcSignalOutcome / CallRecordingStartOutcome
 // mirrors were removed (YOU-01-002).
-
-// ── MIMI Provider Facade ─────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiProviderDirectory {
-    pub service_did: Option<String>,
-    pub service_type: String,
-    #[serde(default)]
-    pub supported_profiles: Vec<String>,
-    pub mimi: MimiProviderProfile,
-    #[serde(default)]
-    pub proof: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiProviderProfile {
-    pub protocol_draft: String,
-    pub content_draft: String,
-    pub room_policy_draft: Option<String>,
-    pub identifier_draft: Option<String>,
-    pub base_url: String,
-    pub provider_id: String,
-    #[serde(default)]
-    pub features: Vec<String>,
-    #[serde(default)]
-    pub mls_cipher_suites: Vec<String>,
-    #[serde(default)]
-    pub content_profiles: Vec<String>,
-    #[serde(default)]
-    pub room_policy_components: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiKeyMaterialOutcome {
-    pub ok: bool,
-    #[serde(default)]
-    pub key_packages: Vec<Value>,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiRoomUpdateOutcome {
-    pub ok: bool,
-    pub room_id: Option<String>,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiNotifyOutcome {
-    pub ok: bool,
-    #[serde(default)]
-    pub accepted: Vec<String>,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiSubmitMessageOutcome {
-    pub ok: bool,
-    pub mimi_message_id: Option<String>,
-    pub mapped_operation_id: Option<String>,
-    pub cokret_event_id: Option<String>,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiGroupInfoOutcome {
-    /// R20: wire field name `room_id` is preserved because it comes verbatim
-    /// from the MIMI draft (`draft-ietf-mimi-room-policy-03`), which is
-    /// interop-exempt from the `Room → Realm` rename
-    /// (forbidden-model-terms `allowed_contexts: [interop_module]`). On the
-    /// Cokret application side this identifier corresponds to a Flow; the
-    /// `Room` term must stay confined to the mls/mimi interop layer. Callers
-    /// crossing into the app layer SHOULD bind it to a `flow_id`-named local
-    /// to make the boundary explicit (see `views/settings/mod.rs`).
-    pub room_id: String,
-    pub mimi_room_uri: Option<String>,
-    pub group_info: Value,
-    #[serde(default)]
-    pub participants: Vec<Value>,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiRequestConsentOutcome {
-    pub ok: bool,
-    pub consent_id: Option<String>,
-    pub state: Option<String>,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiIdentifierQueryOutcome {
-    pub query: String,
-    pub reachable: bool,
-    pub mapped_did: Option<String>,
-    pub provider_id: Option<String>,
-    #[serde(default)]
-    pub proofs: Vec<Value>,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiReportAbuseOutcome {
-    pub ok: bool,
-    pub report_id: Option<String>,
-    pub status: Option<String>,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiProxyDownloadOutcome {
-    pub ok: bool,
-    pub blob_ref: String,
-    pub media_type: Option<String>,
-    /// Spec rename (head 37ce729 / SDK 4d5a1af): `size` → `size_bytes`.
-    pub size_bytes: Option<usize>,
-    pub proxy_url: Option<String>,
-    #[serde(default)]
-    pub receipt: Value,
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // CKP-0008 / CKP-0009 — Personal Agent HTTP wire types.

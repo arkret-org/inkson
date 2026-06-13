@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::api::CokretApi;
-use crate::models::AccountDataSetOutcome;
+use crate::models::AccountDataSetResult;
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_KIND: &str = "file_transfer";
@@ -205,8 +205,8 @@ pub async fn upload_actor_private_file(
     let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
     let outcome = api.set_account_data(&account_data_key, envelope).await?;
     let server_response = match outcome {
-        AccountDataSetOutcome::Stored { response } => response,
-        AccountDataSetOutcome::Unsupported { status } => {
+        AccountDataSetResult::Stored { response } => response,
+        AccountDataSetResult::Unsupported { status } => {
             anyhow::bail!("ck.account_data.set unsupported for file transfer: {status}");
         }
     };

@@ -28,7 +28,7 @@ use crate::components::{HelpTip, UiIcon};
 use crate::config::LocalConfigStore;
 use crate::i18n::Locale;
 use crate::local_state::LocalStateStore;
-use crate::models::AccountDataSetOutcome;
+use crate::models::AccountDataSetResult;
 use crate::notification_rules::WatchLevel;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -239,8 +239,8 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
         })
         .await
         {
-            Ok(AccountDataSetOutcome::Stored { .. }) => {}
-            Ok(AccountDataSetOutcome::Unsupported { status }) => {
+            Ok(AccountDataSetResult::Stored { .. }) => {}
+            Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
                     "soland ck.account_data.set for client.ui returned {status}; \
                      local state still authoritative"
@@ -275,7 +275,7 @@ pub(crate) fn build_read_receipt_preferences_body(
 /// preferences to soland through `ck.account_data.set`. Read latest values
 /// from the local state store at call time —
 /// the local state is always authoritative; the server-sync is best-effort.
-/// Swallows 404/501/405 via [`AccountDataSetOutcome::Unsupported`] so older
+/// Swallows 404/501/405 via [`AccountDataSetResult::Unsupported`] so older
 /// soland deployments don't surface as user-visible errors.
 fn push_read_receipt_account_data(
     base_url: String,
@@ -294,8 +294,8 @@ fn push_read_receipt_account_data(
         })
         .await
         {
-            Ok(AccountDataSetOutcome::Stored { .. }) => {}
-            Ok(AccountDataSetOutcome::Unsupported { status }) => {
+            Ok(AccountDataSetResult::Stored { .. }) => {}
+            Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
                     "soland ck.account_data.set returned {status}; local state still authoritative"
                 );
@@ -329,8 +329,8 @@ pub(crate) fn push_blocklist_account_data(
         })
         .await
         {
-            Ok(AccountDataSetOutcome::Stored { .. }) => {}
-            Ok(AccountDataSetOutcome::Unsupported { status }) => {
+            Ok(AccountDataSetResult::Stored { .. }) => {}
+            Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
                     "soland ck.account_data.set for ck.account.blocklist returned {status}; \
                      local blocklist remains authoritative"
@@ -456,8 +456,8 @@ fn push_notification_rules_account_data(
         })
         .await
         {
-            Ok(AccountDataSetOutcome::Stored { .. }) => {}
-            Ok(AccountDataSetOutcome::Unsupported { status }) => {
+            Ok(AccountDataSetResult::Stored { .. }) => {}
+            Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
                     "soland ck.account_data.set for ck.push_rules returned {status}; local notification rules remain authoritative"
                 );
@@ -508,8 +508,8 @@ fn push_dnd_account_data(
         })
         .await
         {
-            Ok(AccountDataSetOutcome::Stored { .. })
-            | Ok(AccountDataSetOutcome::Unsupported { .. }) => {
+            Ok(AccountDataSetResult::Stored { .. })
+            | Ok(AccountDataSetResult::Unsupported { .. }) => {
                 notification_settings_status.set(if enabled {
                     "Do not disturb enabled.".to_owned()
                 } else {
@@ -665,8 +665,8 @@ fn push_realm_remark_account_data_impl(
         })
         .await
         {
-            Ok(crate::models::AccountDataSetOutcome::Stored { .. }) => {}
-            Ok(crate::models::AccountDataSetOutcome::Unsupported { status }) => {
+            Ok(crate::models::AccountDataSetResult::Stored { .. }) => {}
+            Ok(crate::models::AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
                     "soland ck.account_data.set for {key_for_log} returned {status}; local state still authoritative"
                 );
@@ -724,8 +724,8 @@ pub(crate) fn push_contact_remark_account_data(
         })
         .await
         {
-            Ok(crate::models::AccountDataSetOutcome::Stored { .. }) => {}
-            Ok(crate::models::AccountDataSetOutcome::Unsupported { status }) => {
+            Ok(crate::models::AccountDataSetResult::Stored { .. }) => {}
+            Ok(crate::models::AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
                     "soland ck.account_data.set for {key_for_log} returned {status}; local state still authoritative"
                 );

@@ -31,7 +31,7 @@ fn optional_did_for_request_field(
 }
 
 impl CokretApi {
-    pub async fn health(&self) -> anyhow::Result<HealthOutcome> {
+    pub async fn health(&self) -> anyhow::Result<HealthView> {
         self.get_json("health").await
     }
 
@@ -45,13 +45,17 @@ impl CokretApi {
             .await
     }
 
-    pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeOutcome> {
+    pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeView> {
         anyhow::bail!(
             "principal auth bridge describe is not part of the Cokret spec; yougen must not call private bridge paths"
         )
     }
 
-    pub async fn dev_login(&self, actor: &str, device_id: &str) -> anyhow::Result<DevLoginOutcome> {
+    pub async fn dev_login(
+        &self,
+        actor: &str,
+        device_id: &str,
+    ) -> anyhow::Result<SessionLoginView> {
         let _ = (actor, device_id);
         anyhow::bail!(
             "dev_login is a soland private development path; yougen must not call private soland paths"
@@ -64,7 +68,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<DevLoginOutcome> {
+    ) -> anyhow::Result<SessionLoginView> {
         self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_id, device_id, None)
             .await
     }
@@ -76,7 +80,7 @@ impl CokretApi {
         principal_id: &str,
         device_id: &str,
         introspection_proof: Option<&SessionGrantIntrospectionProof>,
-    ) -> anyhow::Result<DevLoginOutcome> {
+    ) -> anyhow::Result<SessionLoginView> {
         let body = cokret_sdk::SessionGrantExchangeRequestBody {
             grant_jwt: grant_jwt.to_owned(),
             principal_id: did_for_request_field("principal_id", principal_id)?,
@@ -92,7 +96,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<DevLoginOutcome> {
+    ) -> anyhow::Result<SessionLoginView> {
         self.exchange_session_grant_at(
             "_cokret/gate/account/session-grants",
             grant_jwt,
@@ -129,7 +133,7 @@ impl CokretApi {
         self.get_json("_cokret/self/account/viewer").await
     }
 
-    pub async fn account_me(&self) -> anyhow::Result<CurrentAccountOutcome> {
+    pub async fn account_me(&self) -> anyhow::Result<CurrentAccountView> {
         let viewer = self.account_viewer().await?;
         Ok(current_account_from_viewer(viewer))
     }
@@ -186,7 +190,10 @@ impl CokretApi {
         self.post_json("_cokret/self/account/profile", &body).await
     }
 
-    pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactOutcome> {
+    pub async fn request_contact(
+        &self,
+        target: &str,
+    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
         self.request_contact_scoped(target, "direct_message").await
     }
 
@@ -194,7 +201,7 @@ impl CokretApi {
         &self,
         target: &str,
         scope: &str,
-    ) -> anyhow::Result<ContactOutcome> {
+    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
         self.request_contact_with_message(target, &[scope.to_owned()], None, None)
             .await
     }
@@ -216,7 +223,7 @@ impl CokretApi {
         scopes: &[String],
         message: Option<&str>,
         recipient_service_did: Option<&str>,
-    ) -> anyhow::Result<ContactOutcome> {
+    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
         let requested_scopes: Vec<String> = scopes
             .iter()
             .map(|scope| scope.trim())
@@ -243,7 +250,7 @@ impl CokretApi {
         &self,
         requester: &str,
         action: &str,
-    ) -> anyhow::Result<ContactOutcome> {
+    ) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
         self.respond_contact_with_service(requester, action, None)
             .await
     }
@@ -276,7 +283,7 @@ impl CokretApi {
         requester: &str,
         action: &str,
         requester_service_did: Option<&str>,
-    ) -> anyhow::Result<ContactOutcome> {
+    ) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
         let request_event_ref = self
             .contact_request_event_id_for_requester(requester)
             .await?;
@@ -295,7 +302,7 @@ impl CokretApi {
         request_event_ref: &str,
         action: &str,
         requester_service_did: Option<&str>,
-    ) -> anyhow::Result<ContactOutcome> {
+    ) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
         let body = cokret_sdk::ContactRespondRequestBody {
             request_id: cokret_sdk::EventId::new(request_event_ref.trim().to_owned()).map_err(
                 |err| anyhow::anyhow!("invalid contact request_id `{request_event_ref}`: {err}"),
@@ -311,8 +318,9 @@ impl CokretApi {
         self.post_json("_cokret/self/contacts/respond", &body).await
     }
 
-    pub async fn contacts(&self) -> anyhow::Result<ContactsOutcome> {
-        self.get_json("_cokret/self/contacts").await
+    pub async fn contacts(&self) -> anyhow::Result<ContactListView> {
+        let response: cokret_sdk::ContactList = self.get_json("_cokret/self/contacts").await?;
+        ContactListView::from_sdk(response)
     }
 
     /// Tombstone a contact relationship via `contacts/tombstone`. When
@@ -325,7 +333,7 @@ impl CokretApi {
         &self,
         peer: &str,
         block_peer: bool,
-    ) -> anyhow::Result<ContactOutcome> {
+    ) -> anyhow::Result<cokret_sdk::ContactTombstone> {
         let body = cokret_sdk::ContactTombstoneRequestBody {
             contact: did_for_request_field("contact", peer)?,
             revoke_scopes: Vec::new(),
@@ -382,7 +390,7 @@ impl CokretApi {
             .await
     }
 
-    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsOutcome> {
+    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsView> {
         anyhow::bail!(
             "consent cell projection is not a Cokret HTTP self endpoint; derive it from account subscribe/events"
         )
@@ -394,7 +402,7 @@ impl CokretApi {
         peer: &str,
         scope: &str,
         expires_at: Option<&str>,
-    ) -> anyhow::Result<ConsentCellOutcome> {
+    ) -> anyhow::Result<ConsentCellView> {
         let _ = (holder, peer, scope, expires_at);
         anyhow::bail!(
             "consent grants must be submitted as Cokret events; yougen must not call private soland consent cells"
@@ -406,7 +414,7 @@ impl CokretApi {
         holder: &str,
         peer: &str,
         scope: &str,
-    ) -> anyhow::Result<ConsentCellOutcome> {
+    ) -> anyhow::Result<ConsentCellView> {
         let _ = (holder, peer, scope);
         anyhow::bail!(
             "consent revokes must be submitted as Cokret events; yougen must not call private soland consent cells"
@@ -418,14 +426,14 @@ impl CokretApi {
         &self,
         holder: &str,
         scope: &str,
-    ) -> anyhow::Result<ConsentCellOutcome> {
+    ) -> anyhow::Result<ConsentCellView> {
         let _ = (holder, scope);
         anyhow::bail!(
             "consent requests must be submitted as Cokret events; yougen must not call private soland consent requests"
         )
     }
 
-    pub async fn logout(&self) -> anyhow::Result<LogoutOutcome> {
+    pub async fn logout(&self) -> anyhow::Result<LogoutResult> {
         let body = cokret_sdk::model::SessionRevokeRequestBody {
             target_grant_id: None,
             target_device_id: None,
@@ -435,7 +443,7 @@ impl CokretApi {
         let outcome: cokret_sdk::model::SessionRevokeOutcome = self
             .post_json("_cokret/gate/account/session-grants/revoke", &body)
             .await?;
-        Ok(LogoutOutcome {
+        Ok(LogoutResult {
             ok: true,
             revoked: outcome.revoked_count > 0,
         })
@@ -450,7 +458,7 @@ impl CokretApi {
         &self,
         type_key: &str,
         content: Value,
-    ) -> anyhow::Result<AccountDataSetOutcome> {
+    ) -> anyhow::Result<AccountDataSetResult> {
         let (actor, principal_realm_id) = match self.account_data_actor_scope().await {
             Ok(scope) => scope,
             Err(error) => {
@@ -459,7 +467,7 @@ impl CokretApi {
                         "principal-realm lookup for account_data returned {status}; \
                          keeping local state authoritative"
                     );
-                    return Ok(AccountDataSetOutcome::Unsupported { status });
+                    return Ok(AccountDataSetResult::Unsupported { status });
                 }
                 return Err(error);
             }
@@ -470,7 +478,7 @@ impl CokretApi {
                 .build("yougen-account-data");
         let result = self.submit_event_envelope(&event).await;
         match result {
-            Ok(value) => Ok(AccountDataSetOutcome::Stored {
+            Ok(value) => Ok(AccountDataSetResult::Stored {
                 response: serde_json::to_value(value)?,
             }),
             Err(error) => {
@@ -479,7 +487,7 @@ impl CokretApi {
                         "ck.account_data.set submit for {type_key} returned {status}; \
                          keeping local state authoritative"
                     );
-                    return Ok(AccountDataSetOutcome::Unsupported { status });
+                    return Ok(AccountDataSetResult::Unsupported { status });
                 }
                 Err(error)
             }
@@ -567,7 +575,7 @@ impl CokretApi {
         Ok((account.did, realm_id.to_string()))
     }
 
-    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeOutcome> {
+    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeView> {
         self.get_json("_cokret/self/account/describe").await
     }
 
@@ -581,8 +589,8 @@ impl CokretApi {
         after: Option<&str>,
     ) -> anyhow::Result<ClientSyncOutcome> {
         match self.account_subscribe_snapshot_outcome(after).await? {
-            AccountSubscribeSnapshotOutcome::Delta(response) => Ok(response),
-            AccountSubscribeSnapshotOutcome::ReconnectAfter {
+            AccountSubscribeSnapshotResult::Delta(response) => Ok(response),
+            AccountSubscribeSnapshotResult::ReconnectAfter {
                 reconnect_after_ms,
                 reason,
                 reset_cursor,
@@ -598,7 +606,7 @@ impl CokretApi {
     pub async fn account_subscribe_snapshot_outcome(
         &self,
         after: Option<&str>,
-    ) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
+    ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
         // H3 — enforce `ck:cursor:*` prefix on non-nil values. nil
         // (`None`) is the boot bootstrap case and stays untouched.
         if let Some(token) = after {
@@ -659,12 +667,12 @@ impl CokretApi {
     pub async fn submit_read_cursor_advance(
         &self,
         marker: &crate::local_state::ReadMarkerRecord,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         let event = build_read_cursor_advance_event(marker);
         self.submit_event_envelope(&event).await
     }
 
-    pub async fn invites(&self) -> anyhow::Result<InvitesOutcome> {
+    pub async fn invites(&self) -> anyhow::Result<InvitesView> {
         self.get_json("_cokret/self/authz/invites").await
     }
 }
@@ -683,7 +691,7 @@ fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
         })
 }
 
-fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccountOutcome {
+fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccountView {
     let display_name = viewer.profile.as_ref().and_then(|profile| {
         let value = profile.display_name.trim();
         (!value.is_empty()).then(|| value.to_owned())
@@ -697,7 +705,7 @@ fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> Curren
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         })
         .unwrap_or_default();
-    CurrentAccountOutcome {
+    CurrentAccountView {
         did: viewer.principal_id.as_str().to_owned(),
         handle: primary_handle_from_viewer(&viewer),
         display_name,

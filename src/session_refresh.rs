@@ -9,7 +9,7 @@
 //!
 //! Without a refresh path the user gets bounced back to the login page
 //! every time the bearer dies. We don't have a refresh token (the
-//! `DevLoginOutcome` body doesn't carry one) — but we still have the
+//! `SessionLoginView` body doesn't carry one) — but we still have the
 //! grant. Persisting it lets us silently mint a new bearer by repeating
 //! the principal-side exchange.
 //!
@@ -31,7 +31,7 @@ use crate::coauth::{
 };
 use crate::config::normalize_server_url;
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
-use crate::models::DevLoginOutcome;
+use crate::models::SessionLoginView;
 
 /// Window before the current `session_expires_at` at which the
 /// background poller proactively re-exchanges the grant.
@@ -255,7 +255,7 @@ pub fn prepare_refresh_for_server_after_unauthorized(
 pub async fn exchange_refresh(
     grant: &PersistedSessionGrant,
     proof: &SessionGrantIntrospectionProof,
-) -> anyhow::Result<DevLoginOutcome> {
+) -> anyhow::Result<SessionLoginView> {
     let api = CokretApi::new(&grant.principal_server_url)?;
     api.exchange_session_grant_at_with_proof(
         &grant.session_grant_exchange_path,
@@ -272,7 +272,7 @@ pub async fn exchange_refresh(
 /// `RefreshOutcome` the caller can act on.
 pub fn commit_refresh(
     store: &mut LocalStateStore,
-    result: anyhow::Result<DevLoginOutcome>,
+    result: anyhow::Result<SessionLoginView>,
 ) -> RefreshOutcome {
     match result {
         Ok(session) => {

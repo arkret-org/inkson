@@ -25,7 +25,7 @@ pub struct CancellationToken {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct PrincipalAuthBridgeDescribeOutcome {
+pub struct PrincipalAuthBridgeDescribeView {
     pub contract: String,
     pub version: String,
     pub api_base_path: String,
@@ -92,18 +92,17 @@ impl Default for CancellationToken {
 use crate::config::validate_server_url;
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
-    AccountDataSetOutcome, AuthzCheckOutcome, BackfillOutcome, BlobUploadOutcome,
-    ClientSyncOutcome, ConsentCellOutcome, ConsentCellsOutcome, ContactOutcome, ContactsOutcome,
-    CurrentAccountOutcome, DevLoginOutcome, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
-    DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustOutcome, EphemeralSubmitOutcome,
-    GrantList, HealthOutcome, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchOutcome,
-    InvitesOutcome, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutOutcome,
-    MediaIceConfigOutcome, MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD,
-    OkOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate, RealmPolicyOutcome,
-    ReceiptOutcome, ResolveHandleOutcome, ResolveRealmOutcome, SearchActorsOutcome,
-    SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
-    SolandDirectoryDescribeResBody, SpaceCreateOutcome, SubmitEventOutcome, SyncDescribeOutcome,
-    TypingOutcome, VerifyDeviceOutcome,
+    AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ClientSyncOutcome,
+    ConsentCellView, ConsentCellsView, ContactListView, CurrentAccountView,
+    DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome,
+    DeviceMessagesPutOutcome, DeviceTrustView, EphemeralSubmitResult, GrantList, HealthView,
+    IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchView, InvitesView,
+    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutResult, MediaIceConfigOutcome,
+    MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD, OkOutcome,
+    PushRegisterView, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ReceiptResult,
+    ResolveHandleView, ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView,
+    SearchRealmsView, ServerDescription, SessionLoginView, SolandDirectoryDescribeResBody,
+    SpaceCreateResult, SubmitEventResult, SyncDescribeView, TypingResult, VerifyDeviceResult,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
@@ -119,7 +118,7 @@ pub const RECOMMENDED_REALM_ENCRYPTION_FLOOR: &str = "e2ee_required";
 /// hydrate path can pluck projection rows with the same code. The decoder
 /// normalizes spec `spaces` / `flows` / `morphs` collection keys into `items`.
 #[derive(Clone, Debug, Deserialize)]
-pub struct LifecycleProjectionOutcome<T> {
+pub struct LifecycleProjectionView<T> {
     pub realm_id: String,
     #[serde(default)]
     pub total: u32,
@@ -452,7 +451,7 @@ pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
 }
 
 #[derive(Clone, Debug)]
-pub enum AccountSubscribeSnapshotOutcome {
+pub enum AccountSubscribeSnapshotResult {
     Delta(ClientSyncOutcome),
     ReconnectAfter {
         reconnect_after_ms: u64,
@@ -2528,10 +2527,10 @@ pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Resu
 }
 
 /// Project chime's full [`PushRegisterDeviceOutcome`](chime::PushRegisterDeviceOutcome)
-/// onto yougen's slimmer `PushRegisterOutcome` view (the upstream
+/// onto yougen's slimmer `PushRegisterView` view (the upstream
 /// fields not modelled here are intentionally dropped for now).
-fn map_chime_register_response(response: chime::PushRegisterDeviceOutcome) -> PushRegisterOutcome {
-    PushRegisterOutcome {
+fn map_chime_register_response(response: chime::PushRegisterDeviceOutcome) -> PushRegisterView {
+    PushRegisterView {
         ok: response.ok,
         registration_id: response.registration_id,
         expires_at: response.expires_at,
@@ -2930,8 +2929,8 @@ pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
 #[cfg(test)]
 fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOutcome> {
     match parse_account_subscribe_snapshot_outcome(bytes)? {
-        AccountSubscribeSnapshotOutcome::Delta(response) => Ok(response),
-        AccountSubscribeSnapshotOutcome::ReconnectAfter {
+        AccountSubscribeSnapshotResult::Delta(response) => Ok(response),
+        AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
             reason,
             reset_cursor,
@@ -2961,7 +2960,7 @@ fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOu
 struct AccountSubscribeFolder {
     merged: Option<ClientSyncOutcome>,
     latest_cursor: Option<String>,
-    done: Option<AccountSubscribeSnapshotOutcome>,
+    done: Option<AccountSubscribeSnapshotResult>,
 }
 
 impl AccountSubscribeFolder {
@@ -2977,7 +2976,7 @@ impl AccountSubscribeFolder {
         match frame.kind {
             cokret_sdk::AccountSubscribeFrameKind::ResyncRequired
             | cokret_sdk::AccountSubscribeFrameKind::Unauthorized => {
-                self.done = Some(AccountSubscribeSnapshotOutcome::ReconnectAfter {
+                self.done = Some(AccountSubscribeSnapshotResult::ReconnectAfter {
                     reconnect_after_ms: frame
                         .reconnect_after_ms()
                         .unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS),
@@ -3009,7 +3008,7 @@ impl AccountSubscribeFolder {
         false
     }
 
-    fn finish(self) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
+    fn finish(self) -> anyhow::Result<AccountSubscribeSnapshotResult> {
         if let Some(done) = self.done {
             return Ok(done);
         }
@@ -3018,7 +3017,7 @@ impl AccountSubscribeFolder {
                 if let Some(cursor) = self.latest_cursor {
                     response.cursor = cursor;
                 }
-                Ok(AccountSubscribeSnapshotOutcome::Delta(response))
+                Ok(AccountSubscribeSnapshotResult::Delta(response))
             }
             None => anyhow::bail!("account subscribe stream ended before a delta frame"),
         }
@@ -3031,7 +3030,7 @@ impl AccountSubscribeFolder {
 #[cfg_attr(not(any(test, target_arch = "wasm32")), allow(dead_code))]
 fn parse_account_subscribe_snapshot_outcome(
     bytes: &[u8],
-) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
+) -> anyhow::Result<AccountSubscribeSnapshotResult> {
     let mut folder = AccountSubscribeFolder::default();
     for line in bytes.split(|byte| *byte == b'\n') {
         let trimmed = trim_ascii(line);
@@ -3054,7 +3053,7 @@ fn parse_account_subscribe_snapshot_outcome(
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn drain_account_subscribe_response(
     mut response: reqwest::Response,
-) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
+) -> anyhow::Result<AccountSubscribeSnapshotResult> {
     let mut folder = AccountSubscribeFolder::default();
     let mut pending: Vec<u8> = Vec::new();
     'stream: while let Some(chunk) = response.chunk().await? {
@@ -3156,7 +3155,7 @@ fn merge_realm_delta_value(current: &mut Value, incoming: Value) {
     }
 }
 
-pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeOutcome> {
+pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeView> {
     Ok(serde_json::from_value(value)?)
 }
 
@@ -3385,7 +3384,7 @@ mod tests {
     #[test]
     fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites() {
         let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
-        let resolved: ResolveHandleOutcome = serde_json::from_value(json!({
+        let resolved: ResolveHandleView = serde_json::from_value(json!({
             "subject": "did:web:bob.example",
             "handle": "bob:local.host",
             "handle_claim": {
@@ -3407,7 +3406,7 @@ mod tests {
             "did:web:local.host"
         );
 
-        let missing_binding: ResolveHandleOutcome = serde_json::from_value(json!({
+        let missing_binding: ResolveHandleView = serde_json::from_value(json!({
             "did": "did:web:bob.example",
             "handle": "bob:local.host",
             "audience": realm_id
@@ -3440,7 +3439,7 @@ mod tests {
 
     #[test]
     fn lifecycle_projection_response_accepts_spec_keys() {
-        let canonical_spaces: LifecycleProjectionOutcome<SpaceContainerProjectionView> =
+        let canonical_spaces: LifecycleProjectionView<SpaceContainerProjectionView> =
             serde_json::from_value(json!({
                 "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                 "total": 1,
@@ -3458,7 +3457,7 @@ mod tests {
             "ck:space:01904100-0000-7000-8000-f10dc0000001"
         );
 
-        let flows: LifecycleProjectionOutcome<FlowProjectionView> = serde_json::from_value(json!({
+        let flows: LifecycleProjectionView<FlowProjectionView> = serde_json::from_value(json!({
             "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
             "flows": [{
                 "flow_id": "ck:flow:01904100-0000-7000-8000-f20dc0000001",
@@ -3629,7 +3628,7 @@ mod tests {
         )
         .unwrap();
         match reconnect {
-            AccountSubscribeSnapshotOutcome::ReconnectAfter {
+            AccountSubscribeSnapshotResult::ReconnectAfter {
                 reconnect_after_ms,
                 reason,
                 reset_cursor,

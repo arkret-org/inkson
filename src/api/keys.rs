@@ -319,7 +319,7 @@ impl CokretApi {
         actor_id: &str,
         revoked_by_device_id: &str,
         target_device_id: &str,
-    ) -> anyhow::Result<SubmitEventOutcome> {
+    ) -> anyhow::Result<SubmitEventResult> {
         if target_device_id == revoked_by_device_id {
             anyhow::bail!(
                 "a device cannot revoke itself; revoke from a peer device (cannot_self_revoke)"
@@ -379,7 +379,7 @@ impl CokretApi {
     }
 
     /// Device trust must be derived from the spec device-message flow.
-    pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustOutcome> {
+    pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustView> {
         anyhow::bail!("device trust table has no spec-defined Cokret HTTP endpoint")
     }
 
@@ -389,7 +389,7 @@ impl CokretApi {
         device_id: &str,
         method: &str,
         proof: Value,
-    ) -> anyhow::Result<VerifyDeviceOutcome> {
+    ) -> anyhow::Result<VerifyDeviceResult> {
         ensure_device_verification_proof_is_signed(&proof)?;
         let _ = (device_id, method, proof);
         anyhow::bail!(

@@ -163,7 +163,7 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchRealmsOutcome> {
+    ) -> anyhow::Result<SearchRealmsView> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
@@ -262,7 +262,7 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchOrganizationsOutcome> {
+    ) -> anyhow::Result<SearchOrganizationsView> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
@@ -280,7 +280,7 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchActorsOutcome> {
+    ) -> anyhow::Result<SearchActorsView> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
@@ -302,12 +302,12 @@ impl CokretApi {
         realm_ids: &[String],
         object_kinds: Option<&[&str]>,
         limit: u32,
-    ) -> anyhow::Result<IndexSearchOutcome> {
+    ) -> anyhow::Result<IndexSearchView> {
         let _ = (query, realm_ids, object_kinds, limit);
         anyhow::bail!("index_search has no spec-defined Cokret HTTP endpoint")
     }
 
-    pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleOutcome> {
+    pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleView> {
         self.resolve_handle_with_context(
             handle,
             ResolveHandleContext {
@@ -322,7 +322,7 @@ impl CokretApi {
         &self,
         handle: &str,
         context: ResolveHandleContext<'_>,
-    ) -> anyhow::Result<ResolveHandleOutcome> {
+    ) -> anyhow::Result<ResolveHandleView> {
         let body = resolve_handle_request_body(handle, context)?;
         self.post_json("_cokret/find/directory/resolve-handle", &body)
             .await

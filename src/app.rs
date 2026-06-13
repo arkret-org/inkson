@@ -6617,7 +6617,7 @@ async fn reissue_development_session(
     principal_server_url: &str,
     actor_id: &str,
     device_id: &str,
-) -> Option<crate::models::DevLoginOutcome> {
+) -> Option<crate::models::SessionLoginView> {
     if !can_attempt_development_session_reissue(principal_server_url, actor_id, device_id) {
         return None;
     }

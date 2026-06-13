@@ -38,7 +38,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::api::{
-    AccountSubscribeSnapshotOutcome, CokretApi, is_auth_expired_error, is_invalid_cursor_error,
+    AccountSubscribeSnapshotResult, CokretApi, is_auth_expired_error, is_invalid_cursor_error,
     is_stale_frontier_error, is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
@@ -320,7 +320,7 @@ async fn run_iteration(
         .account_subscribe_snapshot_outcome(cursor.as_deref())
         .await
     {
-        Ok(AccountSubscribeSnapshotOutcome::Delta(response)) => {
+        Ok(AccountSubscribeSnapshotResult::Delta(response)) => {
             // Late-arriving response from a stale generation must not
             // overwrite signals owned by the new generation. The
             // state_store write below is still safe because it's keyed
@@ -383,7 +383,7 @@ async fn run_iteration(
             }
             IterationOutcome::Ok
         }
-        Ok(AccountSubscribeSnapshotOutcome::ReconnectAfter {
+        Ok(AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
             reason,
             reset_cursor,
