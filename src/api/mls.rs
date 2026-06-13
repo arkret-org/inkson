@@ -15,6 +15,7 @@ impl CokretApi {
     ) -> anyhow::Result<cokret_sdk::KeyPackagesUploadOutcome> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload MLS demo device_signature")?;
         let body = cokret_sdk::KeyPackagesUploadRequestBody {
+            principal_id: record.principal_id.clone(),
             device_id: cokret_sdk::DeviceId::new(device_id.trim().to_owned())?,
             key_packages: vec![serde_json::to_value(record)?],
             device_signature: json!({"alg": "EdDSA", "signature": "yougen-dev-signature"}),
