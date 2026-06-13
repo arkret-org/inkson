@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct HealthView {
+pub struct HealthOutcome {
     pub ok: bool,
     pub service: String,
     pub storage: String,
@@ -24,7 +24,7 @@ pub struct LogoutResult {
 /// signed `primary_handle_claim.handle`; an empty string means the server did
 /// not include handle evidence in the viewer response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CurrentAccountView {
+pub struct CurrentAccount {
     pub did: String,
     #[serde(default)]
     pub handle: String,

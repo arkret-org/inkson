@@ -31,7 +31,7 @@ fn optional_did_for_request_field(
 }
 
 impl CokretApi {
-    pub async fn health(&self) -> anyhow::Result<HealthView> {
+    pub async fn health(&self) -> anyhow::Result<HealthOutcome> {
         self.get_json("health").await
     }
 
@@ -133,7 +133,7 @@ impl CokretApi {
         self.get_json("_cokret/self/account/viewer").await
     }
 
-    pub async fn account_me(&self) -> anyhow::Result<CurrentAccountView> {
+    pub async fn account_me(&self) -> anyhow::Result<CurrentAccount> {
         let viewer = self.account_viewer().await?;
         Ok(current_account_from_viewer(viewer))
     }
@@ -691,7 +691,7 @@ fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
         })
 }
 
-fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccountView {
+fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccount {
     let display_name = viewer.profile.as_ref().and_then(|profile| {
         let value = profile.display_name.trim();
         (!value.is_empty()).then(|| value.to_owned())
@@ -705,7 +705,7 @@ fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> Curren
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         })
         .unwrap_or_default();
-    CurrentAccountView {
+    CurrentAccount {
         did: viewer.principal_id.as_str().to_owned(),
         handle: primary_handle_from_viewer(&viewer),
         display_name,
