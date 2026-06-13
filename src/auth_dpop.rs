@@ -60,6 +60,9 @@ pub enum AuthDpopError {
     /// The underlying [`crate::dpop::build_dpop_proof_ed25519`] failed.
     #[error("DPoP mint failed: {0}")]
     Mint(#[from] DpopError),
+    /// The session-grant introspection proof could not be signed.
+    #[error("session-grant introspection proof failed: {0}")]
+    SessionGrantProof(String),
 }
 
 /// In-memory handle on the device's DPoP signing key. Construct via
@@ -102,6 +105,24 @@ impl DpopHandle {
         let mut claims: DpopClaims = fresh_dpop_claims(htm.to_owned(), htu.to_owned(), None);
         claims.ath = ath.map(dpop_access_token_hash);
         build_dpop_proof_ed25519(&self.signing_key, &claims).map_err(AuthDpopError::Mint)
+    }
+
+    /// Sign the one-shot proof that soland forwards to coauth when it
+    /// introspects a session grant. It uses the same private key as the
+    /// DPoP proof that coauth bound into the grant's `cnf.jkt`.
+    pub fn mint_session_grant_introspection_proof(
+        &self,
+        grant_id: &str,
+        grant_jwt: &str,
+        audience: &str,
+    ) -> Result<crate::api::SessionGrantIntrospectionProof, AuthDpopError> {
+        crate::coauth::build_session_grant_introspection_proof_bundle(
+            grant_id,
+            grant_jwt,
+            audience,
+            &self.signing_key,
+        )
+        .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))
     }
 }
 
@@ -282,6 +303,22 @@ mod tests {
         for p in &parts {
             assert!(!p.is_empty());
         }
+    }
+
+    #[test]
+    fn handle_mints_session_grant_introspection_proof() {
+        let mut store = isolated_store("session-grant-proof");
+        let handle = ensure_device_key(&mut store).unwrap();
+        let proof = handle
+            .mint_session_grant_introspection_proof(
+                "grant-1",
+                "eyJ.mock.jwt",
+                "did:web:soland.example",
+            )
+            .unwrap();
+
+        assert!(!proof.challenge.is_empty());
+        assert_eq!(proof.proof_jwt.split('.').count(), 3);
     }
 
     fn proof_payload(proof: &str) -> serde_json::Value {

@@ -90,6 +90,7 @@ pub struct CoauthSessionGrantInfo {
     pub id: Option<String>,
     pub grant_jwt: String,
     pub session_public_key: String,
+    #[serde(default)]
     pub session_private_key_pem: String,
     pub expires_at: String,
     #[serde(default)]
@@ -466,19 +467,15 @@ impl CoauthApi {
     }
 
     pub async fn auth_bridge_describe(&self) -> anyhow::Result<CoauthAuthBridgeDescribe> {
-        anyhow::bail!(
-            "coauth auth bridge is not part of the Cokret spec; yougen must not call private coauth paths"
-        )
+        self.get_json("_coauth/gate/account/auth/bridge/describe")
+            .await
     }
 
     pub async fn describe_oidc_exchange(
         &self,
         exchange_describe_path: &str,
     ) -> anyhow::Result<CoauthOidcExchangeDescribe> {
-        let _ = exchange_describe_path;
-        anyhow::bail!(
-            "coauth OIDC exchange describe is not part of the Cokret spec; yougen must not call private coauth paths"
-        )
+        self.get_json(exchange_describe_path).await
     }
 
     pub async fn integration_describe(&self) -> anyhow::Result<CoauthIntegrationManifest> {
@@ -539,26 +536,28 @@ impl CoauthApi {
         state: Option<&str>,
         expected_state: Option<&str>,
         expected_nonce: Option<&str>,
+        dpop_proof: Option<&str>,
     ) -> anyhow::Result<CoauthLoginOutcome> {
-        let _ = (
+        self.post_json_with_dpop(
             exchange_path,
-            authorization_code,
-            code_verifier,
-            redirect_uri,
-            issuer,
-            token_endpoint,
-            userinfo_endpoint,
-            client_id,
-            login_hint,
-            device_id,
-            principal_audience,
-            state,
-            expected_state,
-            expected_nonce,
-        );
-        anyhow::bail!(
-            "coauth OIDC exchange is not part of the Cokret spec; yougen must not call private coauth paths"
+            json!({
+                "authorization_code": authorization_code,
+                "code_verifier": code_verifier,
+                "redirect_uri": redirect_uri,
+                "issuer": issuer,
+                "token_endpoint": token_endpoint,
+                "userinfo_endpoint": userinfo_endpoint,
+                "client_id": client_id,
+                "login_hint": login_hint,
+                "device_id": device_id,
+                "principal_audience": principal_audience,
+                "state": state,
+                "expected_state": expected_state,
+                "expected_nonce": expected_nonce,
+            }),
+            dpop_proof,
         )
+        .await
     }
 
     /// Real OIDC token-endpoint exchange. Drives the PKCE authorization-code
@@ -763,17 +762,17 @@ impl CoauthApi {
         principal_audience: Option<&str>,
         client_id_hint: Option<&str>,
     ) -> anyhow::Result<CoauthOidcBrowserBridgeSession> {
-        let _ = (
+        self.post_json(
             session_path,
-            redirect_uri,
-            login_hint,
-            device_id,
-            principal_audience,
-            client_id_hint,
-        );
-        anyhow::bail!(
-            "coauth OIDC browser bridge is not part of the Cokret spec; yougen must not call private coauth paths"
+            json!({
+                "redirect_uri": redirect_uri,
+                "login_hint": login_hint,
+                "device_id": device_id,
+                "principal_audience": principal_audience,
+                "client_id_hint": client_id_hint,
+            }),
         )
+        .await
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
@@ -788,15 +787,24 @@ impl CoauthApi {
     }
 
     async fn post_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
-        Ok(self
-            .http
-            .post(self.endpoint(path)?)
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?)
+        self.post_json_with_dpop(path, body, None).await
+    }
+
+    async fn post_json_with_dpop<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: Value,
+        dpop_proof: Option<&str>,
+    ) -> anyhow::Result<T> {
+        let mut request = self.http.post(self.endpoint(path)?).json(&body);
+        if let Some(proof) = dpop_proof.filter(|proof| !proof.trim().is_empty()) {
+            request = request.header("DPoP", proof);
+        }
+        Ok(request.send().await?.error_for_status()?.json().await?)
+    }
+
+    pub fn endpoint_url(&self, path: &str) -> anyhow::Result<String> {
+        Ok(self.endpoint(path)?.to_string())
     }
 
     fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
@@ -838,6 +846,7 @@ pub async fn resolve_principal_auth_server_url(
 #[derive(Clone, Debug)]
 pub(crate) struct PrincipalAuthServerResolution {
     pub auth_server_url: String,
+    pub principal_audience: String,
 }
 
 pub(crate) async fn resolve_principal_auth_server(
@@ -853,8 +862,18 @@ pub(crate) async fn resolve_principal_auth_server(
         .ok_or_else(|| {
             anyhow::anyhow!("principal server did not publish auth_metadata.auth_server_url")
         })?;
-    Ok(validate_server_url(auth_server_url)?.to_string())
-        .map(|auth_server_url| PrincipalAuthServerResolution { auth_server_url })
+    let principal_audience = {
+        let service_did = description.service_did.as_str().trim();
+        if service_did.is_empty() {
+            principal_audience(principal_server_url)?
+        } else {
+            service_did.to_owned()
+        }
+    };
+    Ok(PrincipalAuthServerResolution {
+        auth_server_url: validate_server_url(auth_server_url)?.to_string(),
+        principal_audience,
+    })
 }
 
 pub fn active_oidc_redirect_uri() -> String {
@@ -1790,6 +1809,35 @@ mod tests {
 
         let viewer = response.viewer.unwrap();
         assert_eq!(viewer.principal_id.as_deref(), Some("@ca:auth.local.host"));
+    }
+
+    #[test]
+    fn login_response_accepts_one_shot_session_grant_without_private_key() {
+        let response: CoauthLoginOutcome = serde_json::from_value(json!({
+            "status": "success",
+            "viewer": {
+                "id": "user:01K",
+                "handle": "ca",
+                "did": "did:web:auth.local.host:u:ca",
+                "federated_handle": "ca@auth.local.host",
+                "principal_id": "@ca:auth.local.host",
+                "display_name": null
+            },
+            "session_grant": {
+                "kind": "principal_session",
+                "id": "grant-1",
+                "grant_jwt": "eyJ.mock.jwt",
+                "session_public_key": "{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"mock\"}",
+                "expires_at": "2026-05-13T04:00:00Z",
+                "audience": "https://local.host/api",
+                "scopes": ["urn:cokret:principal-server:session.bind"]
+            }
+        }))
+        .unwrap();
+
+        let grant = response.session_grant.expect("session grant");
+        assert_eq!(grant.session_private_key_pem, "");
+        assert_eq!(grant.audience.as_deref(), Some("https://local.host/api"));
     }
 
     /// S256 challenge for a known verifier matches the RFC 7636 Appendix B

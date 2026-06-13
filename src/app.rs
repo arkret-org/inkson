@@ -1113,6 +1113,9 @@ pub fn RouterView() -> Element {
                         account_recovery_configured.set(Some(state.server_recovery_configured()));
                     }
                     Err(error) if error.is_auth_expired() => {
+                        crate::session::invalidate_current_session(
+                            "session expired while loading account recovery state",
+                        );
                         account_recovery_configured.set(None);
                     }
                     Err(error) => {
