@@ -1,5 +1,6 @@
 pub use cokret_sdk::{
-    ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry,
+    ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, SessionLoginOutcome,
+    VerifiedProfileEntry,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,15 +10,6 @@ pub struct HealthView {
     pub ok: bool,
     pub service: String,
     pub storage: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SessionLoginView {
-    pub access_token: String,
-    pub token_type: String,
-    pub actor: String,
-    pub device_id: String,
-    pub expires_at: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -101,7 +101,7 @@ use crate::models::{
     MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD, OkOutcome,
     PushRegisterView, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ReceiptResult,
     ResolveHandleView, ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView,
-    SearchRealmsView, ServerDescription, SessionLoginView, SolandDirectoryDescribeResBody,
+    SearchRealmsView, ServerDescription, SessionLoginOutcome, SolandDirectoryDescribeResBody,
     SpaceCreateResult, SubmitEventResult, SyncDescribeView, TypingResult, VerifyDeviceResult,
 };
 use crate::operation::{

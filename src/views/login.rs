@@ -15,7 +15,7 @@ use crate::coauth::{
 use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant};
 #[cfg(test)]
-use crate::models::SessionLoginView;
+use crate::models::SessionLoginOutcome;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
 use crate::ui::input::Input;
@@ -574,10 +574,10 @@ async fn finish_oidc_callback(
     Ok(CompletedLogin {
         principal_server_url: principal_target,
         actor: canonical_actor,
-        device_id: if session.device_id.trim().is_empty() {
+        device_id: if session.device_id.as_str().trim().is_empty() {
             device
         } else {
-            session.device_id
+            session.device_id.as_str().to_owned()
         },
         access_token: session.access_token,
         grant: None,
@@ -588,7 +588,7 @@ async fn finish_oidc_callback(
 #[cfg(test)]
 fn persisted_session_grant_from_login(
     grant: &CoauthSessionGrantInfo,
-    session: &SessionLoginView,
+    session: &SessionLoginOutcome,
     principal_server_url: &str,
     actor: &str,
     session_grant_exchange_path: &str,
@@ -597,9 +597,9 @@ fn persisted_session_grant_from_login(
         grant,
         principal_server_url,
         actor,
-        &session.device_id,
+        session.device_id.as_str(),
         session_grant_exchange_path,
-        parse_rfc3339_utc(&session.expires_at),
+        Some(session.expires_at),
     )
 }
 
@@ -704,12 +704,13 @@ mod tests {
             scopes: vec!["urn:cokret:principal-server:session.bind".to_owned()],
             principal_server: None,
         };
-        let session = SessionLoginView {
+        let session = SessionLoginOutcome {
             access_token: "sx-bridge".to_owned(),
             token_type: "Bearer".to_owned(),
-            actor: "did:web:alice.example".to_owned(),
-            device_id: "ck:device:01964137-0000-7000-8000-000000000001".to_owned(),
-            expires_at: "2026-05-29T11:05:00Z".to_owned(),
+            actor: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
+            device_id: cokret_sdk::DeviceId::new("ck:device:01964137-0000-7000-8000-000000000001")
+                .unwrap(),
+            expires_at: parse_rfc3339_utc("2026-05-29T11:05:00Z").unwrap(),
         };
 
         let persisted = persisted_session_grant_from_login(

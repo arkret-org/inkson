@@ -6620,7 +6620,7 @@ async fn reissue_development_session(
     principal_server_url: &str,
     actor_id: &str,
     device_id: &str,
-) -> Option<crate::models::SessionLoginView> {
+) -> Option<crate::models::SessionLoginOutcome> {
     if !can_attempt_development_session_reissue(principal_server_url, actor_id, device_id) {
         return None;
     }
@@ -6768,15 +6768,15 @@ async fn remint_principal_bearer(
                     return None;
                 }
                 let access_token = session.access_token.clone();
-                let actor = if session.actor.trim().is_empty() {
+                let actor = if session.actor.as_str().trim().is_empty() {
                     actor
                 } else {
-                    session.actor.clone()
+                    session.actor.as_str().to_owned()
                 };
-                let device = if session.device_id.trim().is_empty() {
+                let device = if session.device_id.as_str().trim().is_empty() {
                     device
                 } else {
-                    session.device_id.clone()
+                    session.device_id.as_str().to_owned()
                 };
                 token.set(access_token.clone());
                 persist_config(config_store, base, actor, device, access_token.clone());

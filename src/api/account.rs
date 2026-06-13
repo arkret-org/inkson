@@ -55,7 +55,7 @@ impl CokretApi {
         &self,
         actor: &str,
         device_id: &str,
-    ) -> anyhow::Result<SessionLoginView> {
+    ) -> anyhow::Result<SessionLoginOutcome> {
         let _ = (actor, device_id);
         anyhow::bail!(
             "dev_login is a soland private development path; yougen must not call private soland paths"
@@ -68,7 +68,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<SessionLoginView> {
+    ) -> anyhow::Result<SessionLoginOutcome> {
         self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_id, device_id, None)
             .await
     }
@@ -80,7 +80,7 @@ impl CokretApi {
         principal_id: &str,
         device_id: &str,
         introspection_proof: Option<&SessionGrantIntrospectionProof>,
-    ) -> anyhow::Result<SessionLoginView> {
+    ) -> anyhow::Result<SessionLoginOutcome> {
         let body = cokret_sdk::SessionGrantExchangeRequestBody {
             grant_jwt: grant_jwt.to_owned(),
             principal_id: did_for_request_field("principal_id", principal_id)?,
@@ -96,7 +96,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<SessionLoginView> {
+    ) -> anyhow::Result<SessionLoginOutcome> {
         self.exchange_session_grant_at(
             "_cokret/gate/account/session-grants",
             grant_jwt,
