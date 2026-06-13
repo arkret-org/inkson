@@ -1199,13 +1199,6 @@ pub fn english_translations() -> TranslationDict {
         "Older messages were just decrypted, {minutes} minutes after they arrived.",
     );
 
-    // Round 4 — observed_dots consent revoke UI.
-    dict.set(
-        "consent.revoke.dot_list_header",
-        "Observed dots that will cascade revoke:",
-    );
-    dict.set("consent.revoke.cascade_button", "Revoke all observed dots");
-
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
     // cokret-spec error code expansion (CKP-0010 media binding,
     // agent FSM, handle homograph wire-level enforce, recovery

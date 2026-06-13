@@ -1552,48 +1552,6 @@ pub mod ck_ops {
             .body(object_lifecycle_payload_value(flow_id)?))
     }
 
-    // ── Consent (OrSet cell `ck.component.consent.grant.v1`) ─────────
-
-    /// `ck.consent.grant` event. Spec: events.submit applies this to the
-    /// `ck.component.consent.grant.v1` OrSet cell as an add op with `tag`.
-    pub fn consent_grant(
-        realm_id: &str,
-        actor: &str,
-        consent_id: &str,
-        tag: &str,
-    ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.consent.grant")
-            .target_ref(consent_id)
-            .body(json!({
-                "consent_id": consent_id,
-                "tag": tag,
-            }))
-    }
-
-    /// `ck.consent.revoke` event with required `observed_dots` (round 4
-    /// wire). Pass an empty slice only for non-causal revoke.
-    pub fn consent_revoke(
-        realm_id: &str,
-        actor: &str,
-        consent_id: &str,
-        tag: &str,
-        reason: Option<&str>,
-        observed_dots: &[cokret_sdk::Dot],
-    ) -> OperationBuilder {
-        let mut body = json!({
-            "consent_id": consent_id,
-            "tag": tag,
-            "observed_dots": serde_json::to_value(observed_dots)
-                .unwrap_or(json!([])),
-        });
-        if let Some(reason) = reason {
-            body["reason"] = json!(reason);
-        }
-        OperationBuilder::new(realm_id, actor, "ck.consent.revoke")
-            .target_ref(consent_id)
-            .body(body)
-    }
-
     // ── Capability (OrSet cell `ck.component.capability.grant.v1`) ───
 
     /// `ck.capability.grant` event with optional structured constraints

@@ -93,15 +93,14 @@ use crate::config::validate_server_url;
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
     AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ClientSyncOutcome,
-    ConsentCellView, ConsentCellsView, ContactListView, CurrentAccountView,
-    DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome,
-    DeviceMessagesPutOutcome, DeviceTrustView, EphemeralSubmitResult, GrantList, HealthView,
-    IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchView, InvitesView,
-    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutResult, MediaIceConfigOutcome,
+    ContactListView, CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
+    DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustView, EphemeralSubmitResult,
+    GrantList, HealthOutcome, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchView,
+    InvitesView, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, MediaIceConfigOutcome,
     MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD, OkOutcome,
     PushRegisterView, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ReceiptResult,
     ResolveHandleView, ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView,
-    SearchRealmsView, ServerDescription, SessionLoginView, SolandDirectoryDescribeResBody,
+    SearchRealmsView, ServerDescription, SessionLoginOutcome, SolandDirectoryDescribeResBody,
     SpaceCreateResult, SubmitEventResult, SyncDescribeView, TypingResult, VerifyDeviceResult,
 };
 use crate::operation::{

@@ -31,7 +31,7 @@ fn optional_did_for_request_field(
 }
 
 impl CokretApi {
-    pub async fn health(&self) -> anyhow::Result<HealthView> {
+    pub async fn health(&self) -> anyhow::Result<HealthOutcome> {
         self.get_json("health").await
     }
 
@@ -55,7 +55,7 @@ impl CokretApi {
         &self,
         actor: &str,
         device_id: &str,
-    ) -> anyhow::Result<SessionLoginView> {
+    ) -> anyhow::Result<SessionLoginOutcome> {
         let _ = (actor, device_id);
         anyhow::bail!(
             "dev_login is a soland private development path; yougen must not call private soland paths"
@@ -68,7 +68,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<SessionLoginView> {
+    ) -> anyhow::Result<SessionLoginOutcome> {
         self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_id, device_id, None)
             .await
     }
@@ -80,7 +80,7 @@ impl CokretApi {
         principal_id: &str,
         device_id: &str,
         introspection_proof: Option<&SessionGrantIntrospectionProof>,
-    ) -> anyhow::Result<SessionLoginView> {
+    ) -> anyhow::Result<SessionLoginOutcome> {
         let body = cokret_sdk::SessionGrantExchangeRequestBody {
             grant_jwt: grant_jwt.to_owned(),
             principal_id: did_for_request_field("principal_id", principal_id)?,
@@ -96,7 +96,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<SessionLoginView> {
+    ) -> anyhow::Result<SessionLoginOutcome> {
         self.exchange_session_grant_at(
             "_cokret/gate/account/session-grants",
             grant_jwt,
@@ -133,7 +133,7 @@ impl CokretApi {
         self.get_json("_cokret/self/account/viewer").await
     }
 
-    pub async fn account_me(&self) -> anyhow::Result<CurrentAccountView> {
+    pub async fn account_me(&self) -> anyhow::Result<CurrentAccount> {
         let viewer = self.account_viewer().await?;
         Ok(current_account_from_viewer(viewer))
     }
@@ -390,63 +390,15 @@ impl CokretApi {
             .await
     }
 
-    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsView> {
-        anyhow::bail!(
-            "consent cell projection is not a Cokret HTTP self endpoint; derive it from account subscribe/events"
-        )
-    }
-
-    pub async fn grant_consent_cell(
-        &self,
-        holder: &str,
-        peer: &str,
-        scope: &str,
-        expires_at: Option<&str>,
-    ) -> anyhow::Result<ConsentCellView> {
-        let _ = (holder, peer, scope, expires_at);
-        anyhow::bail!(
-            "consent grants must be submitted as Cokret events; yougen must not call private soland consent cells"
-        )
-    }
-
-    pub async fn revoke_consent_cell(
-        &self,
-        holder: &str,
-        peer: &str,
-        scope: &str,
-    ) -> anyhow::Result<ConsentCellView> {
-        let _ = (holder, peer, scope);
-        anyhow::bail!(
-            "consent revokes must be submitted as Cokret events; yougen must not call private soland consent cells"
-        )
-    }
-
-    /// Open a scoped consent request toward `holder` (`ck.consent.request`).
-    pub async fn request_consent_cell(
-        &self,
-        holder: &str,
-        scope: &str,
-    ) -> anyhow::Result<ConsentCellView> {
-        let _ = (holder, scope);
-        anyhow::bail!(
-            "consent requests must be submitted as Cokret events; yougen must not call private soland consent requests"
-        )
-    }
-
-    pub async fn logout(&self) -> anyhow::Result<LogoutResult> {
+    pub async fn logout(&self) -> anyhow::Result<cokret_sdk::model::SessionRevokeOutcome> {
         let body = cokret_sdk::model::SessionRevokeRequestBody {
             target_grant_id: None,
             target_device_id: None,
             all_sessions: None,
             proof: None,
         };
-        let outcome: cokret_sdk::model::SessionRevokeOutcome = self
-            .post_json("_cokret/gate/account/session-grants/revoke", &body)
-            .await?;
-        Ok(LogoutResult {
-            ok: true,
-            revoked: outcome.revoked_count > 0,
-        })
+        self.post_json("_cokret/gate/account/session-grants/revoke", &body)
+            .await
     }
 
     /// Submit a per-account `ck.account_data.set` event so settings UIs can
@@ -691,7 +643,7 @@ fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
         })
 }
 
-fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccountView {
+fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccount {
     let display_name = viewer.profile.as_ref().and_then(|profile| {
         let value = profile.display_name.trim();
         (!value.is_empty()).then(|| value.to_owned())
@@ -705,7 +657,7 @@ fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> Curren
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         })
         .unwrap_or_default();
-    CurrentAccountView {
+    CurrentAccount {
         did: viewer.principal_id.as_str().to_owned(),
         handle: primary_handle_from_viewer(&viewer),
         display_name,

@@ -9,7 +9,7 @@
 //!
 //! Without a refresh path the user gets bounced back to the login page
 //! every time the bearer dies. We don't have a refresh token (the
-//! `SessionLoginView` body doesn't carry one) — but we still have the
+//! `SessionLoginOutcome` body doesn't carry one) — but we still have the
 //! grant. Persisting it lets us silently mint a new bearer by repeating
 //! the principal-side exchange.
 //!
@@ -31,7 +31,7 @@ use crate::coauth::{
 };
 use crate::config::normalize_server_url;
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
-use crate::models::SessionLoginView;
+use crate::models::SessionLoginOutcome;
 
 /// Window before the current `session_expires_at` at which the
 /// background poller proactively re-exchanges the grant.
@@ -255,7 +255,7 @@ pub fn prepare_refresh_for_server_after_unauthorized(
 pub async fn exchange_refresh(
     grant: &PersistedSessionGrant,
     proof: &SessionGrantIntrospectionProof,
-) -> anyhow::Result<SessionLoginView> {
+) -> anyhow::Result<SessionLoginOutcome> {
     let api = CokretApi::new(&grant.principal_server_url)?;
     api.exchange_session_grant_at_with_proof(
         &grant.session_grant_exchange_path,
@@ -272,11 +272,11 @@ pub async fn exchange_refresh(
 /// `RefreshOutcome` the caller can act on.
 pub fn commit_refresh(
     store: &mut LocalStateStore,
-    result: anyhow::Result<SessionLoginView>,
+    result: anyhow::Result<SessionLoginOutcome>,
 ) -> RefreshOutcome {
     match result {
         Ok(session) => {
-            let session_expires_at = parse_rfc3339(&session.expires_at);
+            let session_expires_at = Some(session.expires_at);
             store.update_session_expires_at(session_expires_at);
             RefreshOutcome::Refreshed {
                 access_token: session.access_token,
@@ -313,12 +313,6 @@ pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
     };
     let result = exchange_refresh(&grant, &proof).await;
     commit_refresh(store, result)
-}
-
-fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value.trim())
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
 }
 
 /// Exchange the persisted session grant for a fresh one against coauth's
