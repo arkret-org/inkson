@@ -40,6 +40,12 @@
   --accent-soft: #fff4e6;
   --accent-2: #c65b72;
   --accent-ink: #7f3f02;
+  --primary: var(--accent);
+  --primary-strong: var(--accent-strong);
+  --primary-2: var(--accent-2);
+  --primary-foreground: var(--text-on-accent);
+  --ring: var(--accent);
+  --focused-border-color: var(--ring);
 
   --success: #317d6a;
   --success-soft: #e5f3ee;
@@ -109,6 +115,12 @@
   --accent-soft: rgba(245, 158, 11, 0.12);
   --accent-2: #fb7185;
   --accent-ink: #fde7ba;
+  --primary: var(--accent);
+  --primary-strong: var(--accent-strong);
+  --primary-2: var(--accent-2);
+  --primary-foreground: var(--text-on-accent);
+  --ring: var(--accent);
+  --focused-border-color: var(--ring);
 
   --success: #7bc9b5;
   --success-soft: rgba(123, 201, 181, 0.16);
