@@ -923,7 +923,7 @@ pub fn RouterView() -> Element {
     // session guard makes the one-time auto-open robust against the user
     // dismissing the modal and against sync re-flushing local state, so the
     // proactive nudge can never re-pop within a session.
-    let recovery_autoprompt_fired = use_signal(|| false);
+    let recovery_auto_prompt_fired = use_signal(|| false);
     let account_recovery_configured = use_signal(|| Option::<bool>::None);
     let account_recovery_detection_key_seen = use_signal(|| Option::<String>::None);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
@@ -1517,15 +1517,14 @@ pub fn RouterView() -> Element {
         // configured (the lowest-priority RecoverySetupReminder state), open the
         // setup modal once and persist a flag so it never auto-pops again — the
         // passive dashboard banner remains as the steady-state reminder. The
-        // in-memory `recovery_autoprompt_fired` guard makes "once" robust within
-        // a session. See account_health::should_autoprompt_recovery_setup and
+        // in-memory `recovery_auto_prompt_fired` guard makes "once" robust within
+        // a session. See account_health::should_auto_prompt_recovery_setup and
         // docs/user-flows-key-lifecycle.md §3/S1.
-        const RECOVERY_AUTOPROMPT_SHOWN_KEY: &str = "recovery.autoprompt_shown.v1";
         let mut recovery_key_setup_prompt = recovery_key_setup_prompt;
-        let mut recovery_autoprompt_fired = recovery_autoprompt_fired;
+        let mut recovery_auto_prompt_fired = recovery_auto_prompt_fired;
         let mut state_store = state_store;
         use_effect(move || {
-            if recovery_autoprompt_fired() || recovery_key_setup_prompt() {
+            if recovery_auto_prompt_fired() || recovery_key_setup_prompt() {
                 return;
             }
             let session = token();
@@ -1533,8 +1532,14 @@ pub fn RouterView() -> Element {
             if session.trim().is_empty() || actor.trim().is_empty() {
                 return;
             }
-            let (inputs, already_prompted) = {
+            let (inputs, already_prompted, local_only_fingerprint) = {
                 let store = state_store.read();
+                let account_recovery_configured = account_recovery_configured();
+                let local_only_fingerprint = recovery_auto_prompt_pending_local_only_fingerprint(
+                    &store,
+                    &actor,
+                    account_recovery_configured,
+                );
                 let inputs = crate::account_health::AccountHealthInputs {
                     has_session: true,
                     sync_bootstrap_complete: sync_bootstrap_complete(),
@@ -1549,22 +1554,26 @@ pub fn RouterView() -> Element {
                         crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
                             &store, &actor,
                         ),
-                    recovery_unconfigured: recovery_setup_prompt_required(
-                        account_recovery_configured(),
-                    ),
+                    recovery_unconfigured: recovery_setup_prompt_required(account_recovery_configured),
                 };
-                let already = store
-                    .load_private_data(&actor, RECOVERY_AUTOPROMPT_SHOWN_KEY)
-                    .is_some();
-                (inputs, already)
-            };
-            if crate::account_health::should_autoprompt_recovery_setup(inputs, already_prompted) {
-                recovery_autoprompt_fired.set(true);
-                state_store.write().save_private_data(
+                let already = recovery_auto_prompt_already_prompted(
+                    &store,
                     &actor,
-                    RECOVERY_AUTOPROMPT_SHOWN_KEY,
-                    "1".to_owned(),
+                    account_recovery_configured,
                 );
+                (inputs, already, local_only_fingerprint)
+            };
+            if crate::account_health::should_auto_prompt_recovery_setup(inputs, already_prompted) {
+                recovery_auto_prompt_fired.set(true);
+                let mut store = state_store.write();
+                store.save_private_data(&actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1".to_owned());
+                if let Some(fingerprint) = local_only_fingerprint {
+                    store.save_private_data(
+                        &actor,
+                        RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
+                        fingerprint,
+                    );
+                }
                 recovery_key_setup_prompt.set(true);
             }
         });

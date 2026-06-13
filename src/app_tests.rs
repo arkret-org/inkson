@@ -360,6 +360,64 @@ fn recovery_setup_prompt_waits_for_server_state() {
     assert!(recovery_setup_prompt_required(Some(false)));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn recovery_auto_prompt_ignores_old_shown_flag_for_local_only_key() {
+    let actor = "did:web:alice.example";
+    let mut store = isolated_store("recovery-local-only-auto_prompt");
+    store.save_private_data(actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1");
+    store.save_private_data(
+        actor,
+        "recovery.state.v1",
+        serde_json::json!({
+            "recovery_key_fingerprint": "sha256:abc",
+            "recovery_key_rotated_at": "2026-06-13T00:00:00Z"
+        })
+        .to_string(),
+    );
+
+    assert_eq!(
+        recovery_auto_prompt_pending_local_only_fingerprint(&store, actor, Some(false)).as_deref(),
+        Some("sha256:abc")
+    );
+    assert!(!recovery_auto_prompt_already_prompted(
+        &store,
+        actor,
+        Some(false)
+    ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn recovery_auto_prompt_local_only_key_is_prompted_once_per_fingerprint() {
+    let actor = "did:web:alice.example";
+    let mut store = isolated_store("recovery-local-only-auto_prompt-once");
+    store.save_private_data(actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1");
+    store.save_private_data(
+        actor,
+        "recovery.state.v1",
+        serde_json::json!({
+            "recovery_key_fingerprint": "sha256:abc",
+            "recovery_key_rotated_at": "2026-06-13T00:00:00Z"
+        })
+        .to_string(),
+    );
+    store.save_private_data(
+        actor,
+        RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
+        "sha256:abc",
+    );
+
+    assert!(
+        recovery_auto_prompt_pending_local_only_fingerprint(&store, actor, Some(false)).is_none()
+    );
+    assert!(recovery_auto_prompt_already_prompted(
+        &store,
+        actor,
+        Some(false)
+    ));
+}
+
 // YOU-05-010: shared hermetic state-store fixture from `local_state`.
 #[cfg(not(target_arch = "wasm32"))]
 use crate::local_state::isolated_store_for_tests as isolated_store;
