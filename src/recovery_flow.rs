@@ -10,15 +10,29 @@
 //! The wire shapes match `cokret-spec` `recovery-session.schema.json`
 //! (`create_request` / `proof_submit_request` / `complete_request`).
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use cokret_sdk::model::{
     RecoveryPolicyRef, RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody,
 };
 use cokret_sdk::{DeviceId, Did, EventId, PolicyId, TypedTrustDomainId};
 use ed25519_dalek::SigningKey;
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 use crate::api::CokretApi;
+
+pub const RECOVERY_POLICY_SIGNED_FIELDS: &[&str] = &[
+    "schema",
+    "policy_id",
+    "principal_id",
+    "version",
+    "trust_domain",
+    "allowed_proof_kinds",
+    "supersedes",
+    "issued_at",
+    "expires_at",
+];
 
 /// 6.1 — parsed active recovery policy summary (the fields a client surfaces).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -134,6 +148,156 @@ pub async fn fetch_active_recovery_policy(
 ) -> anyhow::Result<Option<ActiveRecoveryPolicy>> {
     let response = api.get_recovery_policy().await?;
     Ok(parse_active_recovery_policy(&response))
+}
+
+pub fn build_signed_genesis_recovery_policy(
+    principal_id: &str,
+    trust_domain: &str,
+) -> anyhow::Result<Value> {
+    let principal_id = principal_id.trim();
+    let trust_domain = trust_domain.trim();
+    if principal_id.is_empty() {
+        anyhow::bail!("principal_id is required");
+    }
+    if trust_domain.is_empty() {
+        anyhow::bail!("trust_domain is required");
+    }
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device signer is required for recovery policy"))?;
+    let issued_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut policy = json!({
+        "schema": "ck.schema.recovery_policy.v1",
+        "policy_id": format!("ck:policy:{}", crate::operation::uuid_v7()),
+        "principal_id": principal_id,
+        "version": 1,
+        "supersedes": null,
+        "trust_domain": trust_domain,
+        "allowed_proof_kinds": ["principal_signing", "recovery_unlock"],
+        "issued_at": issued_at,
+        "expires_at": null,
+        "auth_data": {
+            "verification_method": signer.verification_method(),
+            "signature_algorithm": signer.algorithm(),
+            "signed_fields": RECOVERY_POLICY_SIGNED_FIELDS,
+            "signature": ""
+        }
+    });
+    let transcript = recovery_policy_signature_transcript(&policy, RECOVERY_POLICY_SIGNED_FIELDS);
+    let bytes = crate::canonical::canonical_json_bytes(&transcript)?;
+    let signature = signer
+        .sign_raw(&bytes)
+        .map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
+    policy["auth_data"]["signature"] = Value::String(B64.encode(signature));
+    Ok(policy)
+}
+
+fn recovery_policy_signature_transcript(payload: &Value, signed_fields: &[&str]) -> Value {
+    let mut signed_payload = Map::new();
+    for field in signed_fields {
+        signed_payload.insert(
+            (*field).to_owned(),
+            payload.get(*field).cloned().unwrap_or(Value::Null),
+        );
+    }
+    json!({
+        "type": "ck.identity.recovery_policy.signature.v1",
+        "signed_fields": signed_fields,
+        "payload": Value::Object(signed_payload),
+    })
+}
+
+pub async fn ensure_active_recovery_policy(
+    api: &CokretApi,
+    principal_id: &str,
+) -> anyhow::Result<ActiveRecoveryPolicy> {
+    if let Some(policy) = fetch_active_recovery_policy(api).await? {
+        return Ok(policy);
+    }
+
+    let description = api.describe().await?;
+    let body =
+        build_signed_genesis_recovery_policy(principal_id, description.trust_domain.as_str())?;
+    api.put_recovery_policy(body).await?;
+
+    fetch_active_recovery_policy(api)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("server accepted recovery policy but did not expose it"))
+}
+
+pub async fn ensure_recovery_policy_and_did_recovery_backup(
+    api: &CokretApi,
+    principal_id: &str,
+    device_id: &str,
+    recovery_key: &str,
+) -> anyhow::Result<String> {
+    let policy = ensure_active_recovery_policy(api, principal_id).await?;
+    let list = api
+        .list_key_backups_by_series(None, Some("did_recovery"))
+        .await?;
+    if let Some(backup_id) = matching_did_recovery_backup_id(&list, &policy) {
+        return Ok(backup_id);
+    }
+
+    let (recovery_private_key, recovery_public_key) =
+        crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key)?;
+    let backup_id = format!("ck:backup:{}", crate::operation::uuid_v7());
+    let recovery_key_ref = format!("{}#recovery", principal_id.trim());
+    let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let plaintext = crate::canonical::canonical_json_bytes(&json!({
+        "schema": "ck.local.did_recovery_share.v1",
+        "principal_id": principal_id,
+        "recovery_key_ref": recovery_key_ref,
+        "recovery_private_key_b64u": B64.encode(&recovery_private_key),
+        "recovery_public_key_b64u": B64.encode(&recovery_public_key),
+        "recovery_policy_ref": {
+            "policy_id": policy.policy_id,
+            "policy_version": policy.policy_version,
+        },
+        "created_at": created_at,
+    }))?;
+    let body = crate::key_backup::build_did_recovery_backup_body(
+        &backup_id,
+        principal_id,
+        device_id,
+        &recovery_public_key,
+        &recovery_key_ref,
+        &plaintext,
+        &policy.policy_id,
+        policy.policy_version,
+    )?;
+    api.put_key_backup(&backup_id, body).await?;
+    Ok(backup_id)
+}
+
+fn matching_did_recovery_backup_id(
+    list_payload: &Value,
+    policy: &ActiveRecoveryPolicy,
+) -> Option<String> {
+    list_payload
+        .get("backups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|backup| {
+            backup.get("backup_class").and_then(Value::as_str) == Some("did_recovery")
+                && backup
+                    .get("encryption")
+                    .and_then(|encryption| encryption.get("recipient_method"))
+                    .and_then(Value::as_str)
+                    == Some("recovery_public_key")
+                && backup
+                    .get("recovery_policy_ref")
+                    .and_then(|policy_ref| policy_ref.get("policy_id"))
+                    .and_then(Value::as_str)
+                    == Some(policy.policy_id.as_str())
+                && backup
+                    .get("recovery_policy_ref")
+                    .and_then(|policy_ref| policy_ref.get("policy_version"))
+                    .and_then(Value::as_u64)
+                    == Some(policy.policy_version)
+        })
+        .and_then(|backup| backup.get("backup_id").and_then(Value::as_str))
+        .map(str::to_owned)
 }
 
 /// Build the `recovery-session.schema.json` `create_request` body.
@@ -348,6 +512,42 @@ mod tests {
             None,
         );
         assert!(configured.server_recovery_configured());
+    }
+
+    #[test]
+    fn matching_did_recovery_backup_requires_active_policy_ref() {
+        let policy = ActiveRecoveryPolicy {
+            policy_id: "ck:policy:019a6aa0-0000-7000-8000-0000000000bb".to_owned(),
+            policy_version: 2,
+            trust_domain: "ck:trust_domain:soland.local".to_owned(),
+            allowed_proof_kinds: vec!["recovery_unlock".to_owned()],
+        };
+        let payload = json!({
+            "backups": [
+                {
+                    "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000001",
+                    "backup_class": "did_recovery",
+                    "encryption": { "recipient_method": "recovery_public_key" },
+                    "recovery_policy_ref": {
+                        "policy_id": "ck:policy:019a6aa0-0000-7000-8000-000000000000",
+                        "policy_version": 2
+                    }
+                },
+                {
+                    "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000002",
+                    "backup_class": "did_recovery",
+                    "encryption": { "recipient_method": "recovery_public_key" },
+                    "recovery_policy_ref": {
+                        "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                        "policy_version": 2
+                    }
+                }
+            ]
+        });
+        assert_eq!(
+            matching_did_recovery_backup_id(&payload, &policy).as_deref(),
+            Some("ck:backup:019a6aa0-0000-7000-8000-000000000002")
+        );
     }
 
     #[test]

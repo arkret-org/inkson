@@ -52,6 +52,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
+  let recoveryPolicy: Record<string, unknown> | null = null;
+  const keyBackups = new Map<string, Record<string, unknown>>();
   const eventRealmId = (event: Record<string, unknown>) =>
     String(event.realm_id ?? "");
   const boardSpaceContainers: SpaceContainerProjection[] = [
@@ -291,6 +293,10 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           "ck.self.keys.upload",
           "ck.self.keys.query",
           "ck.self.keys.claim",
+          "ck.self.keys.backups.list",
+          "ck.self.keys.backups.put",
+          "ck.root.identity.recovery_policy.get",
+          "ck.root.identity.recovery_policy.put",
           "ck.self.device_messages.get",
           "ck.self.device_messages.put",
           "ck.self.device_messages.ack",
@@ -1301,21 +1307,54 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, { report_id: "ck:report:e2e", status: "queued", routed_to: ["did:web:server.local#moderation"] });
     }
 
-    // Encrypted Cloud Vault — the recovery view uploads a backup body whose
-    // ciphertext was sealed client-side with Argon2id + XChaCha20-Poly1305.
-    // The server only ever sees the opaque ciphertext blob + metadata; this
-    // mock echoes that contract so the recovery rekey e2e (D1) can assert
-    // the server never witnessed a plaintext recovery key.
+    // Recovery bootstrap publishes a signed policy and then uploads an
+    // encrypted did_recovery backup. The server mock stores only the public
+    // policy summary plus opaque backup bodies.
+    if (url.pathname === "/_cokret/root/identity/recovery-policy") {
+      const method = route.request().method().toUpperCase();
+      if (method === "GET") {
+        return json(route, { active_policy: recoveryPolicy });
+      }
+      if (method === "POST") {
+        const body = ((await contractRequestBody(route)) ?? {}) as Record<string, unknown>;
+        recoveryPolicy = {
+          policy_id: body.policy_id,
+          principal_id: body.principal_id,
+          version: body.version,
+          trust_domain: body.trust_domain,
+          allowed_proof_kinds: Array.isArray(body.allowed_proof_kinds)
+            ? body.allowed_proof_kinds
+            : [],
+        };
+        return json(route, {
+          ok: true,
+          policy_id: body.policy_id,
+          principal_id: body.principal_id,
+          version: body.version,
+          accepted_at: new Date().toISOString(),
+        });
+      }
+    }
+
     const keyBackupMatch = url.pathname.match(/^\/_cokret\/self\/keys\/backups\/([^/]+)$/);
     if (keyBackupMatch) {
       if (route.request().method() === "PUT") {
+        const body = ((await contractRequestBody(route)) ?? {}) as Record<string, unknown>;
+        const backup = {
+          ...body,
+          backup_id: body.backup_id ?? keyBackupMatch[1],
+        };
+        keyBackups.set(keyBackupMatch[1], backup);
         return json(route, {
           backup_id: keyBackupMatch[1],
-          status: "stored",
+          status: "accepted",
+          ciphertext_digest: typeof body.ciphertext_digest === "string"
+            ? body.ciphertext_digest
+            : "sha256:e2e",
         });
       }
       if (route.request().method() === "GET") {
-        return json(route, {
+        return json(route, keyBackups.get(keyBackupMatch[1]) ?? {
           backup_id: keyBackupMatch[1],
           status: "stored",
           ciphertext: "BASE64URL_OPAQUE_BLOB",
@@ -1323,7 +1362,11 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       }
     }
     if (url.pathname === "/_cokret/self/keys/backups") {
-      return json(route, { backups: [] });
+      const backupClass = url.searchParams.get("backup_class");
+      const backups = Array.from(keyBackups.values()).filter((backup) =>
+        backupClass ? backup.backup_class === backupClass : true,
+      );
+      return json(route, { backups });
     }
 
     const contractResponse = mockCokretContract({

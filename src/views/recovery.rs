@@ -4,11 +4,11 @@
 //! - **Recovery Key (24 words)**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. This
 //!   is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and therefore
 //!   the `MlsUnlockPrompt` restore path) only accepts this 24-word format, so generating the key
-//!   also wraps the account MLS secret behind it and uploads that backup (see
-//!   `upload_recovery_key_account_backup`). The mnemonic plaintext only lives in memory between
-//!   Generate and the user's Copy interaction; only a SHA-256 fingerprint plus rotation timestamp
-//!   are persisted via `LocalStateStore::save_private_data` — the words themselves are never
-//!   uploaded.
+//!   publishes the recovery policy and a `did_recovery` backup immediately, then wraps the account
+//!   MLS secret behind it when one exists (see `upload_recovery_key_account_backup`). The mnemonic
+//!   plaintext only lives in memory between Generate and the user's Copy interaction; only a
+//!   SHA-256 fingerprint plus rotation timestamp are persisted via
+//!   `LocalStateStore::save_private_data` — the words themselves are never uploaded.
 //! - **Restore from backup**: lists the server-side `ck.schema.key_backup.v1` ciphertext envelopes
 //!   and decrypts them on-device with the 24-word Recovery Key. Envelopes sealed by the removed
 //!   vault-passphrase flows are legacy garbage: they can still be listed and deleted, but no longer
@@ -509,12 +509,11 @@ fn copy_recovery_text_to_clipboard(text: &str) {
     let _ = document::eval(&script);
 }
 
-/// RK-as-authority backup: wrap the local account MLS secret behind the just
-/// generated 24-word Recovery Key and upload it, so the key the restore prompt
-/// asks for is the same key that actually protects encrypted history. Mirrors
-/// `MlsBackupPrompt`'s upload (account secret + best-effort sidecar). No-op with
-/// an explanatory status when there is no account secret yet (encryption hasn't
-/// been used, so there is nothing to back up — the backup runs on first use).
+/// RK-as-authority backup: publish the active recovery policy and a
+/// `did_recovery` backup immediately, then wrap the local account MLS secret
+/// behind the just generated 24-word Recovery Key when the account secret
+/// already exists. This keeps the server-side first-backup gate satisfied even
+/// before the user has sent encrypted content.
 pub(crate) fn upload_recovery_key_account_backup(
     base_url: String,
     token: Signal<String>,
@@ -535,28 +534,14 @@ pub(crate) fn upload_recovery_key_account_backup(
     if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
         return;
     }
-    // Only upload when encryption has produced an account secret. Otherwise there
-    // is nothing to wrap yet; the secret is created on the first encrypted write
-    // or an applied Welcome, and the backup-prompt path runs the upload then.
-    let has_secret = {
-        let secure = crate::secure_key_store::default_secure_key_store("yougen");
-        matches!(
-            crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &actor),
-            Ok(Some(_))
-        )
-    };
-    if !has_secret {
-        status.set(
-            "Recovery Key saved. Your encrypted content will be backed up to it automatically the first time you use encryption.".to_owned(),
-        );
-        return;
-    }
     let sidecar_json = if state_store.read().private_plaintext_is_empty() {
         None
     } else {
         Some(state_store.read().private_plaintext_snapshot_json())
     };
-    status.set("Recovery Key generated — backing up your encrypted history to it…".to_owned());
+    status.set(
+        "Recovery Key generated — publishing recovery policy and DID recovery backup…".to_owned(),
+    );
     spawn(async move {
         let actor_for_sidecar = actor.clone();
         let device_for_sidecar = device.clone();
@@ -564,30 +549,50 @@ pub(crate) fn upload_recovery_key_account_backup(
         let session_for_sidecar = session.clone();
         let mut state_store = state_store;
         let result = with_authed_api(&base, session, |api| async move {
+            let did_backup_id =
+                crate::recovery_flow::ensure_recovery_policy_and_did_recovery_backup(
+                    &api,
+                    &actor,
+                    &device,
+                    &recovery_secret,
+                )
+                .await?;
             let secure = crate::secure_key_store::default_secure_key_store("yougen");
-            crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
-                &api,
-                secure.as_ref(),
-                &actor,
-                &device,
-                &recovery_secret,
-            )
-            .await
+            let account_backup_id = if matches!(
+                crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &actor),
+                Ok(Some(_))
+            ) {
+                Some(
+                    crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
+                        &api,
+                        secure.as_ref(),
+                        &actor,
+                        &device,
+                        &recovery_secret,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+            Ok::<_, anyhow::Error>((did_backup_id, account_backup_id))
         })
         .await;
         match result {
-            Ok(backup_id) => {
+            Ok((did_backup_id, account_backup_id)) => {
                 if let Ok(mut store) = state_store.try_write() {
                     crate::components::mark_mls_recovery_backup_configured(
                         &mut store,
                         &actor_for_sidecar,
-                        &backup_id,
+                        &did_backup_id,
                     );
                 }
                 // Best-effort: also back up the encrypted local-plaintext sidecar
                 // so a fresh device recovers the author's own content. A failure
                 // here must not block the (successful) account-secret backup.
-                if let Some(sidecar_json) = sidecar_json {
+                if account_backup_id.is_some()
+                    && let Some(sidecar_json) = sidecar_json
+                {
                     let actor = actor_for_sidecar;
                     let device = device_for_sidecar;
                     let _ =
@@ -606,13 +611,17 @@ pub(crate) fn upload_recovery_key_account_backup(
                         .await;
                 }
                 if let Ok(mut slot) = status.try_write() {
-                    *slot = "Recovery Key generated and your encrypted history is now backed up to it. Write the 24 words down — they are the only way to restore on a new device.".to_owned();
+                    *slot = if account_backup_id.is_some() {
+                        "Recovery Key generated; DID recovery and encrypted history are backed up. Write the 24 words down — they are the only way to restore on a new device.".to_owned()
+                    } else {
+                        "Recovery Key generated and DID recovery backup is on the server. Encrypted content will be backed up to it automatically the first time you use encryption.".to_owned()
+                    };
                 }
             }
             Err(err) => {
                 if let Ok(mut slot) = status.try_write() {
                     *slot = format!(
-                        "Recovery Key saved, but backing up your encrypted history failed: {}",
+                        "Recovery Key saved locally, but server recovery backup failed: {}",
                         err.display()
                     );
                 }

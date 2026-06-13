@@ -192,6 +192,15 @@ impl CokretApi {
         self.get_json("_cokret/root/identity/recovery-policy").await
     }
 
+    /// Publish or rotate the principal's signed recovery policy.
+    pub async fn put_recovery_policy(
+        &self,
+        body: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json("_cokret/root/identity/recovery-policy", &body)
+            .await
+    }
+
     /// 6.3 — open a recovery session bound to the active policy. `body` is the
     /// `recovery-session.schema.json` `create_request`
     /// (`principal_id`, `requesting_device_id`, `trust_domain`, `ssk_generation`,
