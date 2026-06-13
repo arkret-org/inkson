@@ -32,8 +32,8 @@ mod due_calendar;
 /// hard-coded cards.
 mod model;
 
-use due_calendar::*;
 use dnd::*;
+use due_calendar::*;
 use model::*;
 
 #[component]

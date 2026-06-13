@@ -14,13 +14,12 @@ use ed25519_dalek::Signer;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
     trim_realm_id, uuid_v7,
 };
-
-use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
 
 /// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
 /// (renamed from `handle_uri` @ cokret-spec 7157ee8 — the `cokret://`

@@ -5,11 +5,11 @@
 //! `mod.rs` 通过 `use due_calendar::*;` 重导出后,`KanbanPanel` 与
 //! `tests.rs`(`use super::*`)的解析路径均保持不变。
 
-use chrono::{Datelike, Duration};
 // `NaiveDate` 通过本模块再导出回 kanban 根:`mod.rs` 的 `use due_calendar::*`
 // 使其重新出现在父作用域,`tests.rs`(`use super::*`)的既有未限定引用因此
 // 仍能解析,无需改动测试。
 pub(super) use chrono::NaiveDate;
+use chrono::{Datelike, Duration};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DueCalendarCell {

@@ -8,9 +8,7 @@ use serde_json::Value;
 
 use crate::api::{CokretApi, is_auth_expired_error};
 use crate::components::{SecurityStateBadge, UiIcon};
-use crate::config::{
-    ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url,
-};
+use crate::config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::conformance::{
     PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
     profile_ready,

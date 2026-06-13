@@ -4,9 +4,8 @@
 //! 这里聚集三组关注点:
 //!   - 开发态 session 续期可行性判定(`has_bootstrap_refresh_material` 等);
 //!   - 设备授权状态投影(`*_device_authorization_*`);
-//!   - MLS 备份/解锁双检测与 device-message Welcome bootstrap
-//!     (`mls_recovery_setup_missing` / `mls_welcome_bootstrap_key` /
-//!      `bootstrap_mls_welcome_for_realm`)。
+//!   - MLS 备份/解锁双检测与 device-message Welcome bootstrap (`mls_recovery_setup_missing` /
+//!     `mls_welcome_bootstrap_key` / `bootstrap_mls_welcome_for_realm`)。
 //!
 //! `app.rs` 通过 `pub(crate) use bootstrap::*;` 重导出,原有调用点与
 //! `app_tests.rs` 的 `use super::*` 解析路径均不变。
@@ -17,10 +16,9 @@ use std::hash::{Hash, Hasher};
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use super::server_key;
 use crate::config::{is_valid_device_id, normalize_server_url};
 use crate::local_state::{ClientLocalState, LocalStateStore};
-
-use super::server_key;
 
 pub(crate) fn has_bootstrap_refresh_material(
     store: &LocalStateStore,
