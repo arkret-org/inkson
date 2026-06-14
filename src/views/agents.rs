@@ -1487,7 +1487,7 @@ pub fn PersonalAgentAdminPanel(
                                         // Spec response is operation_status_outcome {ok, status}.
                                         Ok(r) => last_op_status.set(format!(
                                             "pause: status={}",
-                                            r.get("status").and_then(Value::as_str).unwrap_or("(unknown)")
+                                            r.status.as_wire_str()
                                         )),
                                         Err(err) => last_op_status.set(format!(
                                             "pause failed: {}", err.display()
@@ -1524,7 +1524,7 @@ pub fn PersonalAgentAdminPanel(
                                     {
                                         Ok(r) => last_op_status.set(format!(
                                             "resume: status={}",
-                                            r.get("status").and_then(Value::as_str).unwrap_or("(unknown)")
+                                            r.status.as_wire_str()
                                         )),
                                         Err(err) => last_op_status.set(format!(
                                             "resume failed: {}", err.display()
@@ -1569,7 +1569,7 @@ pub fn PersonalAgentAdminPanel(
                                         {
                                             Ok(r) => last_op_status.set(format!(
                                                 "deactivate: status={}",
-                                                r.get("status").and_then(Value::as_str).unwrap_or("(unknown)")
+                                                r.status.as_wire_str()
                                             )),
                                             Err(err) => last_op_status.set(format!(
                                                 "deactivate failed: {}", err.display()

@@ -547,7 +547,7 @@ pub fn render_actor_mention(
     };
 
     let selection = PrimaryHandleSelectInput {
-        subject_id: &subject,
+        subject_id: subject.as_str(),
         context,
         claim_set_snapshot,
         accepted_issuers,

@@ -465,6 +465,7 @@ pub async fn complete_recovery_session(
     let body = RecoverySessionCompleteRequestBody {
         authorization_event_id: EventId::new(authorization_event_id.trim().to_owned())?,
         device_list_update_event_id: EventId::new(device_list_update_event_id.trim().to_owned())?,
+        idempotency_key: None,
     };
     api.complete_recovery_session(recovery_session_id, &body)
         .await
