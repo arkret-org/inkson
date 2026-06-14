@@ -764,6 +764,7 @@ struct ApiErrorBody {
 
 mod account;
 mod agent;
+mod applet;
 mod blob;
 mod blob_resumable;
 // YOU-07-001:领域事件 / 信封构造器从本文件外迁至 `builders`(仅移动)。

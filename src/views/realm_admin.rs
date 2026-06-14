@@ -1187,6 +1187,12 @@ pub fn RealmAdminPanel(
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
     let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
+    // Realm-admin grant inputs (see realm-admin-grant-card). The subject is
+    // the DID being made / removed as admin; the grant id is minted
+    // client-side on grant and re-entered on revoke (the soland reducer
+    // locates the cell by grant_id).
+    let mut admin_subject_did = use_signal(String::new);
+    let mut admin_grant_id = use_signal(String::new);
     // Structured constraint inputs for the capability grant.
     // `cap_constraint_kind` chooses the family (`temporal` / `quota` /
     // `scope_limitation` / `none`); the temporal MVP exposes `not_before`
@@ -2408,6 +2414,129 @@ pub fn RealmAdminPanel(
                             }
                         },
                         {crate::i18n::tr("realm_admin.revoke_capability_move")}
+                    }
+                }
+            }
+            div { class: "event", "data-testid": "realm-admin-grant-card",
+                div { class: "event-head",
+                    span { {crate::i18n::tr("realm_admin.admin_grant_title")} }
+                    span { class: "badge", "ck.realm.admin" }
+                }
+                div { class: "muted",
+                    {crate::i18n::tr("realm_admin.admin_grant_hint")}
+                }
+                Label { html_for: "realm-admin-subject-input", {crate::i18n::tr("realm_admin.admin_subject_label")} }
+                Input {
+                    id: "realm-admin-subject-input",
+                    "data-testid": "realm-admin-subject-input",
+                    value: "{admin_subject_did}",
+                    placeholder: "did:web:…",
+                    oninput: move |event: FormEvent| admin_subject_did.set(event.value()),
+                }
+                Label { html_for: "realm-admin-grant-id-input", {crate::i18n::tr("realm_admin.admin_grant_id_label")} }
+                Input {
+                    id: "realm-admin-grant-id-input",
+                    "data-testid": "realm-admin-grant-id-input",
+                    value: "{admin_grant_id}",
+                    placeholder: "ck:grant:… (auto on grant, paste on revoke)",
+                    oninput: move |event: FormEvent| admin_grant_id.set(event.value()),
+                }
+                div { class: "actions",
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        "data-testid": "realm-admin-grant-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let realm = selected_realm_id.clone();
+                            let actor_account_did = account_did.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let realm = realm.clone();
+                                let api_token = token();
+                                let subject = admin_subject_did().trim().to_owned();
+                                let actor_id = actor_account_did.trim().to_owned();
+                                if subject.is_empty() {
+                                    status_msg.set(crate::i18n::tr("realm_admin.admin_subject_required"));
+                                    return;
+                                }
+                                if actor_id.is_empty() {
+                                    status_msg.set("set admin failed: account is not connected".to_owned());
+                                    return;
+                                }
+                                let grant_id = format!("ck:grant:{}", crate::operation::uuid_v7());
+                                admin_grant_id.set(grant_id.clone());
+                                spawn(async move {
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move {
+                                            api.grant_realm_admin(&realm, &actor_id, &grant_id, &subject).await
+                                        },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => status_msg.set(format!(
+                                            "granted ck.realm.admin: event_id={}",
+                                            short_protocol_id(&resp.event_id)
+                                        )),
+                                        Err(err) => status_msg.set(format!(
+                                            "set admin failed: {}", err.display()
+                                        )),
+                                    }
+                                });
+                            }
+                        },
+                        {crate::i18n::tr("realm_admin.admin_grant_button")}
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "realm-admin-revoke-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let realm = selected_realm_id.clone();
+                            let actor_account_did = account_did.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let realm = realm.clone();
+                                let api_token = token();
+                                let grant_id = admin_grant_id().trim().to_owned();
+                                let actor_id = actor_account_did.trim().to_owned();
+                                if grant_id.is_empty() {
+                                    status_msg.set(crate::i18n::tr("realm_admin.admin_grant_id_required"));
+                                    return;
+                                }
+                                if actor_id.is_empty() {
+                                    status_msg.set("revoke admin failed: account is not connected".to_owned());
+                                    return;
+                                }
+                                spawn(async move {
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move {
+                                            api.revoke_realm_admin(
+                                                &realm,
+                                                &actor_id,
+                                                &grant_id,
+                                                Some("admin_revoke"),
+                                            )
+                                            .await
+                                        },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => status_msg.set(format!(
+                                            "revoked ck.realm.admin: event_id={}",
+                                            short_protocol_id(&resp.event_id)
+                                        )),
+                                        Err(err) => status_msg.set(format!(
+                                            "revoke admin failed: {}", err.display()
+                                        )),
+                                    }
+                                });
+                            }
+                        },
+                        {crate::i18n::tr("realm_admin.admin_revoke_button")}
                     }
                 }
             }

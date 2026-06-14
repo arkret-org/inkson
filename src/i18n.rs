@@ -589,6 +589,23 @@ pub fn english_translations() -> TranslationDict {
         "realm_admin.revoke_capability_move",
         "Revoke capability (Move)",
     );
+    dict.set("realm_admin.admin_grant_title", "Realm administrators");
+    dict.set(
+        "realm_admin.admin_grant_hint",
+        "Grant or revoke ck.realm.admin authority. Authored as a signed capability event; takes effect once the soland reducer projects it.",
+    );
+    dict.set("realm_admin.admin_subject_label", "Admin subject (DID)");
+    dict.set("realm_admin.admin_grant_id_label", "Grant ID");
+    dict.set(
+        "realm_admin.admin_subject_required",
+        "enter the subject DID to make an admin",
+    );
+    dict.set(
+        "realm_admin.admin_grant_id_required",
+        "enter the grant ID to revoke admin authority",
+    );
+    dict.set("realm_admin.admin_grant_button", "Make admin");
+    dict.set("realm_admin.admin_revoke_button", "Revoke admin");
     dict.set("realm_admin.refresh_members", "Refresh");
     dict.set("realm_admin.kick_member", "Kick");
     dict.set("realm_admin.ban_member", "Ban");
@@ -1829,6 +1846,23 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.apply_policy", "应用策略");
     dict.set("realm_admin.grant_capability_move", "授予权限（Move）");
     dict.set("realm_admin.revoke_capability_move", "撤销权限（Move）");
+    dict.set("realm_admin.admin_grant_title", "Realm 管理员");
+    dict.set(
+        "realm_admin.admin_grant_hint",
+        "授予或撤销 ck.realm.admin 权限。以签名 capability 事件提交;待 soland reducer 投影后生效。",
+    );
+    dict.set("realm_admin.admin_subject_label", "管理员主体(DID)");
+    dict.set("realm_admin.admin_grant_id_label", "Grant ID");
+    dict.set(
+        "realm_admin.admin_subject_required",
+        "请填写要设为管理员的主体 DID",
+    );
+    dict.set(
+        "realm_admin.admin_grant_id_required",
+        "请填写要撤销的 Grant ID",
+    );
+    dict.set("realm_admin.admin_grant_button", "设为管理员");
+    dict.set("realm_admin.admin_revoke_button", "撤销管理员");
     dict.set("realm_admin.refresh_members", "刷新");
     dict.set("realm_admin.kick_member", "踢出");
     dict.set("realm_admin.ban_member", "封禁");

@@ -327,6 +327,17 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         // Moderation (governance/content-moderation)
         "ck.moderation.franking_proof",
         "ck.self.moderation.report",
+        // Daily moderation governance (P2/P3): decision seal + lift and the
+        // four-event appeal loop. Authored as self-signed protocol Moves via
+        // POST /_cokret/self/events (no /_soland/admin write path); registering
+        // them here keeps inbound projection of these governance events in
+        // profile.
+        "ck.moderation.decision",
+        "ck.moderation.decision.lift",
+        "ck.moderation.appeal.submit",
+        "ck.moderation.appeal.review",
+        "ck.moderation.appeal.decision",
+        "ck.moderation.appeal.close",
         // Morph (C45 — schema_migrate is the first-class schema_refs[]
         // evolution event with explicit compatibility_class; replaces ad-hoc
         // schema_refs[] writes via ck.morph.update).

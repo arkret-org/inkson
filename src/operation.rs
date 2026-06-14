@@ -1597,6 +1597,196 @@ pub mod ck_ops {
             .body(body)
     }
 
+    /// `ck.capability.grant` event carrying the canonical
+    /// `capability_grant_payload` wrapper (`{grant_id, grant:{…}}`) the P1
+    /// soland reducer (`apply_capability`) reads `issuer` / `subject` /
+    /// `actions` / `resources` from. Use this — not [`capability_grant`] —
+    /// for any directed grant (e.g. setting a Realm admin via
+    /// `actions=[ck.realm.admin]`), because the reducer fails closed on a
+    /// grant body with no `issuer` or no `actions`.
+    ///
+    /// `subject` is the delegee DID the grant authorizes; `actor` is the
+    /// issuer (and the Envelope signer). `resources` defaults to a single
+    /// `{kind:"realm", realm_id}` selector — the management surface this
+    /// covers. The Envelope `seal_basis` / signature carries the issuer
+    /// proof; the per-grant `proofs[]` the strict SDK builder mints is not
+    /// re-derived here (consistent with the rest of the yougen `ck_ops`
+    /// event pipeline, which signs at the Envelope boundary).
+    pub fn capability_grant_actions(
+        realm_id: &str,
+        actor: &str,
+        grant_id: &str,
+        subject: &str,
+        actions: &[&str],
+        expires_at: Option<&str>,
+        constraints: Value,
+    ) -> OperationBuilder {
+        let realm = trim_realm_id(realm_id);
+        let mut grant = json!({
+            "id": grant_id,
+            "schema": "ck.schema.capability_grant.v1",
+            "realm_id": realm,
+            "issuer": actor,
+            "subject": subject,
+            "actions": actions,
+            "resources": [{ "kind": "realm", "realm_id": realm }],
+            "issued_at": crate::clock::now_rfc3339_secs(),
+            "proofs": [],
+        });
+        if let Some(expires_at) = expires_at {
+            grant["expires_at"] = json!(expires_at);
+        }
+        if !constraints.is_null() {
+            grant["constraints"] = constraints;
+        }
+        OperationBuilder::new(&realm, actor, "ck.capability.grant")
+            .target_ref(grant_id)
+            .body(json!({
+                "grant_id": grant_id,
+                "grant": grant,
+            }))
+    }
+
+    // ── Moderation (P2 — moderation_state / appeal cells) ────────────
+    //
+    // Daily moderation governance is authored as self-signed protocol
+    // events submitted via `ck.self.events.command.submit`
+    // (`POST /_cokret/self/events`); the `/_soland/admin/moderation` write
+    // path is retired. The soland P2 reducer (`apply_moderation`) projects
+    // these into `ck.component.moderation_state.v1` /
+    // `ck.component.moderation.appeal.v1` and enforces the §5.5.2
+    // separation-of-duties / atomicity constraints.
+
+    /// `ck.moderation.decision` — seal a moderation disposition. Writes the
+    /// `moderation_state` cell keyed by `decision_id`. The reducer reads
+    /// `decision_id` + `issuer` (here the authoring `actor`) and carries the
+    /// `target_ref` / `verdict` snapshot so the appeal SoD reverse-lookup
+    /// resolves the original issuer.
+    pub fn moderation_decision(
+        realm_id: &str,
+        actor: &str,
+        decision_id: &str,
+        target_ref: &str,
+        verdict: &str,
+        reason_code: &str,
+    ) -> OperationBuilder {
+        let realm = trim_realm_id(realm_id);
+        OperationBuilder::new(&realm, actor, "ck.moderation.decision")
+            .target_ref(target_ref)
+            .body(json!({
+                "decision_id": decision_id,
+                "realm_id": realm,
+                "issuer": actor,
+                "target_ref": target_ref,
+                "verdict": verdict,
+                "reason_code": reason_code,
+                "decided_at": crate::clock::now_rfc3339_secs(),
+            }))
+    }
+
+    /// `ck.moderation.decision.lift` — observed-remove / supersede a
+    /// previously sealed decision. Cell subject is `decision_ref` (the
+    /// `decision_id` of the decision being lifted).
+    pub fn moderation_decision_lift(
+        realm_id: &str,
+        actor: &str,
+        decision_ref: &str,
+        reason_code: &str,
+    ) -> OperationBuilder {
+        let realm = trim_realm_id(realm_id);
+        OperationBuilder::new(&realm, actor, "ck.moderation.decision.lift")
+            .target_ref(decision_ref)
+            .body(json!({
+                "decision_ref": decision_ref,
+                "realm_id": realm,
+                "issuer": actor,
+                "reason_code": reason_code,
+                "lifted_at": crate::clock::now_rfc3339_secs(),
+            }))
+    }
+
+    /// `ck.moderation.appeal.review` — reviewer takes an appeal under
+    /// review (`submitted → under_review`). `reviewer` is the authoring
+    /// actor; the reducer rejects with `appeal_self_review_forbidden` when
+    /// it equals the appealed decision's issuer.
+    pub fn moderation_appeal_review(
+        realm_id: &str,
+        actor: &str,
+        appeal_id: &str,
+        notes_ref: Option<&str>,
+    ) -> OperationBuilder {
+        let realm = trim_realm_id(realm_id);
+        let mut body = json!({
+            "appeal_id": appeal_id,
+            "realm_id": realm,
+            "reviewer": actor,
+            "reviewed_at": crate::clock::now_rfc3339_secs(),
+        });
+        if let Some(notes_ref) = notes_ref {
+            body["notes_ref"] = json!(notes_ref);
+        }
+        OperationBuilder::new(&realm, actor, "ck.moderation.appeal.review")
+            .target_ref(appeal_id)
+            .body(body)
+    }
+
+    /// `ck.moderation.appeal.decision` — reviewer verdict
+    /// (`under_review → decided`). `verdict` ∈ {uphold, overturn, modify}.
+    /// `overturn` MUST be paired in the same ordered submit batch with a
+    /// [`moderation_decision_lift`] over the appealed `decision_ref`;
+    /// `modify` MUST name the replacement decision via `modify_decision_ref`
+    /// (and pair the new [`moderation_decision`]). The caller owns batch
+    /// ordering; this builder only mints the event.
+    pub fn moderation_appeal_decision(
+        realm_id: &str,
+        actor: &str,
+        appeal_id: &str,
+        verdict: &str,
+        reason_text_ref: &str,
+        modify_decision_ref: Option<&str>,
+    ) -> OperationBuilder {
+        let realm = trim_realm_id(realm_id);
+        let mut body = json!({
+            "appeal_id": appeal_id,
+            "realm_id": realm,
+            "reviewer": actor,
+            "verdict": verdict,
+            "reason_text_ref": reason_text_ref,
+            "decided_at": crate::clock::now_rfc3339_secs(),
+        });
+        if let Some(modify_decision_ref) = modify_decision_ref {
+            body["modify_decision_ref"] = json!(modify_decision_ref);
+        }
+        OperationBuilder::new(&realm, actor, "ck.moderation.appeal.decision")
+            .target_ref(appeal_id)
+            .body(body)
+    }
+
+    /// `ck.moderation.appeal.close` — terminal close of an appeal from
+    /// submitted / under_review / decided. `closer` is the authoring actor
+    /// (reviewer close or appellant withdrawal — the reducer authorizes the
+    /// withdrawal path by `closer == appellant`).
+    pub fn moderation_appeal_close(
+        realm_id: &str,
+        actor: &str,
+        appeal_id: &str,
+        close_reason: Option<&str>,
+    ) -> OperationBuilder {
+        let realm = trim_realm_id(realm_id);
+        let mut body = json!({
+            "appeal_id": appeal_id,
+            "realm_id": realm,
+            "closer": actor,
+            "closed_at": crate::clock::now_rfc3339_secs(),
+        });
+        if let Some(close_reason) = close_reason {
+            body["close_reason"] = json!(close_reason);
+        }
+        OperationBuilder::new(&realm, actor, "ck.moderation.appeal.close")
+            .target_ref(appeal_id)
+            .body(body)
+    }
+
     /// Durable `ck.device.revoke` Control Move on the principal control
     /// stream (`crypto-media/device-lifecycle.md` §2.2, SPEC-SOL-003
     /// resolution). `realm_id` MUST be the principal's control realm

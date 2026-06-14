@@ -540,6 +540,168 @@ impl CokretApi {
             .await
     }
 
+    // ── Daily governance — protocol-event pipeline (P3) ───────────────
+    //
+    // Setting / revoking Realm admins, sealing moderation decisions, and
+    // running the appeal loop are now self-authored protocol Moves submitted
+    // via `ck.self.events.command.submit` (`POST /_cokret/self/events`) —
+    // mirroring `transition_member_state` / `ban_member`. P1 (capability)
+    // and P2 (moderation) projected the matching reducers in soland and the
+    // sodmin-side `/_soland/admin/...` write paths were retired; these are
+    // the yougen-side submitters that drive them.
+
+    /// Grant Realm admin authority to `subject` by emitting a
+    /// `ck.capability.grant{actions:[ck.realm.admin], subject}` event.
+    /// `grant_id` is minted client-side so the caller can correlate the
+    /// optimistic row with the eventual projection. P1's `apply_capability`
+    /// folds this into the soland authz index, so subsequent
+    /// `ck.realm.admin` checks for `subject` pass.
+    pub async fn grant_realm_admin(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        grant_id: &str,
+        subject: &str,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let envelope = crate::operation::ck_ops::capability_grant_actions(
+            realm_id,
+            actor_id,
+            grant_id,
+            subject,
+            &["ck.realm.admin"],
+            None,
+            Value::Null,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Revoke a Realm-admin grant via `ck.capability.revoke`. `grant_id`
+    /// MUST be the id of the grant established by [`grant_realm_admin`]
+    /// (the soland reducer locates the cell by `grant_id`).
+    pub async fn revoke_realm_admin(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        grant_id: &str,
+        reason: Option<&str>,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let envelope = crate::operation::ck_ops::capability_revoke(
+            realm_id,
+            actor_id,
+            grant_id,
+            "ck.realm.admin",
+            reason,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Seal a moderation disposition via `ck.moderation.decision`.
+    /// `decision_id` (cell subject) is minted client-side.
+    pub async fn moderation_decide(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        decision_id: &str,
+        target_ref: &str,
+        verdict: &str,
+        reason_code: &str,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let envelope = crate::operation::ck_ops::moderation_decision(
+            realm_id,
+            actor_id,
+            decision_id,
+            target_ref,
+            verdict,
+            reason_code,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Lift a previously sealed moderation decision via
+    /// `ck.moderation.decision.lift`. `decision_ref` is the lifted
+    /// decision's `decision_id`.
+    pub async fn moderation_lift(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        decision_ref: &str,
+        reason_code: &str,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let envelope = crate::operation::ck_ops::moderation_decision_lift(
+            realm_id,
+            actor_id,
+            decision_ref,
+            reason_code,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Take an appeal under review (`ck.moderation.appeal.review`).
+    pub async fn appeal_review(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        appeal_id: &str,
+        notes_ref: Option<&str>,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let envelope = crate::operation::ck_ops::moderation_appeal_review(
+            realm_id, actor_id, appeal_id, notes_ref,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Decide an appeal (`ck.moderation.appeal.decision`). For an
+    /// `overturn` verdict the caller MUST also submit a matching
+    /// [`Self::moderation_lift`] in the same ordered batch; for `modify`,
+    /// pass the replacement decision id as `modify_decision_ref` and submit
+    /// that new [`Self::moderation_decide`] in the same batch. This single
+    /// call only mints the appeal-decision event.
+    pub async fn appeal_decide(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        appeal_id: &str,
+        verdict: &str,
+        reason_text_ref: &str,
+        modify_decision_ref: Option<&str>,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let envelope = crate::operation::ck_ops::moderation_appeal_decision(
+            realm_id,
+            actor_id,
+            appeal_id,
+            verdict,
+            reason_text_ref,
+            modify_decision_ref,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Close an appeal (`ck.moderation.appeal.close`). Reviewer close or
+    /// appellant withdrawal (the reducer authorizes withdrawal via
+    /// `closer == appellant`).
+    pub async fn appeal_close(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        appeal_id: &str,
+        close_reason: Option<&str>,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let envelope = crate::operation::ck_ops::moderation_appeal_close(
+            realm_id,
+            actor_id,
+            appeal_id,
+            close_reason,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
     // ── Views — collection projection (T20 / YOU-01-009 子项 3) ──────
     //
     // Spec-registered operation `ck.self.views.collection_projection.command.materialize`
