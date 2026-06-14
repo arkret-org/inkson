@@ -6629,6 +6629,19 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         last_error.set(None);
         match CokretApi::new(&base) {
             Ok(api) => {
+                // SPEC-CR-001 — bind the ck.session.grant signing key so every
+                // clone of this base client PoP-signs `/_cokret/self/*` requests
+                // (api-conventions.md §3.2). Falls back to bearer-only if no
+                // grant key is persisted or it fails to parse.
+                let api = match state_store.read().session_grant() {
+                    Some(grant) if !grant.session_private_key_pem.is_empty() => {
+                        match api.clone().with_session_signing_key(&grant.session_private_key_pem) {
+                            Ok(signed) => signed,
+                            Err(_) => api,
+                        }
+                    }
+                    _ => api,
+                };
                 // Probe `/server/describe` for status text, but treat failure
                 // as non-fatal: a transient describe error (CORS preflight,
                 // server warming up, brief 5xx) must not block the sync below

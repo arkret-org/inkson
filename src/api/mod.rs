@@ -318,6 +318,11 @@ pub struct CokretApi {
     chime_session_grant_proof: Option<SessionGrantIntrospectionProof>,
     network_state: Arc<RwLock<NetworkState>>,
     cancel_token: Option<CancellationToken>,
+    /// SPEC-CR-001 — `ck.session.grant` signing key + its `keyid`. When set,
+    /// requests to the `/_cokret/self/*` surface carry an RFC 9421 PoP
+    /// signature (api-conventions.md §3.2).
+    session_signing_key: Option<ed25519_dalek::SigningKey>,
+    session_key_id: Option<String>,
     /// Cached `GET /_cokret/self/events/describe` response (spec
     /// `ServiceDescribe` shape) so repeat callers avoid re-hitting the
     /// network.
@@ -780,6 +785,20 @@ mod sync_parse;
 pub use builders::*;
 pub use sync_parse::*;
 
+/// PoP signature validity window (seconds). Kept well under the 300s protocol
+/// maximum (api-conventions.md §3.2) while tolerating modest clock skew.
+const POP_SIGNATURE_WINDOW_SECONDS: i64 = 120;
+
+/// RFC 7638 JWK thumbprint of an Ed25519 verifying key (the `keyid` soland
+/// accepts for the PoP binding check).
+fn session_key_thumbprint(verifying_key: &ed25519_dalek::VerifyingKey) -> String {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+    let x = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key.to_bytes());
+    let canonical = format!("{{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"{x}\"}}");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(canonical.as_bytes()))
+}
+
 impl CokretApi {
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
         Self::new_with_options(base_url, CokretApiOptions::default())
@@ -801,6 +820,8 @@ impl CokretApi {
             chime_session_grant_proof: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
             cancel_token: None,
+            session_signing_key: None,
+            session_key_id: None,
             events_describe_cache: Arc::new(OnceCell::new()),
             service_describe_cache: Arc::new(OnceCell::new()),
         })
@@ -822,6 +843,20 @@ impl CokretApi {
     pub fn with_bearer(mut self, access_token: impl Into<String>) -> Self {
         self.access_token = Some(access_token.into());
         self
+    }
+
+    /// SPEC-CR-001 — bind the `ck.session.grant` session key so requests to
+    /// `/_cokret/self/*` are RFC 9421 PoP-signed. `session_private_key_pem` is
+    /// the PKCS#8 PEM returned by the grant exchange; the keyid is the key's
+    /// RFC 7638 thumbprint, which soland accepts for the binding check.
+    pub fn with_session_signing_key(
+        mut self,
+        session_private_key_pem: &str,
+    ) -> anyhow::Result<Self> {
+        let signing_key = crate::coauth::session_grant_signing_key_from_pem(session_private_key_pem)?;
+        self.session_key_id = Some(session_key_thumbprint(&signing_key.verifying_key()));
+        self.session_signing_key = Some(signing_key);
+        Ok(self)
     }
 
     pub fn with_wait_for(mut self, sync_token: impl Into<String>) -> Self {
@@ -948,7 +983,14 @@ impl CokretApi {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
-        let request = self.http.post(self.endpoint(path)?).json(body);
+        // Explicit serialized bytes (not `.json()`) so PoP signing can read the
+        // exact body for the content-digest on every target (incl. wasm).
+        let bytes = serde_json::to_vec(body)?;
+        let request = self
+            .http
+            .post(self.endpoint(path)?)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(bytes);
         self.send_json(self.prepare_request(request), Method::POST)
             .await
     }
@@ -958,7 +1000,12 @@ impl CokretApi {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
-        let request = self.http.put(self.endpoint(path)?).json(body);
+        let bytes = serde_json::to_vec(body)?;
+        let request = self
+            .http
+            .put(self.endpoint(path)?)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(bytes);
         self.send_json(self.prepare_request(request), Method::PUT)
             .await
     }
@@ -1039,13 +1086,18 @@ impl CokretApi {
             }
 
             let Some(candidate) = request.try_clone() else {
-                return Ok(request.send().await?);
+                // SPEC-CR-001 — sign the fully-built request (PoP covers
+                // @method/@target-uri/@authority/content-digest); re-signed per
+                // attempt so created/expires stay fresh after a backoff.
+                let built = self.sign_request(request.build()?)?;
+                return Ok(self.http.execute(built).await?);
             };
             // 401 handling lives at the app layer (`crate::session`): a
             // refresh future capturing Dioxus signals + wasm `reqwest` is
             // `!Send`, so the HTTP client can't own it. The client just
             // surfaces the 401; the caller re-mints and retries.
-            match candidate.send().await {
+            let built = self.sign_request(candidate.build()?)?;
+            match self.http.execute(built).await {
                 Ok(response) => {
                     if retryable
                         && attempt < self.retry.max_retries
@@ -1084,6 +1136,92 @@ impl CokretApi {
                 }
             }
         }
+    }
+
+    /// SPEC-CR-001 — attach an RFC 9421 PoP signature to `/_cokret/self/*`
+    /// requests when a session signing key is bound. No-op for other surfaces
+    /// or unsigned clients. Covers `@method`/`@target-uri`/`@authority` plus
+    /// `content-digest` (over the body) for body-bearing requests; `created` /
+    /// `expires` bound the validity window (<=300s, well under the protocol cap).
+    fn sign_request(&self, mut request: reqwest::Request) -> anyhow::Result<reqwest::Request> {
+        let Some(signing_key) = self.session_signing_key.as_ref() else {
+            return Ok(request);
+        };
+        let path = request.url().path().to_owned();
+        if !(path.contains("/_cokret/self/") || path.contains("/_soland/self/")) {
+            return Ok(request);
+        }
+        use cokret_sdk::http_signature::{
+            Component, ContentDigest, ContentDigestAlgorithm, SignatureInput, SignedRequestParts,
+            canonical_message, sign_message,
+        };
+
+        let key_id = self.session_key_id.clone().unwrap_or_default();
+        let method = request.method().as_str().to_owned();
+        let url = request.url();
+        let target_uri = url.as_str().to_owned();
+        let authority = match url.port() {
+            Some(port) => format!("{}:{}", url.host_str().unwrap_or_default(), port),
+            None => url.host_str().unwrap_or_default().to_owned(),
+        };
+        let path_only = url.path().to_owned();
+        let body_bytes: Vec<u8> = request
+            .body()
+            .and_then(|body| body.as_bytes())
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default();
+
+        let mut covered = vec![Component::Method, Component::TargetUri, Component::Authority];
+        let mut component_names = vec!["\"@method\"", "\"@target-uri\"", "\"@authority\""];
+        let digest = if body_bytes.is_empty() {
+            None
+        } else {
+            let digest = ContentDigest::compute(&body_bytes, ContentDigestAlgorithm::Sha256);
+            covered.push(Component::Header("content-digest".to_owned()));
+            component_names.push("\"content-digest\"");
+            Some(digest.wire_value)
+        };
+
+        let created = chrono::Utc::now().timestamp();
+        let expires = created + POP_SIGNATURE_WINDOW_SECONDS;
+        let params_value = format!(
+            "({});created={created};expires={expires};keyid=\"{key_id}\";alg=\"ed25519\"",
+            component_names.join(" ")
+        );
+        let signature_input = SignatureInput {
+            label: "sig1".to_owned(),
+            covered_components: covered,
+            created,
+            expires,
+            key_id,
+            algorithm: "ed25519".to_owned(),
+            params_value: params_value.clone(),
+        };
+        let parts = SignedRequestParts {
+            method,
+            target_uri,
+            authority,
+            path: path_only,
+            headers: Vec::new(),
+            body_digest: digest.clone(),
+        };
+        let canonical = canonical_message(&parts, &signature_input)
+            .map_err(|error| anyhow::anyhow!("build PoP signing string: {error}"))?;
+        let signature = sign_message(&canonical, signing_key);
+
+        let headers = request.headers_mut();
+        if let Some(ref wire) = digest {
+            headers.insert("content-digest", reqwest::header::HeaderValue::from_str(wire)?);
+        }
+        headers.insert(
+            "signature-input",
+            reqwest::header::HeaderValue::from_str(&format!("sig1={params_value}"))?,
+        );
+        headers.insert(
+            "signature",
+            reqwest::header::HeaderValue::from_str(&format!("sig1=:{signature}:"))?,
+        );
+        Ok(request)
     }
 
     fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -1938,6 +2076,61 @@ mod tests {
             error.to_string().contains("redline"),
             "error should mention the redline: {error}"
         );
+    }
+
+    #[test]
+    fn self_request_pop_signature_roundtrips_with_sdk_verifier() {
+        use ed25519_dalek::pkcs8::EncodePrivateKey as _;
+
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let pem = signing
+            .to_pkcs8_pem(ed25519_dalek::pkcs8::spki::der::pem::LineEnding::LF)
+            .unwrap()
+            .to_string();
+        let api = CokretApi::new("https://soland.example.com")
+            .unwrap()
+            .with_bearer("tok")
+            .with_session_signing_key(&pem)
+            .unwrap();
+
+        let body = serde_json::to_vec(&serde_json::json!({"hello": "world"})).unwrap();
+        let request = api
+            .http
+            .post(api.endpoint("/_cokret/self/events").unwrap())
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.clone())
+            .build()
+            .unwrap();
+        let signed = api.sign_request(request).unwrap();
+
+        let headers: Vec<(String, String)> = signed
+            .headers()
+            .iter()
+            .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap().to_owned()))
+            .collect();
+        let url = signed.url().clone();
+        let authority = url.host_str().unwrap().to_owned();
+
+        // The same SDK verifier soland runs MUST accept the yougen signature.
+        let verified = cokret_sdk::http_signature::verify_signed_http_message(
+            "POST",
+            url.as_str(),
+            &authority,
+            url.path(),
+            headers.iter().map(|(name, value)| (name.as_str(), value.as_str())),
+            &body,
+            &signing.verifying_key(),
+            &cokret_sdk::http_signature::SignatureVerificationPolicy::service_ingest()
+                .require_content_digest(true)
+                .max_clock_skew_seconds(30),
+            chrono::Utc::now().timestamp(),
+        )
+        .expect("SDK verifies yougen-produced PoP signature");
+        assert_eq!(
+            verified.signature_input.key_id,
+            session_key_thumbprint(&signing.verifying_key())
+        );
+        assert!(verified.signature_input.expires - verified.signature_input.created <= 300);
     }
 
     #[test]
