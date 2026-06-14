@@ -674,6 +674,7 @@ pub fn RecoveryPanel(
     let mut restore_pass = use_signal(String::new);
     let mut restore_target = use_signal(|| Option::<String>::None);
     let mut restore_plaintext = use_signal(String::new);
+    let mut pending_delete_backup = use_signal(|| Option::<String>::None);
 
     // Server-side Recovery-Key backup marker (written by the upload paths via
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
@@ -1357,10 +1358,10 @@ pub fn RecoveryPanel(
             // Lists every backup the server still holds for this principal,
             // lets the user decrypt one locally with the 24-word Recovery
             // Key (XChaCha20-Poly1305 AEAD authenticates the tag before any
-            // plaintext is returned), and offers a destructive Delete that
-            // goes through the typed delete endpoint. Envelopes sealed by the
-            // removed vault-passphrase flow are legacy garbage: listable and
-            // deletable, but no longer decryptable.
+            // plaintext is returned), and offers a confirmed destructive
+            // Delete that goes through the typed delete endpoint. Envelopes
+            // sealed by the removed vault-passphrase flow are legacy garbage:
+            // listable and deletable, but no longer decryptable.
             div { class: "event", "data-testid": "restore-section",
                 div { class: "event-head",
                     span { "Restore from backup" }
@@ -1390,6 +1391,7 @@ pub fn RecoveryPanel(
                                             let status = backup_inventory_status(&rows);
                                             backup_rows.set(rows);
                                             restore_loaded_once.set(true);
+                                            pending_delete_backup.set(None);
                                             restore_status.set(status);
                                         }
                                         Err(err) => restore_status
@@ -1404,6 +1406,7 @@ pub fn RecoveryPanel(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "restore-clear-button",
+                        title: "Only clears this local restore panel. It does not delete server backups.",
                         disabled: backup_rows().is_empty() && restore_plaintext().is_empty(),
                         onclick: move |_| {
                             backup_rows.set(Vec::new());
@@ -1411,9 +1414,10 @@ pub fn RecoveryPanel(
                             restore_target.set(None);
                             restore_pass.set(String::new());
                             restore_plaintext.set(String::new());
-                            restore_status.set("Cleared restore panel state.".to_owned());
+                            pending_delete_backup.set(None);
+                            restore_status.set("Cleared local restore panel state. Server backups were not deleted.".to_owned());
                         },
-                        "Clear"
+                        "Clear panel"
                     }
                 }
                 if !restore_status().is_empty() {
@@ -1460,6 +1464,7 @@ pub fn RecoveryPanel(
                                             move |_| {
                                                 restore_target.set(Some(bid.clone()));
                                                 restore_plaintext.set(String::new());
+                                                pending_delete_backup.set(None);
                                                 restore_status.set(format!(
                                                     "Selected {}. Enter your Recovery Key (24 words) below.",
                                                     short_protocol_id(&bid)
@@ -1468,51 +1473,87 @@ pub fn RecoveryPanel(
                                         },
                                         if restore_target() == Some(row.backup_id.clone()) { "Selected" } else { "Decrypt" }
                                     }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "restore-delete-button",
-                                        title: "Delete the server-side ciphertext. Local fingerprint metadata stays.",
-                                        onclick: {
-                                            let base = base_url.clone();
-                                            let bid = row.backup_id.clone();
-                                            let actor = account_did();
-                                            move |_| {
-                                                let base = base.clone();
-                                                let api_token = token();
-                                                let bid = bid.clone();
-                                                let actor = actor.clone();
-                                                restore_loading.set(true);
-                                                restore_status.set(format!(
-                                                    "Deleting {}…",
-                                                    short_protocol_id(&bid)
-                                                ));
-                                                spawn(async move {
-                                                    let bid_label = short_protocol_id(&bid);
-                                                    let bid_clone = bid.clone();
-                                                    let result = with_authed_api(&base, api_token, |api| async move {
-                                                        api.delete_key_backup(&bid_clone, &actor).await
-                                                    })
-                                                    .await
-                                                    .map_err(|err| anyhow::anyhow!("{}", err.display()));
-                                                    match result {
-                                                        Ok(_) => {
-                                                            restore_status.set(format!("Deleted {bid_label}"));
-                                                            let mut rows = backup_rows();
-                                                            rows.retain(|r| r.backup_id != bid);
-                                                            backup_rows.set(rows);
-                                                            if restore_target() == Some(bid.clone()) {
-                                                                restore_target.set(None);
-                                                                restore_plaintext.set(String::new());
+                                    {
+                                        let confirm_delete = pending_delete_backup() == Some(row.backup_id.clone());
+                                        let delete_title = if confirm_delete {
+                                            "Click again to permanently delete this server-side ciphertext."
+                                        } else {
+                                            "Delete the server-side ciphertext. Requires confirmation."
+                                        };
+                                        rsx! {
+                                            Button {
+                                                variant: if confirm_delete { ButtonVariant::Destructive } else { ButtonVariant::Secondary },
+                                                "data-testid": "restore-delete-button",
+                                                title: "{delete_title}",
+                                                disabled: restore_loading(),
+                                                onclick: {
+                                                    let base = base_url.clone();
+                                                    let bid = row.backup_id.clone();
+                                                    let actor = account_did();
+                                                    move |_| {
+                                                        let bid_label = short_protocol_id(&bid);
+                                                        if pending_delete_backup() != Some(bid.clone()) {
+                                                            pending_delete_backup.set(Some(bid.clone()));
+                                                            restore_status.set(format!(
+                                                                "Confirm delete {bid_label}. This permanently removes the server-side ciphertext and cannot be restored from this backup."
+                                                            ));
+                                                            return;
+                                                        }
+
+                                                        let base = base.clone();
+                                                        let api_token = token();
+                                                        let bid = bid.clone();
+                                                        let actor = actor.clone();
+                                                        pending_delete_backup.set(None);
+                                                        restore_loading.set(true);
+                                                        restore_status.set(format!("Deleting {bid_label}…"));
+                                                        spawn(async move {
+                                                            let bid_label = short_protocol_id(&bid);
+                                                            let bid_clone = bid.clone();
+                                                            let result = with_authed_api(&base, api_token, |api| async move {
+                                                                api.delete_key_backup(&bid_clone, &actor).await
+                                                            })
+                                                            .await
+                                                            .map_err(|err| anyhow::anyhow!("{}", err.display()));
+                                                            match result {
+                                                                Ok(_) => {
+                                                                    restore_status.set(format!("Deleted {bid_label}"));
+                                                                    let mut rows = backup_rows();
+                                                                    rows.retain(|r| r.backup_id != bid);
+                                                                    backup_rows.set(rows);
+                                                                    if restore_target() == Some(bid.clone()) {
+                                                                        restore_target.set(None);
+                                                                        restore_plaintext.set(String::new());
+                                                                    }
+                                                                }
+                                                                Err(err) => restore_status
+                                                                    .set(format!("Delete {bid_label} failed: {err}")),
+                                                            }
+                                                            restore_loading.set(false);
+                                                        });
+                                                    }
+                                                },
+                                                if confirm_delete { "Confirm delete" } else { "Delete" }
+                                            }
+                                            if confirm_delete {
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    "data-testid": "restore-delete-cancel-button",
+                                                    title: "Cancel server backup deletion.",
+                                                    disabled: restore_loading(),
+                                                    onclick: {
+                                                        let bid = row.backup_id.clone();
+                                                        move |_| {
+                                                            if pending_delete_backup() == Some(bid.clone()) {
+                                                                pending_delete_backup.set(None);
+                                                                restore_status.set("Delete cancelled.".to_owned());
                                                             }
                                                         }
-                                                        Err(err) => restore_status
-                                                            .set(format!("Delete {bid_label} failed: {err}")),
-                                                    }
-                                                    restore_loading.set(false);
-                                                });
+                                                    },
+                                                    "Cancel"
+                                                }
                                             }
-                                        },
-                                        "Delete"
+                                        }
                                     }
                                 }
                             }

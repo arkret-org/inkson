@@ -4626,6 +4626,7 @@ pub fn RouterView() -> Element {
                                 crate::views::setup::SetupPanel {
                                     base_url: base_url(),
                                     plaintext_service_did: active_service_did.clone(),
+                                    secure_store_ready: secure_store_bootstrap_ready(),
                                     token,
                                     account_did,
                                     device_id,
