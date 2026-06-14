@@ -18,10 +18,7 @@ const DEVICE_ID_PREFIX: &str = "ck:device:";
 #[cfg(target_arch = "wasm32")]
 const CONFIG_STORAGE_KEY: &str = "yougen.config.v1";
 /// P3B.4: localStorage key for the multi-profile config holding the
-/// `MultiProfileConfig`. The legacy single-profile blob
-/// (`yougen.config.v1`) is still read on first launch for migration;
-/// both keys coexist during the transition and the legacy blob is
-/// left alone for one release in case the user rolls back.
+/// `MultiProfileConfig`.
 #[cfg(target_arch = "wasm32")]
 const PROFILES_STORAGE_KEY: &str = "yougen.profiles.v1";
 
@@ -105,7 +102,7 @@ pub struct AccountProfile {
     /// the account DID's last segment when empty.
     #[serde(default)]
     pub label: String,
-    /// Same four fields as the legacy `ClientConfig`.
+    /// Same four fields as `ClientConfig`.
     pub server_url: String,
     pub account_did: String,
     pub device_id: String,
@@ -143,10 +140,7 @@ impl AccountProfile {
 }
 
 /// Multi-profile config. Persisted under `PROFILES_STORAGE_KEY` on
-/// wasm and `app_data_dir()/profiles.json` on native. The legacy
-/// single-profile blob (`config.json` / `yougen.config.v1`) is read on
-/// first launch to seed the first profile, then left alone for one
-/// release in case the user rolls back.
+/// wasm and `app_data_dir()/profiles.json` on native.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MultiProfileConfig {
     /// `profile_id` of the profile currently driving the UI.
@@ -244,33 +238,6 @@ impl MultiProfileConfig {
         })
     }
 
-    /// Convert a legacy single-profile `ClientConfig` into a fresh
-    /// multi-profile config seeded with one entry. Used by
-    /// [`LocalConfigStore`] migration.
-    pub fn from_legacy(config: ClientConfig) -> Self {
-        if config.account_did.is_empty() {
-            // Fresh install — no profile yet.
-            return Self::default();
-        }
-        let mut profile = AccountProfile::new(
-            config.server_url,
-            config.account_did,
-            config.device_id,
-            config.session_token,
-        );
-        // Stable id derived from the DID so re-running migration is
-        // idempotent (the v2 blob, if it already exists, wins anyway —
-        // this branch only runs when v2 is empty).
-        profile.profile_id = format!(
-            "ck:profile:legacy-{}",
-            profile.account_did.replace(':', "-")
-        );
-        let id = profile.profile_id.clone();
-        Self {
-            active_profile_id: Some(id),
-            profiles: vec![profile],
-        }
-    }
 }
 
 /// Typed payload published when the active profile rotates.
@@ -345,13 +312,8 @@ fn session_token_cache()
 }
 
 /// Move `session_token` into the SecureKeyStore. Returns `true` when
-/// the on-disk copy can be redacted (the secret is durably in the
-/// store, or there is nothing to store). Returns `false` when the
-/// secure store rejected the write — the caller falls back to the
-/// legacy plaintext persistence so a keyring-less environment doesn't
-/// get logged out on every restart (mirrors the
-/// `plaintext_identity_seed_fallback` philosophy: degrade loudly, not
-/// silently into data loss).
+/// the on-disk copy must be redacted. If the secure store rejects the
+/// write, persistence still proceeds without the bearer.
 fn persist_session_token_secret(account_did: &str, session_token: &str) -> bool {
     if account_did.is_empty() {
         // No namespace to key the secret under; only an empty token is
@@ -376,9 +338,9 @@ fn persist_session_token_secret(account_did: &str, session_token: &str) -> bool 
         Err(error) => {
             tracing::warn!(
                 ?error,
-                "secure_key_store session_token write failed; falling back to plaintext config persistence",
+                "secure_key_store session_token write failed; config persisted without bearer",
             );
-            false
+            true
         }
     }
 }
@@ -432,9 +394,7 @@ fn restore_session_token_secret(account_did: &str) -> Option<String> {
 
 /// Build the copy of `config` that is allowed to touch the plaintext
 /// persistence layer: the `session_token` is moved into the
-/// SecureKeyStore and blanked. When the secure store is unavailable
-/// the plaintext token is kept (logged) so degraded environments keep
-/// working.
+/// SecureKeyStore and blanked.
 fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
     let mut redacted = config.clone();
     if persist_session_token_secret(&redacted.account_did, &redacted.session_token) {
@@ -571,20 +531,14 @@ impl LocalConfigStore {
     }
 
     /// Reattach the session bearer to a config freshly read from the
-    /// plaintext persistence layer. A legacy blob that still carries
-    /// the token in plaintext gets read-repaired: the token is moved
-    /// into the SecureKeyStore and the redacted blob is rewritten.
+    /// plaintext persistence layer.
     fn rehydrate_config(&self, mut config: ClientConfig) -> ClientConfig {
         if config.account_did.is_empty() {
             return config;
         }
-        if config.session_token.is_empty() {
-            if let Some(token) = restore_session_token_secret(&config.account_did) {
-                config.session_token = token;
-            }
-        } else {
-            // Legacy plaintext config — migrate the bearer off disk.
-            let _ = self.write_persisted_config(&config);
+        config.session_token.clear();
+        if let Some(token) = restore_session_token_secret(&config.account_did) {
+            config.session_token = token;
         }
         config
     }
@@ -597,16 +551,11 @@ impl LocalConfigStore {
         if config.account_did.is_empty() {
             return config;
         }
-        if config.session_token.is_empty() {
-            if let Some(token) =
-                restore_session_token_secret_from_store(&config.account_did, secure_store)
-            {
-                config.session_token = token;
-            }
-        } else {
-            // Legacy plaintext config — migrate the bearer off disk through
-            // the standard persistence path.
-            let _ = self.write_persisted_config(&config);
+        config.session_token.clear();
+        if let Some(token) =
+            restore_session_token_secret_from_store(&config.account_did, secure_store)
+        {
+            config.session_token = token;
         }
         config
     }
@@ -646,46 +595,34 @@ impl LocalConfigStore {
         }
     }
 
-    /// P3B.4 — load the multi-profile config. Falls back to the
-    /// legacy single-profile blob (via `MultiProfileConfig::from_legacy`)
-    /// when the v2 file is missing or empty.
+    /// P3B.4 — load the multi-profile config.
     pub fn load_profiles(&self) -> MultiProfileConfig {
         if let Some(v2) = self.read_persisted_profiles()
             && !v2.profiles.is_empty()
         {
             return self.rehydrate_profiles(v2);
         }
-        MultiProfileConfig::from_legacy(self.load())
+        MultiProfileConfig::default()
     }
 
     /// Profile-store analogue of [`Self::rehydrate_config`]: reattach
-    /// each profile's bearer from the SecureKeyStore and read-repair
-    /// legacy blobs that still hold tokens in plaintext.
+    /// each profile's bearer from the SecureKeyStore.
     fn rehydrate_profiles(&self, mut profiles: MultiProfileConfig) -> MultiProfileConfig {
-        let mut needs_migration = false;
         for profile in &mut profiles.profiles {
             if profile.account_did.is_empty() {
                 continue;
             }
-            if profile.session_token.is_empty() {
-                if let Some(token) = restore_session_token_secret(&profile.account_did) {
-                    profile.session_token = token;
-                }
-            } else {
-                needs_migration = true;
+            profile.session_token.clear();
+            if let Some(token) = restore_session_token_secret(&profile.account_did) {
+                profile.session_token = token;
             }
-        }
-        if needs_migration {
-            // Legacy plaintext blob — migrate the bearers off disk.
-            let _ = self.write_persisted_profiles(&profiles);
         }
         profiles
     }
 
-    /// P3B.4 — persist the multi-profile config. The legacy v1 blob is
-    /// left untouched for one release so a downgrade still has a
-    /// readable config. Session bearers are moved into the
-    /// SecureKeyStore; the plaintext blob only carries redacted rows.
+    /// P3B.4 — persist the multi-profile config. Session bearers are
+    /// moved into the SecureKeyStore; the plaintext blob only carries
+    /// redacted rows.
     pub fn save_profiles(&mut self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
         self.write_persisted_profiles(profiles)
     }
@@ -928,35 +865,6 @@ mod tests {
     // --- P3B.4 multi-profile coverage ----------------------------------
 
     #[test]
-    fn legacy_config_round_trips_into_single_profile() {
-        let legacy = ClientConfig::from_fields(
-            "https://cokret.example",
-            "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000003",
-            "session-secret",
-        );
-        let multi = MultiProfileConfig::from_legacy(legacy.clone());
-        assert_eq!(multi.profiles.len(), 1);
-        assert!(multi.active_profile_id.is_some());
-        let active = multi.active().expect("active profile");
-        assert_eq!(active.account_did, "did:web:alice.example");
-        assert_eq!(active.server_url, "https://cokret.example");
-    }
-
-    #[test]
-    fn empty_legacy_config_yields_no_profile() {
-        let legacy = ClientConfig::from_fields(
-            "https://cokret.example",
-            "", // empty DID = fresh install
-            "ck:device:01964137-0000-7000-8000-000000000004",
-            "",
-        );
-        let multi = MultiProfileConfig::from_legacy(legacy);
-        assert!(multi.profiles.is_empty());
-        assert!(multi.active_profile_id.is_none());
-    }
-
-    #[test]
     fn upsert_and_activate_replaces_matching_profile() {
         let mut multi = MultiProfileConfig::default();
         let first = AccountProfile::new(
@@ -1112,33 +1020,6 @@ mod tests {
             reader.load_with_secure_store(&secure_store).session_token,
             "sx_from_supplied_store"
         );
-    }
-
-    #[test]
-    fn legacy_plaintext_session_token_migrates_on_load() {
-        let path = temp_config_path("legacy-migrate");
-        // Simulate a pre-migration config.json with the bearer in
-        // plaintext (written via the raw blob writer).
-        let legacy = ClientConfig::from_fields(
-            "https://legacy.example",
-            "did:web:legacy.example",
-            "ck:device:01964137-0000-7000-8000-00000000000d",
-            "sx_legacy_bearer",
-        );
-        fs::write(&path, serde_json::to_vec_pretty(&legacy).expect("json")).expect("seed blob");
-
-        let store = LocalConfigStore::with_path(path.clone());
-        // First load still sees the token (read-repair keeps it live).
-        assert_eq!(store.load().session_token, "sx_legacy_bearer");
-        // ... but the on-disk blob has been rewritten without it.
-        let raw = fs::read_to_string(&path).expect("config blob");
-        assert!(
-            !raw.contains("sx_legacy_bearer"),
-            "legacy bearer still on disk after read-repair: {raw}"
-        );
-        // Subsequent loads keep working off the secure store.
-        let reader = LocalConfigStore::with_path(path);
-        assert_eq!(reader.load().session_token, "sx_legacy_bearer");
     }
 
     #[test]

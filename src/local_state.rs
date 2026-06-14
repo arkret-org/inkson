@@ -518,12 +518,6 @@ pub struct ClientLocalState {
     pub to_device_inbox: Vec<Value>,
     #[serde(default)]
     pub notification_client_state: BTreeMap<String, NotificationClientState>,
-    /// Legacy binary per-realm mute map (JSON key `muted_realms`). Superseded
-    /// by `realm_watch_levels`; kept as deserialize-only so existing devices
-    /// migrate (`true → WatchLevel::Muted`) on next load via
-    /// `migrate_legacy_realm_mutes`. Never written back to storage.
-    #[serde(default, rename = "muted_realms", skip_serializing)]
-    pub legacy_muted_realms: BTreeMap<String, bool>,
     /// Per-realm watch level overrides (spec
     /// `discovery/push-notifications.md` §4.3.2). Only non-default entries are
     /// stored; an absent realm resolves to `WatchLevel::MentionsOnly`.
@@ -868,25 +862,6 @@ pub struct OidcTokenBundle {
     pub stored_at: DateTime<Utc>,
 }
 
-impl ClientLocalState {
-    /// One-way migration of the legacy binary `muted_realms` map into
-    /// `realm_watch_levels`. A muted realm becomes `WatchLevel::Muted`; the
-    /// legacy map is drained so it is never serialized again. Existing
-    /// `realm_watch_levels` entries win (already migrated / explicitly set).
-    fn migrate_legacy_realm_mutes(&mut self) {
-        if self.legacy_muted_realms.is_empty() {
-            return;
-        }
-        for (realm_id, muted) in std::mem::take(&mut self.legacy_muted_realms) {
-            if muted {
-                self.realm_watch_levels
-                    .entry(realm_id)
-                    .or_insert(WatchLevel::Muted);
-            }
-        }
-    }
-}
-
 impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
@@ -901,7 +876,6 @@ impl Default for ClientLocalState {
             presence_projection: Vec::new(),
             to_device_inbox: Vec::new(),
             notification_client_state: BTreeMap::new(),
-            legacy_muted_realms: BTreeMap::new(),
             realm_watch_levels: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),
             read_receipt_default_send: true,
@@ -1920,24 +1894,12 @@ impl LocalStateStore {
         Ok(public_record)
     }
 
-    /// Load the DPoP key from `SecureKeyStore`, migrating a legacy
-    /// plaintext seed from `state.json` when one is present.
+    /// Load the DPoP key from `SecureKeyStore`.
     pub fn load_dpop_device_key_with_secure_store(
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
-        if let Some(record) = load_dpop_device_key_from_secure_store(secure_store)? {
-            return Ok(Some(record));
-        }
-
-        let Some(record) = self.dpop_device_key() else {
-            return Ok(None);
-        };
-        if record.seed_b64.trim().is_empty() {
-            return Ok(None);
-        }
-        store_dpop_device_key_in_secure_store(secure_store, &record)?;
-        Ok(Some(record))
+        load_dpop_device_key_from_secure_store(secure_store)
     }
 
     pub fn save_draft(&mut self, draft_scope_id: impl Into<String>, draft: impl Into<String>) {
@@ -2089,11 +2051,11 @@ impl LocalStateStore {
 
     // ── Per-realm watch level (spec push-notifications.md §4.3.2) ──
     //
-    // Replaces the legacy binary mute map. A realm with no stored entry
-    // resolves to the protocol default `WatchLevel::MentionsOnly`; only
-    // non-default levels are persisted. Binary "mute" is just the `Muted`
-    // end of this scale, so the `*_muted` helpers below stay as thin
-    // wrappers for the notification drawer / chat sidebar toggles.
+    // A realm with no stored entry resolves to the protocol default
+    // `WatchLevel::MentionsOnly`; only non-default levels are persisted.
+    // Binary "mute" is just the `Muted` end of this scale, so the
+    // `*_muted` helpers below stay as thin wrappers for the notification
+    // drawer / chat sidebar toggles.
 
     /// Set (or clear) the per-realm watch level. Storing the default
     /// (`MentionsOnly`) removes the override so the realm follows global
@@ -3063,10 +3025,7 @@ impl LocalStateStore {
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
         let bytes = fs::read(&self.path).ok()?;
         match serde_json::from_slice::<ClientLocalState>(&bytes) {
-            Ok(mut state) => {
-                state.migrate_legacy_realm_mutes();
-                Some(state)
-            }
+            Ok(state) => Some(state),
             Err(error) => {
                 // YOU-02-002: a corrupt / truncated state.json (e.g. a crash
                 // mid-write before atomic rename landed) MUST NOT be silently
@@ -3093,10 +3052,7 @@ impl LocalStateStore {
         let json = browser_storage()
             .and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())?;
         match serde_json::from_str::<ClientLocalState>(&json) {
-            Ok(mut state) => {
-                state.migrate_legacy_realm_mutes();
-                Some(state)
-            }
+            Ok(state) => Some(state),
             Err(error) => {
                 // YOU-02-002: preserve the corrupt blob under a sibling key
                 // rather than silently dropping it back to defaults.

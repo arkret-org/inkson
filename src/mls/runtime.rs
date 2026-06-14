@@ -12,7 +12,6 @@ use serde_json::Value;
 
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
-const DEVICE_SNAPSHOT_SECRET_PREFIX: &str = "yougen.mls_snapshot.device_secret.v1";
 const ACCOUNT_MLS_SECRET_PREFIX: &str = "yougen.mls_snapshot.account_secret";
 pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
@@ -407,16 +406,6 @@ fn require_backup_u64(body: &Value, key: &str, expected: u64) -> Result<(), MlsR
     }
 }
 
-/// Legacy per-device storage key. Retained only for migration lookups: the
-/// snapshot secret is now account-scoped (see [`account_mls_secret_key`]).
-pub fn device_snapshot_secret_key(actor_id: &str, device_id: &str) -> String {
-    format!(
-        "{DEVICE_SNAPSHOT_SECRET_PREFIX}.{}.{}",
-        actor_id.trim(),
-        device_id.trim()
-    )
-}
-
 /// Stored account-scoped MLS snapshot secret plus the local key version that
 /// carried it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -557,15 +546,12 @@ fn generate_account_mls_secret() -> Result<String, SecureKeyStoreError> {
 ///
 /// Resolution order:
 ///   a. the highest existing versioned account secret is returned as-is;
-///   b. otherwise, if a legacy device-scoped secret exists for `(actor,
-///      device)`, it is *promoted* to the v1 account key (so single-device users
-///      keep their local MLS state) and returned;
-///   c. otherwise a fresh random 32-byte secret is generated, stored under the
+///   b. otherwise a fresh random 32-byte secret is generated, stored under the
 ///      current account key, and returned.
 pub fn load_or_create_account_mls_secret(
     store: &dyn SecureKeyStore,
     actor_id: &str,
-    device_id: &str,
+    _device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
     let actor = actor_id.trim();
     if actor.is_empty() {
@@ -573,22 +559,9 @@ pub fn load_or_create_account_mls_secret(
             "actor_id is required for MLS snapshot secret".to_owned(),
         ));
     }
-    // a. existing account secret wins.
     if let Some(existing) = load_account_mls_secret(store, actor)? {
         return Ok(existing.secret);
     }
-    // b. migrate a legacy device-scoped secret if one exists for this device.
-    let device = device_id.trim();
-    if !device.is_empty() {
-        let device_key = device_snapshot_secret_key(actor, device);
-        if let Some(legacy) = store.get_secret(&device_key)?
-            && !legacy.trim().is_empty()
-        {
-            store_account_mls_secret_version(store, actor, 1, &legacy)?;
-            return Ok(legacy);
-        }
-    }
-    // c. generate a fresh account secret.
     let secret = generate_account_mls_secret()?;
     store_account_mls_secret(store, actor, &secret)?;
     Ok(secret)
@@ -596,8 +569,8 @@ pub fn load_or_create_account_mls_secret(
 
 /// Load-or-create the snapshot secret for `(actor, device)`.
 ///
-/// The `device_id` parameter is retained for source compatibility and legacy
-/// migration only; the secret is account-scoped and shared by every device.
+/// The `device_id` parameter is retained for source compatibility; the secret
+/// is account-scoped and shared by every device.
 pub fn load_or_create_device_snapshot_secret(
     store: &dyn SecureKeyStore,
     actor_id: &str,
@@ -608,14 +581,12 @@ pub fn load_or_create_device_snapshot_secret(
 
 /// Load (without creating) the snapshot secret for `(actor, device)`.
 ///
-/// Delegates to the account-scoped secret. As a migration convenience, if no
-/// account secret exists yet but a legacy device-scoped secret does, the legacy
-/// value is promoted to the account key and returned. `device_id` no longer
-/// scopes the stored key.
+/// Delegates to the account-scoped secret. `device_id` no longer scopes the
+/// stored key.
 pub fn load_device_snapshot_secret(
     store: &dyn SecureKeyStore,
     actor_id: &str,
-    device_id: &str,
+    _device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
     let actor = actor_id.trim();
     if actor.is_empty() {
@@ -625,17 +596,6 @@ pub fn load_device_snapshot_secret(
     }
     if let Some(existing) = load_account_mls_secret(store, actor)? {
         return Ok(existing.secret);
-    }
-    // Migration: promote a legacy device-scoped secret if present.
-    let device = device_id.trim();
-    if !device.is_empty() {
-        let device_key = device_snapshot_secret_key(actor, device);
-        if let Some(legacy) = store.get_secret(&device_key)?
-            && !legacy.trim().is_empty()
-        {
-            store_account_mls_secret_version(store, actor, 1, &legacy)?;
-            return Ok(legacy);
-        }
     }
     Err(SecureKeyStoreError::NotFound)
 }
@@ -1926,16 +1886,6 @@ mod tests {
     }
 
     #[test]
-    fn device_snapshot_secret_is_scoped_by_actor_and_device() {
-        let a = device_snapshot_secret_key("did:web:alice.example", "ck:device:a");
-        let b = device_snapshot_secret_key("did:web:bob.example", "ck:device:a");
-        let c = device_snapshot_secret_key("did:web:alice.example", "ck:device:b");
-        assert_ne!(a, b);
-        assert_ne!(a, c);
-        assert!(a.starts_with("yougen.mls_snapshot.device_secret.v1."));
-    }
-
-    #[test]
     fn account_secret_is_shared_across_devices() {
         let store = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
@@ -1950,29 +1900,6 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
-    }
-
-    #[test]
-    fn legacy_device_secret_is_promoted_to_account_key() {
-        let store = MemorySecureKeyStore::new();
-        let actor = "did:web:alice.example";
-        let device = "ck:device:legacy";
-        // Simulate an existing single-device user with a legacy device secret.
-        store
-            .store_secret(&device_snapshot_secret_key(actor, device), "legacy-secret")
-            .unwrap();
-        // load_or_create must promote and return the legacy value unchanged.
-        let resolved = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
-        assert_eq!(resolved, "legacy-secret");
-        assert_eq!(
-            store
-                .get_secret(&account_mls_secret_key_for_version(actor, 1))
-                .unwrap(),
-            Some("legacy-secret".to_owned())
-        );
-        // load-only path also resolves the promoted account secret.
-        let loaded = load_device_snapshot_secret(&store, actor, device).unwrap();
-        assert_eq!(loaded, "legacy-secret");
     }
 
     #[test]

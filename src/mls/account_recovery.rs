@@ -267,8 +267,7 @@ fn backup_secret_version(body: &Value) -> u64 {
         .unwrap_or(0)
 }
 
-/// Version recorded in an `mls_account_secret` backup. Legacy backups did not
-/// carry this field, so they import at the current default version.
+/// Version recorded in an `mls_account_secret` backup.
 pub fn mls_account_secret_backup_version(body: &Value) -> u32 {
     backup_secret_version(body)
         .try_into()
@@ -324,12 +323,9 @@ pub fn select_mls_account_secret_recovery_public_key_backup(list_payload: &Value
         .cloned()
 }
 
-/// Select the preferred account-secret backup. New `recovery_public_key`
-/// backups are the primary fresh-device path; legacy `passphrase_kdf` backups
-/// remain a fallback for accounts created before the HPKE path existed.
+/// Select the preferred account-secret backup for fresh-device recovery.
 pub fn select_preferred_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
     select_mls_account_secret_recovery_public_key_backup(list_payload)
-        .or_else(|| select_mls_account_secret_backup(list_payload))
 }
 
 /// Build the HPKE `recovery_public_key` account-secret backup: the account
@@ -1172,8 +1168,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
 }
 
 /// Upload an HPKE `recovery_public_key` account-secret backup derived from the
-/// user's 24-word Recovery Key. This is the primary backup shape for fresh
-/// browser recovery; `passphrase_kdf` is retained only as legacy fallback.
+/// user's 24-word Recovery Key.
 pub async fn upload_mls_account_secret_backup_with_recovery_key(
     api: &crate::api::CokretApi,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -1342,7 +1337,7 @@ fn is_mls_history_backup(body: &Value) -> bool {
 /// Series-tail `backup_id`s among the `mls_history` backups in `list_payload`.
 ///
 /// Grouped per `series_id` (a missing `series_id` degrades to per-backup
-/// grouping, so legacy envelopes are all kept); the tail is the highest
+/// grouping); the tail is the highest
 /// `(series_seq, created_at)` link. The continuous-backup writer folds each
 /// Realm's epoch material into the tail of one series, so restore only needs
 /// the tail per series — soland's per-principal 24h full-ciphertext download
@@ -1649,8 +1644,8 @@ mod tests {
     }
 
     #[test]
-    fn preferred_account_secret_uses_recovery_public_key_before_legacy_passphrase() {
-        let legacy = wrap();
+    fn preferred_account_secret_requires_recovery_public_key() {
+        let passphrase_wrapped = wrap();
         let (_sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
         let hpke = build_mls_account_secret_recovery_public_key_backup(
             "ck:backup:01964137-0000-7000-8000-00000000c001",
@@ -1662,7 +1657,7 @@ mod tests {
             1,
         )
         .unwrap();
-        let payload = serde_json::json!({ "backups": [legacy.clone(), hpke.clone()] });
+        let payload = serde_json::json!({ "backups": [passphrase_wrapped.clone(), hpke.clone()] });
 
         let found = select_preferred_mls_account_secret_backup(&payload)
             .expect("preferred account secret present");
@@ -1671,13 +1666,8 @@ mod tests {
             serde_json::json!("recovery_public_key")
         );
 
-        let legacy_only = serde_json::json!({ "backups": [legacy.clone()] });
-        let fallback = select_preferred_mls_account_secret_backup(&legacy_only)
-            .expect("legacy fallback present");
-        assert_eq!(
-            fallback["encryption"]["recipient_method"],
-            serde_json::json!("passphrase_kdf")
-        );
+        let passphrase_only = serde_json::json!({ "backups": [passphrase_wrapped.clone()] });
+        assert!(select_preferred_mls_account_secret_backup(&passphrase_only).is_none());
     }
 
     #[test]

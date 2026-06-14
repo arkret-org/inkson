@@ -267,8 +267,8 @@ fn sync_event_states_update_submission_by_event_id() {
 }
 
 #[test]
-fn sync_event_states_update_legacy_submission_keyed_by_event_id() {
-    let path = temp_state_path("legacy-move-event-state");
+fn sync_event_states_update_submission_keyed_by_event_id() {
+    let path = temp_state_path("move-event-state");
     let mut store = LocalStateStore::with_path(path);
     let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
     let event_id = "ck:event:0196419b-0000-7000-8000-0000000000bb";
@@ -624,35 +624,10 @@ fn realm_watch_level_set_get_roundtrip() {
         WatchLevel::MentionsOnly
     );
     assert!(!reader.realm_watch_levels().contains_key("ck:realm:c"));
-    // The binary-mute compatibility view only reports `Muted` realms.
+    // The binary-mute helper only reports `Muted` realms.
     assert_eq!(reader.muted_realms(), vec!["ck:realm:b".to_owned()]);
     assert!(reader.is_realm_muted("ck:realm:b"));
     assert!(!reader.is_realm_muted("ck:realm:a"));
-}
-
-#[test]
-fn legacy_muted_realms_migrate_to_watch_level() {
-    let path = temp_state_path("legacy-mute-migration");
-    // Persist a snapshot in the legacy shape (binary `muted_realms` map).
-    let mut value = serde_json::to_value(ClientLocalState::default()).unwrap();
-    value["muted_realms"] = serde_json::json!({
-        "ck:realm:legacy": true,
-        "ck:realm:already-unmuted": false,
-    });
-    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-
-    let store = LocalStateStore::with_path(path);
-    assert_eq!(
-        store.realm_watch_level("ck:realm:legacy"),
-        WatchLevel::Muted
-    );
-    assert_eq!(
-        store.realm_watch_level("ck:realm:already-unmuted"),
-        WatchLevel::MentionsOnly
-    );
-    // The legacy key must not survive a round-trip back to storage.
-    let reserialized = serde_json::to_value(store.load()).unwrap();
-    assert!(reserialized.get("muted_realms").is_none());
 }
 
 #[test]

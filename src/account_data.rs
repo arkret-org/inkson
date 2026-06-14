@@ -540,9 +540,7 @@ impl ContactRemark {
 /// [`build_blocklist_account_data_body`] expands it to the canonical account
 /// data wire shape: `{ target: { kind, did|domain }, mode, applies_to,
 /// reason_code, created_at, expires_at, entry_id }`.
-/// [`blocklist_entries_from_account_data`] accepts that canonical shape and
-/// the pre-canonical `{ did, reason, blocked_at }` shape so existing local
-/// state and older soland rows continue to hydrate.
+/// [`blocklist_entries_from_account_data`] accepts only that canonical shape.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlocklistEntry {
     /// Target identifier value. For `kind = "actor" | "service" |
@@ -552,9 +550,7 @@ pub struct BlocklistEntry {
     /// lower-cased by [`normalize_blocklist_value`]). The field name stays
     /// `did` for wire/UI backward-compat — non-DID kinds reuse the same slot.
     pub did: String,
-    /// `target.kind` per `discovery/client-preferences.md` §3.5. Defaults to
-    /// `actor` so legacy disk rows and older wire shapes (which only ever
-    /// carried actor DIDs) hydrate unchanged.
+    /// `target.kind` per `discovery/client-preferences.md` §3.5.
     #[serde(default = "default_blocklist_target_kind")]
     pub kind: String,
     /// Optional user-supplied reason (serialised as `reason_code`). Empty
@@ -900,10 +896,6 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
 
 /// Parse the `ck.account.blocklist` account-data content body. Malformed
 /// actor entries are skipped instead of partially corrupting the local UI.
-/// This parser intentionally accepts legacy rows written by earlier yougen
-/// and cotest fixtures: `{ did, reason, blocked_at }`,
-/// `{ target: "did:...", kind: "block" }`, and the canonical
-/// `{ target: { kind: "actor", did }, mode: "block", created_at }`.
 pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
     let entries = value
         .get("entries")
@@ -919,23 +911,9 @@ pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<Blocklis
 
 fn blocklist_entry_from_account_data_value(value: &Value) -> Option<BlocklistEntry> {
     match value {
-        Value::String(did) => blocklist_entry_from_parts(
-            DEFAULT_BLOCKLIST_TARGET_KIND,
-            did,
-            None,
-            None,
-            Vec::new(),
-            None,
-            None,
-        ),
         Value::Object(object) => {
-            // Top-level `kind` is the legacy *action* alias (block/unblock),
-            // distinct from `target.kind` (the target type). Keep accepting it.
             let mode = object
                 .get("mode")
-                .or_else(|| object.get("kind"))
-                .or_else(|| object.get("action"))
-                .or_else(|| object.get("status"))
                 .and_then(Value::as_str)
                 .unwrap_or("block");
             if matches!(mode, "allow" | "unblock" | "removed" | "deleted") {
@@ -946,22 +924,13 @@ fn blocklist_entry_from_account_data_value(value: &Value) -> Option<BlocklistEnt
             }
             let (target_kind, target_value) = object
                 .get("target")
-                .and_then(blocklist_target_kind_value)
-                .or_else(|| {
-                    object
-                        .get("did")
-                        .or_else(|| object.get("actor"))
-                        .and_then(Value::as_str)
-                        .map(|v| (DEFAULT_BLOCKLIST_TARGET_KIND.to_owned(), v.to_owned()))
-                })?;
+                .and_then(blocklist_target_kind_value)?;
             let reason = object
                 .get("reason_code")
-                .or_else(|| object.get("reason"))
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
             let blocked_at = object
                 .get("created_at")
-                .or_else(|| object.get("blocked_at"))
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
             let applies_to = object
@@ -996,32 +965,18 @@ fn blocklist_entry_from_account_data_value(value: &Value) -> Option<BlocklistEnt
     }
 }
 
-/// Extract `(target.kind, value)` from a wire `target`. Accepts a bare string
-/// (legacy actor DID), and objects keyed by `did` / `actor` / `domain` /
-/// `value` / `id`. When `kind` is absent it is inferred: a `domain` field
-/// implies `domain`, otherwise `actor`.
+/// Extract `(target.kind, value)` from a canonical wire `target`.
 fn blocklist_target_kind_value(value: &Value) -> Option<(String, String)> {
     match value {
-        Value::String(did) => Some((DEFAULT_BLOCKLIST_TARGET_KIND.to_owned(), did.clone())),
         Value::Object(object) => {
             let kind = object
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k.trim().to_ascii_lowercase());
+                .map(|k| k.trim().to_ascii_lowercase())?;
             let value = object
                 .get("did")
-                .or_else(|| object.get("actor"))
                 .or_else(|| object.get("domain"))
-                .or_else(|| object.get("value"))
-                .or_else(|| object.get("id"))
                 .and_then(Value::as_str)?;
-            let kind = kind.unwrap_or_else(|| {
-                if object.get("domain").is_some() {
-                    "domain".to_owned()
-                } else {
-                    DEFAULT_BLOCKLIST_TARGET_KIND.to_owned()
-                }
-            });
             Some((kind, value.to_owned()))
         }
         _ => None,
@@ -1282,11 +1237,9 @@ mod tests {
         assert_eq!(restored.len(), 1);
     }
 
-    /// Pre-snapshot persisted state has no `snapshot_head` field; loading
-    /// it should default to `None` rather than fail to deserialize.
     #[test]
-    fn snapshot_head_absent_from_legacy_state_defaults_to_none() {
-        let legacy = json!({
+    fn snapshot_head_absent_from_state_defaults_to_none() {
+        let persisted = json!({
             "entries": {
                 "client.ui": {
                     "key": "client.ui",
@@ -1296,7 +1249,7 @@ mod tests {
                 }
             }
         });
-        let store: AccountDataStore = serde_json::from_value(legacy).unwrap();
+        let store: AccountDataStore = serde_json::from_value(persisted).unwrap();
         assert_eq!(store.snapshot_head(), None);
         assert_eq!(store.len(), 1);
     }
@@ -1741,19 +1694,6 @@ mod tests {
                 .unwrap()
                 .contains(&json!("messages"))
         );
-    }
-
-    #[test]
-    fn blocklist_entries_parse_legacy_account_data_body() {
-        let body = json!({
-            "entries": [
-                {"did": "did:web:mallory.example", "reason": "spam"},
-                {"did": "   "}
-            ]
-        });
-        let entries = blocklist_entries_from_account_data(&body).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].did, "did:web:mallory.example");
     }
 
     #[test]
