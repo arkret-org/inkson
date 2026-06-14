@@ -1041,7 +1041,7 @@ pub fn build_device_message_envelope(
     kind: &str,
     expires_at: &str,
     content: serde_json::Value,
-) -> anyhow::Result<cokret_sdk::model::DeviceMessagesPutRequestBody> {
+) -> anyhow::Result<cokret_sdk::model::DeviceMessagesSendRequestBody> {
     let target_actor = cokret_sdk::Did::new(target_actor.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid device-message target actor: {err}"))?;
     let target_device_id = cokret_sdk::DeviceId::new(target_device_id.to_owned())
@@ -1059,7 +1059,7 @@ pub fn build_device_message_envelope(
     by_device.insert(target_device_id, target);
     let mut messages = BTreeMap::new();
     messages.insert(target_actor, by_device);
-    Ok(cokret_sdk::model::DeviceMessagesPutRequestBody { messages })
+    Ok(cokret_sdk::model::DeviceMessagesSendRequestBody { messages })
 }
 
 pub fn build_signed_device_verification_proof(

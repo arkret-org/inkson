@@ -300,12 +300,8 @@ impl CokretApi {
             .iter()
             .map(EventEnvelope::to_sdk_event_for_submit)
             .collect::<anyhow::Result<_>>()?;
-        let events_value: Vec<Value> = sdk_events
-            .iter()
-            .map(serde_json::to_value)
-            .collect::<Result<_, _>>()?;
         let body = cokret_sdk::EventsSubmitBatchRequestBody {
-            events: events_value,
+            events: sdk_events,
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
         let request = self
@@ -373,7 +369,7 @@ impl CokretApi {
         target_device_id: &str,
         message_type: &str,
         content: Value,
-    ) -> anyhow::Result<DeviceMessagesPutOutcome> {
+    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
         if !message_type.starts_with("ck.key.verification.") {
             anyhow::bail!(
                 "to-device ephemeral submit: message_type {message_type:?} is not in the ck.key.verification.* family"

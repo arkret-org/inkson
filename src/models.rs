@@ -855,7 +855,7 @@ pub struct PushRegisterView {
 pub use cokret_sdk::model::ModerationReportOutcome;
 pub use cokret_sdk::model::{
     BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesAckOutcome,
-    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome,
+    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
     KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
 };
 

@@ -94,7 +94,7 @@ use crate::identity_handle::parse_user_handle;
 use crate::models::{
     AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ClientSyncOutcome,
     ContactListView, CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
-    DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustView, EphemeralSubmitResult,
+    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, DeviceTrustView, EphemeralSubmitResult,
     GrantList, HealthOutcome, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchView,
     InvitesView, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, MediaIceConfigOutcome,
     MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD, OkOutcome,

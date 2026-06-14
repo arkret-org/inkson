@@ -70,7 +70,7 @@ impl CokretApi {
         &self,
         actor: &str,
         device_id: &str,
-    ) -> anyhow::Result<DeviceMessagesPutOutcome> {
+    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
         self.ensure_demo_crypto_fallback_allowed("device_messages opaque test ciphertext")?;
         self.send_device_message_envelope(
             "yougen-txn-1",
@@ -88,7 +88,7 @@ impl CokretApi {
         &self,
         _actor: &str,
         _device_id: &str,
-    ) -> anyhow::Result<DeviceMessagesPutOutcome> {
+    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
         anyhow::bail!(
             "send_to_device ships an opaque test ciphertext and requires the `demo-crypto` build feature"
         )
@@ -114,7 +114,7 @@ impl CokretApi {
         kind: &str,
         expires_at: &str,
         content: serde_json::Value,
-    ) -> anyhow::Result<DeviceMessagesPutOutcome> {
+    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
         let path = "_cokret/self/device_messages";
         let payload = build_device_message_envelope(
             target_actor,

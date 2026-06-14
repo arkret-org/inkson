@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use chrono::Utc;
 use reqwest::StatusCode;
 use serde_json::json;
@@ -228,10 +226,13 @@ fn yougen_accepts_server_contract_payloads() {
         "realm_preview": {
             "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
             "title": "Cokret Demo Realm",
-            "description": "Shared demo Realm served by server",
+            "summary": "Shared demo Realm served by server",
             "tags": ["demo"],
             "public": true,
-            "category": "collaboration"
+            "category": "collaboration",
+            "as_of": "2026-05-30T00:00:00Z",
+            "source_refs": ["ck:event:0196419b-0000-7000-8000-000000000001"],
+            "policy_revision": "contract-rev"
         },
         "stripped_state": [],
         "join_rule": "public",
@@ -360,7 +361,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(!claimed.one_time_keys.is_empty());
 
-    let device_send: yougen::models::DeviceMessagesPutOutcome = serde_json::from_value(json!({
+    let device_send: yougen::models::DeviceMessagesSendOutcome = serde_json::from_value(json!({
         "ok": true,
         "delivered": {"did:web:alice.example": ["dev_alice"]},
         "unknown_devices": {}
