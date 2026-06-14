@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn browser_prefers_dark_theme() -> bool {
     #[cfg(target_arch = "wasm32")]
     {

@@ -44,6 +44,18 @@ use crate::views::timeline::TimelineEvent;
 #[path = "bootstrap.rs"]
 mod bootstrap;
 pub(crate) use bootstrap::*;
+// YOU-07-001: theme-resolution helpers (system/shell dark-mode detection, the
+// `<html>` data-theme mirror, manual toggle) live in `app/theme.rs` (move only).
+// The glob re-export keeps the inline call sites and `app_tests.rs` `use super::*`
+// resolution unchanged.
+mod theme;
+pub(crate) use theme::*;
+// YOU-07-001: per-realm surface selection (RealmSurface enum + preference
+// load/persist + route→surface resolution) lives in `app/realm_surface.rs`
+// (move only). The glob re-export keeps inline call sites and `app_tests.rs`
+// `use super::*` resolution unchanged.
+mod realm_surface;
+pub(crate) use realm_surface::*;
 
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
@@ -433,103 +445,6 @@ pub fn App() -> Element {
     rsx! {
         Router::<Route> {}
     }
-}
-
-fn browser_prefers_dark_theme() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        web_sys::window()
-            .and_then(|window| {
-                window
-                    .match_media("(prefers-color-scheme: dark)")
-                    .ok()
-                    .flatten()
-            })
-            .map(|query| query.matches())
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        false
-    }
-}
-
-fn browser_shell_color_scheme_is_dark() -> Option<bool> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let window = web_sys::window()?;
-        let document = window.document()?;
-        let shell = document
-            .query_selector("[data-testid=\"client-shell\"]")
-            .ok()
-            .flatten()?;
-        let styles = window.get_computed_style(&shell).ok().flatten()?;
-        let color_scheme = styles
-            .get_property_value("color-scheme")
-            .ok()?
-            .to_ascii_lowercase();
-        let has_dark = color_scheme.split_whitespace().any(|token| token == "dark");
-        let has_light = color_scheme
-            .split_whitespace()
-            .any(|token| token == "light");
-        if has_dark && !has_light {
-            Some(true)
-        } else if has_light && !has_dark {
-            Some(false)
-        } else {
-            None
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        None
-    }
-}
-
-fn theme_renders_as_night(theme: &str, system_theme_is_night: bool) -> bool {
-    theme == "night" || (theme == "system" && system_theme_is_night)
-}
-
-/// Mirror the effective theme onto the document root (`<html>`).
-///
-/// The vendored dioxus-components theme declares its palette
-/// (`--primary-color`, …) on `:root` and flips it with a
-/// `var(--light, …) var(--dark, …)` switch keyed on `html[data-theme]`.
-/// Those derived custom properties are substituted **once at `:root`**, so
-/// toggling `--light`/`--dark` on the shell `<div>` (where yougen renders
-/// its `data-theme`) has no effect — descendants inherit the already-computed
-/// palette. CSS cannot propagate a `<div>` attribute up to `:root`, so the
-/// switch must live on `<html>` itself. Writing `data-theme` here lets the
-/// vendored switch — and design.css's `[data-theme]` tokens — resolve at the
-/// level the palette is declared, fixing dxc controls (select, tabs, …) and
-/// dialogs teleported under `<body>`. Uses the canonical `light`/`dark`
-/// values understood by both the vendored theme and design.css.
-fn apply_document_root_theme(is_night: bool) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(root) = web_sys::window()
-            .and_then(|window| window.document())
-            .and_then(|document| document.document_element())
-        {
-            let _ = root.set_attribute("data-theme", if is_night { "dark" } else { "light" });
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = is_night;
-    }
-}
-
-fn next_manual_theme(theme: &str) -> String {
-    let is_night = if theme == "system" {
-        browser_shell_color_scheme_is_dark().unwrap_or_else(browser_prefers_dark_theme)
-    } else {
-        theme == "night"
-    };
-    if is_night { "light" } else { "night" }.to_owned()
 }
 
 fn oidc_access_token_boot_usable(bundle: &OidcTokenBundle, now_unix: i64) -> bool {
@@ -5883,171 +5798,9 @@ fn DeferredFeatureGate(feature: &'static str) -> Element {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RealmSurface {
-    Timeline,
-    Board,
-    Document,
-}
-
-impl RealmSurface {
-    fn top_nav() -> [Self; 3] {
-        [Self::Timeline, Self::Board, Self::Document]
-    }
-
-    fn short_label(self) -> &'static str {
-        match self {
-            Self::Timeline => "Timeline",
-            Self::Board => "Board",
-            Self::Document => "Document",
-        }
-    }
-
-    fn title(self) -> &'static str {
-        match self {
-            Self::Timeline => "Timeline View",
-            Self::Board => "Board View",
-            Self::Document => "Document View",
-        }
-    }
-
-    fn icon_name(self) -> &'static str {
-        match self {
-            Self::Timeline => "timeline",
-            Self::Board => "board",
-            Self::Document => "file",
-        }
-    }
-
-    fn preference_value(self) -> &'static str {
-        match self {
-            Self::Timeline => "timeline",
-            Self::Board => "board",
-            Self::Document => "document",
-        }
-    }
-
-    fn from_preference(value: &str) -> Option<Self> {
-        match value {
-            "timeline" => Some(Self::Timeline),
-            "board" => Some(Self::Board),
-            "discussion" => Some(Self::Board),
-            "document" => Some(Self::Document),
-            _ => None,
-        }
-    }
-
-    fn route(self, realm_id: String) -> Route {
-        match self {
-            Self::Timeline => Route::TimelineRealm { realm_id },
-            Self::Board => Route::KanbanRealm { realm_id },
-            Self::Document => Route::DocumentRealm { realm_id },
-        }
-    }
-
-    fn is_available(self, minimal_ready: bool, kanban_ready: bool, full_ready: bool) -> bool {
-        match self {
-            Self::Timeline => minimal_ready,
-            Self::Board => kanban_ready,
-            Self::Document => full_ready,
-        }
-    }
-}
-
-fn realm_surface_preference_key(realm_id: &str) -> String {
-    format!("realm_surface:{realm_id}")
-}
-
-fn load_realm_surface_preference(
-    state_store: &LocalStateStore,
-    account_key: &str,
-    realm_id: &str,
-) -> RealmSurface {
-    if account_key.trim().is_empty() {
-        return RealmSurface::Timeline;
-    }
-
-    state_store
-        .load_private_data(account_key, &realm_surface_preference_key(realm_id))
-        .as_deref()
-        .and_then(RealmSurface::from_preference)
-        .unwrap_or(RealmSurface::Timeline)
-}
-
-fn persist_realm_surface_preference(
-    state_store: &mut LocalStateStore,
-    account_key: &str,
-    realm_id: &str,
-    surface: RealmSurface,
-) {
-    if account_key.trim().is_empty() {
-        return;
-    }
-
-    state_store.save_private_data(
-        account_key,
-        realm_surface_preference_key(realm_id),
-        surface.preference_value(),
-    );
-}
-
 // YOU-05-009: the main-strand id derivation is a protocol mapping rule; the
 // single authoritative copy lives in `crate::local_state`.
 use crate::local_state::default_strand_id_for_realm;
-
-fn resolve_realm_surface(
-    route: &Route,
-    state_store: &LocalStateStore,
-    account_key: &str,
-    _effective_realm_id: Option<&str>,
-) -> Option<RealmSurface> {
-    match route {
-        Route::Realm { realm_id } => Some(load_realm_surface_preference(
-            state_store,
-            account_key,
-            realm_id,
-        )),
-        Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
-            Some(RealmSurface::Timeline)
-        }
-        Route::Chat { .. } | Route::DirectConversation { .. } => None,
-        Route::Kanban
-        | Route::KanbanRealm { .. }
-        | Route::KanbanBoard { .. }
-        | Route::KanbanBoardTask { .. }
-        | Route::KanbanTask { .. } => Some(RealmSurface::Board),
-        Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => {
-            Some(RealmSurface::Document)
-        }
-        Route::RealmMembers { .. } | Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
-            None
-        }
-        _ => None,
-    }
-}
-
-fn route_uses_realm_context(route: &Route) -> bool {
-    matches!(
-        route,
-        Route::Realm { .. }
-            | Route::Timeline
-            | Route::TimelineRealm { .. }
-            | Route::TimelineMessage { .. }
-            | Route::Chat { .. }
-            | Route::DirectConversation { .. }
-            | Route::Kanban
-            | Route::KanbanRealm { .. }
-            | Route::KanbanBoard { .. }
-            | Route::KanbanBoardTask { .. }
-            | Route::KanbanTask { .. }
-            | Route::Document
-            | Route::DocumentNew
-            | Route::DocumentRealm { .. }
-            | Route::RealmMembers { .. }
-            | Route::RealmAdmin { .. }
-            | Route::RealmAdminSection { .. }
-    )
-}
 
 fn route_label(route: &Route) -> &'static str {
     match route {
