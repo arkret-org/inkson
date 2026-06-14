@@ -88,7 +88,6 @@ export function mockCokretContract(req) {
   if (method === "POST" && path === "/_cokret/find/directory/search-realms") {
     return json({
       realms: [realmPreview()],
-      next_cursor: null,
       has_more: false,
     });
   }
@@ -104,7 +103,10 @@ export function mockCokretContract(req) {
   }
 
   if (method === "GET" && path === "/_cokret/root/identity/recovery-policy") {
-    return json({ active_policy: null });
+    return json({
+      active_policy: null,
+      principal_id: body.principal_id ?? req.account?.did ?? "did:web:alice.example",
+    });
   }
 
   if (method === "POST" && path === "/_cokret/gate/account/device-pair") {
