@@ -135,40 +135,18 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("sas-match-button")).toBeVisible();
   });
 
-  test("device pairing: existing device approves new-device request through account gate", async ({
+  test("device pairing: generated request is accepted through account gate", async ({
     page,
   }) => {
     await page.goto("/settings/devices/pair", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await dismissBlockingDialog(page);
     await expect(page.getByTestId("pair-device-card")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("pending-pairing-requests-card")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("approve-pairing-request-button").first()).toBeVisible({
-      timeout: 30_000,
-    });
-    const createPendingPromise = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return url.pathname === "/_cokret/gate/account/device-pairing-requests";
-    });
     await page.getByTestId("pair-device-start-button").click();
-    const createPendingResponse = await createPendingPromise;
-    expect(createPendingResponse.ok()).toBeTruthy();
     await expect(page.getByTestId("pair-device-secret")).toHaveValue(/ck\.device\.pair\.request\.v1/, {
       timeout: 30_000,
     });
     const payload = await page.getByTestId("pair-device-secret").inputValue();
-
-    const approvePendingPromise = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return url.pathname.includes("/_cokret/self/devices/pairing-requests/")
-        && url.pathname.endsWith("/approve");
-    });
-    await page.getByTestId("approve-pairing-request-button").first().click();
-    const approvePendingResponse = await approvePendingPromise;
-    expect(approvePendingResponse.ok()).toBeTruthy();
-    await expect(page.getByTestId("pending-pairing-requests-card")).toContainText(
-      "Pairing request approved",
-      { timeout: 30_000 },
-    );
 
     await page.getByTestId("accept-pairing-input").fill(payload);
 

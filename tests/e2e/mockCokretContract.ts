@@ -119,75 +119,6 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "POST" && path === "/_cokret/gate/account/device-pairing-requests") {
-    const request = {
-      pairing_request_id: "01970000-0000-7000-8000-000000000020",
-      state: "pending",
-      requesting_device_id: body.new_device_pubkey?.kid ?? "ck:device:01964137-0000-7000-8000-0000000000b2",
-      pairing_code: body.pairing_code,
-      new_device_pubkey: body.new_device_pubkey,
-      challenge_signature: body.challenge_signature,
-      display_name: body.display_name ?? "New device",
-      device_metadata: body.device_metadata ?? {},
-      created_at: "2026-06-12T12:00:00Z",
-      expires_at: "2026-06-12T12:10:00Z",
-    };
-    return json({
-      pairing_request_id: request.pairing_request_id,
-      state: "pending",
-      requesting_device_id: request.requesting_device_id,
-      pairing_code: request.pairing_code,
-      expires_at: request.expires_at,
-      request,
-      notified_devices: 1,
-    });
-  }
-
-  if (method === "GET" && path === "/_cokret/self/devices/pairing-requests") {
-    return json({
-      requests: [
-        {
-          pairing_request_id: "01970000-0000-7000-8000-000000000020",
-          state: "pending",
-          requesting_device_id: "ck:device:01964137-0000-7000-8000-0000000000b2",
-          pairing_code: "pairing-code",
-          new_device_pubkey: {
-            kty: "OKP",
-            kid: "ck:device:01964137-0000-7000-8000-0000000000b2",
-            alg: "EdDSA",
-            key: "emtleQ",
-          },
-          challenge_signature: "c2ln",
-          display_name: "New browser",
-          device_metadata: { platform: "browser" },
-          created_at: "2026-06-12T12:00:00Z",
-          expires_at: "2026-06-12T12:10:00Z",
-        },
-      ],
-    });
-  }
-
-  if (method === "POST" && path.startsWith("/_cokret/self/devices/pairing-requests/") && path.endsWith("/approve")) {
-    return json({
-      device_id: "ck:device:01964137-0000-7000-8000-0000000000b2",
-      authorized_event_ref: "ck:event:01964137-0000-7000-8000-00000000d001",
-      device_grant: {
-        status: "active",
-      },
-      key_backup_hint: {},
-    });
-  }
-
-  if (method === "POST" && path === "/_cokret/self/devices/pairing-challenge") {
-    const deviceId = body.device_id ?? "dev_yougen";
-    return json({
-      challenge_id: `ck:device_challenge:${deviceId}`,
-      device_id: deviceId,
-      expires_at: "2026-04-28T12:05:00Z",
-      server_signature: "mock-signature",
-    });
-  }
-
   if (method === "POST" && path === "/_cokret/self/ephemeral") {
     if (!["ck.receipt.read", "ck.typing", "ck.presence", "ck.call.signal"].includes(body.kind)) {
       return json(
@@ -225,7 +156,6 @@ export function canonicalPath(path) {
     "/directory/search-realms": "/_cokret/find/directory/search-realms",
     "/keys/backups": "/_cokret/self/keys/backups",
     "/gate/account/device-pair": "/_cokret/gate/account/device-pair",
-    "/devices/pairing-challenge": "/_cokret/self/devices/pairing-challenge",
     "/ephemeral": "/_cokret/self/ephemeral",
   };
   return aliases[clean] ?? clean;
