@@ -403,6 +403,7 @@ fn policy_combination_hint(
 pub fn SetupPanel(
     base_url: String,
     plaintext_service_did: String,
+    secure_store_ready: bool,
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
@@ -455,6 +456,7 @@ pub fn SetupPanel(
     let mut new_space_state = use_signal(|| "Draft not created yet".to_owned());
     let mut new_space_created_id = use_signal(String::new);
     let mut realm_state = use_signal(|| "Draft not created yet".to_owned());
+    let mut realm_create_busy = use_signal(|| false);
     let mut created_realm_id = use_signal(String::new);
     // S6 (docs/user-flows-key-lifecycle.md §9, key-management §7.11) — recovery
     // soft-gate for encrypted-Realm creation. Creating an e2ee Realm produces
@@ -639,6 +641,7 @@ pub fn SetupPanel(
     let new_space_can_submit = has_session && new_space_ready;
     let seed_members_value = seed_members();
     let realm_state_value = realm_state();
+    let realm_create_busy_value = realm_create_busy();
     let created_realm_id_value = created_realm_id();
     let parsed_seed_members = parse_seed_members(&seed_members_value);
     let seed_member_count = parsed_seed_members.len();
@@ -652,13 +655,26 @@ pub fn SetupPanel(
     let current_policy_error = matches!(current_visibility_hint, Some(("error", _, _)));
     let basics_ready = !title_value.trim().is_empty();
     let boundary_ready = !current_policy_error;
+    let create_blocker = if !has_session {
+        Some("Sign in before creating a Realm.")
+    } else if !secure_store_ready {
+        Some("Device signing storage is still starting. Try again in a moment.")
+    } else if realm_create_busy_value {
+        Some("Creating Realm...")
+    } else {
+        None
+    };
     let can_advance_step = match active_create_step {
         NewRealmStep::Basics => basics_ready,
         NewRealmStep::Boundary => boundary_ready,
         NewRealmStep::Seed => basics_ready && boundary_ready,
         NewRealmStep::Done => has_created_realm,
     };
-    let can_create_realm = has_session && basics_ready && boundary_ready;
+    let can_create_realm = has_session
+        && basics_ready
+        && boundary_ready
+        && secure_store_ready
+        && !realm_create_busy_value;
 
     rsx! {
         div { class: "timeline", "data-testid": "setup-panel",
@@ -1174,6 +1190,19 @@ pub fn SetupPanel(
                                         div { class: "muted", "{seed_member_count} principal(s) will be included in the bootstrap request." }
                                     }
                                 }
+                                if let Some(blocker) = create_blocker {
+                                    div { class: "inline-warn", "data-testid": "realm-create-blocker",
+                                        span { class: "body", "{blocker}" }
+                                    }
+                                }
+                                if realm_state_value != "Draft not created yet" {
+                                    div { class: "setup-summary-list", "data-testid": "realm-create-status",
+                                        div { class: "setup-summary-row setup-summary-row-stack",
+                                            strong { "Bootstrap state" }
+                                            span { class: "muted", "{realm_state_value}" }
+                                        }
+                                    }
+                                }
                                 div { class: "actions setup-nav-actions",
                                     Button {
                                         variant: ButtonVariant::Secondary,
@@ -1209,6 +1238,9 @@ pub fn SetupPanel(
                                                         return;
                                                     }
                                                 }
+                                                realm_create_busy.set(true);
+                                                realm_state.set("Creating Realm...".to_owned());
+                                                status.set("Creating Realm...".to_owned());
                                                 let api_token = token();
                                                 let base = base.clone();
                                                 let backup_trigger_signal =
@@ -1229,6 +1261,20 @@ pub fn SetupPanel(
                                                 let configured_plaintext_service_did =
                                                     plaintext_service_did.clone();
                                                 spawn(async move {
+                                                    if crate::event_signer::active_signer().is_none() {
+                                                        match crate::event_signer::bootstrap_default_signer("yougen") {
+                                                            Ok(_) => {}
+                                                            Err(error) => {
+                                                                let message = format!(
+                                                                    "event signer is not ready; cannot sign ck.realm.create: {error}"
+                                                                );
+                                                                realm_create_busy.set(false);
+                                                                realm_state.set(message.clone());
+                                                                status.set(message);
+                                                                return;
+                                                            }
+                                                        }
+                                                    }
                                                     let invitees = parse_seed_members(&seed_text);
                                                     match authed_api(&base, api_token.clone()) {
                                                         Ok(api) => {
@@ -1365,6 +1411,7 @@ pub fn SetupPanel(
                                                                                     realm_id,
                                                                                     err.user_message()
                                                                                 );
+                                                                                realm_create_busy.set(false);
                                                                                 realm_state.set(message.clone());
                                                                                 status.set(message);
                                                                                 return;
@@ -1488,6 +1535,7 @@ pub fn SetupPanel(
                                                                 }
 
                                                                 let message = steps.join(" · ");
+                                                                realm_create_busy.set(false);
                                                                 realm_state.set(message.clone());
                                                                 status.set(message);
                                                                 create_step.set(NewRealmStep::Done);
@@ -1534,6 +1582,7 @@ pub fn SetupPanel(
                                                                 } else {
                                                                     format!("create failed: {error}")
                                                                 };
+                                                                realm_create_busy.set(false);
                                                                 realm_state.set(message.clone());
                                                                 status.set(message);
                                                             }
@@ -1541,6 +1590,7 @@ pub fn SetupPanel(
                                                         }
                                                         Err(error) => {
                                                             let message = format!("invalid server URL: {error}");
+                                                            realm_create_busy.set(false);
                                                             realm_state.set(message.clone());
                                                             status.set(message);
                                                         }
