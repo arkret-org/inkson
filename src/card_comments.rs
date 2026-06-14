@@ -112,7 +112,10 @@ pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value
     }
 
     let strand_id = cokret_sdk::StrandId::new(comment.card_strand_id.clone()).map_err(|err| {
-        anyhow::anyhow!("invalid card strand id {:?}: {err:?}", comment.card_strand_id)
+        anyhow::anyhow!(
+            "invalid card strand id {:?}: {err:?}",
+            comment.card_strand_id
+        )
     })?;
 
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(

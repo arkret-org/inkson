@@ -1394,6 +1394,7 @@ pub fn RouterView() -> Element {
             device_queue,
             theme,
             account_did,
+            device_id,
             selected_realm_id,
             profiles: profiles_signal,
             // Y1/Y2 —— 把上面 provide 的会话级缓存句柄交给同步引擎,

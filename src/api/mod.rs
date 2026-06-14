@@ -2320,21 +2320,22 @@ mod tests {
             "ck:space:01904100-0000-7000-8000-f10dc0000001"
         );
 
-        let strands: LifecycleProjectionView<StrandProjectionView> = serde_json::from_value(json!({
-            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
-            "strands": [{
-                "strand_id": "ck:strand:01904100-0000-7000-8000-f20dc0000001",
+        let strands: LifecycleProjectionView<StrandProjectionView> =
+            serde_json::from_value(json!({
                 "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
-                "title": "Card",
-                "summary": "Projection-backed card",
-                "board_space_id": "ck:space:01904100-0000-7000-8000-b0ard0000001",
-                "list_space_id": "ck:space:01904100-0000-7000-8000-l15t00000001",
-                "rank": "U",
-                "fields": { "labels": ["demo"] },
-                "state": "archived"
-            }]
-        }))
-        .unwrap();
+                "strands": [{
+                    "strand_id": "ck:strand:01904100-0000-7000-8000-f20dc0000001",
+                    "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+                    "title": "Card",
+                    "summary": "Projection-backed card",
+                    "board_space_id": "ck:space:01904100-0000-7000-8000-b0ard0000001",
+                    "list_space_id": "ck:space:01904100-0000-7000-8000-l15t00000001",
+                    "rank": "U",
+                    "fields": { "labels": ["demo"] },
+                    "state": "archived"
+                }]
+            }))
+            .unwrap();
         assert_eq!(strands.items[0].realm_id, strands.realm_id);
         assert_eq!(strands.items[0].state, "archived");
         assert_eq!(

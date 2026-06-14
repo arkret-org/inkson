@@ -2117,7 +2117,8 @@ pub(super) fn chat_message_from_event_with_sidecar(
         .iter()
         .any(|candidate| message_kind_is_create(candidate));
     let message_payload_shape =
-        first_string_in_candidates(&candidates, &["message_id", "strand_id", "thread_id"]).is_some();
+        first_string_in_candidates(&candidates, &["message_id", "strand_id", "thread_id"])
+            .is_some();
     if !explicit_message_kind && !message_payload_shape {
         return None;
     }

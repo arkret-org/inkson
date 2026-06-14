@@ -11,7 +11,9 @@ use crate::components::{
 };
 use crate::hlc::Hlc;
 use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState, RawOperationRecord};
-use crate::move_builder::{StrandPositionEffect, StrandPositionExpectation, strand_position_cell_id};
+use crate::move_builder::{
+    StrandPositionEffect, StrandPositionExpectation, strand_position_cell_id,
+};
 use crate::operation::{trim_realm_id, uuid_v7};
 use crate::rank::{RankError, rank_for_drop};
 use crate::routes::Route;
@@ -986,7 +988,8 @@ pub fn KanbanPanel(
                         .unwrap_or_default();
                     let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
                     let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                    let remote_update_operations = strand_update_operations_from_events(&event_items);
+                    let remote_update_operations =
+                        strand_update_operations_from_events(&event_items);
                     let remote_space_create_operations =
                         space_create_operations_from_events(&event_items);
                     let container_items = containers_with_local_space_creates(
@@ -1196,7 +1199,8 @@ pub fn KanbanPanel(
                     }
                     for view in &strand_items {
                         for col in cols.iter_mut() {
-                            if let Some(card) = col.cards.iter_mut().find(|c| c.id == view.strand_id)
+                            if let Some(card) =
+                                col.cards.iter_mut().find(|c| c.id == view.strand_id)
                             {
                                 let new_lifecycle = strand_lifecycle_from_wire(&view.state);
                                 if card.lifecycle != new_lifecycle {
@@ -6872,15 +6876,18 @@ fn dispatch_card_detail_update(
         snapshot: mls_new_snapshot,
     } = mls_events;
 
-    let op =
-        match crate::operation::ck_ops::strand_update_patch(&realm_id, &actor_id, &current.id, patch)
-        {
-            Ok(builder) => builder.build("yougen"),
-            Err(err) => {
-                board_status.set(format!("cannot update card: {err:#}"));
-                return false;
-            }
-        };
+    let op = match crate::operation::ck_ops::strand_update_patch(
+        &realm_id,
+        &actor_id,
+        &current.id,
+        patch,
+    ) {
+        Ok(builder) => builder.build("yougen"),
+        Err(err) => {
+            board_status.set(format!("cannot update card: {err:#}"));
+            return false;
+        }
+    };
     // R4: feed the guard the three-state security signal. An explicit
     // per-card `security_encrypted` flag (`Some`) wins; otherwise fall back to
     // the scope three-state so an unknown projection fails closed.

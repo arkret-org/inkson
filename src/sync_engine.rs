@@ -103,6 +103,11 @@ pub struct SyncEngineContext {
     pub device_queue: Signal<usize>,
     pub theme: Signal<String>,
     pub account_did: Signal<String>,
+    /// YOU-02-004R (§5.6) — the local device id, needed by the idle
+    /// self-update driver to load the device snapshot secret and build the
+    /// background `self_update_commit`. Sourced from the active profile config
+    /// (same value the chat / realm-admin send paths use).
+    pub device_id: Signal<String>,
     pub selected_realm_id: Signal<String>,
     /// CKP-0007 P3B.4.3 — the active multi-profile configuration. The
     /// engine reads `active_profile_id` at the top of every iteration
@@ -213,6 +218,15 @@ pub async fn run_sync_engine(
                 // RateLimited blip sticks in the status bar forever
                 // because apply_response doesn't touch last_error.
                 ctx.last_error.clone().set(None);
+                // YOU-02-004R (`encryption-and-audit.md` §5.6) — non-send
+                // self-preservation trigger. A long-lived read-only member's
+                // epoch is otherwise never force-advanced (the send path only
+                // fires while encrypting). After each successful sync — when
+                // the local membership/pending-commit view is freshest — drive
+                // the idle self-update pass. It is a no-op for every Realm not
+                // yet over the §5.6 floor / before this member's jitter slot,
+                // so the common case costs one cheap scan.
+                run_idle_self_update_pass(start_generation, generation, &ctx).await;
                 // Server-side long-poll absorbs the idle wait on a
                 // spec-compliant server; if the server returns
                 // immediately (older soland), MIN_INTER_ITERATION_MS
@@ -282,6 +296,136 @@ pub async fn run_sync_engine(
                 }
                 sleep_for(Duration::from_secs(backoff_secs)).await;
                 backoff_secs = (backoff_secs.saturating_mul(2)).min(MAX_BACKOFF_SECS);
+            }
+        }
+    }
+}
+
+/// YOU-02-004R (`encryption-and-audit.md` §5.6) — background idle / receive-only
+/// self-preservation Commit driver.
+///
+/// Walks every persisted MLS Realm and, for each one over the §5.6 trigger
+/// floor whose deterministic member-order jitter slot has opened, builds a
+/// `self_update_commit`, submits the canonical `ck.mls.commit`, and — only on
+/// server-accept — persists the post-commit snapshot (persist-on-accept, the
+/// same contract as the send path and the realm-admin epoch-rotation button).
+///
+/// Why here and not a separate timer: the sync loop already wakes on a
+/// human-scale cadence with the membership / pending-commit view at its
+/// freshest right after a sync applied, and the §5.6 normative pending-commit
+/// suppression + base-epoch CAS make a redundant pass cheap and safe (a loser
+/// just discards its local change per §5.4). One Realm is committed per pass at
+/// most, so a multi-Realm client spreads its background commits across passes
+/// instead of bursting.
+async fn run_idle_self_update_pass(
+    start_generation: u64,
+    generation: Signal<u64>,
+    ctx: &SyncEngineContext,
+) {
+    if generation() != start_generation {
+        return;
+    }
+    let base = ctx.base_url.read().clone();
+    let token = ctx.token.read().clone();
+    let actor_id = ctx.account_did.read().trim().to_owned();
+    let device_id = ctx.device_id.read().trim().to_owned();
+    if base.trim().is_empty()
+        || token.trim().is_empty()
+        || actor_id.is_empty()
+        || device_id.is_empty()
+    {
+        return;
+    }
+    let now = crate::clock::now_utc();
+    let realm_ids: Vec<String> = ctx.state_store.read().mls_snapshots().into_keys().collect();
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    for realm_id in realm_ids {
+        // Re-check cancellation between Realms: a logout / profile rotation
+        // mid-pass must not keep minting commits under the dead generation.
+        if generation() != start_generation {
+            return;
+        }
+        // Build the gated idle commit under a read borrow. `Ok(None)` is the
+        // overwhelmingly common case (Realm not yet due / before this member's
+        // jitter slot / a pending commit already suppresses it).
+        let built = {
+            let store = ctx.state_store.read();
+            crate::mls::runtime::build_idle_self_update_commit(
+                &store,
+                secure_store.as_ref(),
+                &realm_id,
+                &actor_id,
+                &device_id,
+                now,
+            )
+            .map_err(|err| err.user_message())
+            .and_then(|maybe| match maybe {
+                None => Ok(None),
+                Some((commit_envelope, snapshot)) => {
+                    let schedule_hash = commit_envelope.commit_digest.clone();
+                    crate::views::kanban::kanban_mls_commit_event_from_store(
+                        &store,
+                        &realm_id,
+                        &actor_id,
+                        &schedule_hash,
+                        &commit_envelope,
+                    )
+                    .map(|event| Some((event, commit_envelope.epoch, snapshot)))
+                }
+            })
+        };
+        let (commit_event, next_epoch, snapshot) = match built {
+            Ok(Some(parts)) => parts,
+            Ok(None) => continue,
+            Err(err) => {
+                // Soft failure (missing secret, build error): log once and move
+                // on. Local state is untouched; the next pass retries.
+                tracing::debug!(
+                    %realm_id,
+                    error = %err,
+                    "sync_engine: idle §5.6 self-update build skipped",
+                );
+                continue;
+            }
+        };
+        // Submit the canonical ck.mls.commit. The server's expected-prev-epoch
+        // CAS (§5.4) rejects the loser of any concurrent commit race; either
+        // way the epoch advances, so a rejection is fine — we simply do NOT
+        // persist the local snapshot (persist-on-accept).
+        let submit_token = token.clone();
+        match crate::views::helpers::with_authed_api(&base, submit_token, |api| async move {
+            api.submit_event_envelope(&commit_event).await
+        })
+        .await
+        {
+            Ok(_) => {
+                if generation() != start_generation {
+                    // A late accept under a stale generation must not write the
+                    // snapshot into the new generation's store.
+                    return;
+                }
+                ctx.state_store
+                    .clone()
+                    .write()
+                    .save_mls_snapshot(realm_id.clone(), snapshot);
+                tracing::info!(
+                    %realm_id,
+                    epoch = next_epoch,
+                    "sync_engine: §5.6 idle self-update commit accepted",
+                );
+                // One commit per pass: a multi-Realm client staggers the rest
+                // across subsequent sync iterations rather than bursting.
+                return;
+            }
+            Err(err) => {
+                tracing::debug!(
+                    %realm_id,
+                    error = %err.display(),
+                    "sync_engine: idle §5.6 self-update commit not accepted (race or transient)",
+                );
+                // Lost the §5.4 CAS or a transient error — discard the local
+                // change (never persisted) and let the next pass re-evaluate.
+                continue;
             }
         }
     }

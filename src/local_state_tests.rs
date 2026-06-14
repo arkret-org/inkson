@@ -189,7 +189,9 @@ fn private_plaintext_sidecar_round_trips_through_store() {
     // Fresh reader (simulating a process restart / reload).
     let reader = LocalStateStore::with_path(path.clone());
     assert_eq!(
-        reader.private_plaintext_for(realm, strand, "body").as_deref(),
+        reader
+            .private_plaintext_for(realm, strand, "body")
+            .as_deref(),
         Some("\"author body\"")
     );
     assert_eq!(
@@ -216,7 +218,11 @@ fn private_plaintext_sidecar_round_trips_through_store() {
     let mut writer = LocalStateStore::with_path(path.clone());
     writer.save_private_plaintext(realm, strand, "body", "");
     let reader = LocalStateStore::with_path(path);
-    assert!(reader.private_plaintext_for(realm, strand, "body").is_none());
+    assert!(
+        reader
+            .private_plaintext_for(realm, strand, "body")
+            .is_none()
+    );
     assert_eq!(
         reader
             .private_plaintext_for(realm, strand, "synthesis")

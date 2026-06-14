@@ -47,6 +47,7 @@ pub(crate) enum RealmAdminSection {
     Access,
     Security,
     Federation,
+    Moderation,
     Repair,
 }
 
@@ -57,6 +58,7 @@ impl RealmAdminSection {
             "access" => Self::Access,
             "security" => Self::Security,
             "federation" => Self::Federation,
+            "moderation" => Self::Moderation,
             "repair" => Self::Repair,
             _ => Self::Overview,
         }
@@ -69,6 +71,7 @@ impl RealmAdminSection {
             Self::Access => Some("access"),
             Self::Security => Some("security"),
             Self::Federation => Some("federation"),
+            Self::Moderation => Some("moderation"),
             Self::Repair => Some("repair"),
         }
     }
@@ -80,6 +83,7 @@ impl RealmAdminSection {
             Self::Access => "Access",
             Self::Security => "Security & MLS",
             Self::Federation => "Federation",
+            Self::Moderation => "Moderation",
             Self::Repair => "Repair & Danger",
         }
     }
@@ -101,6 +105,7 @@ const REALM_ADMIN_POLICY_GROUP: &[RealmAdminSection] = &[
     RealmAdminSection::Access,
     RealmAdminSection::Security,
     RealmAdminSection::Federation,
+    RealmAdminSection::Moderation,
 ];
 const REALM_ADMIN_OPERATIONS_GROUP: &[RealmAdminSection] = &[RealmAdminSection::Repair];
 const REALM_ADMIN_NAV_GROUPS: &[(&str, &[RealmAdminSection])] = &[
@@ -2551,6 +2556,19 @@ pub fn RealmAdminPanel(
                     div { class: "muted",
                         "Trust bundle import, validation, and revocation are not wired in yougen. Use the deployment's admin tooling for federation trust changes."
                     }
+                }
+            }
+
+            // P3 — moderation reviewer workbench (decision/lift + appeal
+            // review/decide/close). Drives the daily-governance moderation_*
+            // / appeal_* API; queues project from the local raw-operation log.
+            if active_section == RealmAdminSection::Moderation {
+                crate::views::moderation::ModerationWorkbench {
+                    base_url: base_url.clone(),
+                    account_did: account_did.clone(),
+                    token,
+                    selected_realm_id: selected_realm_id.clone(),
+                    state_store,
                 }
             }
 

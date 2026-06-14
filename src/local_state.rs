@@ -2513,7 +2513,11 @@ impl LocalStateStore {
     /// answer is forced `true`; with `disclosure="disabled"` it's forced
     /// `false`. User-level overrides are ignored in those cases (matching
     /// the lock UI in settings).
-    pub fn read_receipt_should_send(&self, strand_id: Option<&str>, realm_id: Option<&str>) -> bool {
+    pub fn read_receipt_should_send(
+        &self,
+        strand_id: Option<&str>,
+        realm_id: Option<&str>,
+    ) -> bool {
         let snapshot = self.load();
         if let Some(rid) = realm_id
             && let Some(policy) = snapshot.read_receipt_policy_snapshots.get(rid)

@@ -685,7 +685,9 @@ pub mod ck_ops {
             "participating" => Ok(cokret_sdk::StrandWatchLevel::Participating),
             "all" => Ok(cokret_sdk::StrandWatchLevel::All),
             "muted" => Ok(cokret_sdk::StrandWatchLevel::Muted),
-            other => Err(anyhow::anyhow!("unknown ck.strand.watch.set level {other:?}")),
+            other => Err(anyhow::anyhow!(
+                "unknown ck.strand.watch.set level {other:?}"
+            )),
         }
     }
 
@@ -710,9 +712,9 @@ pub mod ck_ops {
                 did_id(watcher_actor_id)?,
             ),
         };
-        payload
-            .to_value()
-            .map_err(|err| anyhow::anyhow!("invalid strand_watch_set_payload for {strand_id}: {err}"))
+        payload.to_value().map_err(|err| {
+            anyhow::anyhow!("invalid strand_watch_set_payload for {strand_id}: {err}")
+        })
     }
 
     /// Build the canonical `strand_move_payload` body via the SDK strong type.
@@ -815,11 +817,12 @@ pub mod ck_ops {
     }
 
     fn patch_from_value(patch: Value) -> anyhow::Result<cokret_sdk::Patch> {
-        let patch: cokret_sdk::Patch = serde_json::from_value(patch)
-            .map_err(|err| anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}"))?;
-        patch
-            .validate()
-            .map_err(|err| anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}"))?;
+        let patch: cokret_sdk::Patch = serde_json::from_value(patch).map_err(|err| {
+            anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}")
+        })?;
+        patch.validate().map_err(|err| {
+            anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}")
+        })?;
         Ok(patch)
     }
 
@@ -962,7 +965,8 @@ pub mod ck_ops {
         // Strong type: strand_watch_set_payload (additionalProperties:false +
         // allOf forbidding level_public when level is null). The typed
         // constructors keep the clear path (level:null) free of level_public.
-        let payload = strand_watch_set_payload_value(strand_id, target_actor_id, level, level_public)?;
+        let payload =
+            strand_watch_set_payload_value(strand_id, target_actor_id, level, level_public)?;
         Ok(
             OperationBuilder::new(realm_id, sender_actor, "ck.strand.watch.set")
                 .target_ref(strand_id)
@@ -1927,15 +1931,19 @@ pub mod ck_ops {
         let effect_rank = position_field(&effect_position, "rank");
 
         let Some(effect_space) = effect_space else {
-            let payload =
-                strand_object_patch_payload_value(strand_id, patch_set("position", effect_position)?)?;
+            let payload = strand_object_patch_payload_value(
+                strand_id,
+                patch_set("position", effect_position)?,
+            )?;
             return Ok(OperationBuilder::new(realm_id, actor, "ck.strand.update")
                 .target_ref(strand_id)
                 .body(payload));
         };
         let Some(effect_rank) = effect_rank else {
-            let payload =
-                strand_object_patch_payload_value(strand_id, patch_set("position", effect_position)?)?;
+            let payload = strand_object_patch_payload_value(
+                strand_id,
+                patch_set("position", effect_position)?,
+            )?;
             return Ok(OperationBuilder::new(realm_id, actor, "ck.strand.update")
                 .target_ref(strand_id)
                 .body(payload));

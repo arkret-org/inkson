@@ -165,7 +165,8 @@ pub fn DashboardPanel(
                 }
                 Err(err) => {
                     recent_strands.set(Vec::new());
-                    recent_strands_status.set(format!("Recent strands unavailable: {}", err.display()));
+                    recent_strands_status
+                        .set(format!("Recent strands unavailable: {}", err.display()));
                 }
             }
         });

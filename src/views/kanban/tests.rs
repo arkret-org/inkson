@@ -500,7 +500,10 @@ fn validate_strand_lifecycle_transition_rules() {
 /// MUST start Active so the demo board exercises the happy path.
 #[test]
 fn strand_lifecycle_state_default_is_active() {
-    assert_eq!(StrandLifecycleState::default(), StrandLifecycleState::Active);
+    assert_eq!(
+        StrandLifecycleState::default(),
+        StrandLifecycleState::Active
+    );
     for column in seed_columns() {
         for card in &column.cards {
             assert_eq!(
@@ -558,7 +561,9 @@ fn card_detail_tab_reads_url_query() {
         Some(CardDetailContentTab::Synthesis)
     );
     assert_eq!(
-        card_detail_tab_from_href("http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:strand:f?tab=bad"),
+        card_detail_tab_from_href(
+            "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:strand:f?tab=bad"
+        ),
         None
     );
 }
@@ -685,7 +690,10 @@ fn strand_body_display_text_reads_content_block_body() {
         "body": "Long-form strand body"
     });
 
-    assert_eq!(strand_body_display_text(Some(&body)), "Long-form strand body");
+    assert_eq!(
+        strand_body_display_text(Some(&body)),
+        "Long-form strand body"
+    );
 }
 
 #[test]
@@ -746,7 +754,10 @@ fn value_is_mls_envelope_detects_encrypted_patch_values() {
 fn private_strand_display_text_passes_plaintext_through_without_ctx() {
     let plain = json!({ "kind": "ck.content.text", "body": "plain body" });
     // No decrypt ctx, non-envelope value → renders the plaintext as-is.
-    assert_eq!(private_strand_display_text(None, Some(&plain)), "plain body");
+    assert_eq!(
+        private_strand_display_text(None, Some(&plain)),
+        "plain body"
+    );
     // Missing value → blank.
     assert_eq!(private_strand_display_text(None, None), "");
 }
@@ -975,7 +986,10 @@ fn collection_projection_maps_to_kanban_columns() {
     assert_eq!(card.body, "Review processor wording before beta.");
     // Locked discussion + lazy_link should populate locked_strand
     // and the cross-Space hint without leaking room contents.
-    assert!(card.locked_strand.is_some(), "locked discussion → LockedStrand");
+    assert!(
+        card.locked_strand.is_some(),
+        "locked discussion → LockedStrand"
+    );
     assert_eq!(
         card.history_visibility, "lazy_link (cross-Space)",
         "lazy_link=true must be reflected without exposing members"
@@ -2596,14 +2610,20 @@ fn relocate_card_preserves_rank_ordering_after_move() {
             id: "ck:space:list-a".to_owned(),
             title: "A".to_owned(),
             rank: "U".to_owned(),
-            cards: vec![test_card("ck:strand:a1", "U"), test_card("ck:strand:a2", "f")],
+            cards: vec![
+                test_card("ck:strand:a1", "U"),
+                test_card("ck:strand:a2", "f"),
+            ],
             state: SpaceContainerLifecycleState::Active,
         },
         KanbanColumn {
             id: "ck:space:list-b".to_owned(),
             title: "B".to_owned(),
             rank: "f".to_owned(),
-            cards: vec![test_card("ck:strand:b1", "U"), test_card("ck:strand:b3", "z")],
+            cards: vec![
+                test_card("ck:strand:b1", "U"),
+                test_card("ck:strand:b3", "z"),
+            ],
             state: SpaceContainerLifecycleState::Active,
         },
     ];

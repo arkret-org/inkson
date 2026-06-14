@@ -61,6 +61,11 @@ pub mod global_search;
 pub mod helpers;
 pub mod kanban;
 pub mod login;
+/// P3 — moderation reviewer workbench (decision/lift + appeal review/decide/
+/// close). Admin-scope reviewer surface, mounted as the RealmAdmin
+/// `Moderation` section; drives the daily-governance `moderation_*` /
+/// `appeal_*` API. Companion to the appellant-facing [`moderation_appeal`].
+pub mod moderation;
 /// Round R2/R3 (T06) — moderation appeal user strand. Entrypoint button +
 /// `ck.moderation.appeal.submit` builder. Renders near user-facing
 /// moderation decisions; reviewer surface is admin-scope.

@@ -105,8 +105,8 @@ pub mod rank;
 /// hierarchy + projection-parsing logic is unit-testable in isolation.
 pub(crate) mod realm_tree;
 pub mod recovery_crypto;
-pub mod recovery_strand;
 pub mod recovery_proof;
+pub mod recovery_strand;
 pub mod routes;
 pub mod secure_key_store;
 pub mod security_state;

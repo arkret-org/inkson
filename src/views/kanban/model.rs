@@ -48,7 +48,8 @@ pub(super) fn actor_is_current_account(actor_id: &str, account_did: &str) -> boo
 
 pub(super) const LOCAL_PENDING_CARD_DESCRIPTION: &str =
     "New local card waiting for reducer receipt.";
-pub(super) const DEMO_STRAND_LEGAL_REVIEW_ID: &str = "ck:strand:0196419b-0000-7000-8000-000000000101";
+pub(super) const DEMO_STRAND_LEGAL_REVIEW_ID: &str =
+    "ck:strand:0196419b-0000-7000-8000-000000000101";
 pub(super) const DEMO_STRAND_ONBOARDING_COPY_ID: &str =
     "ck:strand:0196419b-0000-7000-8000-000000000102";
 pub(super) const DEMO_STRAND_SECURITY_SIGNOFF_ID: &str =
@@ -1072,13 +1073,19 @@ pub(super) fn columns_from_lifecycle_projection(
     });
 
     for strand in strands.iter().filter(|strand| {
-        strand_projection_field_string(strand, strand.board_space_id.as_deref(), &["board_space_id"])
-            .as_deref()
+        strand_projection_field_string(
+            strand,
+            strand.board_space_id.as_deref(),
+            &["board_space_id"],
+        )
+        .as_deref()
             == Some(board_id.as_str())
     }) {
-        let Some(list_space_id) =
-            strand_projection_field_string(strand, strand.list_space_id.as_deref(), &["list_space_id"])
-        else {
+        let Some(list_space_id) = strand_projection_field_string(
+            strand,
+            strand.list_space_id.as_deref(),
+            &["list_space_id"],
+        ) else {
             continue;
         };
         if let Some(column) = cols.iter_mut().find(|col| col.id == list_space_id) {
@@ -1154,7 +1161,8 @@ pub(super) fn strand_projection_field_string(
         .map(ToOwned::to_owned)
         .or_else(|| {
             field_names.iter().find_map(|field_name| {
-                strand.fields
+                strand
+                    .fields
                     .get(*field_name)
                     .and_then(Value::as_str)
                     .filter(|value| !value.trim().is_empty())
@@ -1177,7 +1185,9 @@ pub(super) fn strand_projection_labels(strand: &crate::api::StrandProjectionView
     }
 }
 
-pub(super) fn strand_projection_assignee(strand: &crate::api::StrandProjectionView) -> Option<String> {
+pub(super) fn strand_projection_assignee(
+    strand: &crate::api::StrandProjectionView,
+) -> Option<String> {
     if strand.assigned_actor_ids.is_empty() {
         return None;
     }
@@ -1187,7 +1197,8 @@ pub(super) fn strand_projection_assignee(strand: &crate::api::StrandProjectionVi
 pub(super) fn strand_projection_assigned_to_relations(
     strand: &crate::api::StrandProjectionView,
 ) -> Vec<CardAssignedToRelation> {
-    strand.assigned_to_relations
+    strand
+        .assigned_to_relations
         .iter()
         .filter_map(|relation| {
             let relation_id = relation.relation_id.trim();
@@ -1318,7 +1329,10 @@ pub(super) fn value_is_mls_envelope(value: &Value) -> bool {
 /// snapshot / wrong device secret / payload that doesn't decrypt). On
 /// `None` the caller keeps the original value (plaintext realms) or falls
 /// back to a blank field (encrypted-but-locked).
-pub(super) fn decrypt_private_strand_value(ctx: &MlsDecryptCtx<'_>, value: &Value) -> Option<Value> {
+pub(super) fn decrypt_private_strand_value(
+    ctx: &MlsDecryptCtx<'_>,
+    value: &Value,
+) -> Option<Value> {
     let envelope = mls_envelope_value(value)?;
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         ctx.state_store,
@@ -1452,18 +1466,22 @@ pub(super) fn card_from_strand_projection(
     } else {
         strand.title.clone()
     };
-    let description =
-        strand_projection_field_string(strand, strand.summary.as_deref(), &["summary", "description"])
-            .unwrap_or_default();
+    let description = strand_projection_field_string(
+        strand,
+        strand.summary.as_deref(),
+        &["summary", "description"],
+    )
+    .unwrap_or_default();
     let discussion_visibility =
         strand_projection_field_string(strand, None, &["discussion_visibility", "visibility"]);
     let locked_strand = if discussion_visibility.as_deref() == Some("locked") {
         Some(LockedStrand {
             strand_id_hash: strand_projection_field_string(strand, None, &["discussion_ref_hash"])
                 .unwrap_or_else(|| format!("sha256:{}", strand.strand_id)),
-            reason: strand_projection_field_string(strand, None, &["locked_reason"]).unwrap_or_else(
-                || "Locked discussion: title and members are not disclosed.".to_owned(),
-            ),
+            reason: strand_projection_field_string(strand, None, &["locked_reason"])
+                .unwrap_or_else(|| {
+                    "Locked discussion: title and members are not disclosed.".to_owned()
+                }),
         })
     } else {
         None
@@ -1498,7 +1516,12 @@ pub(super) fn card_from_strand_projection(
             .unwrap_or_default(),
         title: title.clone(),
         description,
-        body: private_strand_field_text(decrypt_ctx, &strand.strand_id, strand_body_path, strand_body_value),
+        body: private_strand_field_text(
+            decrypt_ctx,
+            &strand.strand_id,
+            strand_body_path,
+            strand_body_value,
+        ),
         body_locked: private_strand_field_locked(
             decrypt_ctx,
             &strand.strand_id,
@@ -1796,7 +1819,9 @@ pub(super) fn displayed_card_state(
     card: &KanbanCard,
     projected_strand_ids: &BTreeSet<String>,
 ) -> CardState {
-    if projected_strand_ids.contains(&card.id) || projected_strand_ids.contains(&card.primary_strand_id) {
+    if projected_strand_ids.contains(&card.id)
+        || projected_strand_ids.contains(&card.primary_strand_id)
+    {
         CardState::Synced
     } else {
         card.state
@@ -2278,7 +2303,8 @@ pub(super) fn strand_position_component(body: Option<&Value>) -> Option<&Value> 
         .as_array()?
         .iter()
         .find(|component| {
-            component.get("family").and_then(Value::as_str) == Some("ck.component.strand.position.v1")
+            component.get("family").and_then(Value::as_str)
+                == Some("ck.component.strand.position.v1")
         })
 }
 

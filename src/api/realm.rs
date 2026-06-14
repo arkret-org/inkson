@@ -682,6 +682,119 @@ impl CokretApi {
         self.submit_event_envelope(&envelope).await
     }
 
+    /// `governance/content-moderation.md` §5.5.1.1 — atomically decide an
+    /// appeal `verdict=overturn`. The reducer rejects an overturn whose
+    /// matching `ck.moderation.decision.lift` (target = `decision_ref`) is not
+    /// in the SAME ordered submit batch (`appeal_overturn_missing_lift`), so
+    /// this helper builds BOTH events, signs them, and submits them via
+    /// [`Self::submit_events_batch`] as one transaction.
+    ///
+    /// Order matters: the appeal-decision precedes the lift it authorizes.
+    pub async fn appeal_overturn_atomic(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        appeal_id: &str,
+        decision_ref: &str,
+        reason_text_ref: &str,
+        lift_reason_code: &str,
+    ) -> anyhow::Result<Value> {
+        let appeal_event = crate::operation::ck_ops::moderation_appeal_decision(
+            realm_id,
+            actor_id,
+            appeal_id,
+            "overturn",
+            reason_text_ref,
+            None,
+        )
+        .build("yougen");
+        let lift_event = crate::operation::ck_ops::moderation_decision_lift(
+            realm_id,
+            actor_id,
+            decision_ref,
+            lift_reason_code,
+        )
+        .build("yougen");
+        self.sign_and_submit_moderation_batch(realm_id, vec![appeal_event, lift_event])
+            .await
+    }
+
+    /// `governance/content-moderation.md` §5.5.1.1 — atomically decide an
+    /// appeal `verdict=modify`. The reducer rejects a modify whose
+    /// replacement `ck.moderation.decision` (target = original target) is not
+    /// in the same batch, and cross-checks that the appeal-decision's
+    /// `modify_decision_ref` equals that new decision's event id. This helper
+    /// mints the replacement decision id, stamps it as `modify_decision_ref`,
+    /// and submits both events as one transaction.
+    ///
+    /// Returns the minted replacement `decision_id` alongside the batch result
+    /// so the caller can surface it.
+    pub async fn appeal_modify_atomic(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        appeal_id: &str,
+        target_ref: &str,
+        new_verdict: &str,
+        new_reason_code: &str,
+        appeal_reason_text_ref: &str,
+    ) -> anyhow::Result<(String, Value)> {
+        let new_decision_id = format!("ck:event:{}", crate::operation::uuid_v7());
+        let mut new_decision = crate::operation::ck_ops::moderation_decision(
+            realm_id,
+            actor_id,
+            &new_decision_id,
+            target_ref,
+            new_verdict,
+            new_reason_code,
+        )
+        .build("yougen");
+        // The reducer matches `modify_decision_ref` against the new decision's
+        // EVENT id, so pin the envelope's event_id to the same value we report.
+        new_decision.event_id = new_decision_id.clone();
+        let appeal_event = crate::operation::ck_ops::moderation_appeal_decision(
+            realm_id,
+            actor_id,
+            appeal_id,
+            "modify",
+            appeal_reason_text_ref,
+            Some(&new_decision_id),
+        )
+        .build("yougen");
+        let result = self
+            .sign_and_submit_moderation_batch(realm_id, vec![appeal_event, new_decision])
+            .await?;
+        Ok((new_decision_id, result))
+    }
+
+    /// Seal-stamp + sign each envelope in a moderation control transaction,
+    /// then submit them atomically via [`Self::submit_events_batch`]. Shared
+    /// by [`Self::appeal_overturn_atomic`] / [`Self::appeal_modify_atomic`].
+    /// All envelopes ride the same Realm seal head so the batch is one
+    /// consistent control view.
+    async fn sign_and_submit_moderation_batch(
+        &self,
+        realm_id: &str,
+        mut envelopes: Vec<crate::operation::EventEnvelope>,
+    ) -> anyhow::Result<Value> {
+        let seal = self.current_seal_for(realm_id).await?;
+        let proof_context = self.event_proof_context().await?;
+        for envelope in &mut envelopes {
+            if envelope.seal_ref.is_none() && !envelope.effects.is_empty() {
+                envelope.seal_ref = Some(seal.clone());
+            }
+            if envelope.proofs.is_empty() {
+                crate::event_signer::sign_with_active_context(envelope, proof_context.clone())
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "no active signer configured \u{2014} cannot submit moderation batch: {err}"
+                        )
+                    })?;
+            }
+        }
+        self.submit_events_batch(&envelopes, None).await
+    }
+
     /// Close an appeal (`ck.moderation.appeal.close`). Reviewer close or
     /// appellant withdrawal (the reducer authorizes withdrawal via
     /// `closer == appellant`).

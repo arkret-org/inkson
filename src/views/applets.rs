@@ -26,8 +26,12 @@
 //! server-side soland validation), per-session cancellation. Those
 //! follow once the bridge layer is implemented in a companion crate.
 
+use cokret_sdk::models::{
+    AppletApprovalRequest, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
+    AppletRevokeMode, AppletRevokeRequestBody,
+};
 use dioxus::prelude::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
@@ -35,6 +39,56 @@ use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
+
+/// Build the canonical `applet_package` Value the install preview/commit
+/// surface expects from a manifest input. For inline JSON the parsed object is
+/// the package as-is; for a URL we wrap it in the minimal
+/// `{ manifest_url }` envelope soland resolves server-side. Pure so the
+/// classify→package mapping is unit-tested.
+pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<Value> {
+    match kind {
+        ManifestInputKind::Json(raw) => serde_json::from_str::<Value>(raw).ok(),
+        ManifestInputKind::Url(url) => Some(json!({ "manifest_url": url })),
+        ManifestInputKind::Invalid => None,
+    }
+}
+
+/// The effective-scope object an install/revoke targets: the admin's currently
+/// selected Realm. soland gates the write on `ck.realm.admin` over this scope.
+pub fn applet_effective_scope(realm_id: &str) -> Value {
+    json!({ "realm_id": crate::operation::trim_realm_id(realm_id) })
+}
+
+/// A conservative default approval request: no ghost / delegated-native actors,
+/// no e2ee join, no widget — only the explicitly requested non-actor scopes.
+/// The admin escalates these in the wizard's approval step before commit.
+fn default_approval_request() -> AppletApprovalRequest {
+    AppletApprovalRequest {
+        approve_actions: Vec::new(),
+        allow_ghost_actors: false,
+        allow_delegated_native_actors: false,
+        allow_e2ee_join: false,
+        allow_widget: false,
+    }
+}
+
+/// Pull `plan_digest` + `approved_scopes` out of the canonical InstallPlan the
+/// preview returns. `applet-install-plan.schema.json` makes both required, so a
+/// missing `plan_digest` is a hard error the caller surfaces rather than
+/// committing a digest-less (always-rejected) install.
+pub fn parse_install_plan(plan: &Value) -> Result<(String, Vec<Value>), String> {
+    let plan_digest = plan
+        .get("plan_digest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "preview returned no plan_digest".to_owned())?
+        .to_owned();
+    let approved_scopes = plan
+        .get("approved_scopes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Ok((plan_digest, approved_scopes))
+}
 
 /// Whether the local UI should expose applet install / registration panels.
 pub fn applets_enabled() -> bool {
@@ -98,6 +152,10 @@ pub fn AppletsPanel(
     let mut install_manifest = use_signal(String::new);
     let mut install_verified = use_signal(|| false);
     let mut install_status = use_signal(String::new);
+    // P3 install wizard: the previewed plan_digest the commit MUST echo, and
+    // the resolved approved-scope count surfaced after preview.
+    let mut install_plan_digest = use_signal(String::new);
+    let mut install_approved_scopes = use_signal(|| 0usize);
     let mut trace_open_for = use_signal(|| Option::<String>::None);
 
     // Pull registry + session rows from the local raw-operation
@@ -437,56 +495,136 @@ pub fn AppletsPanel(
                             },
                             style: "width: 100%; min-height: 60px;",
                         }
+                        // Step 1 — preview: POST the manifest-derived package to
+                        // `applet_install_preview`, capturing the canonical
+                        // plan_digest the commit MUST echo back (P3 API).
                         div { class: "actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 "data-testid": "applet-install-verify-button",
-                                onclick: move |_| {
-                                    let raw = install_manifest();
-                                    match classify_manifest_input(&raw) {
-                                        ManifestInputKind::Invalid => {
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let realm = selected_realm_id.clone();
+                                    move |_| {
+                                        let raw = install_manifest();
+                                        let kind = classify_manifest_input(&raw);
+                                        let Some(package) = applet_package_from_manifest(&kind) else {
                                             install_verified.set(false);
+                                            install_plan_digest.set(String::new());
                                             install_status
                                                 .set("manifest must be a URL or JSON body".to_owned());
-                                        }
-                                        ManifestInputKind::Url(u) => {
-                                            // Experimental-only surface:
-                                            // default builds hide this panel
-                                            // until server-side manifest
-                                            // verification is owned by soland.
-                                            install_verified.set(true);
-                                            install_status.set(format!(
-                                                "manifest URL accepted: {u}"
-                                            ));
-                                        }
-                                        ManifestInputKind::Json(_j) => {
-                                            install_verified.set(true);
-                                            install_status.set(format!(
-                                                "manifest JSON parsed (hash {})",
-                                                manifest_hash_for(&raw)
-                                            ));
-                                        }
+                                            return;
+                                        };
+                                        let base = base.clone();
+                                        let realm = realm.clone();
+                                        let api_token = token();
+                                        install_status.set("previewing install plan…".to_owned());
+                                        spawn(async move {
+                                            let body = AppletInstallPreviewRequestBody {
+                                                applet_package: package,
+                                                effective_scope: applet_effective_scope(&realm),
+                                                approval_request: default_approval_request(),
+                                            };
+                                            let result = with_authed_api(&base, api_token, |api| async move {
+                                                api.applet_install_preview(&body).await
+                                            })
+                                            .await;
+                                            match result {
+                                                Ok(plan) => match parse_install_plan(&plan) {
+                                                    Ok((digest, scopes)) => {
+                                                        install_plan_digest.set(digest.clone());
+                                                        install_approved_scopes.set(scopes.len());
+                                                        install_verified.set(true);
+                                                        install_status.set(format!(
+                                                            "plan ready ({} scope(s)); digest {}",
+                                                            install_approved_scopes(),
+                                                            short_protocol_id(&digest),
+                                                        ));
+                                                    }
+                                                    Err(err) => {
+                                                        install_verified.set(false);
+                                                        install_status.set(format!("preview invalid: {err}"));
+                                                    }
+                                                },
+                                                Err(err) => {
+                                                    install_verified.set(false);
+                                                    install_status.set(format!(
+                                                        "preview failed: {}", err.display()
+                                                    ));
+                                                }
+                                            }
+                                        });
                                     }
                                 },
-                                "Verify manifest"
+                                "Preview plan"
                             }
+                            // Step 2 — commit: echo plan_digest + approved_scopes
+                            // back via `applet_install` with an Idempotency-Key.
                             Button {
                                 variant: if install_verified() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                                 disabled: !install_verified(),
                                 "data-testid": "applet-install-confirm-button",
-                                onclick: move |_| {
-                                    install_status.set(
-                                        "install confirmed — submit ck.applet.registration in the form above to publish".to_owned(),
-                                    );
-                                    install_open.set(false);
-                                    install_manifest.set(String::new());
-                                    install_verified.set(false);
-                                    // Experimental-only surface:
-                                    // default builds hide this panel
-                                    // until manifest prefill and direct
-                                    // registration submission are complete.
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let realm = selected_realm_id.clone();
+                                    move |_| {
+                                        let raw = install_manifest();
+                                        let kind = classify_manifest_input(&raw);
+                                        let Some(package) = applet_package_from_manifest(&kind) else {
+                                            install_status.set("manifest no longer valid".to_owned());
+                                            return;
+                                        };
+                                        let digest = install_plan_digest();
+                                        if digest.is_empty() {
+                                            install_status.set("preview the plan before installing".to_owned());
+                                            return;
+                                        }
+                                        let base = base.clone();
+                                        let realm = realm.clone();
+                                        let api_token = token();
+                                        install_status.set("installing applet…".to_owned());
+                                        spawn(async move {
+                                            let digest_typed = match cokret_sdk::Hash::new(digest.clone()) {
+                                                Ok(h) => h,
+                                                Err(err) => {
+                                                    install_status.set(format!("bad plan_digest: {err:?}"));
+                                                    return;
+                                                }
+                                            };
+                                            let body = AppletInstallRequestBody {
+                                                plan_digest: digest_typed,
+                                                applet_package: package,
+                                                effective_scope: applet_effective_scope(&realm),
+                                                approved_scopes: Vec::new(),
+                                                actor_policy: Value::Null,
+                                                e2ee_policy: Value::Null,
+                                                widget_policy: Value::Null,
+                                            };
+                                            let idem = crate::operation::uuid_v7();
+                                            let result = with_authed_api(&base, api_token, |api| async move {
+                                                api.applet_install(&idem, &body).await
+                                            })
+                                            .await;
+                                            match result {
+                                                Ok(outcome) => {
+                                                    install_status.set(format!(
+                                                        "installed: applet_id {} ({:?})",
+                                                        short_protocol_id(&outcome.applet_id),
+                                                        outcome.effective_status,
+                                                    ));
+                                                    install_open.set(false);
+                                                    install_manifest.set(String::new());
+                                                    install_verified.set(false);
+                                                    install_plan_digest.set(String::new());
+                                                }
+                                                Err(err) => install_status.set(format!(
+                                                    "install failed: {}", err.display()
+                                                )),
+                                            }
+                                        });
+                                    }
                                 },
-                                "Confirm install"
+                                "Install applet"
                             }
                         }
                         if !install_status().is_empty() {
@@ -530,15 +668,34 @@ pub fn AppletsPanel(
                                             variant: ButtonVariant::Destructive,
                                             "data-testid": "applet-uninstall-button",
                                             onclick: {
-                                                let sd = service_did.clone();
+                                                let base = base_url.clone();
+                                                let realm = selected_realm_id.clone();
+                                                let aid = applet_id.clone();
                                                 move |_| {
-                                                    install_status.set(format!(
-                                                        "uninstall requested for {sd}"
-                                                    ));
-                                                    // Experimental-only surface:
-                                                    // default builds hide this panel
-                                                    // until soland accepts applet
-                                                    // revoke/uninstall events.
+                                                    let base = base.clone();
+                                                    let realm = realm.clone();
+                                                    let aid = aid.clone();
+                                                    let api_token = token();
+                                                    install_status.set("revoking applet…".to_owned());
+                                                    spawn(async move {
+                                                        let body = AppletRevokeRequestBody {
+                                                            effective_scope: applet_effective_scope(&realm),
+                                                            reason_code: "admin_uninstall".to_owned(),
+                                                            revoke_mode: AppletRevokeMode::RevokeAll,
+                                                        };
+                                                        let result = with_authed_api(&base, api_token, |api| async move {
+                                                            api.applet_revoke(&aid, &body).await
+                                                        })
+                                                        .await;
+                                                        match result {
+                                                            Ok(outcome) => install_status.set(format!(
+                                                                "revoked: {} ref(s)", outcome.revoked_refs.len()
+                                                            )),
+                                                            Err(err) => install_status.set(format!(
+                                                                "revoke failed: {}", err.display()
+                                                            )),
+                                                        }
+                                                    });
                                                 }
                                             },
                                             "Uninstall"
@@ -679,6 +836,45 @@ mod tests {
         let a = manifest_hash_for("did:web:applet.example:extensions");
         let b = manifest_hash_for("did:web:applet.example:messaging");
         assert_ne!(a, b);
+    }
+
+    // ── P3 install wizard helpers ───────────────────────────────
+
+    use super::{applet_effective_scope, applet_package_from_manifest, parse_install_plan};
+
+    #[test]
+    fn applet_package_maps_json_and_url_kinds() {
+        let json = super::ManifestInputKind::Json("{\"package_id\":\"package:demo\"}".to_owned());
+        let pkg = applet_package_from_manifest(&json).unwrap();
+        assert_eq!(pkg["package_id"], "package:demo");
+
+        let url = super::ManifestInputKind::Url("https://x/manifest.json".to_owned());
+        let pkg = applet_package_from_manifest(&url).unwrap();
+        assert_eq!(pkg["manifest_url"], "https://x/manifest.json");
+
+        assert!(applet_package_from_manifest(&super::ManifestInputKind::Invalid).is_none());
+    }
+
+    #[test]
+    fn effective_scope_trims_realm_prefix_consistently() {
+        let scope = applet_effective_scope("ck:realm:abc");
+        assert!(scope["realm_id"].is_string());
+    }
+
+    #[test]
+    fn parse_install_plan_requires_plan_digest() {
+        let plan = serde_json::json!({
+            "plan_digest": "sha256:deadbeef",
+            "approved_scopes": [{"scope": "read"}, {"scope": "write"}],
+        });
+        let (digest, scopes) = parse_install_plan(&plan).unwrap();
+        assert_eq!(digest, "sha256:deadbeef");
+        assert_eq!(scopes.len(), 2);
+
+        // Missing plan_digest is a hard error (never commit a digest-less
+        // install — soland would reject it with applet_install_plan_mismatch).
+        let bad = serde_json::json!({ "approved_scopes": [] });
+        assert!(parse_install_plan(&bad).is_err());
     }
 
     #[test]
