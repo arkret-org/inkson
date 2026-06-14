@@ -49,7 +49,7 @@ use crate::push::{
 };
 use crate::session_refresh::grant_matches_principal_server;
 
-/// Errors the orchestrator surfaces back to the UI / login flow.
+/// Errors the orchestrator surfaces back to the UI / login strand.
 #[derive(Debug, thiserror::Error)]
 pub enum PushRegistrationError {
     /// No `PushTokenProvider` installed, or the installed one declined
@@ -117,7 +117,7 @@ pub struct RegisterContext {
     pub session_grant: Option<String>,
     /// CKP-0007 P3B.2.9 — active Circle id (when the registration
     /// originates from a Circle-scoped sidebar deep-link or the
-    /// current Flow's `scope_circle_id`). `None` falls back to the
+    /// current Strand's `scope_circle_id`). `None` falls back to the
     /// historical Realm-wide subscription. Forwarded into the chime
     /// request via [`build_request`].
     pub active_circle_id: Option<String>,

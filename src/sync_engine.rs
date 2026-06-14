@@ -21,7 +21,7 @@
 //!   fresh engine spawn picks up the next generation.
 //! * **Backoff**: transient network errors double the sleep (capped at `MAX_BACKOFF_SECS`); a
 //!   successful response resets it. Auth-expired errors stop the engine and let the refresh poller
-//!   + login flow take over. Cursor-invalid errors clear the cursor and immediately retry as a full
+//!   + login strand take over. Cursor-invalid errors clear the cursor and immediately retry as a full
 //!     sync.
 //!
 //! The engine deliberately does NOT trigger session refresh inline —
@@ -139,7 +139,7 @@ enum IterationOutcome {
     /// beat.
     StaleFrontier,
     /// Auth expired or server otherwise told us the session is dead.
-    /// Engine exits; refresh poller + login flow take over.
+    /// Engine exits; refresh poller + login strand take over.
     AuthExpired,
     /// Transient network / 5xx error. Backoff and retry.
     Transient(String),
@@ -236,7 +236,7 @@ pub async fn run_sync_engine(
                 sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
             IterationOutcome::AuthExpired => {
-                // Hand off to the refresh poller / login flow. The
+                // Hand off to the refresh poller / login strand. The
                 // lifecycle code will bump generation and respawn us.
                 return;
             }
@@ -305,7 +305,7 @@ async fn run_iteration(
         }
     };
 
-    // Read cursor freshly each iteration — login flow / server switch
+    // Read cursor freshly each iteration — login strand / server switch
     // may have cleared it underneath us.
     let cursor = ctx
         .state_store
@@ -423,7 +423,7 @@ async fn run_iteration(
         Err(error) if is_stale_frontier_error(&error) => {
             // client-sync.md §4 / §12.3: stale_frontier keeps the
             // cursor. Refresh the service frontier via account/describe
-            // (step 2 of the recovery flow) before retrying with the
+            // (step 2 of the recovery strand) before retrying with the
             // SAME cursor; failures here are best-effort — the retry
             // itself is the recovery.
             if let Err(describe_error) = api.sync_describe().await {

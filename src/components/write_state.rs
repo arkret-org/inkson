@@ -9,7 +9,7 @@
 //! - `sync/operations-sync.md`: offline-first writes; the Event Envelope is the source of truth.
 //! - `authz/event-auth-state-resolution.md`: reducer rejections fall into `state_mismatch` or
 //!   `cas_conflict`.
-//! - `governance/content-moderation.md`: quarantined writes remain visible but flow through the
+//! - `governance/content-moderation.md`: quarantined writes remain visible but strand through the
 //!   moderation queue.
 //!
 //! State machine:
@@ -43,7 +43,7 @@ pub enum WriteState {
     /// Reducer soft failure (schema / capability passed but the transition
     /// is illegal).
     SoftFailed,
-    /// CAS / position-edge conflict (concurrent `ck.flow.move`).
+    /// CAS / position-edge conflict (concurrent `ck.strand.move`).
     CasConflict,
     /// Capability check passed but the write is quarantined by moderation
     /// policy.
@@ -192,7 +192,7 @@ pub fn WriteStateIcon(state: WriteState) -> Element {
 }
 
 /// A single pill-shaped write-state marker, suitable for KanbanCard,
-/// Message, or Flow row decorations.
+/// Message, or Strand row decorations.
 #[component]
 pub fn WriteStatePill(state: String, icon_only: Option<bool>) -> Element {
     let parsed = parse_write_state(&state);

@@ -2,9 +2,9 @@
 
 > What happens between launching yougen for the first time and reaching the
 > dashboard. References `crypto-media/device-lifecycle.md` §1-§3 and the
-> coauth OIDC sign-in flow.
+> coauth OIDC sign-in strand.
 
-The first-login flow has three legs:
+The first-login strand has three legs:
 
 1. **Discover the Principal Server** — base URL + capabilities.
 2. **Sign in via coauth OIDC** — the only place where account credentials
@@ -98,7 +98,7 @@ server-backed follow-up.
 <!-- TODO(screenshot): onboarding-step-recovery.png -->
 
 You can change the policy later under **Settings → Recovery**. The
-`FirstBackupGate` component blocks you from leaving the inception flow
+`FirstBackupGate` component blocks you from leaving the inception strand
 until at least one `backup_class=did_recovery` envelope is published —
 this is non-negotiable.
 

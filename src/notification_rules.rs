@@ -78,8 +78,8 @@ pub struct NotificationEvalContext {
     pub event_kind: String,
     pub notification_type: String,
     pub realm_id: String,
-    pub flow_id: Option<String>,
-    pub flow_track: Option<String>,
+    pub strand_id: Option<String>,
+    pub strand_track: Option<String>,
     pub sender: Option<String>,
     pub body: Option<String>,
     pub is_e2ee: bool,
@@ -94,7 +94,7 @@ pub struct NotificationEvalContext {
     pub member_count: Option<u32>,
     pub priority: Option<String>,
     pub priority_override: bool,
-    /// Flow/thread-scoped watch level for this event (from the event's own
+    /// Strand/thread-scoped watch level for this event (from the event's own
     /// `watch_state` projection). Takes precedence over `realm_watch_level`.
     pub watch_level: Option<WatchLevel>,
     /// Realm-scoped watch level override the receiver set in notification
@@ -288,7 +288,7 @@ fn apply_dnd(
 }
 
 fn effective_watch_level(ctx: &NotificationEvalContext) -> Option<WatchLevel> {
-    // Flow/thread watch (most specific) wins; fall back to the realm-level
+    // Strand/thread watch (most specific) wins; fall back to the realm-level
     // override. An unset realm leaves this `None` so the gate is skipped.
     ctx.watch_level.or(ctx.realm_watch_level)
 }
@@ -403,9 +403,9 @@ fn condition_matches(condition: &PushCondition, ctx: &NotificationEvalContext) -
         },
         "is_direct_message" => bool_result(ctx.is_direct_message),
         "member_count" => member_count_matches(condition, ctx),
-        "flow_track" => {
+        "strand_track" => {
             if ctx
-                .flow_track
+                .strand_track
                 .as_deref()
                 .is_some_and(|track| pattern_matches(condition.pattern.as_ref(), track))
             {
@@ -461,12 +461,12 @@ fn context_field<'a>(ctx: &'a NotificationEvalContext, field: &str) -> Option<&'
         "realm_id" => Some(ctx.realm_id.as_str()),
         "kind" | "event_kind" => Some(ctx.event_kind.as_str()),
         "notification_type" => Some(ctx.notification_type.as_str()),
-        "flow_id" => ctx.flow_id.as_deref(),
+        "strand_id" => ctx.strand_id.as_deref(),
         // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
         // sender → sender_actor_id,hard_reject)。规则引擎只暴露
         // `actor_id` / `sender_actor_id`;legacy `sender` 不再接受。
         "actor_id" | "sender_actor_id" => ctx.sender.as_deref(),
-        "flow_track" | "track_name" => ctx.flow_track.as_deref(),
+        "strand_track" | "track_name" => ctx.strand_track.as_deref(),
         "priority" | "notification_priority" => ctx.priority.as_deref(),
         "watch_state" => effective_watch_level(ctx).map(WatchLevel::as_wire),
         _ => None,
@@ -610,8 +610,8 @@ mod tests {
             event_kind: "ck.message.create".to_owned(),
             notification_type: "message".to_owned(),
             realm_id: "ck:realm:demo".to_owned(),
-            flow_id: Some("ck:flow:demo".to_owned()),
-            flow_track: Some("discussion".to_owned()),
+            strand_id: Some("ck:strand:demo".to_owned()),
+            strand_track: Some("discussion".to_owned()),
             body: Some("urgent launch note".to_owned()),
             watch_level: Some(WatchLevel::All),
             ..Default::default()
@@ -619,8 +619,8 @@ mod tests {
     }
 
     #[test]
-    fn realm_watch_level_gates_when_flow_level_absent() {
-        // No flow-scoped watch level; a realm override of `Muted` suppresses
+    fn realm_watch_level_gates_when_strand_level_absent() {
+        // No strand-scoped watch level; a realm override of `Muted` suppresses
         // everything, even a direct mention.
         let mut ctx = message_context();
         ctx.watch_level = None;
@@ -632,7 +632,7 @@ mod tests {
     }
 
     #[test]
-    fn flow_watch_level_takes_precedence_over_realm_override() {
+    fn strand_watch_level_takes_precedence_over_realm_override() {
         let mut ctx = message_context();
         ctx.watch_level = Some(WatchLevel::All);
         ctx.realm_watch_level = Some(WatchLevel::Muted);
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn participating_filters_non_participants() {
         // T4.4 — v1 core: participating requires the receiver to have
-        // operated in some cell of the flow (mentions, assigned-to,
+        // operated in some cell of the strand (mentions, assigned-to,
         // reply-to-self, or a participating thread update).
         let mut ctx = message_context();
         ctx.watch_level = Some(WatchLevel::Participating);
@@ -749,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn mentions_only_suppresses_non_directed_flow_events() {
+    fn mentions_only_suppresses_non_directed_strand_events() {
         let mut ctx = message_context();
         ctx.watch_level = Some(WatchLevel::MentionsOnly);
         ctx.mentions_actor = Some(false);

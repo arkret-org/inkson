@@ -80,7 +80,7 @@ pub struct RemoteCursor {
 
 /// One comment thread sealed to a `[start, end)` range within the
 /// document. Spec contract is `ck.message.create` on the document
-/// Flow's discussion track (`models/flow-and-message.md` §4.3) with a
+/// Strand's discussion track (`models/strand-and-message.md` §4.3) with a
 /// payload that carries `anchor_range`. The thread is identified by
 /// the originating message's event_id.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -694,7 +694,7 @@ pub fn DocumentPanel(
                     Input {
                         "data-testid": "document-link-incident-input",
                         value: "{linked_incident_input}",
-                        placeholder: "Incident Flow or Space id",
+                        placeholder: "Incident Strand or Space id",
                         oninput: move |event: FormEvent| linked_incident_input.set(event.value()),
                     }
                 }
@@ -1563,10 +1563,10 @@ mod tests {
     #[test]
     fn document_body_payload_carries_schema_version_and_blocks() {
         let blocks = default_draft().blocks;
-        let body = document_body_payload(&blocks, Some("ck:flow:incident"));
+        let body = document_body_payload(&blocks, Some("ck:strand:incident"));
         assert_eq!(body["schema_version"], 1);
         assert_eq!(body["blocks"].as_array().unwrap().len(), 2);
-        assert_eq!(body["linked_incident_id"], "ck:flow:incident");
+        assert_eq!(body["linked_incident_id"], "ck:strand:incident");
         assert_eq!(body["relations"][0]["rel"], "postmortem_for");
     }
 

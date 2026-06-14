@@ -6,17 +6,17 @@ const SETUP_REALM = "ck:realm:01js0setupflow000000000000";
 const CHILD_REALM = "ck:realm:01launchchild0000000000000";
 const GRANDCHILD_REALM = "ck:realm:01launchdeep00000000000000";
 const DIRECT_BOB_REALM = "ck:realm:01directbob000000000000000";
-const DIRECT_BOB_FLOW = "ck:flow:01directbob0000000000000000";
+const DIRECT_BOB_STRAND = "ck:strand:01directbob0000000000000000";
 const DEMO_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0a0";
 const DEMO_SECOND_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0b0";
 const DEMO_TODO_LIST = "ck:space:01list-todo000000000000000000";
 const DEMO_PROGRESS_LIST = "ck:space:01list-progress00000000000000";
 const DEMO_DONE_LIST = "ck:space:01list-done00000000000000000";
 const DEMO_SECOND_LIST = "ck:space:01list-secondary000000000000";
-const DEMO_FLOW_LEGAL_REVIEW = "ck:flow:0196419b-0000-7000-8000-000000000101";
-const DEMO_FLOW_ONBOARDING_COPY = "ck:flow:0196419b-0000-7000-8000-000000000102";
-const DEMO_FLOW_SECURITY_SIGNOFF = "ck:flow:0196419b-0000-7000-8000-000000000103";
-const DEMO_FLOW_SECONDARY_CARD = "ck:flow:0196419b-0000-7000-8000-000000000104";
+const DEMO_STRAND_LEGAL_REVIEW = "ck:strand:0196419b-0000-7000-8000-000000000101";
+const DEMO_STRAND_ONBOARDING_COPY = "ck:strand:0196419b-0000-7000-8000-000000000102";
+const DEMO_STRAND_SECURITY_SIGNOFF = "ck:strand:0196419b-0000-7000-8000-000000000103";
+const DEMO_STRAND_SECONDARY_CARD = "ck:strand:0196419b-0000-7000-8000-000000000104";
 const DEMO_BLOB_REF =
   "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91";
 
@@ -30,8 +30,8 @@ type SpaceContainerProjection = {
   parent_space_id?: string;
 };
 
-type FlowProjection = {
-  flow_id: string;
+type StrandProjection = {
+  strand_id: string;
   realm_id: string;
   title: string;
   summary?: string;
@@ -108,9 +108,9 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       parent_space_id: DEMO_SECOND_BOARD_SPACE,
     },
   ];
-  const boardFlowProjections: FlowProjection[] = [
+  const boardStrandProjections: StrandProjection[] = [
     {
-      flow_id: DEMO_FLOW_LEGAL_REVIEW,
+      strand_id: DEMO_STRAND_LEGAL_REVIEW,
       realm_id: DEMO_REALM,
       title: "Legal review for public beta",
       summary: "Finalize external processor wording before launch checklist can move.",
@@ -128,7 +128,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       },
     },
     {
-      flow_id: DEMO_FLOW_ONBOARDING_COPY,
+      strand_id: DEMO_STRAND_ONBOARDING_COPY,
       realm_id: DEMO_REALM,
       title: "Onboarding copy",
       summary: "Waiting on discussion-scoped feedback from support and docs reviewers.",
@@ -140,7 +140,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       fields: { labels: ["copy", "support"], due_at: "May 10" },
     },
     {
-      flow_id: DEMO_FLOW_SECURITY_SIGNOFF,
+      strand_id: DEMO_STRAND_SECURITY_SIGNOFF,
       realm_id: DEMO_REALM,
       title: "Security sign-off",
       summary: "Projection detected a stale column head after an offline move.",
@@ -152,7 +152,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       fields: { labels: ["security", "reviewed"], due_at: "May 01" },
     },
     {
-      flow_id: DEMO_FLOW_SECONDARY_CARD,
+      strand_id: DEMO_STRAND_SECONDARY_CARD,
       realm_id: DEMO_REALM,
       title: "Secondary board card",
       summary: "Only visible after the Board selector switches projection scope.",
@@ -337,12 +337,12 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/projection/flows") {
+    if (url.pathname === "/_cokret/self/projection/strands") {
       const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
       return json(route, {
         realm_id: realmId,
-        total: boardFlowProjections.length,
-        flows: boardFlowProjections,
+        total: boardStrandProjections.length,
+        strands: boardStrandProjections,
       });
     }
 
@@ -404,7 +404,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           event.payload?.object?.title ??
           event.payload?.title ??
           event.payload?.fields?.title ??
-          "Setup Flow Space";
+          "Setup Strand Space";
         const summary =
           event.payload?.object?.summary ??
           event.payload?.summary ??
@@ -449,22 +449,22 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           payload: body.payload,
         });
       }
-      if (body.kind === "ck.flow.create") {
+      if (body.kind === "ck.strand.create") {
         messageCounter += 1;
-        syncToken = `sx:e2e:flow-${messageCounter}`;
+        syncToken = `sx:e2e:strand-${messageCounter}`;
         const object = body.payload?.object ?? {};
         const component = Array.isArray(body.payload?.components)
           ? body.payload.components.find(
-              (candidate: { family?: string }) => candidate.family === "ck.component.flow.position.v1",
+              (candidate: { family?: string }) => candidate.family === "ck.component.strand.position.v1",
             )
           : undefined;
-        const flowId = body.payload?.flow_id ?? object.id;
-        if (typeof flowId === "string") {
+        const strandId = body.payload?.strand_id ?? object.id;
+        if (typeof strandId === "string") {
           const fields = object.fields ?? {};
-          const nextProjection: FlowProjection = {
-            flow_id: flowId,
+          const nextProjection: StrandProjection = {
+            strand_id: strandId,
             realm_id: object.realm_id ?? body.realm_id ?? DEMO_REALM,
-            title: object.title ?? body.payload?.title ?? flowId,
+            title: object.title ?? body.payload?.title ?? strandId,
             summary: object.summary,
             state: "active",
             board_space_id: component?.board_space_id ?? fields.board_space_id,
@@ -472,11 +472,11 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
             rank: component?.rank ?? fields.rank ?? body.payload?.rank,
             fields,
           };
-          const existing = boardFlowProjections.findIndex((row) => row.flow_id === flowId);
+          const existing = boardStrandProjections.findIndex((row) => row.strand_id === strandId);
           if (existing >= 0) {
-            boardFlowProjections[existing] = nextProjection;
+            boardStrandProjections[existing] = nextProjection;
           } else {
-            boardFlowProjections.push(nextProjection);
+            boardStrandProjections.push(nextProjection);
           }
         }
         timelineEvents.push({
@@ -516,7 +516,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/update$/) && route.request().method() === "PUT") {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/update$/) && route.request().method() === "PUT") {
       const roomId = decodeURIComponent(url.pathname.split("/")[5]);
       return json(route, {
         ok: true,
@@ -525,7 +525,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/notify$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/notify$/)) {
       return json(route, {
         ok: true,
         accepted: ["did:web:remote.example"],
@@ -533,7 +533,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/messages$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/messages$/)) {
       return json(route, {
         event_ref: "ck:event:01964137-0000-7000-8000-00000000d0aa",
         delivery: {
@@ -550,7 +550,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/group-info$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/group-info$/)) {
       return json(route, {
         group_info: { epoch: 7, mls_group_id: "mls-group-01", policy_root: "sha256:e2e-policy-root" },
         room_binding_ref: "ck:event:01964137-0000-7000-8000-00000000d0ab",
@@ -1014,7 +1014,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
             invite_consent_grant_ref: "ck:event:0196419b-0000-7000-8000-000000000102",
             direct_conversation: {
               realm_id: DIRECT_BOB_REALM,
-              main_flow_id: DIRECT_BOB_FLOW,
+              main_strand_id: DIRECT_BOB_STRAND,
               binding_event_ref: "ck:event:0196419b-0000-7000-8000-000000000103",
               state: "active",
             },
@@ -1112,7 +1112,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, {
         state: "found",
         realm_id: DIRECT_BOB_REALM,
-        main_flow_id: DIRECT_BOB_FLOW,
+        main_strand_id: DIRECT_BOB_STRAND,
         binding_event_ref: "ck:event:0196419b-0000-7000-8000-000000000103",
         created: false,
       });

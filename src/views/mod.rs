@@ -9,10 +9,10 @@
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
 // | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | ck.session.grant, ck.device.authorize                            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
-// | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | ck.flow.update, ck.message.create, derived projection              |
-// | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ck.flow.move, ck.flow.reorder, ck.space.update (board/list container)|
-// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.flow.tracks.update (unified), ck.message.*                      |
-// | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | ck.flow.update on synthesis track                                  |
+// | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | ck.strand.update, ck.message.create, derived projection              |
+// | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ck.strand.move, ck.strand.reorder, ck.space.update (board/list container)|
+// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.strand.tracks.update (unified), ck.message.*                      |
+// | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | ck.strand.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ck.realm.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ck.read_cursor.advance / ck.receipt.read / @-mention) |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ck.key.verification.*, ck.mls.welcome                              |
@@ -48,7 +48,7 @@ pub mod contacts;
 pub mod dashboard;
 /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
 /// protocol-level details (raw event log, audit rows, profile / schema
-/// ids, conformance status) that used to leak into the main flow. End
+/// ids, conformance status) that used to leak into the main strand. End
 /// users do not need to read this surface.
 pub mod developer;
 pub mod directory;
@@ -61,7 +61,7 @@ pub mod global_search;
 pub mod helpers;
 pub mod kanban;
 pub mod login;
-/// Round R2/R3 (T06) — moderation appeal user flow. Entrypoint button +
+/// Round R2/R3 (T06) — moderation appeal user strand. Entrypoint button +
 /// `ck.moderation.appeal.submit` builder. Renders near user-facing
 /// moderation decisions; reviewer surface is admin-scope.
 pub mod moderation_appeal;
@@ -112,7 +112,7 @@ pub enum View {
     /// Recovery behind an Advanced fold (claude-design `desktop/recovery.html`,
     /// crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)
     Recovery,
-    /// Onboarding stepper — 4-step flow (DID method / Handle / Device / Recovery).
+    /// Onboarding stepper — 4-step strand (DID method / Handle / Device / Recovery).
     /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity
     /// setup surface. (claude-design `desktop/onboarding.html`, identity-did §3 +
     /// identity-handles + device-lifecycle §1-§13)
@@ -133,7 +133,7 @@ pub enum View {
     Search,
     /// G3.Y1 — device management surface (list + revoke + QR pair).
     /// Rendered for both `/settings/devices` and `/settings/devices/pair`
-    /// because the pair flow is a single panel mounted on a sub-route.
+    /// because the pair strand is a single panel mounted on a sub-route.
     SettingsDevices,
     /// G3.Y1 compatibility variant. `/settings/recovery` now renders
     /// through `View::Settings` so the Settings sidebar remains visible.

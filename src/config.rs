@@ -228,7 +228,7 @@ impl MultiProfileConfig {
     }
 
     /// Build the typed [`ProfileSwitchEvent`] payload that callers
-    /// (account switcher, login flow, server change) emit when the
+    /// (account switcher, login strand, server change) emit when the
     /// active profile rotates. Returns `None` if the requested
     /// profile is not in the store.
     pub fn build_switch_event(&self, target_profile_id: &str) -> Option<ProfileSwitchEvent> {

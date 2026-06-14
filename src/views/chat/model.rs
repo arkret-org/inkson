@@ -10,30 +10,30 @@ pub(super) const CHAT_EMOJI_GRID: &[&str] = &[
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ChannelEntity {
-    pub(super) flow_id: String,
+    pub(super) strand_id: String,
     pub(super) name: String,
     pub(super) kind: String,
     pub(super) category: String,
     pub(super) topic: Option<String>,
     pub(super) unread: usize,
     pub(super) is_default: bool,
-    /// Explicit Flow security state from Flow metadata. `None` inherits
+    /// Explicit Strand security state from Strand metadata. `None` inherits
     /// the current Realm / Space security posture.
     pub(super) security_encrypted: Option<bool>,
-    /// CKP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Flow was
-    /// created under, when the Flow projection carries a
+    /// CKP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Strand was
+    /// created under, when the Strand projection carries a
     /// `scope_circle_id`. The composer banner and the per-message
-    /// accent rail read from this field; `None` means the Flow
+    /// accent rail read from this field; `None` means the Strand
     /// inherits the parent Realm scope and no banner / rail is
     /// rendered.
-    pub(super) scope_circle: Option<FlowScopeCircle>,
+    pub(super) scope_circle: Option<StrandScopeCircle>,
 }
 
 /// Minimal Circle-scope projection embedded on each [`ChannelEntity`].
 /// Mirrors the subset of [`crate::circle::CircleSummary`] needed by
 /// the chat composer banner and timeline accent rail.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct FlowScopeCircle {
+pub(super) struct StrandScopeCircle {
     /// `ck:circle:…`
     pub(super) circle_id: String,
     /// Circle title used in the banner heading + accent-rail tooltip.
@@ -78,7 +78,7 @@ pub(super) struct ChatMessage {
     pub(super) sender: String,
     pub(super) body: String,
     pub(super) timestamp: String,
-    pub(super) flow_id: String,
+    pub(super) strand_id: String,
     pub(super) reply_to: Option<String>,
     pub(super) reactions: Vec<(String, Vec<String>)>,
     pub(super) redacted: bool,
@@ -188,7 +188,7 @@ pub(super) struct SpaceParticipant {
 ///
 /// On any failure (missing Welcome/snapshot, restore fails, encrypt fails) the
 /// helper returns `(None, vec![], None, None)` and the caller aborts the
-/// Send Secure flow.
+/// Send Secure strand.
 /// Encrypt a discussion message under the Realm MLS group and return the
 /// structured MLS payload + the canonical AAD it was bound to. The caller
 /// wraps these into a spec-conforming `ck.schema.encrypted_envelope.v1` via
@@ -196,7 +196,7 @@ pub(super) struct SpaceParticipant {
 /// MLS group-state reference for `key_ref.group_state_ref`.
 ///
 /// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
-/// uses the same wasm-enabled OpenMLS path as kanban flow-content encryption.
+/// uses the same wasm-enabled OpenMLS path as kanban strand-content encryption.
 pub(super) type LocalEncryptedMessage = (
     cokret_sdk::EncryptedPayload,
     cokret_sdk::EncryptedEnvelopeAadV1,
@@ -1696,7 +1696,7 @@ pub(super) fn schema_message_id_or_new(value: &str) -> String {
 }
 
 // YOU-02-001: these helpers return `Result` instead of panicking — the
-// realm/flow ids they parse come from server-synced UI state, and a
+// realm/strand ids they parse come from server-synced UI state, and a
 // non-canonical id must not abort the client (wasm panic = blank page).
 pub(super) fn sdk_payload_value(
     result: cokret_sdk::Result<Value>,
@@ -1705,15 +1705,15 @@ pub(super) fn sdk_payload_value(
     result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
 }
 
-pub(super) fn flow_id_value(value: &str) -> anyhow::Result<cokret_sdk::FlowId> {
-    cokret_sdk::FlowId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid flow id {value:?}: {err:?}"))
+pub(super) fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
+    cokret_sdk::StrandId::new(value.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
 }
 
 pub(super) fn chat_message_create_operation(
     realm_id: &str,
     actor: &str,
-    flow_id: &str,
+    strand_id: &str,
     _channel_kind: &str,
     message_id: &str,
     body: &str,
@@ -1733,7 +1733,7 @@ pub(super) fn chat_message_create_operation(
     // (artifacts/registry/forbidden-wire-fields.json, hard_reject). v1 uses
     // `track_name` — a display-only timeline segment identifier — instead.
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(flow_id)?,
+        strand_id_value(strand_id)?,
         "discussion",
         sdk_payload_value(content.to_value(), "chat message content serialize")?,
     )
@@ -1742,7 +1742,7 @@ pub(super) fn chat_message_create_operation(
         payload = payload.with_reply_to(reply_to);
     }
     Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .target_ref(flow_id)
+        .target_ref(strand_id)
         .body(sdk_payload_value(
             payload.to_value(),
             "chat ck.message.create payload serialize",
@@ -2056,7 +2056,7 @@ pub(super) fn decrypt_chat_encrypted_content(
 /// no plaintext body. Without the sidecar, keep the message as a visible
 /// crypto-pending row instead of dropping it, so a fresh browser shows "locked"
 /// rather than "No messages". The sidecar lookup mirrors kanban's
-/// `private_flow_field_text`.
+/// `private_strand_field_text`.
 pub(super) fn chat_message_from_event_with_sidecar(
     realm_id: &str,
     event: &Value,
@@ -2085,12 +2085,12 @@ pub(super) fn chat_message_from_event_with_sidecar(
     let has_encrypted_payload = encrypted_content_value.is_some();
     // Author-owned plaintext sidecar: look up the body the author stored on
     // encrypted send, keyed by `message:{message_id}` under the discussion
-    // flow. Falls back to the decoded payload body (another member's message
+    // strand. Falls back to the decoded payload body (another member's message
     // we CAN decrypt, or a plaintext message).
     let sidecar_body = state_store.and_then(|store| {
         let message_id = first_string_in_candidates(&candidates, &["message_id"])?;
-        let flow_id = first_string_in_candidates(&candidates, &["flow_id", "thread_id"])?;
-        store.private_plaintext_for(message_realm, flow_id, &format!("message:{message_id}"))
+        let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])?;
+        store.private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
     });
     let body_from_sidecar = sidecar_body.is_some();
     // P0 decrypt-on-read: a remote member's message carries ciphertext but no
@@ -2117,7 +2117,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
         .iter()
         .any(|candidate| message_kind_is_create(candidate));
     let message_payload_shape =
-        first_string_in_candidates(&candidates, &["message_id", "flow_id", "thread_id"]).is_some();
+        first_string_in_candidates(&candidates, &["message_id", "strand_id", "thread_id"]).is_some();
     if !explicit_message_kind && !message_payload_shape {
         return None;
     }
@@ -2128,15 +2128,15 @@ pub(super) fn chat_message_from_event_with_sidecar(
         .or_else(|| first_string_in_candidates(&candidates, &["event_id", "message_id", "id"]))
         .unwrap_or("event:unknown")
         .to_owned();
-    let flow_id = first_string_in_candidates(&candidates, &["flow_id", "thread_id"])
+    let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])
         .or_else(|| {
             event
                 .get("unsigned")
                 .and_then(|unsigned| unsigned.get("local_target_ref"))
                 .and_then(Value::as_str)
         })
-        .filter(|value| value.starts_with("ck:flow:"))
-        .unwrap_or("ck:flow:general")
+        .filter(|value| value.starts_with("ck:strand:"))
+        .unwrap_or("ck:strand:general")
         .to_owned();
     // CKP-0007 P3B.2.7 — compare the envelope's `effective_scope`
     // against the payload `scope_circle_id`. When they disagree we
@@ -2202,7 +2202,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
             .to_owned(),
         body,
         timestamp: short_message_time(first_string_in_candidates(&candidates, &["created_at"])),
-        flow_id,
+        strand_id,
         reply_to: first_string_in_candidates(&candidates, &["reply_to", "thread_id"])
             .map(ToOwned::to_owned),
         reactions: Vec::new(),
@@ -2497,14 +2497,14 @@ pub(super) fn first_string_in_candidate_paths<'a>(
     })
 }
 
-pub(super) fn default_discussion_flow_id(realm_id: &str) -> String {
+pub(super) fn default_discussion_strand_id(realm_id: &str) -> String {
     let trimmed = realm_id.trim();
-    if trimmed.starts_with("ck:flow:") {
+    if trimmed.starts_with("ck:strand:") {
         trimmed.to_owned()
     } else if let Some(suffix) = trimmed.strip_prefix("ck:realm:") {
-        format!("ck:flow:{suffix}")
+        format!("ck:strand:{suffix}")
     } else {
-        format!("ck:flow:{}", trimmed.trim_start_matches("ck:"))
+        format!("ck:strand:{}", trimmed.trim_start_matches("ck:"))
     }
 }
 
@@ -2513,7 +2513,7 @@ pub(super) fn candidate_has_track(candidate: &Value, track: &str) -> bool {
         .get("tracks")
         .and_then(|tracks| tracks.get(track))
         .is_some()
-        || ["object", "flow"].iter().any(|wrapper| {
+        || ["object", "strand"].iter().any(|wrapper| {
             candidate
                 .get(*wrapper)
                 .and_then(|inner| inner.get("tracks"))
@@ -2522,13 +2522,13 @@ pub(super) fn candidate_has_track(candidate: &Value, track: &str) -> bool {
         })
 }
 
-pub(super) fn flow_create_has_discussion_track(candidates: &[&Value]) -> bool {
+pub(super) fn strand_create_has_discussion_track(candidates: &[&Value]) -> bool {
     candidates
         .iter()
         .any(|candidate| candidate_has_track(candidate, "discussion"))
 }
 
-pub(super) fn flow_create_has_synthesis_track(candidates: &[&Value]) -> bool {
+pub(super) fn strand_create_has_synthesis_track(candidates: &[&Value]) -> bool {
     candidates
         .iter()
         .any(|candidate| candidate_has_track(candidate, "synthesis"))
@@ -2536,42 +2536,42 @@ pub(super) fn flow_create_has_synthesis_track(candidates: &[&Value]) -> bool {
             bool_at_path(candidate, &["create_card"]).unwrap_or(false)
                 || bool_at_path(candidate, &["fields", "has_synthesis"]).unwrap_or(false)
                 || bool_at_path(candidate, &["object", "fields", "has_synthesis"]).unwrap_or(false)
-                || bool_at_path(candidate, &["flow", "fields", "has_synthesis"]).unwrap_or(false)
+                || bool_at_path(candidate, &["strand", "fields", "has_synthesis"]).unwrap_or(false)
         })
 }
 
-pub(super) fn flow_security_state_from_candidates(candidates: &[&Value]) -> Option<bool> {
+pub(super) fn strand_security_state_from_candidates(candidates: &[&Value]) -> Option<bool> {
     candidates
         .iter()
-        .find_map(|candidate| crate::security_state::flow_projection_security_state(candidate))
+        .find_map(|candidate| crate::security_state::strand_projection_security_state(candidate))
 }
 
-pub(super) fn channel_from_flow_projection(
+pub(super) fn channel_from_strand_projection(
     realm_id: &str,
-    flow: &Value,
+    strand: &Value,
     is_default: bool,
 ) -> Option<ChannelEntity> {
-    if !candidate_has_track(flow, "discussion") {
+    if !candidate_has_track(strand, "discussion") {
         return None;
     }
 
-    let flow_id = first_string_in_candidate_paths(&[flow], &[&["flow_id"], &["id"]])
+    let strand_id = first_string_in_candidate_paths(&[strand], &[&["strand_id"], &["id"]])
         .map(str::trim)
-        .filter(|id| id.starts_with("ck:flow:"))
+        .filter(|id| id.starts_with("ck:strand:"))
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| default_discussion_flow_id(realm_id));
-    let name = first_string_in_candidate_paths(&[flow], &[&["title"], &["name"]])
+        .unwrap_or_else(|| default_discussion_strand_id(realm_id));
+    let name = first_string_in_candidate_paths(&[strand], &[&["title"], &["name"]])
         .filter(|title| !title.trim().is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| {
             if is_default {
                 "Discussion".to_owned()
             } else {
-                flow_id.clone()
+                strand_id.clone()
             }
         });
     let category = first_string_in_candidate_paths(
-        &[flow],
+        &[strand],
         &[
             &["category"],
             &["fields", "category"],
@@ -2582,13 +2582,13 @@ pub(super) fn channel_from_flow_projection(
     .map(ToOwned::to_owned)
     .unwrap_or_else(|| {
         if is_default {
-            "default flow".to_owned()
+            "default strand".to_owned()
         } else {
             "general".to_owned()
         }
     });
     let topic = first_string_in_candidate_paths(
-        &[flow],
+        &[strand],
         &[
             &["summary"],
             &["topic"],
@@ -2601,20 +2601,20 @@ pub(super) fn channel_from_flow_projection(
     .map(ToOwned::to_owned)
     .or_else(|| {
         if is_default {
-            Some("Default Flow discussion track".to_owned())
+            Some("Default Strand discussion track".to_owned())
         } else {
             None
         }
     });
-    let has_synthesis = flow_create_has_synthesis_track(&[flow]);
-    let security_encrypted = crate::security_state::flow_projection_security_state(flow);
-    let scope_circle = flow_scope_circle_from_projection(flow);
+    let has_synthesis = strand_create_has_synthesis_track(&[strand]);
+    let security_encrypted = crate::security_state::strand_projection_security_state(strand);
+    let scope_circle = strand_scope_circle_from_projection(strand);
 
     Some(ChannelEntity {
-        flow_id,
+        strand_id,
         name,
         kind: if !is_default && has_synthesis {
-            "flow".to_owned()
+            "strand".to_owned()
         } else {
             "discussion".to_owned()
         },
@@ -2627,13 +2627,13 @@ pub(super) fn channel_from_flow_projection(
     })
 }
 
-/// Extract the optional Circle-scope projection from a Flow
+/// Extract the optional Circle-scope projection from a Strand
 /// projection JSON. Looks under both the top-level
 /// `scope_circle_id` and the canonical `scope.circle_id` shape so
 /// the helper tolerates both projection layouts.
-pub(super) fn flow_scope_circle_from_projection(flow: &Value) -> Option<FlowScopeCircle> {
+pub(super) fn strand_scope_circle_from_projection(strand: &Value) -> Option<StrandScopeCircle> {
     let circle_id = first_string_in_candidate_paths(
-        &[flow],
+        &[strand],
         &[
             &["scope_circle_id"],
             &["scope", "circle_id"],
@@ -2646,7 +2646,7 @@ pub(super) fn flow_scope_circle_from_projection(flow: &Value) -> Option<FlowScop
     .map(ToOwned::to_owned)?;
 
     let title = first_string_in_candidate_paths(
-        &[flow],
+        &[strand],
         &[
             &["scope_circle_title"],
             &["scope", "circle_title"],
@@ -2657,11 +2657,11 @@ pub(super) fn flow_scope_circle_from_projection(flow: &Value) -> Option<FlowScop
     .map(ToOwned::to_owned)
     .unwrap_or_else(|| circle_id.clone());
 
-    let member_count = u32_at_path(flow, &["scope_circle_member_count"])
-        .or_else(|| u32_at_path(flow, &["scope", "member_count"]))
+    let member_count = u32_at_path(strand, &["scope_circle_member_count"])
+        .or_else(|| u32_at_path(strand, &["scope", "member_count"]))
         .unwrap_or(0);
 
-    Some(FlowScopeCircle {
+    Some(StrandScopeCircle {
         circle_id,
         title,
         member_count,
@@ -2687,20 +2687,20 @@ pub(super) fn default_discussion_channel(
     realm_id: &str,
     realm_body: Option<&Value>,
 ) -> ChannelEntity {
-    if let Some(flow) = realm_body
+    if let Some(strand) = realm_body
         .and_then(|body| body.get("summary"))
-        .and_then(|summary| summary.get("flow"))
-        && let Some(channel) = channel_from_flow_projection(realm_id, flow, true)
+        .and_then(|summary| summary.get("strand"))
+        && let Some(channel) = channel_from_strand_projection(realm_id, strand, true)
     {
         return channel;
     }
 
     ChannelEntity {
-        flow_id: default_discussion_flow_id(realm_id),
+        strand_id: default_discussion_strand_id(realm_id),
         name: "Discussion".to_owned(),
         kind: "discussion".to_owned(),
-        category: "default flow".to_owned(),
-        topic: Some("Default Flow discussion track".to_owned()),
+        category: "default strand".to_owned(),
+        topic: Some("Default Strand discussion track".to_owned()),
         unread: 0,
         is_default: true,
         security_encrypted: realm_body.map(crate::security_state::realm_projection_is_encrypted),
@@ -2708,34 +2708,34 @@ pub(super) fn default_discussion_channel(
     }
 }
 
-pub(super) fn discussion_channel_for_flow(realm_id: &str, flow_id: &str) -> ChannelEntity {
-    let trimmed_flow_id = flow_id.trim();
-    if trimmed_flow_id.is_empty() {
+pub(super) fn discussion_channel_for_strand(realm_id: &str, strand_id: &str) -> ChannelEntity {
+    let trimmed_strand_id = strand_id.trim();
+    if trimmed_strand_id.is_empty() {
         return default_discussion_channel(realm_id, None);
     }
 
     ChannelEntity {
-        flow_id: trimmed_flow_id.to_owned(),
+        strand_id: trimmed_strand_id.to_owned(),
         name: "Discussion".to_owned(),
         kind: "discussion".to_owned(),
         category: "discussion".to_owned(),
         topic: None,
         unread: 0,
-        is_default: trimmed_flow_id == default_discussion_flow_id(realm_id),
+        is_default: trimmed_strand_id == default_discussion_strand_id(realm_id),
         security_encrypted: None,
         scope_circle: None,
     }
 }
 
-pub(super) fn channel_from_flow_event(realm_id: &str, event: &Value) -> Option<ChannelEntity> {
+pub(super) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option<ChannelEntity> {
     let candidates = message_candidates(event);
     if !candidates
         .iter()
-        .any(|candidate| value_string_at(candidate, &["kind", "type"]) == Some("ck.flow.create"))
+        .any(|candidate| value_string_at(candidate, &["kind", "type"]) == Some("ck.strand.create"))
     {
         return None;
     }
-    if !flow_create_has_discussion_track(&candidates)
+    if !strand_create_has_discussion_track(&candidates)
         && !candidates.iter().any(|candidate| {
             // T2.3: the v1 wire uses `track_name`; legacy `branch` is a
             // hard_reject field per forbidden-wire-fields.json, so writers
@@ -2748,19 +2748,19 @@ pub(super) fn channel_from_flow_event(realm_id: &str, event: &Value) -> Option<C
         return None;
     }
 
-    let flow_id = first_string_in_candidate_paths(
+    let strand_id = first_string_in_candidate_paths(
         &candidates,
         &[
-            &["flow_id"],
+            &["strand_id"],
             &["target_ref"],
             &["object", "id"],
-            &["object", "flow_id"],
-            &["flow", "id"],
-            &["flow", "flow_id"],
+            &["object", "strand_id"],
+            &["strand", "id"],
+            &["strand", "strand_id"],
         ],
     )?
     .trim();
-    if !flow_id.starts_with("ck:flow:") {
+    if !strand_id.starts_with("ck:strand:") {
         return None;
     }
 
@@ -2771,11 +2771,11 @@ pub(super) fn channel_from_flow_event(realm_id: &str, event: &Value) -> Option<C
             &["name"],
             &["object", "title"],
             &["object", "name"],
-            &["flow", "title"],
-            &["flow", "name"],
+            &["strand", "title"],
+            &["strand", "name"],
         ],
     )
-    .unwrap_or(flow_id)
+    .unwrap_or(strand_id)
     .to_owned();
     let category = first_string_in_candidate_paths(
         &candidates,
@@ -2783,7 +2783,7 @@ pub(super) fn channel_from_flow_event(realm_id: &str, event: &Value) -> Option<C
             &["category"],
             &["fields", "category"],
             &["object", "fields", "category"],
-            &["flow", "fields", "category"],
+            &["strand", "fields", "category"],
         ],
     )
     .unwrap_or("general")
@@ -2797,30 +2797,30 @@ pub(super) fn channel_from_flow_event(realm_id: &str, event: &Value) -> Option<C
             &["object", "summary"],
             &["object", "topic"],
             &["object", "description"],
-            &["flow", "summary"],
-            &["flow", "topic"],
-            &["flow", "description"],
+            &["strand", "summary"],
+            &["strand", "topic"],
+            &["strand", "description"],
         ],
     )
     .map(ToOwned::to_owned);
-    let has_synthesis = flow_create_has_synthesis_track(&candidates);
-    let security_encrypted = flow_security_state_from_candidates(&candidates);
+    let has_synthesis = strand_create_has_synthesis_track(&candidates);
+    let security_encrypted = strand_security_state_from_candidates(&candidates);
     let scope_circle = candidates
         .iter()
-        .find_map(|candidate| flow_scope_circle_from_projection(candidate));
+        .find_map(|candidate| strand_scope_circle_from_projection(candidate));
 
     Some(ChannelEntity {
-        flow_id: flow_id.to_owned(),
+        strand_id: strand_id.to_owned(),
         name,
         kind: if has_synthesis {
-            "flow".to_owned()
+            "strand".to_owned()
         } else {
             "discussion".to_owned()
         },
         category,
         topic,
         unread: 0,
-        is_default: flow_id == default_discussion_flow_id(realm_id),
+        is_default: strand_id == default_discussion_strand_id(realm_id),
         security_encrypted,
         scope_circle,
     })
@@ -2829,7 +2829,7 @@ pub(super) fn channel_from_flow_event(realm_id: &str, event: &Value) -> Option<C
 pub(super) fn channels_from_events(realm_id: &str, events: &[Value]) -> Vec<ChannelEntity> {
     events
         .iter()
-        .filter_map(|event| channel_from_flow_event(realm_id, event))
+        .filter_map(|event| channel_from_strand_event(realm_id, event))
         .collect()
 }
 
@@ -2859,7 +2859,7 @@ pub(super) fn channels_from_local_state(state: &ClientLocalState) -> Vec<Channel
         .raw_operations
         .iter()
         .filter_map(|record| {
-            channel_from_flow_event(
+            channel_from_strand_event(
                 record.realm_id.as_deref().unwrap_or_default(),
                 &record.payload,
             )
@@ -2871,7 +2871,7 @@ pub(super) fn merge_channels(target: &mut Vec<ChannelEntity>, incoming: Vec<Chan
     for channel in incoming {
         if let Some(existing) = target
             .iter_mut()
-            .find(|candidate| candidate.flow_id == channel.flow_id)
+            .find(|candidate| candidate.strand_id == channel.strand_id)
         {
             *existing = channel;
         } else {

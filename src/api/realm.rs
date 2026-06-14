@@ -719,7 +719,7 @@ impl CokretApi {
             .await
     }
 
-    // Pull the canonical Space-container / Flow lifecycle state for a Realm so the
+    // Pull the canonical Space-container / Strand lifecycle state for a Realm so the
     // kanban view can hydrate `column.state` / `card.lifecycle` after a
     // refresh. Pairs with soland's `routing::events::projection_query`.
     pub async fn list_space_container_projections(
@@ -733,12 +733,12 @@ impl CokretApi {
         self.get_json(&path).await
     }
 
-    pub async fn list_flow_projections(
+    pub async fn list_strand_projections(
         &self,
         realm_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionView<FlowProjectionView>> {
+    ) -> anyhow::Result<LifecycleProjectionView<StrandProjectionView>> {
         let realm_id = trim_realm_id(realm_id);
-        let path = format!("_cokret/self/projection/flows?realm_id={realm_id}");
+        let path = format!("_cokret/self/projection/strands?realm_id={realm_id}");
         self.get_json(&path).await
     }
 

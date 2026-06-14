@@ -6,7 +6,7 @@
 .DESCRIPTION
     NOT FOR PRODUCTION USE. This script never submits to Apple, Microsoft
     timestamp authorities, or external signing services. It records what
-    the live signing flow WOULD do given the current host environment,
+    the live signing strand WOULD do given the current host environment,
     and surfaces missing inputs (signing identity, timestamp authority,
     notary credentials) before they trip a real release.
 
@@ -100,7 +100,7 @@ try {
         notes = @(
             "NOT FOR PRODUCTION USE — this is a reproducible dry-run only.",
             "No remote endpoint (Apple notarytool, MS timestamp authority, GPG keyserver) is contacted.",
-            "Real signing happens through a separate manual flow with a paid Developer ID / EV cert."
+            "Real signing happens through a separate manual strand with a paid Developer ID / EV cert."
         )
     }
 
@@ -163,7 +163,7 @@ try {
     $evidencePath = Join-Path $DistDir "codesign-dryrun.json"
     $evidence | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $evidencePath
     Write-Host "Wrote codesign dry-run evidence to $evidencePath"
-    Write-Host "NOT FOR PRODUCTION USE — see SECURITY.md for the real signing flow."
+    Write-Host "NOT FOR PRODUCTION USE — see SECURITY.md for the real signing strand."
 }
 finally {
     Pop-Location

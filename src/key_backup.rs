@@ -463,7 +463,7 @@ pub struct BackupItem<'a> {
 /// The metadata (backup_id, created_at, contents, domain separation) is built
 /// FIRST so the AEAD AAD (`domain_separation.aead_aad`) and the nonce transcript
 /// can be bound BEFORE encryption — the inverse of the old "encrypt then wrap"
-/// flow. `root` is the Argon2id root key (its salt/params travel on the wire).
+/// strand. `root` is the Argon2id root key (its salt/params travel on the wire).
 pub fn build_passphrase_kdf_backup_body(
     backup_id: &str,
     actor_id: &str,

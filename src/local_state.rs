@@ -529,8 +529,8 @@ pub struct ClientLocalState {
     /// `ck.read_receipt.preferences`).
     ///
     /// `read_receipt_default_send` is the global fallback (default: send).
-    /// `read_receipt_realm_overrides` and `read_receipt_flow_overrides`
-    /// are per-scope overrides; resolution order is (flow → realm →
+    /// `read_receipt_realm_overrides` and `read_receipt_strand_overrides`
+    /// are per-scope overrides; resolution order is (strand → realm →
     /// default), matching the SDK's `ReadReceiptPreferences::effective_send`.
     /// Until the server wires `ck.account_data.set` for this key,
     /// preferences live only on this device.
@@ -539,7 +539,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub read_receipt_realm_overrides: BTreeMap<String, bool>,
     #[serde(default)]
-    pub read_receipt_flow_overrides: BTreeMap<String, bool>,
+    pub read_receipt_strand_overrides: BTreeMap<String, bool>,
     /// Server-declared `ck.realm.read_receipt_policy` snapshots, keyed by
     /// realm id. Populated when sync (P0 M3) lands — surfaces the
     /// disclosure / visibility values from the
@@ -614,7 +614,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub mls_genesis_emitted: BTreeSet<String>,
     /// X5.1 — local-only plaintext sidecar for the author's own encrypted
-    /// private flow fields. Keyed `realm_id -> flow_id -> field_path ->
+    /// private strand fields. Keyed `realm_id -> strand_id -> field_path ->
     /// plaintext` where `field_path` is the dotted private patch path
     /// emitted by the kanban writer (e.g. `"body"`, `"synthesis"`) and
     /// `plaintext` is the JSON-serialized patch *value* (the same bytes
@@ -633,7 +633,7 @@ pub struct ClientLocalState {
     ///
     /// CRITICAL: this MUST NEVER leave the device. It is written only by
     /// [`LocalStateStore::save_private_plaintext`] and never enters any
-    /// upstream op / `ck.flow.update` payload. (Cross-device backup of the
+    /// upstream op / `ck.strand.update` payload. (Cross-device backup of the
     /// sidecar is a separate later task — not implemented here.)
     #[serde(default)]
     pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
@@ -679,14 +679,14 @@ pub struct ClientLocalState {
     pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
     /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
     /// connected principal server's Round 4 `ServiceDescribe` response.
-    /// Threaded through to flows that need to canonicalise into
+    /// Threaded through to strands that need to canonicalise into
     /// transport / signing transcripts (e.g. `ck.cross_signing.publish`).
     /// `None` until the first successful `/server/describe` lands.
     #[serde(default)]
     pub server_trust_domain: Option<String>,
     /// G3.Y0 — per-device DPoP signing key metadata persisted across launches.
     /// Used to mint `DPoP:` proofs for session-grant issuance and private
-    /// refresh flows that both require a key the server can bind to `cnf.jkt`.
+    /// refresh strands that both require a key the server can bind to `cnf.jkt`.
     ///
     /// Production callers store the private seed in `SecureKeyStore`
     /// under `auth.dpop.device_key.v1`; this state record keeps the
@@ -899,7 +899,7 @@ impl Default for ClientLocalState {
             muted_notification_kinds: BTreeMap::new(),
             read_receipt_default_send: true,
             read_receipt_realm_overrides: BTreeMap::new(),
-            read_receipt_flow_overrides: BTreeMap::new(),
+            read_receipt_strand_overrides: BTreeMap::new(),
             read_receipt_policy_snapshots: BTreeMap::new(),
             seal_views: BTreeMap::new(),
             push_registration: None,
@@ -1754,9 +1754,9 @@ impl LocalStateStore {
     /// represents the current viewer.
     ///
     /// The auth tokens are deliberately preserved here because the
-    /// caller usually has its own opinion: a fresh-login flow has just
+    /// caller usually has its own opinion: a fresh-login strand has just
     /// written the new account's tokens via `set_oidc_tokens` and would
-    /// be sad to see them disappear, while a `logout` flow follows up
+    /// be sad to see them disappear, while a `logout` strand follows up
     /// with explicit `set_oidc_tokens(None)` + `set_session_grant(None)`
     /// of its own. Bundling the token clear into this helper would have
     /// made the account-change-during-connect path racy.
@@ -1773,7 +1773,7 @@ impl LocalStateStore {
         // G3.Y0 — the DPoP device key is device-level state, same
         // semantics as `local_identity`. Preserved across the
         // soft-logout / account-change paths so a re-authentication on
-        // this device keeps `cnf.jkt` stable; only the hard-logout flow
+        // this device keeps `cnf.jkt` stable; only the hard-logout strand
         // (`clear_device_scoped`) wipes it.
         let preserved_dpop = self.cached.dpop_device_key.clone();
         // YOU-02-004: the MLS receive-chain overlay is account-scoped state —
@@ -2188,35 +2188,35 @@ impl LocalStateStore {
         self.load().read_receipt_realm_overrides
     }
 
-    pub fn read_receipt_flow_override(&self, flow_id: &str) -> Option<bool> {
+    pub fn read_receipt_strand_override(&self, strand_id: &str) -> Option<bool> {
         self.load()
-            .read_receipt_flow_overrides
-            .get(flow_id)
+            .read_receipt_strand_overrides
+            .get(strand_id)
             .copied()
     }
 
-    pub fn set_read_receipt_flow_override(
+    pub fn set_read_receipt_strand_override(
         &mut self,
-        flow_id: impl Into<String>,
+        strand_id: impl Into<String>,
         send: Option<bool>,
     ) {
         self.ensure_cached_loaded();
-        let flow_id = flow_id.into();
+        let strand_id = strand_id.into();
         match send {
             Some(value) => {
                 self.cached
-                    .read_receipt_flow_overrides
-                    .insert(flow_id, value);
+                    .read_receipt_strand_overrides
+                    .insert(strand_id, value);
             }
             None => {
-                self.cached.read_receipt_flow_overrides.remove(&flow_id);
+                self.cached.read_receipt_strand_overrides.remove(&strand_id);
             }
         }
         let _ = self.flush();
     }
 
-    pub fn read_receipt_flow_overrides(&self) -> BTreeMap<String, bool> {
-        self.load().read_receipt_flow_overrides
+    pub fn read_receipt_strand_overrides(&self) -> BTreeMap<String, bool> {
+        self.load().read_receipt_strand_overrides
     }
 
     // ── Realm remarks (spec client-preferences.md §3.7) ─
@@ -2505,7 +2505,7 @@ impl LocalStateStore {
         self.seal_view_for_realm(realm_id).move_seal_ref()
     }
 
-    /// Resolve effective send preference per spec (server policy → flow →
+    /// Resolve effective send preference per spec (server policy → strand →
     /// realm → default). Mirror of
     /// `cokret_sdk::ReadReceiptPreferences::effective_send` extended with
     /// server-declared policy lock: when the Realm publishes a
@@ -2513,7 +2513,7 @@ impl LocalStateStore {
     /// answer is forced `true`; with `disclosure="disabled"` it's forced
     /// `false`. User-level overrides are ignored in those cases (matching
     /// the lock UI in settings).
-    pub fn read_receipt_should_send(&self, flow_id: Option<&str>, realm_id: Option<&str>) -> bool {
+    pub fn read_receipt_should_send(&self, strand_id: Option<&str>, realm_id: Option<&str>) -> bool {
         let snapshot = self.load();
         if let Some(rid) = realm_id
             && let Some(policy) = snapshot.read_receipt_policy_snapshots.get(rid)
@@ -2524,8 +2524,8 @@ impl LocalStateStore {
                 _ => {}
             }
         }
-        if let Some(fid) = flow_id
-            && let Some(value) = snapshot.read_receipt_flow_overrides.get(fid)
+        if let Some(fid) = strand_id
+            && let Some(value) = snapshot.read_receipt_strand_overrides.get(fid)
         {
             return *value;
         }
@@ -3213,29 +3213,29 @@ fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
             track_name: None,
             track_scope: None,
         },
-        Some(topic) if topic.starts_with("ck:flow:") => ReadScope {
-            kind: "flow".to_owned(),
+        Some(topic) if topic.starts_with("ck:strand:") => ReadScope {
+            kind: "strand".to_owned(),
             object_ref: Some(topic.to_owned()),
             track_name: Some("discussion".to_owned()),
             track_scope: None,
         },
         _ => ReadScope {
-            kind: "flow".to_owned(),
-            object_ref: Some(default_flow_id_for_realm(realm_id)),
+            kind: "strand".to_owned(),
+            object_ref: Some(default_strand_id_for_realm(realm_id)),
             track_name: Some("discussion".to_owned()),
             track_scope: None,
         },
     }
 }
 
-/// YOU-05-009: the `ck:realm:<suffix>` → `ck:flow:<suffix>` main-flow id
+/// YOU-05-009: the `ck:realm:<suffix>` → `ck:strand:<suffix>` main-strand id
 /// derivation is a protocol mapping rule that affects event addressing.
 /// This is the crate's single authoritative copy — do NOT re-derive it
-/// locally; a divergent copy writes events to the wrong flow.
-pub(crate) fn default_flow_id_for_realm(realm_id: &str) -> String {
+/// locally; a divergent copy writes events to the wrong strand.
+pub(crate) fn default_strand_id_for_realm(realm_id: &str) -> String {
     realm_id
         .strip_prefix("ck:realm:")
-        .map(|suffix| format!("ck:flow:{suffix}"))
+        .map(|suffix| format!("ck:strand:{suffix}"))
         .unwrap_or_else(|| realm_id.to_owned())
 }
 

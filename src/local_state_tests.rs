@@ -67,14 +67,14 @@ fn private_plaintext_snapshot_json_round_trips_through_merge() {
     let path = temp_state_path("private-plaintext-snapshot");
     let mut store = LocalStateStore::with_path(path);
     assert!(store.private_plaintext_is_empty());
-    store.save_private_plaintext("ck:realm:s1", "ck:flow:f1", "body", "\"hello body\"");
+    store.save_private_plaintext("ck:realm:s1", "ck:strand:f1", "body", "\"hello body\"");
     store.save_private_plaintext(
         "ck:realm:s1",
-        "ck:flow:f1",
+        "ck:strand:f1",
         "synthesis",
         "\"hello synthesis\"",
     );
-    store.save_private_plaintext("ck:realm:s2", "ck:flow:f2", "body", "\"other body\"");
+    store.save_private_plaintext("ck:realm:s2", "ck:strand:f2", "body", "\"other body\"");
     assert!(!store.private_plaintext_is_empty());
 
     let json = store.private_plaintext_snapshot_json();
@@ -87,15 +87,15 @@ fn private_plaintext_snapshot_json_round_trips_through_merge() {
     assert!(fresh.private_plaintext_is_empty());
     fresh.merge_private_plaintext_map(map);
     assert_eq!(
-        fresh.private_plaintext_for("ck:realm:s1", "ck:flow:f1", "body"),
+        fresh.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "body"),
         Some("\"hello body\"".to_owned())
     );
     assert_eq!(
-        fresh.private_plaintext_for("ck:realm:s1", "ck:flow:f1", "synthesis"),
+        fresh.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "synthesis"),
         Some("\"hello synthesis\"".to_owned())
     );
     assert_eq!(
-        fresh.private_plaintext_for("ck:realm:s2", "ck:flow:f2", "body"),
+        fresh.private_plaintext_for("ck:realm:s2", "ck:strand:f2", "body"),
         Some("\"other body\"".to_owned())
     );
 }
@@ -106,25 +106,25 @@ fn merge_private_plaintext_map_keeps_local_value_on_conflict() {
     // local value wins on conflict.
     let path = temp_state_path("private-plaintext-conflict");
     let mut store = LocalStateStore::with_path(path);
-    store.save_private_plaintext("ck:realm:s1", "ck:flow:f1", "body", "\"local newer\"");
+    store.save_private_plaintext("ck:realm:s1", "ck:strand:f1", "body", "\"local newer\"");
 
     let mut fields = BTreeMap::new();
     fields.insert("body".to_owned(), "\"backup older\"".to_owned()); // conflict
     fields.insert("synthesis".to_owned(), "\"backup synthesis\"".to_owned()); // gap
-    let mut flows = BTreeMap::new();
-    flows.insert("ck:flow:f1".to_owned(), fields);
+    let mut strands = BTreeMap::new();
+    strands.insert("ck:strand:f1".to_owned(), fields);
     let mut incoming = BTreeMap::new();
-    incoming.insert("ck:realm:s1".to_owned(), flows);
+    incoming.insert("ck:realm:s1".to_owned(), strands);
     store.merge_private_plaintext_map(incoming);
 
     // Conflict: local value kept.
     assert_eq!(
-        store.private_plaintext_for("ck:realm:s1", "ck:flow:f1", "body"),
+        store.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "body"),
         Some("\"local newer\"".to_owned())
     );
     // Gap: backup fills it.
     assert_eq!(
-        store.private_plaintext_for("ck:realm:s1", "ck:flow:f1", "synthesis"),
+        store.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "synthesis"),
         Some("\"backup synthesis\"".to_owned())
     );
 }
@@ -180,46 +180,46 @@ fn private_plaintext_sidecar_round_trips_through_store() {
     // it is the only place the author's own encrypted content lives.
     let path = temp_state_path("private-plaintext-sidecar");
     let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
-    let flow = "ck:flow:0196419b-0000-7000-8000-0000000000aa";
+    let strand = "ck:strand:0196419b-0000-7000-8000-0000000000aa";
     {
         let mut store = LocalStateStore::with_path(path.clone());
-        store.save_private_plaintext(realm, flow, "body", "\"author body\"");
-        store.save_private_plaintext(realm, flow, "synthesis", "\"author synthesis\"");
+        store.save_private_plaintext(realm, strand, "body", "\"author body\"");
+        store.save_private_plaintext(realm, strand, "synthesis", "\"author synthesis\"");
     }
     // Fresh reader (simulating a process restart / reload).
     let reader = LocalStateStore::with_path(path.clone());
     assert_eq!(
-        reader.private_plaintext_for(realm, flow, "body").as_deref(),
+        reader.private_plaintext_for(realm, strand, "body").as_deref(),
         Some("\"author body\"")
     );
     assert_eq!(
         reader
-            .private_plaintext_for(realm, flow, "synthesis")
+            .private_plaintext_for(realm, strand, "synthesis")
             .as_deref(),
         Some("\"author synthesis\"")
     );
-    let fields = reader.private_plaintext_fields(realm, flow);
+    let fields = reader.private_plaintext_fields(realm, strand);
     assert_eq!(fields.len(), 2);
     // Missing keys return None.
     assert!(
         reader
-            .private_plaintext_for(realm, flow, "content")
+            .private_plaintext_for(realm, strand, "content")
             .is_none()
     );
     assert!(
         reader
-            .private_plaintext_for("ck:realm:other", flow, "body")
+            .private_plaintext_for("ck:realm:other", strand, "body")
             .is_none()
     );
 
     // Clearing a field (empty plaintext) removes it and persists.
     let mut writer = LocalStateStore::with_path(path.clone());
-    writer.save_private_plaintext(realm, flow, "body", "");
+    writer.save_private_plaintext(realm, strand, "body", "");
     let reader = LocalStateStore::with_path(path);
-    assert!(reader.private_plaintext_for(realm, flow, "body").is_none());
+    assert!(reader.private_plaintext_for(realm, strand, "body").is_none());
     assert_eq!(
         reader
-            .private_plaintext_for(realm, flow, "synthesis")
+            .private_plaintext_for(realm, strand, "synthesis")
             .as_deref(),
         Some("\"author synthesis\"")
     );
@@ -236,7 +236,7 @@ fn sync_event_states_update_submission_by_event_id() {
         local_id,
         Some(event_id.to_owned()),
         realm,
-        "ck.flow.move",
+        "ck.strand.move",
         MoveSubmissionState::PendingSeal,
         None,
         Some("ck:seal:sha256:abc".to_owned()),
@@ -303,7 +303,7 @@ fn sync_event_states_update_submission_when_event_and_move_ids_are_present() {
     store.record_move_submission(
         move_id,
         realm,
-        "ck.flow.move",
+        "ck.strand.move",
         MoveSubmissionState::PendingSeal,
         None,
         None,
@@ -664,7 +664,7 @@ fn local_state_store_persists_private_read_cursors() {
     assert_eq!(marker.marker_type, "ck.read_cursor.advance");
     assert_eq!(marker.body.realm_id, "ck:realm:demo");
     assert_eq!(marker.body.position.event_id, "ck:event:read-1");
-    assert_eq!(marker.body.read_scope.kind, "flow");
+    assert_eq!(marker.body.read_scope.kind, "strand");
     assert_eq!(
         marker.body.read_scope.track_name.as_deref(),
         Some("discussion")
@@ -680,8 +680,8 @@ fn local_state_store_persists_private_read_cursors() {
                 "device_id": "device-1",
                 "realm_id": "ck:realm:demo",
                 "read_scope": {
-                    "kind": "flow",
-                    "ref": "ck:flow:demo",
+                    "kind": "strand",
+                    "ref": "ck:strand:demo",
                     "track_name": "discussion"
                 },
                 "position": {
@@ -1180,7 +1180,7 @@ fn clear_account_scoped_preserves_device_level_and_token_state() {
     );
     assert!(
         state.oidc_tokens.is_some(),
-        "OIDC tokens must survive — login flow owns them",
+        "OIDC tokens must survive — login strand owns them",
     );
     assert!(
         state.oidc_tokens.as_ref().unwrap().access_token.is_empty(),
@@ -1336,17 +1336,17 @@ fn read_receipt_default_is_send_until_user_opts_out() {
 }
 
 #[test]
-fn read_receipt_resolution_flow_overrides_realm_overrides_default() {
+fn read_receipt_resolution_strand_overrides_realm_overrides_default() {
     let path = temp_state_path("read-receipt-resolve");
     let mut store = LocalStateStore::with_path(path.clone());
     // default = true (send)
     store.set_read_receipt_realm_override("ck:realm:demo", Some(false));
-    store.set_read_receipt_flow_override("ck:flow:demo", Some(true));
+    store.set_read_receipt_strand_override("ck:strand:demo", Some(true));
 
     let reader = LocalStateStore::with_path(path);
-    // Flow override wins.
-    assert!(reader.read_receipt_should_send(Some("ck:flow:demo"), Some("ck:realm:demo")));
-    // Space override wins over default when no flow override.
+    // Strand override wins.
+    assert!(reader.read_receipt_should_send(Some("ck:strand:demo"), Some("ck:realm:demo")));
+    // Space override wins over default when no strand override.
     assert!(!reader.read_receipt_should_send(None, Some("ck:realm:demo")));
     // Default applies when nothing matches.
     assert!(reader.read_receipt_should_send(None, Some("ck:realm:other")));
@@ -1658,12 +1658,12 @@ fn seal_view_from_sync_body_parses_full_payload() {
 fn seal_view_from_sync_body_parses_structured_bottoms() {
     let body = serde_json::json!({
         "bottoms": [{
-            "cell": "ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card",
+            "cell": "ck:cell:ck.component.strand.position.v1:ck:space:board:ck:strand:card",
             "status": "conflict",
             "bottom": {
                 "kind": "conflict",
                 "cells": [
-                    "ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card"
+                    "ck:cell:ck.component.strand.position.v1:ck:space:board:ck:strand:card"
                 ],
                 "event_ids": [
                     "ck:event:0196419b-0000-7000-8000-000000000001",
@@ -1680,7 +1680,7 @@ fn seal_view_from_sync_body_parses_structured_bottoms() {
     let view = LocalSealView::from_sync_body(&body);
     let info = view
         .bottom_cells
-        .get("ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card")
+        .get("ck:cell:ck.component.strand.position.v1:ck:space:board:ck:strand:card")
         .expect("structured bottom conflict surfaced");
     assert_eq!(info.status, "conflict");
     assert_eq!(info.heads.len(), 2);

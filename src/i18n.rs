@@ -812,11 +812,11 @@ pub fn english_translations() -> TranslationDict {
 
     // Chat / Discussion view (panel headers + key buttons; reuse common.* for
     // generic verbs like Save/Cancel/Retry/Edit/Confirm).
-    dict.set("chat.discussions_header", "Flow discussions");
+    dict.set("chat.discussions_header", "Strand discussions");
     dict.set("chat.users_header", "Users");
     dict.set("chat.settings_header", "Settings");
     dict.set("chat.new_discussion", "New discussion");
-    dict.set("chat.new_flow", "New Flow");
+    dict.set("chat.new_strand", "New Strand");
     dict.set("chat.hide_list", "Hide discussion list");
     dict.set("chat.label.title", "Title");
     dict.set("chat.label.summary", "Summary");
@@ -825,7 +825,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.watch_level.prefix", "Watching");
     dict.set(
         "chat.watch_level.tooltip",
-        "Choose how often this Flow notifies you.",
+        "Choose how often this Strand notifies you.",
     );
     dict.set("chat.watch_level.mentions_only", "Mentions only");
     dict.set("chat.watch_level.participating", "Participating");
@@ -897,9 +897,9 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.empty.title", "No discussion track available");
     dict.set(
         "chat.empty.description",
-        "This Space should expose a default Flow discussion track.",
+        "This Space should expose a default Strand discussion track.",
     );
-    dict.set("chat.empty.create_button", "Create Flow");
+    dict.set("chat.empty.create_button", "Create Strand");
 
     // Notifications panel (group tabs + toolbar tooltips)
     dict.set("notifications.feed_title", "Notification feed");
@@ -1035,7 +1035,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("content.attachment.download", "Download");
 
-    // T7.1 — friendly product-language terms surfaced in the main flow.
+    // T7.1 — friendly product-language terms surfaced in the main strand.
     // Raw protocol identifiers (did:web:, ck.*, schema ids, profile ids)
     // are only shown inside Developer Tools / Diagnostics surfaces.
     dict.set(
@@ -1125,7 +1125,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("profile_gate.friendly.unknown", "Client feature");
 
     // Developer Tools / Diagnostics entry points used to expose the
-    // protocol-level details that used to leak into the main flow.
+    // protocol-level details that used to leak into the main strand.
     dict.set("nav.developer", "Developer Tools");
     dict.set("developer.title", "Developer Tools");
     dict.set("developer.subtitle", "Protocol diagnostics and audit");
@@ -1439,7 +1439,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     // Agent FSM + pairing.
     dict.set(
         "error.agent.pairing_request_expired",
-        "Pairing request expired — start a fresh pairing flow and re-scan.",
+        "Pairing request expired — start a fresh pairing strand and re-scan.",
     );
     dict.set(
         "error.agent.proof_invalid",
@@ -1624,7 +1624,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     // the dedicated zh dict carries the Chinese UI strings.
     dict.set("object_link.share", "Share link");
     dict.set("object_link.share_realm", "Share this Realm");
-    dict.set("object_link.share_flow", "Share this Flow");
+    dict.set("object_link.share_strand", "Share this Strand");
     dict.set("object_link.share_message", "Share this Message");
     dict.set("object_link.copy_https", "Copy link");
     dict.set("object_link.copy_app", "Copy \"open in app\" link");
@@ -2053,18 +2053,18 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.security_mls", "安全与 MLS");
 
     // Chat / Discussion view
-    dict.set("chat.discussions_header", "Flow 讨论");
+    dict.set("chat.discussions_header", "Strand 讨论");
     dict.set("chat.users_header", "用户");
     dict.set("chat.settings_header", "设置");
     dict.set("chat.new_discussion", "新建讨论");
-    dict.set("chat.new_flow", "新建 Flow");
+    dict.set("chat.new_strand", "新建 Strand");
     dict.set("chat.hide_list", "隐藏讨论列表");
     dict.set("chat.label.title", "标题");
     dict.set("chat.label.summary", "概述");
     dict.set("common.remove", "移除");
     // T7.2 watch level 快捷切换
     dict.set("chat.watch_level.prefix", "关注");
-    dict.set("chat.watch_level.tooltip", "选择此 Flow 的通知频率。");
+    dict.set("chat.watch_level.tooltip", "选择此 Strand 的通知频率。");
     dict.set("chat.watch_level.mentions_only", "仅 @ 我");
     dict.set("chat.watch_level.participating", "参与中");
     dict.set("chat.watch_level.all", "全部");
@@ -2130,9 +2130,9 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.empty.title", "暂无可用讨论 track");
     dict.set(
         "chat.empty.description",
-        "该 Space 应该提供默认 Flow 的讨论 track。",
+        "该 Space 应该提供默认 Strand 的讨论 track。",
     );
-    dict.set("chat.empty.create_button", "创建 Flow");
+    dict.set("chat.empty.create_button", "创建 Strand");
 
     // Notifications panel
     dict.set("notifications.feed_title", "通知流");
@@ -2539,7 +2539,7 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     // R3.3 (CKP-0011) — shareable object links (Chinese-first).
     dict.set("object_link.share", "分享链接");
     dict.set("object_link.share_realm", "分享此领域");
-    dict.set("object_link.share_flow", "分享此流程");
+    dict.set("object_link.share_strand", "分享此流程");
     dict.set("object_link.share_message", "分享此消息");
     dict.set("object_link.copy_https", "复制链接");
     dict.set("object_link.copy_app", "复制“在应用中打开”链接");

@@ -1,4 +1,4 @@
-//! CircleScopePicker — dropdown surface for the new-Flow / new-Space /
+//! CircleScopePicker — dropdown surface for the new-Strand / new-Space /
 //! composer-banner family that lets the user pick between Realm scope
 //! (default) and any Circle the active account belongs to.
 //!
@@ -86,7 +86,7 @@ pub fn CircleScopePicker(
     }
 }
 
-/// Coloured banner displayed at the top of a Flow / composer when the
+/// Coloured banner displayed at the top of a Strand / composer when the
 /// active scope is a Circle. Renders nothing for `CircleScope::Realm`
 /// (the default scope has no banner — that keeps the UI surface quiet
 /// during normal use).
@@ -119,37 +119,37 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
     }
 }
 
-/// Confidential-discussion-of cross-link panel. Rendered above a Flow
+/// Confidential-discussion-of cross-link panel. Rendered above a Strand
 /// when its `Relation::ConfidentialDiscussionOf` points at a parent
-/// Flow.
+/// Strand.
 ///
 /// CKP-0007 P3B.2.8 — the link routes through the dioxus router via
 /// the optional `target_realm_id`. When the relation projection
-/// carries the parent Flow's home Realm id the link is built as a
+/// carries the parent Strand's home Realm id the link is built as a
 /// `Route::TimelineRealm { realm_id }` navigation; when it doesn't,
-/// the seal falls back to a `#flow:<id>` hash so the current Realm
-/// timeline can still scroll to the parent Flow.
+/// the seal falls back to a `#strand:<id>` hash so the current Realm
+/// timeline can still scroll to the parent Strand.
 #[component]
 pub fn ConfidentialDiscussionOfBanner(
-    target_flow_id: String,
+    target_strand_id: String,
     target_title: String,
-    /// Parent Flow's home Realm id. When supplied the link routes via
-    /// the dioxus router's `Route::TimelineRealm` (with a flow seal
+    /// Parent Strand's home Realm id. When supplied the link routes via
+    /// the dioxus router's `Route::TimelineRealm` (with a strand seal
     /// in the URL hash).
     #[props(default)]
     target_realm_id: Option<String>,
 ) -> Element {
     let href = match target_realm_id.as_deref() {
         Some(realm_id) if !realm_id.trim().is_empty() => {
-            format!("/timeline/{realm_id}#flow:{target_flow_id}")
+            format!("/timeline/{realm_id}#strand:{target_strand_id}")
         }
-        _ => format!("#flow:{target_flow_id}"),
+        _ => format!("#strand:{target_strand_id}"),
     };
     rsx! {
         div {
             class: "banner confidential-discussion-of-banner",
             "data-testid": "confidential-discussion-of-banner",
-            "data-target-flow-id": "{target_flow_id}",
+            "data-target-strand-id": "{target_strand_id}",
             span { class: "banner-icon", "💬" }
             div { class: "banner-body",
                 strong {
@@ -162,7 +162,7 @@ pub fn ConfidentialDiscussionOfBanner(
                     }
                 }
                 span { class: "muted",
-                    "This Flow is the confidential side of another Flow. Members of this Circle can see both sides."
+                    "This Strand is the confidential side of another Strand. Members of this Circle can see both sides."
                 }
             }
         }

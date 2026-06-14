@@ -127,7 +127,7 @@ pub struct CoauthAuthBridgeOAuthDescriptor {
     pub exchange_describe_path: String,
     pub exchange_path: String,
     #[serde(default)]
-    pub supported_flows: Vec<String>,
+    pub supported_strands: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -240,7 +240,7 @@ pub struct RefreshSessionGrantOutcome {
 }
 
 /// OpenID Connect Core §3.1.3.3 - extra provider-specific fields
-/// flow through `extras` so tokens minted by Auth0 / Keycloak / etc.
+/// strand through `extras` so tokens minted by Auth0 / Keycloak / etc.
 /// don't fail to deserialize on a one-off `provider_session_id` claim.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OidcTokenResponse {
@@ -561,7 +561,7 @@ impl CoauthApi {
     }
 
     /// Real OIDC token-endpoint exchange. Drives the PKCE authorization-code
-    /// flow directly against the configured OIDC provider's `token_endpoint` -
+    /// strand directly against the configured OIDC provider's `token_endpoint` -
     /// no coauth bridge in between. Returns the parsed [`OidcTokenResponse`]
     /// with access + refresh tokens + scope + id_token + expires_in.
     ///
@@ -813,11 +813,11 @@ impl CoauthApi {
 }
 
 /// R3.2 (YG-HC-1) — best-effort deep link to the issuer/coauth handle
-/// issuance flow (`/handles/me`). yougen does NOT manage handle lifecycle
+/// issuance strand (`/handles/me`). yougen does NOT manage handle lifecycle
 /// (per spec §3.2.3 / §3.4): `ck.profile.update` /
 /// `ck.member.identity.update` MUST NOT set or override handles. Instead
 /// the settings UI surfaces "Handle managed by your organization" with a
-/// link out to the issuer flow, where the org-run issuer signs
+/// link out to the issuer strand, where the org-run issuer signs
 /// `ck.schema.handle_claim.v1` evidence.
 ///
 /// We derive the link from the principal/auth base URL synchronously
@@ -1035,7 +1035,7 @@ pub fn build_oidc_scaffold_bundle(
     let callback_uri = current_oidc_redirect_uri();
     let client_id = resolve_oidc_client_id(topology, callback_uri.as_str())?;
     // RFC 6749 §10.12 / RFC 7636: state, nonce, and PKCE verifier MUST be
-    // unguessable per-flow values. The previous scaffold used deterministic
+    // unguessable per-strand values. The previous scaffold used deterministic
     // strings derived from (actor_id, device_id), which would let an
     // attacker who learned the DID + device id forge a matching callback
     // payload. Replace with cryptographically random tokens and the spec
@@ -1051,7 +1051,7 @@ pub fn build_oidc_scaffold_bundle(
         Some("plain") => code_verifier.clone(),
         // S256 is the spec-default + only other value we negotiate, so
         // when the topology is silent we still emit an S256 challenge —
-        // the authorize URL builder simply omits it for non-PKCE flows.
+        // the authorize URL builder simply omits it for non-PKCE strands.
         _ => pkce_code_challenge_s256(&code_verifier),
     };
     let authorize_url = build_authorize_url(
@@ -1519,7 +1519,7 @@ pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
 /// Diagnostic preview of the OIDC authorize URL using **stable
 /// non-secret placeholders** for state / nonce / code_challenge so the
 /// preview output is reproducible and obvious in the UI. The real
-/// authorize flow runs through [`build_authorize_url_with_session`]
+/// authorize strand runs through [`build_authorize_url_with_session`]
 /// (~line 825) which generates the three values via
 /// `random_url_safe_token` + `pkce_code_challenge_s256` against fresh
 /// per-attempt randomness.

@@ -23,7 +23,7 @@ use crate::operation::OperationBuilder;
 pub enum AccountDataKey {
     /// `client.ui` — sidebar collapsed, theme, default view per Realm.
     ClientUi,
-    /// `ck.read_receipt.preferences` — global + per-Realm + per-flow send override.
+    /// `ck.read_receipt.preferences` — global + per-Realm + per-strand send override.
     ClientReadReceipts,
     /// `client.presence` — per-Realm typing / online / last-seen toggles.
     ClientPresence,
@@ -573,7 +573,7 @@ pub struct BlocklistEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
     /// Stable per-entry id (`ck:block:<hash>`), preserved across sync so other
-    /// clients / appeal flows can reference a specific block.
+    /// clients / appeal strands can reference a specific block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_id: Option<String>,
 }
@@ -1913,7 +1913,7 @@ mod tests {
     #[test]
     fn productivity_account_data_keys_use_sdk_private_derivation() {
         let ns = b"yougen-account-data-test-key";
-        let target_ref = "ck:flow:01904100-0000-7000-8000-000000000001";
+        let target_ref = "ck:strand:01904100-0000-7000-8000-000000000001";
         let snooze = snooze_account_data_key(ns, target_ref).unwrap();
         let saved = saved_account_data_key(ns, "Focus", target_ref).unwrap();
         let draft =
@@ -1927,7 +1927,7 @@ mod tests {
 
         for key in [&snooze, &saved, &draft, &manifest, &transfer] {
             assert!(validate_private_account_data_key(key).is_ok());
-            assert!(!key.contains("ck:flow:"));
+            assert!(!key.contains("ck:strand:"));
             assert!(!key.contains("Focus"));
         }
     }

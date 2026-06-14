@@ -23,7 +23,7 @@ fn board_write_record(state: CardState, note: &str) -> BoardWriteRecord {
     BoardWriteRecord {
         state,
         move_id: "ck:operation:test".to_owned(),
-        kind: "ck.flow.create".to_owned(),
+        kind: "ck.strand.create".to_owned(),
         cell_id: "ck:cell:test".to_owned(),
         effect_summary: "{}".to_owned(),
         seal_ref: "ck:seal:test".to_owned(),
@@ -338,7 +338,7 @@ fn try_load_api_columns_returns_none_in_sync_init_context() {
 }
 
 /// Wire state strings emitted by soland's
-/// `/_cokret/self/projection/{spaces|flows}` round-trip into the
+/// `/_cokret/self/projection/{spaces|strands}` round-trip into the
 /// renderer enums. Unknown values stay at the safe `Active` default.
 #[test]
 fn lifecycle_wire_strings_decode_to_enums() {
@@ -360,28 +360,28 @@ fn lifecycle_wire_strings_decode_to_enums() {
     );
 
     assert_eq!(
-        flow_lifecycle_from_wire("active"),
-        FlowLifecycleState::Active
+        strand_lifecycle_from_wire("active"),
+        StrandLifecycleState::Active
     );
     assert_eq!(
-        flow_lifecycle_from_wire("archived"),
-        FlowLifecycleState::Archived
+        strand_lifecycle_from_wire("archived"),
+        StrandLifecycleState::Archived
     );
-    // R11: `redacted` is the only spec terminal (flow.schema.json).
+    // R11: `redacted` is the only spec terminal (strand.schema.json).
     assert_eq!(
-        flow_lifecycle_from_wire("redacted"),
-        FlowLifecycleState::Redacted
+        strand_lifecycle_from_wire("redacted"),
+        StrandLifecycleState::Redacted
     );
     // `deleted` is NOT in the spec enum; it degrades to the safe
     // non-terminal `Active` default (and logs a warning) rather than
     // being treated as a terminal.
     assert_eq!(
-        flow_lifecycle_from_wire("deleted"),
-        FlowLifecycleState::Active
+        strand_lifecycle_from_wire("deleted"),
+        StrandLifecycleState::Active
     );
     assert_eq!(
-        flow_lifecycle_from_wire("garbage"),
-        FlowLifecycleState::Active
+        strand_lifecycle_from_wire("garbage"),
+        StrandLifecycleState::Active
     );
 }
 
@@ -454,58 +454,58 @@ fn validate_space_container_lifecycle_transition_rules() {
 }
 
 /// Symmetric to `validate_space_container_lifecycle_transition_rules` at the
-/// Flow layer. Same two refusal cases, same two legal transitions.
+/// Strand layer. Same two refusal cases, same two legal transitions.
 #[test]
-fn validate_flow_lifecycle_transition_rules() {
-    let err = validate_flow_lifecycle_transition(
-        "ck:flow:test",
-        FlowLifecycleState::Active,
-        FlowLifecycleState::Active,
+fn validate_strand_lifecycle_transition_rules() {
+    let err = validate_strand_lifecycle_transition(
+        "ck:strand:test",
+        StrandLifecycleState::Active,
+        StrandLifecycleState::Active,
     )
     .expect_err("same-state Active→Active must be refused");
     assert!(err.contains("already in"));
-    assert!(err.contains("ck:flow:test"));
+    assert!(err.contains("ck:strand:test"));
 
-    validate_flow_lifecycle_transition(
-        "ck:flow:test",
-        FlowLifecycleState::Archived,
-        FlowLifecycleState::Archived,
+    validate_strand_lifecycle_transition(
+        "ck:strand:test",
+        StrandLifecycleState::Archived,
+        StrandLifecycleState::Archived,
     )
     .expect_err("same-state Archived→Archived must be refused");
 
-    let err = validate_flow_lifecycle_transition(
-        "ck:flow:test",
-        FlowLifecycleState::Active,
-        FlowLifecycleState::Redacted,
+    let err = validate_strand_lifecycle_transition(
+        "ck:strand:test",
+        StrandLifecycleState::Active,
+        StrandLifecycleState::Redacted,
     )
     .expect_err("UI-emitted Redaction must be refused");
     assert!(err.contains("Redaction"));
 
-    validate_flow_lifecycle_transition(
-        "ck:flow:test",
-        FlowLifecycleState::Active,
-        FlowLifecycleState::Archived,
+    validate_strand_lifecycle_transition(
+        "ck:strand:test",
+        StrandLifecycleState::Active,
+        StrandLifecycleState::Archived,
     )
     .expect("Active→Archived is a legal transition");
-    validate_flow_lifecycle_transition(
-        "ck:flow:test",
-        FlowLifecycleState::Archived,
-        FlowLifecycleState::Active,
+    validate_strand_lifecycle_transition(
+        "ck:strand:test",
+        StrandLifecycleState::Archived,
+        StrandLifecycleState::Active,
     )
     .expect("Archived→Active is a legal transition");
 }
 
 /// Symmetric to `space_container_lifecycle_state_default_is_active` —
-/// FlowLifecycleState MUST default to Active and every seeded card
+/// StrandLifecycleState MUST default to Active and every seeded card
 /// MUST start Active so the demo board exercises the happy path.
 #[test]
-fn flow_lifecycle_state_default_is_active() {
-    assert_eq!(FlowLifecycleState::default(), FlowLifecycleState::Active);
+fn strand_lifecycle_state_default_is_active() {
+    assert_eq!(StrandLifecycleState::default(), StrandLifecycleState::Active);
     for column in seed_columns() {
         for card in &column.cards {
             assert_eq!(
                 card.lifecycle,
-                FlowLifecycleState::Active,
+                StrandLifecycleState::Active,
                 "seed card {} in column {} must start Active",
                 card.id,
                 column.id
@@ -517,12 +517,12 @@ fn flow_lifecycle_state_default_is_active() {
 #[test]
 fn card_detail_deep_link_targets_kanban_task_route() {
     assert_eq!(
-        flow_detail_deep_link_path("ck:space:ops", "ck:flow:abc"),
-        "/kanban/ck:space:ops/task/ck:flow:abc"
+        strand_detail_deep_link_path("ck:space:ops", "ck:strand:abc"),
+        "/kanban/ck:space:ops/task/ck:strand:abc"
     );
     assert_eq!(
-        flow_detail_deep_link_path("", "ck:flow:abc"),
-        format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/ck:flow:abc")
+        strand_detail_deep_link_path("", "ck:strand:abc"),
+        format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/ck:strand:abc")
     );
 }
 
@@ -547,18 +547,18 @@ fn card_detail_tab_deep_link_round_trips() {
 fn card_detail_tab_reads_url_query() {
     assert_eq!(
         card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:flow:f?tab=discussion"
+            "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:strand:f?tab=discussion"
         ),
         Some(CardDetailContentTab::Discussion)
     );
     assert_eq!(
         card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:flow:f?tab=synthesis"
+            "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:strand:f?tab=synthesis"
         ),
         Some(CardDetailContentTab::Synthesis)
     );
     assert_eq!(
-        card_detail_tab_from_href("http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:flow:f?tab=bad"),
+        card_detail_tab_from_href("http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:strand:f?tab=bad"),
         None
     );
 }
@@ -566,33 +566,33 @@ fn card_detail_tab_reads_url_query() {
 #[test]
 fn card_detail_share_link_carries_current_tab() {
     assert_eq!(
-        flow_detail_deep_link_path_with_tab(
+        strand_detail_deep_link_path_with_tab(
             "ck:space:ops",
-            "ck:flow:abc",
+            "ck:strand:abc",
             CardDetailContentTab::Discussion
         ),
-        "/kanban/ck:space:ops/task/ck:flow:abc?tab=discussion"
+        "/kanban/ck:space:ops/task/ck:strand:abc?tab=discussion"
     );
 }
 
 #[test]
-fn route_card_flow_id_reads_task_segment_only() {
+fn route_card_strand_id_reads_task_segment_only() {
     assert_eq!(
-        route_card_flow_id(&Route::KanbanTask {
+        route_card_strand_id(&Route::KanbanTask {
             realm_id: "ck:realm:ops".to_owned(),
-            task_id: "ck:flow:abc".to_owned(),
+            task_id: "ck:strand:abc".to_owned(),
         }),
-        Some("ck:flow:abc".to_owned())
+        Some("ck:strand:abc".to_owned())
     );
     assert_eq!(
-        route_card_flow_id(&Route::KanbanBoardTask {
+        route_card_strand_id(&Route::KanbanBoardTask {
             realm_id: "ck:realm:ops".to_owned(),
             board_id: "ck:space:board".to_owned(),
-            task_id: "ck:flow:abc".to_owned(),
+            task_id: "ck:strand:abc".to_owned(),
         }),
-        Some("ck:flow:abc".to_owned())
+        Some("ck:strand:abc".to_owned())
     );
-    assert_eq!(route_card_flow_id(&Route::Kanban), None);
+    assert_eq!(route_card_strand_id(&Route::Kanban), None);
 }
 
 #[test]
@@ -608,7 +608,7 @@ fn route_board_id_reads_board_segment_only() {
         route_board_id(&Route::KanbanBoardTask {
             realm_id: "ck:realm:ops".to_owned(),
             board_id: "ck:space:board".to_owned(),
-            task_id: "ck:flow:abc".to_owned(),
+            task_id: "ck:strand:abc".to_owned(),
         }),
         Some("ck:space:board".to_owned())
     );
@@ -617,7 +617,7 @@ fn route_board_id_reads_board_segment_only() {
     assert_eq!(
         route_board_id(&Route::KanbanTask {
             realm_id: "ck:realm:ops".to_owned(),
-            task_id: "ck:flow:abc".to_owned(),
+            task_id: "ck:strand:abc".to_owned(),
         }),
         None
     );
@@ -649,47 +649,47 @@ fn kanban_board_route_carries_board_or_falls_back() {
 #[test]
 fn kanban_card_task_route_carries_board_or_falls_back() {
     assert_eq!(
-        kanban_card_task_route("ck:realm:ops", "ck:space:board", "ck:flow:abc"),
+        kanban_card_task_route("ck:realm:ops", "ck:space:board", "ck:strand:abc"),
         Route::KanbanBoardTask {
             realm_id: "ck:realm:ops".to_owned(),
             board_id: "ck:space:board".to_owned(),
-            task_id: "ck:flow:abc".to_owned(),
+            task_id: "ck:strand:abc".to_owned(),
         }
     );
     assert_eq!(
-        kanban_card_task_route("ck:realm:ops", "", "ck:flow:abc"),
+        kanban_card_task_route("ck:realm:ops", "", "ck:strand:abc"),
         Route::KanbanTask {
             realm_id: "ck:realm:ops".to_owned(),
-            task_id: "ck:flow:abc".to_owned(),
+            task_id: "ck:strand:abc".to_owned(),
         }
     );
 }
 
 #[test]
-fn find_card_by_flow_id_matches_card_or_primary_flow() {
+fn find_card_by_strand_id_matches_card_or_primary_strand() {
     let columns = seed_columns();
     assert_eq!(
-        find_card_by_flow_id(&columns, DEMO_FLOW_LEGAL_REVIEW_ID).map(|card| card.title),
+        find_card_by_strand_id(&columns, DEMO_STRAND_LEGAL_REVIEW_ID).map(|card| card.title),
         Some("Legal review for public beta".to_owned())
     );
     assert_eq!(
-        find_card_by_flow_id(&columns, DEMO_FLOW_REVIEW_DISCUSSION_ID).map(|card| card.id),
-        Some(DEMO_FLOW_LEGAL_REVIEW_ID.to_owned())
+        find_card_by_strand_id(&columns, DEMO_STRAND_REVIEW_DISCUSSION_ID).map(|card| card.id),
+        Some(DEMO_STRAND_LEGAL_REVIEW_ID.to_owned())
     );
 }
 
 #[test]
-fn flow_body_display_text_reads_content_block_body() {
+fn strand_body_display_text_reads_content_block_body() {
     let body = json!({
         "kind": "ck.content.text",
-        "body": "Long-form flow body"
+        "body": "Long-form strand body"
     });
 
-    assert_eq!(flow_body_display_text(Some(&body)), "Long-form flow body");
+    assert_eq!(strand_body_display_text(Some(&body)), "Long-form strand body");
 }
 
 #[test]
-fn flow_body_display_text_reads_nested_blocks() {
+fn strand_body_display_text_reads_nested_blocks() {
     let body = json!({
         "blocks": [
             { "kind": "ck.content.text", "body": "First block" },
@@ -698,7 +698,7 @@ fn flow_body_display_text_reads_nested_blocks() {
     });
 
     assert_eq!(
-        flow_body_display_text(Some(&body)),
+        strand_body_display_text(Some(&body)),
         "First block\nSecond block"
     );
 }
@@ -709,20 +709,20 @@ fn value_is_mls_envelope_detects_encrypted_patch_values() {
     assert!(value_is_mls_envelope(&json!({
         "scheme": "mls-rfc9420",
         "ciphertext": "AAAA",
-        "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
         "epoch": 0,
     })));
     // Minimal envelope detected via ciphertext + content_type.
     assert!(value_is_mls_envelope(&json!({
         "ciphertext": "AAAA",
-        "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
     })));
     // Projection / patch wrappers must still be recognized as encrypted.
     assert!(value_is_mls_envelope(&json!({
         "encrypted_content": {
             "ciphertext": "AAAA",
-            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         }
     })));
     assert!(value_is_mls_envelope(&json!({
@@ -730,7 +730,7 @@ fn value_is_mls_envelope_detects_encrypted_patch_values() {
         "value": {
             "scheme": "mls-rfc9420",
             "ciphertext": "AAAA",
-            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         }
     })));
     // Plain content blocks are NOT envelopes — unencrypted realms must
@@ -743,27 +743,27 @@ fn value_is_mls_envelope_detects_encrypted_patch_values() {
 }
 
 #[test]
-fn private_flow_display_text_passes_plaintext_through_without_ctx() {
+fn private_strand_display_text_passes_plaintext_through_without_ctx() {
     let plain = json!({ "kind": "ck.content.text", "body": "plain body" });
     // No decrypt ctx, non-envelope value → renders the plaintext as-is.
-    assert_eq!(private_flow_display_text(None, Some(&plain)), "plain body");
+    assert_eq!(private_strand_display_text(None, Some(&plain)), "plain body");
     // Missing value → blank.
-    assert_eq!(private_flow_display_text(None, None), "");
+    assert_eq!(private_strand_display_text(None, None), "");
 }
 
 #[test]
-fn private_flow_display_text_blanks_undecryptable_envelope() {
+fn private_strand_display_text_blanks_undecryptable_envelope() {
     let envelope = json!({
         "scheme": "mls-rfc9420",
         "ciphertext": "AAAA",
-        "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
         "epoch": 0,
     });
     // Envelope + no ctx must render blank rather than leaking the raw
-    // envelope JSON through flow_body_display_text.
-    assert_eq!(private_flow_display_text(None, Some(&envelope)), "");
-    let store = temp_state_store("private-flow-blank");
+    // envelope JSON through strand_body_display_text.
+    assert_eq!(private_strand_display_text(None, Some(&envelope)), "");
+    let store = temp_state_store("private-strand-blank");
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: "ck:realm:01904100-0000-7000-8000-000000000001",
@@ -771,20 +771,20 @@ fn private_flow_display_text_blanks_undecryptable_envelope() {
         device_id: "ck:device:01904100-0000-7000-8000-000000000001",
     };
     // Envelope + ctx but no local snapshot → soft failure → blank.
-    assert_eq!(private_flow_display_text(Some(&ctx), Some(&envelope)), "");
+    assert_eq!(private_strand_display_text(Some(&ctx), Some(&envelope)), "");
 }
 
 #[test]
-fn private_flow_field_text_prefers_local_sidecar_plaintext() {
+fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     // X5.2 — the author's own encrypted field can NEVER be decrypted
     // (OpenMLS refuses the author's own ciphertext). The local sidecar
     // is the only source. With a sidecar hit and NO MLS group at all,
     // the builder must still render the plaintext.
     let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
-    let flow = "ck:flow:01904100-0000-7000-8000-0000000000ab";
-    let mut store = temp_state_store("private-flow-sidecar");
+    let strand = "ck:strand:01904100-0000-7000-8000-0000000000ab";
+    let mut store = temp_state_store("private-strand-sidecar");
     // The writer stores the JSON-serialized patch value (a bare string).
-    store.save_private_plaintext(realm, flow, "body", "\"author body\"");
+    store.save_private_plaintext(realm, strand, "body", "\"author body\"");
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
@@ -796,18 +796,18 @@ fn private_flow_field_text_prefers_local_sidecar_plaintext() {
     let envelope = json!({
         "scheme": "mls-rfc9420",
         "ciphertext": "AAAA",
-        "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
     });
     assert_eq!(
-        private_flow_field_text(Some(&ctx), flow, "body", Some(&envelope)),
+        private_strand_field_text(Some(&ctx), strand, "body", Some(&envelope)),
         "author body"
     );
-    // A different flow id has no sidecar entry → falls back (blank for an
+    // A different strand id has no sidecar entry → falls back (blank for an
     // un-decryptable envelope).
     assert_eq!(
-        private_flow_field_text(
+        private_strand_field_text(
             Some(&ctx),
-            "ck:flow:01904100-0000-7000-8000-0000000000cd",
+            "ck:strand:01904100-0000-7000-8000-0000000000cd",
             "body",
             Some(&envelope)
         ),
@@ -816,11 +816,11 @@ fn private_flow_field_text_prefers_local_sidecar_plaintext() {
 }
 
 #[test]
-fn private_flow_empty_sidecar_does_not_mask_encrypted_locked_state() {
+fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
     let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
-    let flow = "ck:flow:01904100-0000-7000-8000-0000000000ab";
-    let mut store = temp_state_store("private-flow-empty-sidecar");
-    store.save_private_plaintext(realm, flow, "synthesis", "\"\"");
+    let strand = "ck:strand:01904100-0000-7000-8000-0000000000ab";
+    let mut store = temp_state_store("private-strand-empty-sidecar");
+    store.save_private_plaintext(realm, strand, "synthesis", "\"\"");
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
@@ -830,16 +830,16 @@ fn private_flow_empty_sidecar_does_not_mask_encrypted_locked_state() {
     let envelope = json!({
         "scheme": "mls-rfc9420",
         "ciphertext": "AAAA",
-        "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
     });
 
     assert_eq!(
-        private_flow_field_text(Some(&ctx), flow, "synthesis", Some(&envelope)),
+        private_strand_field_text(Some(&ctx), strand, "synthesis", Some(&envelope)),
         ""
     );
-    assert!(private_flow_field_locked(
+    assert!(private_strand_field_locked(
         Some(&ctx),
-        flow,
+        strand,
         "synthesis",
         Some(&envelope)
     ));
@@ -853,24 +853,24 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
     // card must show the author's plaintext (proving the author sees
     // own content with zero decryption).
     let realm = "ck:realm:01904100-0000-7000-8000-000000000000";
-    let flow = "ck:flow:01904100-0000-7000-8000-0000000000ab";
+    let strand = "ck:strand:01904100-0000-7000-8000-0000000000ab";
     let mut store = temp_state_store("card-builder-sidecar");
-    store.save_private_plaintext(realm, flow, "body", "\"recovered body\"");
+    store.save_private_plaintext(realm, strand, "body", "\"recovered body\"");
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
         actor_id: "did:web:alice.example",
         device_id: "ck:device:01904100-0000-7000-8000-000000000001",
     };
-    let flow_view = crate::api::FlowProjectionView {
-        flow_id: flow.to_owned(),
+    let strand_view = crate::api::StrandProjectionView {
+        strand_id: strand.to_owned(),
         realm_id: realm.to_owned(),
         title: "Encrypted card".to_owned(),
         summary: Some("public summary".to_owned()),
         body: Some(json!({
             "scheme": "mls-rfc9420",
             "ciphertext": "AAAA",
-            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         })),
         board_space_id: None,
         list_space_id: None,
@@ -883,7 +883,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         updated_at: None,
         state: "active".to_owned(),
     };
-    let card = card_from_flow_projection(&flow_view, Some(&ctx));
+    let card = card_from_strand_projection(&strand_view, Some(&ctx));
     assert_eq!(card.body, "recovered body");
     // Sanity: there is genuinely no MLS group to decrypt from.
     assert!(store.mls_snapshot_for(realm).is_none());
@@ -919,8 +919,8 @@ fn collection_projection_maps_to_kanban_columns() {
                 source: None,
                 items: vec![ProjectionItemView {
                     object: serde_json::json!({
-                        "id": "ck:flow:01d2b330-0000-7000-8000-000000000000",
-                        "type": "flow",
+                        "id": "ck:strand:01d2b330-0000-7000-8000-000000000000",
+                        "type": "strand",
                         "title": "Legal review",
                         "summary": "ensure GDPR sign-off",
                         "body": {
@@ -969,13 +969,13 @@ fn collection_projection_maps_to_kanban_columns() {
     assert_eq!(cols[0].rank, "mV");
     assert_eq!(cols[0].cards.len(), 1);
     let card = &cols[0].cards[0];
-    assert_eq!(card.id, "ck:flow:01d2b330-0000-7000-8000-000000000000");
+    assert_eq!(card.id, "ck:strand:01d2b330-0000-7000-8000-000000000000");
     assert_eq!(card.title, "Legal review");
     assert_eq!(card.description, "ensure GDPR sign-off");
     assert_eq!(card.body, "Review processor wording before beta.");
-    // Locked discussion + lazy_link should populate locked_flow
+    // Locked discussion + lazy_link should populate locked_strand
     // and the cross-Space hint without leaking room contents.
-    assert!(card.locked_flow.is_some(), "locked discussion → LockedFlow");
+    assert!(card.locked_strand.is_some(), "locked discussion → LockedStrand");
     assert_eq!(
         card.history_visibility, "lazy_link (cross-Space)",
         "lazy_link=true must be reflected without exposing members"
@@ -986,13 +986,13 @@ fn collection_projection_maps_to_kanban_columns() {
 }
 
 #[test]
-fn collection_projection_overlay_applies_remote_encrypted_flow_updates() {
+fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
     use crate::api::{
         CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
         StateFrontierView,
     };
     let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000003";
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000003";
     let projection = CollectionProjectionView {
         projection: "collection".to_owned(),
         renderer: Some("board".to_owned()),
@@ -1006,8 +1006,8 @@ fn collection_projection_overlay_applies_remote_encrypted_flow_updates() {
             source: None,
             items: vec![ProjectionItemView {
                 object: json!({
-                    "id": flow_id,
-                    "type": "flow",
+                    "id": strand_id,
+                    "type": "strand",
                     "title": "Encrypted card",
                 }),
                 render: None,
@@ -1028,26 +1028,26 @@ fn collection_projection_overlay_applies_remote_encrypted_flow_updates() {
     let envelope = json!({
         "scheme": "mls-rfc9420",
         "ciphertext": "AAAA",
-        "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
         "epoch": 0,
     });
     let events = vec![json!({
         "event_id": "ck:event:0196419b-0000-7000-8000-00000000f003",
         "operation_id": "ck:operation:0196419b-0000-7000-8000-00000000f003",
-        "event_kind": "ck.flow.update",
+        "event_kind": "ck.strand.update",
         "actor_id": "did:web:alice.example",
         "created_at": "2026-05-22T10:00:00Z",
         "realm_id": TEST_REALM_ID,
         "payload": {
-            "flow_id": flow_id,
+            "strand_id": strand_id,
             "patch": {
                 "body": { "$op": "set", "value": envelope.clone() },
                 "synthesis": { "$op": "set", "value": envelope }
             }
         }
     })];
-    let remote_operations = flow_update_operations_from_events(&events);
+    let remote_operations = strand_update_operations_from_events(&events);
     let store = LocalStateStore::default();
     let ctx = MlsDecryptCtx {
         state_store: &store,
@@ -1073,13 +1073,13 @@ fn collection_projection_overlay_applies_remote_encrypted_flow_updates() {
 
 /// T20 — when no `state.discussion` metadata is present on the
 /// registered projection item, the card renders as synthesis-only
-/// without a locked_flow.
+/// without a locked_strand.
 #[test]
 fn projection_item_without_discussion_renders_synthesis_only() {
     use crate::api::ProjectionItemView;
     let item = ProjectionItemView {
         object: serde_json::json!({
-            "id": "ck:flow:01doc",
+            "id": "ck:strand:01doc",
             "title": "DID method allowlist",
         }),
         render: None,
@@ -1088,7 +1088,7 @@ fn projection_item_without_discussion_renders_synthesis_only() {
         state: None,
     };
     let card = card_from_projection_item(&item, None);
-    assert!(card.locked_flow.is_none());
+    assert!(card.locked_strand.is_none());
     assert_eq!(card.history_visibility, "synthesis-only");
     assert_eq!(card.external_visibility, "No external discussions linked");
 }
@@ -1268,14 +1268,14 @@ fn local_space_create_state_becomes_synced_once_projection_contains_target() {
 }
 
 #[test]
-fn displayed_card_state_uses_server_flow_projection_over_local_queue() {
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000003";
-    let mut card = test_card(flow_id, "U");
+fn displayed_card_state_uses_server_strand_projection_over_local_queue() {
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000003";
+    let mut card = test_card(strand_id, "U");
     card.state = CardState::Queued;
-    let projected_flow_ids = BTreeSet::from([flow_id.to_owned()]);
+    let projected_strand_ids = BTreeSet::from([strand_id.to_owned()]);
 
     assert_eq!(
-        displayed_card_state(&card, &projected_flow_ids),
+        displayed_card_state(&card, &projected_strand_ids),
         CardState::Synced
     );
 }
@@ -1304,8 +1304,8 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
             parent_space_id: Some(board_id.to_owned()),
         },
     ];
-    let flows = vec![crate::api::FlowProjectionView {
-        flow_id: "ck:flow:0196419b-0000-7000-8000-000000000003".to_owned(),
+    let strands = vec![crate::api::StrandProjectionView {
+        strand_id: "ck:strand:0196419b-0000-7000-8000-000000000003".to_owned(),
         realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
         title: "Persisted card".to_owned(),
         summary: Some("Loaded from projection".to_owned()),
@@ -1332,7 +1332,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     }];
 
     let (columns, options, selected_board) =
-        columns_from_lifecycle_projection(&containers, &flows, "", None);
+        columns_from_lifecycle_projection(&containers, &strands, "", None);
 
     assert_eq!(selected_board.as_deref(), Some(board_id));
     assert_eq!(options.len(), 1);
@@ -1381,24 +1381,24 @@ fn lifecycle_projection_infers_board_from_list_parent() {
 }
 
 #[test]
-fn local_flow_create_overlay_restores_card_until_projection_catches_up() {
+fn local_strand_create_overlay_restores_card_until_projection_catches_up() {
     let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
     let list_id = "ck:space:0196419b-0000-7000-8000-000000000002";
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000003";
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000003";
     let raw_operations = vec![RawOperationRecord {
         operation_id: "sha256:local-create".to_owned(),
         realm_id: Some("ck:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
-            "kind": "ck.flow.create",
+            "kind": "ck.strand.create",
             "operation_id": "sha256:local-create",
             "effect": {
-                "flow_id": flow_id,
+                "strand_id": strand_id,
                 "board_space_id": board_id,
                 "list_space_id": list_id,
                 "title": "Refresh-surviving card",
                 "rank": "U",
-                "flow_kind": "card"
+                "strand_kind": "card"
             },
             "write_state": "queued"
         }),
@@ -1414,7 +1414,7 @@ fn local_flow_create_overlay_restores_card_until_projection_catches_up() {
     let overlaid =
         overlay_local_card_create_records(projected_columns.clone(), &raw_operations, board_id);
     assert_eq!(overlaid[0].cards.len(), 1);
-    assert_eq!(overlaid[0].cards[0].id, flow_id);
+    assert_eq!(overlaid[0].cards[0].id, strand_id);
     assert_eq!(overlaid[0].cards[0].title, "Refresh-surviving card");
     assert_eq!(overlaid[0].cards[0].state, CardState::Queued);
 
@@ -1429,7 +1429,7 @@ fn local_flow_create_overlay_restores_card_until_projection_catches_up() {
     let mut projected_with_server_card = projected_columns;
     projected_with_server_card[0]
         .cards
-        .push(test_card(flow_id, "U"));
+        .push(test_card(strand_id, "U"));
     let de_duped =
         overlay_local_card_create_records(projected_with_server_card, &raw_operations, board_id);
     assert_eq!(
@@ -1441,10 +1441,10 @@ fn local_flow_create_overlay_restores_card_until_projection_catches_up() {
 }
 
 #[test]
-fn remote_flow_update_events_overlay_detail_fields_on_projection() {
+fn remote_strand_update_events_overlay_detail_fields_on_projection() {
     let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000003";
-    let mut card = test_card(flow_id, "U");
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000003";
+    let mut card = test_card(strand_id, "U");
     card.description = "old summary".to_owned();
     card.body = String::new();
     card.synthesis = String::new();
@@ -1458,12 +1458,12 @@ fn remote_flow_update_events_overlay_detail_fields_on_projection() {
     let events = vec![json!({
         "event_id": "ck:event:0196419b-0000-7000-8000-00000000f001",
         "operation_id": "ck:operation:0196419b-0000-7000-8000-00000000f001",
-        "event_kind": "ck.flow.update",
+        "event_kind": "ck.strand.update",
         "actor_id": "did:web:alice.example",
         "created_at": "2026-05-22T10:00:00Z",
         "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
         "payload": {
-            "flow_id": flow_id,
+            "strand_id": strand_id,
             "patch": {
                 "metadata.summary": { "$op": "set", "value": "new summary" },
                 "fields.body": { "$op": "set", "value": "new long description" },
@@ -1478,7 +1478,7 @@ fn remote_flow_update_events_overlay_detail_fields_on_projection() {
             }
         }
     })];
-    let remote_operations = flow_update_operations_from_events(&events);
+    let remote_operations = strand_update_operations_from_events(&events);
 
     let projected = overlay_card_projection_with_operations(
         columns,
@@ -1497,10 +1497,10 @@ fn remote_flow_update_events_overlay_detail_fields_on_projection() {
 }
 
 #[test]
-fn remote_encrypted_flow_update_overlay_marks_private_fields_locked() {
+fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
     let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000003";
-    let mut card = test_card(flow_id, "U");
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000003";
+    let mut card = test_card(strand_id, "U");
     card.body = String::new();
     card.synthesis = String::new();
     let columns = vec![KanbanColumn {
@@ -1513,19 +1513,19 @@ fn remote_encrypted_flow_update_overlay_marks_private_fields_locked() {
     let envelope = json!({
         "scheme": "mls-rfc9420",
         "ciphertext": "AAAA",
-        "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
         "epoch": 0,
     });
     let events = vec![json!({
         "event_id": "ck:event:0196419b-0000-7000-8000-00000000f002",
         "operation_id": "ck:operation:0196419b-0000-7000-8000-00000000f002",
-        "event_kind": "ck.flow.update",
+        "event_kind": "ck.strand.update",
         "actor_id": "did:web:alice.example",
         "created_at": "2026-05-22T10:00:00Z",
         "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
         "payload": {
-            "flow_id": flow_id,
+            "strand_id": strand_id,
             "patch": {
                 "body": { "$op": "set", "value": envelope.clone() },
                 "tracks.synthesis.body": { "$op": "set", "value": {
@@ -1534,7 +1534,7 @@ fn remote_encrypted_flow_update_overlay_marks_private_fields_locked() {
             }
         }
     })];
-    let remote_operations = flow_update_operations_from_events(&events);
+    let remote_operations = strand_update_operations_from_events(&events);
     let store = LocalStateStore::default();
     let ctx = MlsDecryptCtx {
         state_store: &store,
@@ -1623,9 +1623,9 @@ fn due_calendar_cells_cover_sunday_first_six_week_grid() {
 }
 
 #[test]
-fn card_activity_items_show_local_flow_and_assignment_writes() {
-    let mut card = test_card("ck:flow:activity", "U");
-    card.primary_flow_id = card.id.clone();
+fn card_activity_items_show_local_strand_and_assignment_writes() {
+    let mut card = test_card("ck:strand:activity", "U");
+    card.primary_strand_id = card.id.clone();
     let received_at = |value: &str| {
         chrono::DateTime::parse_from_rfc3339(value)
             .unwrap()
@@ -1640,7 +1640,7 @@ fn card_activity_items_show_local_flow_and_assignment_writes() {
                 "kind": "ck.relation.tombstone",
                 "operation_id": "op-assignee",
                 "write_state": "accepted",
-                "assignment_flow_id": card.id.clone(),
+                "assignment_strand_id": card.id.clone(),
                 "assignment_actor_id": "did:web:alice.example",
                 "assignment_relation_id": "ck:relation:activity",
                 "activity_summary": "Assignee removed: alice",
@@ -1654,12 +1654,12 @@ fn card_activity_items_show_local_flow_and_assignment_writes() {
             realm_id: Some(TEST_REALM_ID.to_owned()),
             received_at: received_at("2026-06-10T11:00:00Z"),
             payload: json!({
-                "kind": "ck.flow.update",
+                "kind": "ck.strand.update",
                 "operation_id": "op-due",
                 "write_state": "queued",
                 "activity_summary": "Due date cleared",
                 "body": {
-                    "flow_id": card.id.clone(),
+                    "strand_id": card.id.clone(),
                     "patch": {
                         "metadata.fields": {
                             "$op": "set",
@@ -1680,8 +1680,8 @@ fn card_activity_items_show_local_flow_and_assignment_writes() {
 }
 
 #[test]
-fn card_detail_update_patch_uses_flow_update_patch_paths() {
-    let mut current = test_card("ck:flow:f1", "U");
+fn card_detail_update_patch_uses_strand_update_patch_paths() {
+    let mut current = test_card("ck:strand:f1", "U");
     current.title = "Old".to_owned();
     current.description = "old summary".to_owned();
     current.labels = vec!["old".to_owned()];
@@ -1717,7 +1717,7 @@ fn relation_id_from_event_id_retags_assignment_relation_ids() {
 
 #[test]
 fn card_assignment_mutations_create_and_tombstone_relation_events() {
-    let mut current = test_card("ck:flow:0196419b-0000-7000-8000-000000000101", "U");
+    let mut current = test_card("ck:strand:0196419b-0000-7000-8000-000000000101", "U");
     current.assignee = "did:web:bob.example".to_owned();
     current.assigned_to_relations = vec![CardAssignedToRelation {
         relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000bb".to_owned(),
@@ -1770,7 +1770,7 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
 
 #[test]
 fn card_assignment_mutations_clear_all_assignees() {
-    let mut current = test_card("ck:flow:0196419b-0000-7000-8000-000000000101", "U");
+    let mut current = test_card("ck:strand:0196419b-0000-7000-8000-000000000101", "U");
     current.assigned_to_relations = vec![
         CardAssignedToRelation {
             relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000aa".to_owned(),
@@ -1801,11 +1801,11 @@ fn card_assignment_mutations_clear_all_assignees() {
 }
 
 #[test]
-fn encrypted_scope_blocks_plaintext_flow_update_payload() {
-    let event = crate::operation::ck_ops::flow_update_patch(
+fn encrypted_scope_blocks_plaintext_strand_update_payload() {
+    let event = crate::operation::ck_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
-        DEMO_FLOW_LEGAL_REVIEW_ID,
+        DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "body": {"$op": "set", "value": "private description"},
         }),
@@ -1815,7 +1815,7 @@ fn encrypted_scope_blocks_plaintext_flow_update_payload() {
 
     assert!(kanban_event_carries_plaintext_private_content(&event));
     let reason = kanban_plaintext_block_reason(Some(true), &event).unwrap();
-    assert!(reason.contains("Encrypted Realm blocks plaintext ck.flow.update"));
+    assert!(reason.contains("Encrypted Realm blocks plaintext ck.strand.update"));
     assert!(kanban_plaintext_block_reason(Some(false), &event).is_none());
 }
 
@@ -1824,13 +1824,13 @@ fn encrypted_scope_blocks_plaintext_flow_update_payload() {
 /// plaintext private-content write rather than defaulting to plaintext.
 /// A known-plaintext Realm (`Some(false)`) is the legitimate case that
 /// MUST still be allowed — that is what keeps fail-closed from breaking
-/// normal plaintext flows.
+/// normal plaintext strands.
 #[test]
 fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
-    let private_update = crate::operation::ck_ops::flow_update_patch(
+    let private_update = crate::operation::ck_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
-        DEMO_FLOW_LEGAL_REVIEW_ID,
+        DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "body": {"$op": "set", "value": "private description"},
         }),
@@ -1872,7 +1872,7 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
 }
 
 #[test]
-fn encrypted_scope_allows_encrypted_flow_update_patch_value() {
+fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     let encrypted_payload = crate::crypto::compose_local_encrypted_message(
         "did:web:alice.example",
         "ck:device:01904100-0000-7000-8000-000000000001",
@@ -1883,10 +1883,10 @@ fn encrypted_scope_allows_encrypted_flow_update_patch_value() {
     .expect("test encryption should produce payload")
     .payload;
     let encrypted_payload = serde_json::to_value(encrypted_payload).unwrap();
-    let event = crate::operation::ck_ops::flow_update_patch(
+    let event = crate::operation::ck_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
-        DEMO_FLOW_LEGAL_REVIEW_ID,
+        DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "synthesis": {"$op": "set", "value": encrypted_payload},
         }),
@@ -1926,7 +1926,7 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
     let error = encrypt_private_card_detail_patch_values_with_store(
         patch,
         "ck:realm:01904100-0000-7000-8000-000000000001",
-        "ck:flow:01904100-0000-7000-8000-0000000000ff",
+        "ck:strand:01904100-0000-7000-8000-0000000000ff",
         "did:web:alice.example",
         "ck:device:01904100-0000-7000-8000-000000000001",
         &mut state,
@@ -1967,9 +1967,9 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         "body": {"$op": "set", "value": "private body"},
     });
 
-    let flow_id = "ck:flow:01904100-0000-7000-8000-0000000000ff";
+    let strand_id = "ck:strand:01904100-0000-7000-8000-0000000000ff";
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
-        patch, realm, flow_id, actor, device, &mut state, &secure,
+        patch, realm, strand_id, actor, device, &mut state, &secure,
     )
     .unwrap();
 
@@ -1979,13 +1979,13 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     // decrypt their own ciphertext).
     assert_eq!(
         state
-            .private_plaintext_for(realm, flow_id, "body")
+            .private_plaintext_for(realm, strand_id, "body")
             .as_deref(),
         Some("\"private body\"")
     );
     assert_eq!(
         patched["body"]["value"]["content_type"],
-        KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
+        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
     );
     assert!(mls_events.commit.is_none());
     assert!(mls_events.snapshot.is_none());
@@ -2042,15 +2042,15 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         "body": {"$op": "set", "value": "private body"},
     });
 
-    let flow_id = "ck:flow:01904100-0000-7000-8000-0000000000ff";
+    let strand_id = "ck:strand:01904100-0000-7000-8000-0000000000ff";
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
-        patch, realm, flow_id, actor, device, &mut state, &secure,
+        patch, realm, strand_id, actor, device, &mut state, &secure,
     )
     .unwrap();
 
     assert_eq!(
         patched["body"]["value"]["content_type"],
-        KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
+        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
     );
     assert!(patched["body"]["value"].get("ciphertext").is_some());
     // X5.2 gate — the on-the-wire patch value is an MLS envelope (no
@@ -2063,7 +2063,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     );
     assert_eq!(
         state
-            .private_plaintext_for(realm, flow_id, "body")
+            .private_plaintext_for(realm, strand_id, "body")
             .as_deref(),
         Some("\"private body\"")
     );
@@ -2110,7 +2110,7 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch.clone(),
         "ck:space:01904100-0000-7000-8000-000000000001",
-        "ck:flow:01904100-0000-7000-8000-0000000000ff",
+        "ck:strand:01904100-0000-7000-8000-0000000000ff",
         "did:web:alice.example",
         "ck:device:01904100-0000-7000-8000-000000000001",
         &mut state,
@@ -2125,11 +2125,11 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
 }
 
 #[test]
-fn encrypted_scope_allows_structural_flow_position_update() {
-    let event = crate::operation::ck_ops::flow_position_update(
+fn encrypted_scope_allows_structural_strand_position_update() {
+    let event = crate::operation::ck_ops::strand_position_update(
         TEST_REALM_ID,
         "did:web:alice.example",
-        DEMO_FLOW_LEGAL_REVIEW_ID,
+        DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "board_space_id": "ck:space:0196419b-0000-7000-8000-000000000001",
             "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000002",
@@ -2139,17 +2139,17 @@ fn encrypted_scope_allows_structural_flow_position_update() {
     .expect("builds")
     .build("yougen");
 
-    assert_eq!(event.kind, "ck.flow.update");
+    assert_eq!(event.kind, "ck.strand.update");
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
 }
 
 #[test]
 fn encrypted_scope_allows_content_only_metadata_create_payloads() {
-    let flow = crate::operation::ck_ops::kanban_card_flow_create(
+    let strand = crate::operation::ck_ops::kanban_card_strand_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        DEMO_FLOW_LEGAL_REVIEW_ID,
+        DEMO_STRAND_LEGAL_REVIEW_ID,
         "ck:space:0196419b-0000-7000-8000-000000000001",
         "ck:space:0196419b-0000-7000-8000-000000000002",
         "private card title",
@@ -2169,7 +2169,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     .expect("builds")
     .build("yougen");
 
-    assert!(kanban_plaintext_block_reason(Some(true), &flow).is_none());
+    assert!(kanban_plaintext_block_reason(Some(true), &strand).is_none());
     assert!(kanban_plaintext_block_reason(Some(true), &space).is_none());
 }
 
@@ -2177,7 +2177,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
 /// (`ck.space.create` for BOTH board and list) MUST NOT be blocked — the
 /// title/kind/parent/rank are non-secret metadata that has to reach the
 /// server so a second device can render the real Board/List name. By
-/// contrast a `ck.flow.update` carrying plaintext private body MUST stay
+/// contrast a `ck.strand.update` carrying plaintext private body MUST stay
 /// blocked (only E2EE may leave the client for that field).
 #[test]
 fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_content() {
@@ -2215,11 +2215,11 @@ fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_co
         "encrypted scope must not block list container create"
     );
 
-    // Counter-case: plaintext private body in a flow update is still blocked.
-    let private_update = crate::operation::ck_ops::flow_update_patch(
+    // Counter-case: plaintext private body in a strand update is still blocked.
+    let private_update = crate::operation::ck_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
-        DEMO_FLOW_LEGAL_REVIEW_ID,
+        DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "body": {"$op": "set", "value": "private description"},
         }),
@@ -2228,16 +2228,16 @@ fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_co
     .build("yougen");
     assert!(
         kanban_plaintext_block_reason(Some(true), &private_update).is_some(),
-        "encrypted scope must still block plaintext private flow content"
+        "encrypted scope must still block plaintext private strand content"
     );
 }
 
 #[test]
-fn encrypted_scope_allows_flow_summary_metadata_update() {
-    let event = crate::operation::ck_ops::flow_update_patch(
+fn encrypted_scope_allows_strand_summary_metadata_update() {
+    let event = crate::operation::ck_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
-        DEMO_FLOW_LEGAL_REVIEW_ID,
+        DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "summary": {"$op": "set", "value": "metadata summary"},
         }),
@@ -2252,10 +2252,10 @@ fn encrypted_scope_allows_flow_summary_metadata_update() {
 #[test]
 fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projection() {
     // Simulate: server projection returns the pre-edit card; the user
-    // had queued a ck.flow.update locally that bumped summary + body.
+    // had queued a ck.strand.update locally that bumped summary + body.
     // After page refresh, the overlay must re-apply that patch so the
     // user doesn't see their edits silently disappear.
-    let mut card = test_card("ck:flow:edit-me", "U");
+    let mut card = test_card("ck:strand:edit-me", "U");
     card.title = "old title".to_owned();
     card.description = "old summary".to_owned();
     card.body = "old body".to_owned();
@@ -2272,11 +2272,11 @@ fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projectio
         realm_id: Some("ck:realm:r1".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
-            "kind": "ck.flow.update",
+            "kind": "ck.strand.update",
             "operation_id": "op-1",
             "write_state": "queued",
             "body": {
-                "flow_id": "ck:flow:edit-me",
+                "strand_id": "ck:strand:edit-me",
                 "patch": {
                     "title": { "$op": "set", "value": "new title" },
                     "summary": { "$op": "set", "value": "new summary" },
@@ -2297,7 +2297,7 @@ fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projectio
 
 #[test]
 fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
-    let mut card = test_card("ck:flow:edit-me", "U");
+    let mut card = test_card("ck:strand:edit-me", "U");
     card.due = "2026-06-11".to_owned();
     let columns = vec![KanbanColumn {
         id: "ck:space:list-a".to_owned(),
@@ -2311,11 +2311,11 @@ fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
         realm_id: Some("ck:realm:r1".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
-            "kind": "ck.flow.update",
+            "kind": "ck.strand.update",
             "operation_id": "op-clear-due",
             "write_state": "queued",
             "body": {
-                "flow_id": "ck:flow:edit-me",
+                "strand_id": "ck:strand:edit-me",
                 "patch": {
                     "metadata.fields": {
                         "$op": "set",
@@ -2331,7 +2331,7 @@ fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
 
 #[test]
 fn card_synthesis_track_entries_preserve_append_history() {
-    let mut card = test_card("ck:flow:edit-me", "U");
+    let mut card = test_card("ck:strand:edit-me", "U");
     card.synthesis = "second synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00Z".to_owned();
@@ -2347,13 +2347,13 @@ fn card_synthesis_track_entries_preserve_append_history() {
             realm_id: Some("ck:realm:r1".to_owned()),
             received_at: received_at("2026-05-22T10:00:00Z"),
             payload: json!({
-                "kind": "ck.flow.update",
+                "kind": "ck.strand.update",
                 "operation_id": "op-1",
                 "actor_id": "did:web:acme.example:users:alice",
                 "created_at": "2026-05-22T10:00:00Z",
                 "write_state": "queued",
                 "body": {
-                    "flow_id": "ck:flow:edit-me",
+                    "strand_id": "ck:strand:edit-me",
                     "patch": {
                         "synthesis": { "$op": "set", "value": "first synthesis" }
                     }
@@ -2365,13 +2365,13 @@ fn card_synthesis_track_entries_preserve_append_history() {
             realm_id: Some("ck:realm:r1".to_owned()),
             received_at: received_at("2026-05-22T11:00:00Z"),
             payload: json!({
-                "kind": "ck.flow.update",
+                "kind": "ck.strand.update",
                 "operation_id": "op-2",
                 "actor_id": "did:web:acme.example:users:bob",
                 "created_at": "2026-05-22T11:00:00Z",
                 "write_state": "queued",
                 "body": {
-                    "flow_id": "ck:flow:edit-me",
+                    "strand_id": "ck:strand:edit-me",
                     "patch": {
                         "synthesis": { "$op": "set", "value": "second synthesis" }
                     }
@@ -2397,7 +2397,7 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
     let actor = "did:web:auth.local.host:users:01kth8q1w1f9c9pt3a0zfvf6gb";
     let subject = "did:web:auth.local.host:principals:alice";
     let digest = "sha256:abababababababababababababababababababababababababababababababab";
-    let mut card = test_card("ck:flow:edit-me", "U");
+    let mut card = test_card("ck:strand:edit-me", "U");
     card.synthesis = "wqefqqwf".to_owned();
     card.created_by = actor.to_owned();
 
@@ -2439,7 +2439,7 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
 
 #[test]
 fn synthesis_new_entry_appends_without_replacing_existing_entries() {
-    let mut card = test_card("ck:flow:edit-me", "U");
+    let mut card = test_card("ck:strand:edit-me", "U");
     card.synthesis = join_synthesis_entry_bodies(vec![
         "first active synthesis".to_owned(),
         "second active synthesis".to_owned(),
@@ -2463,21 +2463,21 @@ fn synthesis_new_entry_appends_without_replacing_existing_entries() {
 }
 
 #[test]
-fn flow_participant_dids_filters_by_target_flow_and_pulls_unique_actors() {
+fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
     let ops = vec![
         RawOperationRecord {
             operation_id: "op-a".to_owned(),
             realm_id: Some("ck:realm:r1".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "ck.flow.update",
+                "kind": "ck.strand.update",
                 "body": {
-                    "flow_id": "ck:flow:target",
+                    "strand_id": "ck:strand:target",
                     "actor_id": "did:web:alice.example",
                 },
             }),
         },
-        // Same flow, different actor — both should appear.
+        // Same strand, different actor — both should appear.
         RawOperationRecord {
             operation_id: "op-b".to_owned(),
             realm_id: Some("ck:realm:r1".to_owned()),
@@ -2485,29 +2485,29 @@ fn flow_participant_dids_filters_by_target_flow_and_pulls_unique_actors() {
             payload: json!({
                 "kind": "ck.message.create",
                 "body": {
-                    "target_ref": "ck:flow:target",
+                    "target_ref": "ck:strand:target",
                     // canonical actor key only — the legacy `sender`
                     // fallback was removed (hard_reject).
                     "actor_id": "did:web:bob.example",
                 },
             }),
         },
-        // Different flow — must be excluded so we don't bleed
+        // Different strand — must be excluded so we don't bleed
         // unrelated realm actors into the per-card participant list.
         RawOperationRecord {
             operation_id: "op-c".to_owned(),
             realm_id: Some("ck:realm:r1".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "ck.flow.update",
+                "kind": "ck.strand.update",
                 "body": {
-                    "flow_id": "ck:flow:other",
+                    "strand_id": "ck:strand:other",
                     "actor_id": "did:web:carol.example",
                 },
             }),
         },
     ];
-    let dids = flow_participant_dids(&ops, "ck:flow:target");
+    let dids = strand_participant_dids(&ops, "ck:strand:target");
     assert_eq!(
         dids,
         vec![
@@ -2515,12 +2515,12 @@ fn flow_participant_dids_filters_by_target_flow_and_pulls_unique_actors() {
             "did:web:bob.example".to_owned(),
         ]
     );
-    assert!(flow_participant_dids(&ops, "").is_empty());
+    assert!(strand_participant_dids(&ops, "").is_empty());
 }
 
 #[test]
 fn card_detail_update_patch_emits_body_set_and_unset_ops() {
-    let mut current = test_card("ck:flow:f1", "U");
+    let mut current = test_card("ck:strand:f1", "U");
     current.title = "Keep".to_owned();
     current.body = "old long-form body".to_owned();
     let mut draft = card_detail_draft_from_card(&current);
@@ -2537,7 +2537,7 @@ fn card_detail_update_patch_emits_body_set_and_unset_ops() {
 
 #[test]
 fn card_detail_update_patch_unsets_empty_optional_fields() {
-    let mut current = test_card("ck:flow:f1", "U");
+    let mut current = test_card("ck:strand:f1", "U");
     current.title = "Keep".to_owned();
     current.description = "old summary".to_owned();
     current.assignee = "did:web:bob.example".to_owned();
@@ -2560,7 +2560,7 @@ fn card_detail_update_patch_unsets_empty_optional_fields() {
 
 #[test]
 fn apply_card_detail_draft_marks_card_queued() {
-    let mut card = test_card("ck:flow:f1", "U");
+    let mut card = test_card("ck:strand:f1", "U");
     let draft = CardDetailDraft {
         title: "New title".to_owned(),
         description: "New summary".to_owned(),
@@ -2596,38 +2596,38 @@ fn relocate_card_preserves_rank_ordering_after_move() {
             id: "ck:space:list-a".to_owned(),
             title: "A".to_owned(),
             rank: "U".to_owned(),
-            cards: vec![test_card("ck:flow:a1", "U"), test_card("ck:flow:a2", "f")],
+            cards: vec![test_card("ck:strand:a1", "U"), test_card("ck:strand:a2", "f")],
             state: SpaceContainerLifecycleState::Active,
         },
         KanbanColumn {
             id: "ck:space:list-b".to_owned(),
             title: "B".to_owned(),
             rank: "f".to_owned(),
-            cards: vec![test_card("ck:flow:b1", "U"), test_card("ck:flow:b3", "z")],
+            cards: vec![test_card("ck:strand:b1", "U"), test_card("ck:strand:b3", "z")],
             state: SpaceContainerLifecycleState::Active,
         },
     ];
     // Move a1 from A → B, dropped at rank "m" (between b1=U and b3=z).
     let moved = relocate_card(
         &mut cols,
-        "ck:flow:a1",
+        "ck:strand:a1",
         "ck:space:list-a",
         "ck:space:list-b",
         "m",
     )
     .unwrap();
-    assert_eq!(moved.id, "ck:flow:a1");
+    assert_eq!(moved.id, "ck:strand:a1");
     assert_eq!(moved.rank, "m");
     // Source column no longer contains a1, still has a2.
     let a = &cols[0];
     assert_eq!(a.cards.len(), 1);
-    assert_eq!(a.cards[0].id, "ck:flow:a2");
+    assert_eq!(a.cards[0].id, "ck:strand:a2");
     // Target column has b1 (U) < a1 (m) < b3 (z), ordering preserved.
     let b = &cols[1];
     assert_eq!(b.cards.len(), 3);
-    assert_eq!(b.cards[0].id, "ck:flow:b1");
-    assert_eq!(b.cards[1].id, "ck:flow:a1");
-    assert_eq!(b.cards[2].id, "ck:flow:b3");
+    assert_eq!(b.cards[0].id, "ck:strand:b1");
+    assert_eq!(b.cards[1].id, "ck:strand:a1");
+    assert_eq!(b.cards[2].id, "ck:strand:b3");
 }
 
 /// In-list reorder: removing from a column then re-inserting into
@@ -2640,16 +2640,16 @@ fn relocate_card_handles_in_list_reorder() {
         title: "A".to_owned(),
         rank: "U".to_owned(),
         cards: vec![
-            test_card("ck:flow:a1", "U"),
-            test_card("ck:flow:a2", "f"),
-            test_card("ck:flow:a3", "p"),
+            test_card("ck:strand:a1", "U"),
+            test_card("ck:strand:a2", "f"),
+            test_card("ck:strand:a3", "p"),
         ],
         state: SpaceContainerLifecycleState::Active,
     }];
     // Move a3 to the top of the same list (rank "0" — before "U").
     let moved = relocate_card(
         &mut cols,
-        "ck:flow:a3",
+        "ck:strand:a3",
         "ck:space:list-a",
         "ck:space:list-a",
         "0",
@@ -2658,17 +2658,17 @@ fn relocate_card_handles_in_list_reorder() {
     assert_eq!(moved.rank, "0");
     let a = &cols[0];
     assert_eq!(a.cards.len(), 3);
-    assert_eq!(a.cards[0].id, "ck:flow:a3");
-    assert_eq!(a.cards[1].id, "ck:flow:a1");
-    assert_eq!(a.cards[2].id, "ck:flow:a2");
+    assert_eq!(a.cards[0].id, "ck:strand:a3");
+    assert_eq!(a.cards[1].id, "ck:strand:a1");
+    assert_eq!(a.cards[2].id, "ck:strand:a2");
 }
 
-/// `locate_flow_position_in_projection` is the post-conflict rebase
-/// adapter — it must find the flow's current cell pre-state from a
-/// freshly-fetched projection. When the flow is present with a
+/// `locate_strand_position_in_projection` is the post-conflict rebase
+/// adapter — it must find the strand's current cell pre-state from a
+/// freshly-fetched projection. When the strand is present with a
 /// position, return `At { list_space_id, rank }`; absent ⇒ `Initial`.
 #[test]
-fn locate_flow_position_finds_present_flow_with_rank() {
+fn locate_strand_position_finds_present_strand_with_rank() {
     use crate::api::{
         CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
         StateFrontierView,
@@ -2686,7 +2686,7 @@ fn locate_flow_position_finds_present_flow_with_rank() {
             source: None,
             items: vec![ProjectionItemView {
                 object: serde_json::json!({
-                    "id": "ck:flow:01wanted",
+                    "id": "ck:strand:01wanted",
                     "title": "Find me",
                 }),
                 render: None,
@@ -2712,21 +2712,21 @@ fn locate_flow_position_finds_present_flow_with_rank() {
         total_estimate: None,
         stale: None,
     };
-    let expected = locate_flow_position_in_projection(&projection, "ck:flow:01wanted");
+    let expected = locate_strand_position_in_projection(&projection, "ck:strand:01wanted");
     assert_eq!(
         expected,
-        FlowPositionExpectation::At {
+        StrandPositionExpectation::At {
             list_space_id: "ck:space:01list-review".to_owned(),
             rank: "h3".to_owned(),
         }
     );
 }
 
-/// When the flow isn't in the projection, the rebase must use
+/// When the strand isn't in the projection, the rebase must use
 /// `head_eq null` (Initial) — soland's reducer rejects if the cell
 /// is actually non-initial, which is the safe behaviour.
 #[test]
-fn locate_flow_position_missing_flow_returns_initial() {
+fn locate_strand_position_missing_strand_returns_initial() {
     use crate::api::{CollectionProjectionView, StateFrontierView};
     let projection = CollectionProjectionView {
         projection: "collection".to_owned(),
@@ -2740,8 +2740,8 @@ fn locate_flow_position_missing_flow_returns_initial() {
         total_estimate: None,
         stale: None,
     };
-    let expected = locate_flow_position_in_projection(&projection, "ck:flow:01missing");
-    assert_eq!(expected, FlowPositionExpectation::Initial);
+    let expected = locate_strand_position_in_projection(&projection, "ck:strand:01missing");
+    assert_eq!(expected, StrandPositionExpectation::Initial);
 }
 
 /// Helper for `relocate_card` tests — builds a KanbanCard with the
@@ -2763,13 +2763,13 @@ fn test_card(id: &str, rank: &str) -> KanbanCard {
         assignee: String::new(),
         assigned_to_relations: Vec::new(),
         due: String::new(),
-        primary_flow_id: String::new(),
-        locked_flow: None,
+        primary_strand_id: String::new(),
+        locked_strand: None,
         external_visibility: String::new(),
         history_visibility: String::new(),
         security_encrypted: None,
         state: CardState::Synced,
-        lifecycle: FlowLifecycleState::Active,
+        lifecycle: StrandLifecycleState::Active,
     }
 }
 
@@ -2795,21 +2795,21 @@ fn seed_columns_reflect_three_lifecycle_states_for_demo_drift_check() {
 }
 
 #[test]
-fn seed_flow_ids_are_valid_object_patch_targets() {
-    for flow_id in [
-        DEMO_FLOW_LEGAL_REVIEW_ID,
-        DEMO_FLOW_ONBOARDING_COPY_ID,
-        DEMO_FLOW_SECURITY_SIGNOFF_ID,
+fn seed_strand_ids_are_valid_object_patch_targets() {
+    for strand_id in [
+        DEMO_STRAND_LEGAL_REVIEW_ID,
+        DEMO_STRAND_ONBOARDING_COPY_ID,
+        DEMO_STRAND_SECURITY_SIGNOFF_ID,
     ] {
-        let event = crate::operation::ck_ops::flow_update_patch(
+        let event = crate::operation::ck_ops::strand_update_patch(
             DEMO_BOARD_SPACE_ID,
             "did:web:acme.example:users:alice",
-            flow_id,
+            strand_id,
             json!({"synthesis": {"$op": "set", "value": "demo synthesis"}}),
         )
         .expect("builds")
         .build("yougen");
-        assert_eq!(event.kind, "ck.flow.update");
-        assert_eq!(event.local_target_ref(), Some(flow_id));
+        assert_eq!(event.kind, "ck.strand.update");
+        assert_eq!(event.local_target_ref(), Some(strand_id));
     }
 }

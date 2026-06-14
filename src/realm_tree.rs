@@ -239,7 +239,7 @@ pub(crate) fn projection_title(id: &str, body: &Value) -> String {
     explicit_realm_title(body)
         .or_else(|| {
             body.get("summary")
-                .and_then(|summary| nested_string_field(summary, "flow", &["title", "name"]))
+                .and_then(|summary| nested_string_field(summary, "strand", &["title", "name"]))
         })
         .unwrap_or_else(|| id.to_owned())
 }
@@ -743,7 +743,7 @@ pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Ve
     let mut previews: Vec<RealmTreeNode> = realms
         .iter()
         .filter(|(id, body)| {
-            is_realm_or_space_projection_id(id) && !projection_looks_like_flow(body)
+            is_realm_or_space_projection_id(id) && !projection_looks_like_strand(body)
         })
         .map(|(id, body)| {
             let summary = body.get("summary").unwrap_or(&Value::Null);
@@ -859,25 +859,25 @@ pub fn should_retain_projection_after_full_sync(
         .is_some_and(|realm_id| server_set_contains_realm_id(server_set, realm_id))
 }
 
-pub(crate) fn projection_looks_like_flow(body: &Value) -> bool {
-    // Real Space projections embed their primary flow under
-    // `summary.flow` (with `flow_id` etc. inside it) — so peeking into
-    // `summary` to spot a flow is a false positive. Only the body's own
-    // top-level `flow_id` / `flow` / `tracks` / `kind`, or a
-    // `summary.category` that is itself a flow category, identify a
-    // flow-as-node projection.
-    body.get("flow_id").is_some()
-        || body.get("flow").is_some()
+pub(crate) fn projection_looks_like_strand(body: &Value) -> bool {
+    // Real Space projections embed their primary strand under
+    // `summary.strand` (with `strand_id` etc. inside it) — so peeking into
+    // `summary` to spot a strand is a false positive. Only the body's own
+    // top-level `strand_id` / `strand` / `tracks` / `kind`, or a
+    // `summary.category` that is itself a strand category, identify a
+    // strand-as-node projection.
+    body.get("strand_id").is_some()
+        || body.get("strand").is_some()
         || body.get("tracks").is_some()
         || matches!(
             body.get("kind").and_then(Value::as_str),
-            Some("ck.flow.create" | "discussion" | "flow")
+            Some("ck.strand.create" | "discussion" | "strand")
         )
         || matches!(
             body.get("summary")
                 .and_then(|summary| summary.get("category"))
                 .and_then(Value::as_str),
-            Some("discussion" | "flow" | "card" | "announce" | "support" | "activity")
+            Some("discussion" | "strand" | "card" | "announce" | "support" | "activity")
         )
 }
 
@@ -930,7 +930,7 @@ mod tests {
         let id = "ck:realm:01904100-0000-7000-8000-000000000003";
         let body = json!({
             "summary": {
-                "flow": {"title": "General flow"}
+                "strand": {"title": "General strand"}
             }
         });
 
@@ -1188,7 +1188,7 @@ mod tests {
         assert_eq!(
             extract_parent_space_id(
                 "ck:space:child",
-                &json!({"summary": {"parent_space_id": "ck:flow:root"}})
+                &json!({"summary": {"parent_space_id": "ck:strand:root"}})
             ),
             None
         );
@@ -1214,7 +1214,7 @@ mod tests {
     fn is_realm_or_space_projection_id_matches_realm_and_space_prefixes() {
         assert!(is_realm_or_space_projection_id("ck:realm:abc"));
         assert!(is_realm_or_space_projection_id("ck:space:abc"));
-        assert!(!is_realm_or_space_projection_id("ck:flow:abc"));
+        assert!(!is_realm_or_space_projection_id("ck:strand:abc"));
         assert!(!is_realm_or_space_projection_id("realm:abc"));
     }
 
@@ -1297,7 +1297,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_projection_filters_flow_entries_out_of_realm_tree() {
+    fn sync_projection_filters_strand_entries_out_of_realm_tree() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
             "ck:realm:root".to_owned(),
@@ -1310,20 +1310,20 @@ mod tests {
             }),
         );
         spaces.insert(
-            "ck:flow:discussion".to_owned(),
+            "ck:strand:discussion".to_owned(),
             json!({
-                "flow_id": "ck:flow:discussion",
+                "strand_id": "ck:strand:discussion",
                 "summary": {
                     "title": "Should not be a node"
                 }
             }),
         );
         spaces.insert(
-            "ck:space:flow-projection".to_owned(),
+            "ck:space:strand-projection".to_owned(),
             json!({
-                "flow_id": "ck:flow:nested",
+                "strand_id": "ck:strand:nested",
                 "summary": {
-                    "title": "Flow projection",
+                    "title": "Strand projection",
                     "category": "discussion"
                 }
             }),
@@ -1335,22 +1335,22 @@ mod tests {
         assert_eq!(previews[0].id, "ck:realm:root");
     }
 
-    /// Regression: soland inlines the primary flow under `summary.flow`
+    /// Regression: soland inlines the primary strand under `summary.strand`
     /// for legitimate Spaces (so the client can render the room title
     /// without joining a separate fanout). A previous filter treated
-    /// any `summary.flow` as a flow-as-tree-node projection and dropped the
-    /// Space from the sidebar entirely. Only top-level `flow*`/`tracks`
-    /// or a flow-shaped `summary.category` should reject a `ck:space:`.
+    /// any `summary.strand` as a strand-as-tree-node projection and dropped the
+    /// Space from the sidebar entirely. Only top-level `strand*`/`tracks`
+    /// or a strand-shaped `summary.category` should reject a `ck:space:`.
     #[test]
-    fn sync_projection_keeps_real_space_with_inlined_primary_flow() {
+    fn sync_projection_keeps_real_space_with_inlined_primary_strand() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
             "ck:space:0196419b-0000-7000-8000-000000000000".to_owned(),
             json!({
                 "ephemeral": [],
                 "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
-                "flows": [{
-                    "flow_id": "ck:flow:0196419b-0000-7000-8000-000000000000",
+                "strands": [{
+                    "strand_id": "ck:strand:0196419b-0000-7000-8000-000000000000",
                     "title": "Cokret Demo Realm",
                 }],
                 "summary": {
@@ -1358,8 +1358,8 @@ mod tests {
                     "title": "Cokret Demo Realm",
                     "summary": "Shared demo Space served by soland",
                     "tags": ["demo"],
-                    "flow": {
-                        "flow_id": "ck:flow:0196419b-0000-7000-8000-000000000000",
+                    "strand": {
+                        "strand_id": "ck:strand:0196419b-0000-7000-8000-000000000000",
                         "title": "Cokret Demo Realm",
                         "tracks": { "discussion": { "enabled": true } },
                     },
@@ -1388,23 +1388,23 @@ mod tests {
             json!({
                 "bottom_cells": [],
                 "ephemeral": [],
-                "flows": [{
-                    "flow_id": "ck:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                "strands": [{
+                    "strand_id": "ck:strand:019e4cdc-b435-7e52-9ada-39d5ec134729",
                     "kind": "discussion",
                     "title": "Test"
                 }],
                 "state": [],
                 "state_after": {
                     "events": [{
-                        "flow_id": "ck:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                        "strand_id": "ck:strand:019e4cdc-b435-7e52-9ada-39d5ec134729",
                         "kind": "discussion",
                         "title": "Test"
                     }]
                 },
                 "summary": {
                     "category": null,
-                    "flow": {
-                        "flow_id": "ck:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                    "strand": {
+                        "strand_id": "ck:strand:019e4cdc-b435-7e52-9ada-39d5ec134729",
                         "kind": "discussion",
                         "title": "Test"
                     },
@@ -1463,15 +1463,15 @@ mod tests {
     }
 
     #[test]
-    fn realm_tree_nodes_from_sync_realms_filters_flow_like_projections() {
+    fn realm_tree_nodes_from_sync_realms_filters_strand_like_projections() {
         // The sync engine relies on `realm_tree_nodes_from_sync_realms`
         // (rather than the retired client-side merge filter) to keep
-        // flow-like projections out of the sidebar — verify that here.
+        // strand-like projections out of the sidebar — verify that here.
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ck:flow:discussion".to_owned(),
+            "ck:strand:discussion".to_owned(),
             json!({
-                "flow_id": "ck:flow:discussion",
+                "strand_id": "ck:strand:discussion",
                 "summary": {"title": "Discussion", "category": "discussion"}
             }),
         );

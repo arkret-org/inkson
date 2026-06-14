@@ -220,15 +220,15 @@
             - generic [ref=e196]: Recent Boards
             - generic [ref=e197]: kind=board
           - generic [ref=e198]:
-            - link "Release Board kind=board · 5 lists · 38 flows renderer=board · view=v1.release" [ref=e199] [cursor=pointer]:
+            - link "Release Board kind=board · 5 lists · 38 strands renderer=board · view=v1.release" [ref=e199] [cursor=pointer]:
               - /url: /kanban
               - generic [ref=e200]: Release Board
-              - generic [ref=e201]: kind=board · 5 lists · 38 flows
+              - generic [ref=e201]: kind=board · 5 lists · 38 strands
               - generic [ref=e202]: renderer=board · view=v1.release
-            - link "Triage Board kind=board · 3 lists · 92 flows · 7 overdue" [ref=e203] [cursor=pointer]:
+            - link "Triage Board kind=board · 3 lists · 92 strands · 7 overdue" [ref=e203] [cursor=pointer]:
               - /url: /kanban
               - generic [ref=e204]: Triage Board
-              - generic [ref=e205]: kind=board · 3 lists · 92 flows · 7 overdue
+              - generic [ref=e205]: kind=board · 3 lists · 92 strands · 7 overdue
             - link "Q3 Roadmap kind=board · timeline renderer" [ref=e206] [cursor=pointer]:
               - /url: /kanban
               - generic [ref=e207]: Q3 Roadmap
@@ -249,12 +249,12 @@
             - generic [ref=e222]:
               - generic [ref=e223]: approval
               - generic [ref=e224]: 1 / 2 admin
-            - generic [ref=e225]: Researcher Agent requested read_flow
+            - generic [ref=e225]: Researcher Agent requested read_strand
             - generic [ref=e226]: approval_constraint=2_of_3_admin
           - generic [ref=e227]:
             - generic [ref=e228]:
               - generic [ref=e229]: conflict
-              - generic [ref=e230]: ck.flow.move superseded
+              - generic [ref=e230]: ck.strand.move superseded
             - generic [ref=e231]: Concurrent move resolved
             - generic [ref=e232]: Losing write remains auditable.
         - generic [ref=e233]:
@@ -263,7 +263,7 @@
             - generic [ref=e236]: derived projection
           - generic [ref=e237]:
             - generic [ref=e238]:
-              - generic [ref=e239]: ck.flow.move
+              - generic [ref=e239]: ck.strand.move
               - generic [ref=e240]: Launch Board
             - generic [ref=e241]: Legal review moved into Doing
           - generic [ref=e242]:

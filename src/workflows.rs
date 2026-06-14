@@ -100,7 +100,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             id: "realm.delete",
             name: "Leave, archive, and destroy Realm",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Realm setup + Realm Admin destructive flows (`views/realm_admin.rs` Leave + Destroy buttons)",
+            client_surface: "Realm setup + Realm Admin destructive strands (`views/realm_admin.rs` Leave + Destroy buttons)",
             server_dependency: "F-REALM-LIFECYCLE-1 (2026-05-19): leave-realm is wired through views/realm_admin.rs (`api.leave_realm(realm_id)` + local cache reset); destroy-realm is wired through views/realm_admin.rs (`api.destroy_realm(realm_id)`). Both surfaces report success/failure via `status_msg`; Realm destroy retention enforcement remains server-side.",
         },
         ClientWorkflow {
@@ -148,7 +148,7 @@ mod tests {
         );
         // F-REALM-LIFECYCLE-1 (2026-05-19): realm.delete moved from
         // Blocked → ClientReady because the corresponding UI
-        // wiring (`views/setup.rs` create flow + `views/realm_admin.rs`
+        // wiring (`views/setup.rs` create strand + `views/realm_admin.rs`
         // Leave / Destroy buttons) was already shipped. Explicitly negate
         // it here so a future regression that reintroduces the gap fails
         // this test.
@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn key_backup_flows_are_client_ready() {
+    fn key_backup_strands_are_client_ready() {
         let workflows = production_release_workflows();
         for id in [
             "recovery.key_backup_upload",

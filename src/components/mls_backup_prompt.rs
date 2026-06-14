@@ -463,7 +463,7 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
     // backup-list check has not completed yet.
     try_set_signal(needs_mls_backup, true);
     // Server must NOT already hold an `mls_account_secret` backup. (When it
-    // does, the restore/unlock path owns the flow — backup and restore are
+    // does, the restore/unlock path owns the strand — backup and restore are
     // mutually exclusive by this exact check, so we can't double-prompt.)
     let payload = match with_authed_api(&base_url, token, |api| async move {
         crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
@@ -499,7 +499,7 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
 /// [`crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key`]
 /// to wrap + upload the account secret so a future fresh browser can recover
 /// encrypted history. The wire recipient method remains spec-conformant
-/// `secret_storage` + `recovery_public_key`; the user-facing flow does not ask
+/// `secret_storage` + `recovery_public_key`; the user-facing strand does not ask
 /// the user to invent or confirm a separate passphrase.
 #[component]
 pub fn MlsBackupPrompt(
@@ -628,7 +628,7 @@ pub fn MlsBackupPrompt(
         backup_created.set(false);
         status.set(crate::i18n::tr("mls_backup.status.uploading"));
         spawn(async move {
-            let generated_in_this_flow = !recovery_key_configured;
+            let generated_in_this_strand = !recovery_key_configured;
             let actor_for_sidecar = actor.clone();
             let device_for_sidecar = device.clone();
             let base_for_sidecar = base.clone();
@@ -686,7 +686,7 @@ pub fn MlsBackupPrompt(
                     }
                     try_set_signal(backup_created, true);
                     try_set_status(status, crate::i18n::tr("mls_backup.status.created"));
-                    if !generated_in_this_flow {
+                    if !generated_in_this_strand {
                         try_set_signal(recovery_key_input, String::new());
                         crate::api::sleep_for(std::time::Duration::from_millis(750)).await;
                         try_set_signal(needs_mls_backup, false);

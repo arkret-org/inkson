@@ -1,9 +1,9 @@
-//! G3.Y2 — "promote a Flow's discussion to a Circle-scoped Flow" state.
+//! G3.Y2 — "promote a Strand's discussion to a Circle-scoped Strand" state.
 //!
-//! Spec: `models/flow-and-message.md §5` (`scope_circle_id`) +
-//! `models/circle.md §7.2` (wide seal Flow + narrow discussion Flow).
+//! Spec: `models/strand-and-message.md §5` (`scope_circle_id`) +
+//! `models/circle.md §7.2` (wide seal Strand + narrow discussion Strand).
 //!
-//! This flow creates a Circle plus a private discussion Flow under the current
+//! This strand creates a Circle plus a private discussion Strand under the current
 //! Realm. It MUST NOT create a Space hierarchy, and it MUST NOT write a Space
 //! id into `scope_circle_id` (that field is for `ck:circle:*` ids only).
 //!
@@ -22,11 +22,11 @@ pub fn discussion_promote_enabled() -> bool {
 /// Modal state for the "promote discussion" confirmation dialog.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PromoteDiscussionDraft {
-    /// Message id (or Flow id, depending on entry point) being
+    /// Message id (or Strand id, depending on entry point) being
     /// promoted. `None` means the modal is closed.
     pub source_id: Option<String>,
-    /// User-visible title for the new private discussion Flow. Pre-filled
-    /// from the source Flow's name on open.
+    /// User-visible title for the new private discussion Strand. Pre-filled
+    /// from the source Strand's name on open.
     pub title: String,
 }
 
@@ -50,18 +50,18 @@ impl PromoteDiscussionDraft {
     }
 }
 
-/// Generated identifiers for the new Circle-scoped discussion Flow.
+/// Generated identifiers for the new Circle-scoped discussion Strand.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromoteIds {
     pub circle_id: String,
-    pub discussion_flow_id: String,
+    pub discussion_strand_id: String,
 }
 
 impl PromoteIds {
     pub fn fresh() -> Self {
         Self {
             circle_id: format!("ck:circle:{}", uuid_v7()),
-            discussion_flow_id: format!("ck:flow:{}", uuid_v7()),
+            discussion_strand_id: format!("ck:strand:{}", uuid_v7()),
         }
     }
 }
@@ -76,25 +76,25 @@ pub fn build_discussion_circle_create_op(
     Ok(ck_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?.build("yougen"))
 }
 
-/// Build the `ck.flow.create` envelope for the new private discussion Flow.
-pub fn build_discussion_flow_create_op(
+/// Build the `ck.strand.create` envelope for the new private discussion Strand.
+pub fn build_discussion_strand_create_op(
     realm_id: &str,
     actor: &str,
     ids: &PromoteIds,
     title: &str,
 ) -> anyhow::Result<EventEnvelope> {
-    Ok(ck_ops::scoped_discussion_flow_create(
+    Ok(ck_ops::scoped_discussion_strand_create(
         realm_id,
         actor,
-        &ids.discussion_flow_id,
+        &ids.discussion_strand_id,
         &ids.circle_id,
         title,
     )?
     .build("yougen"))
 }
 
-/// Build the `ck.relation.create` envelope that links the private Flow back
-/// to the source public Flow/message.
+/// Build the `ck.relation.create` envelope that links the private Strand back
+/// to the source public Strand/message.
 pub fn build_confidential_discussion_relation_op(
     realm_id: &str,
     actor: &str,
@@ -104,7 +104,7 @@ pub fn build_confidential_discussion_relation_op(
     Ok(ck_ops::confidential_discussion_relation_create(
         realm_id,
         actor,
-        &ids.discussion_flow_id,
+        &ids.discussion_strand_id,
         source_id,
         &ids.circle_id,
     )?
@@ -121,7 +121,7 @@ pub fn build_promote_ops(
 ) -> anyhow::Result<Vec<EventEnvelope>> {
     Ok(vec![
         build_discussion_circle_create_op(realm_id, actor, ids, title)?,
-        build_discussion_flow_create_op(realm_id, actor, ids, title)?,
+        build_discussion_strand_create_op(realm_id, actor, ids, title)?,
         build_confidential_discussion_relation_op(realm_id, actor, source_id, ids)?,
     ])
 }
@@ -152,19 +152,19 @@ mod tests {
     }
 
     #[test]
-    fn promote_ops_emit_circle_flow_and_private_relation() {
+    fn promote_ops_emit_circle_strand_and_private_relation() {
         let ids = PromoteIds::fresh();
         let ops = build_promote_ops(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "ck:flow:0196419b-0000-7000-8000-000000000003",
+            "ck:strand:0196419b-0000-7000-8000-000000000003",
             &ids,
             "Private discussion",
         )
         .expect("promote ops build");
         assert_eq!(ops.len(), 3);
         assert_eq!(ops[0].kind, "ck.circle.create");
-        assert_eq!(ops[1].kind, "ck.flow.create");
+        assert_eq!(ops[1].kind, "ck.strand.create");
         assert_eq!(ops[2].kind, "ck.relation.create");
         assert_eq!(
             ops[0].payload["object"]["realm_id"],
@@ -173,16 +173,16 @@ mod tests {
         assert_eq!(ops[1].payload["object"]["scope_circle_id"], ids.circle_id);
         assert_eq!(ops[2].payload["kind"], "confidential_discussion_of");
         // relation_create_payload is additionalProperties:false — the private
-        // scope is carried by the Circle-scoped Flow (ops[1]), NOT by an
+        // scope is carried by the Circle-scoped Strand (ops[1]), NOT by an
         // illegal `scope_circle_id` key on the relation payload.
         assert!(
             ops[2].payload.get("scope_circle_id").is_none(),
             "scope_circle_id is not a relation_create_payload field"
         );
-        assert_eq!(ops[2].payload["from_ref"], ids.discussion_flow_id);
+        assert_eq!(ops[2].payload["from_ref"], ids.discussion_strand_id);
         assert_eq!(
             ops[2].payload["to_ref"],
-            "ck:flow:0196419b-0000-7000-8000-000000000003"
+            "ck:strand:0196419b-0000-7000-8000-000000000003"
         );
         for event in &ops {
             cokret_sdk::schema::event_payload_validator_catalog()

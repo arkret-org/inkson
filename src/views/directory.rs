@@ -616,12 +616,12 @@ pub fn DirectoryPanel(
             // (never distinguish not_found vs unauthorized).
             // TODO(R3.3.1): a richer share/open surface (per-object "Share"
             // context-menu actions in the timeline/kanban/realm pages, an
-            // invite-token issuance flow, and a confirm-before-navigate
+            // invite-token issuance strand, and a confirm-before-navigate
             // preview card) lives here in a follow-up.
             div { class: "event", "data-testid": "open-shared-link",
                 div { class: "event-head",
                     span { {crate::i18n::tr("object_link.open")} }
-                    HelpTip { text: "Paste a Cokret share link to open the Realm, Flow, or Message it points at." }
+                    HelpTip { text: "Paste a Cokret share link to open the Realm, Strand, or Message it points at." }
                 }
                 div { class: "actions",
                     Input {
@@ -1291,7 +1291,7 @@ fn protocol_object_results(query: &str) -> Vec<Value> {
         serde_json::json!({
             "kind": "Discussion",
             "title": "Support desk discussion",
-            "summary": "Discussion projection with history_visibility=shared and linked flow metadata.",
+            "summary": "Discussion projection with history_visibility=shared and linked strand metadata.",
             "renderer": "thread",
             "facets": ["renderable", "messageable"],
             "access": "readable",

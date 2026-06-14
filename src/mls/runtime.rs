@@ -794,7 +794,7 @@ pub fn force_epoch_rotation_commit(
 /// decrypted plaintext is simultaneously cached (keyed by the envelope's
 /// canonical `payload_digest`) and re-renders are served from that cache.
 ///
-/// Flow:
+/// Strand:
 ///   1. plaintext-cache hit → return without touching MLS state;
 ///   2. otherwise, under the store's decrypt serialization guard: restore the latest snapshot →
 ///      `decrypt_payload` → export the advanced state →
@@ -1359,7 +1359,7 @@ pub fn reaction_routing_tag_v1(
 /// emoji as an MLS application message, both under the current epoch.
 ///
 /// Unlike message send, this does NOT advance the MLS epoch (no commit) —
-/// `encryption-and-audit.md` §2.9 reuses the application-key flow, so
+/// `encryption-and-audit.md` §2.9 reuses the application-key strand, so
 /// reactions ride the current epoch and the server deduplicates on the
 /// routing tag. The post-encrypt snapshot IS persisted immediately so the
 /// sender's application ratchet never reuses a generation; because the epoch

@@ -229,15 +229,15 @@ impl TimelineEvent {
 }
 
 // YOU-02-001: these helpers return `Result` instead of panicking — the
-// realm/flow ids they parse come from server-synced UI state, and a
+// realm/strand ids they parse come from server-synced UI state, and a
 // non-canonical id must not abort the client (wasm panic = blank page).
 fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> anyhow::Result<Value> {
     result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
 }
 
-fn flow_id_value(value: &str) -> anyhow::Result<cokret_sdk::FlowId> {
-    cokret_sdk::FlowId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid flow id {value:?}: {err:?}"))
+fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
+    cokret_sdk::StrandId::new(value.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
 }
 
 fn text_content(body: &str) -> anyhow::Result<Value> {
@@ -311,10 +311,10 @@ pub(crate) fn message_create_operation(
     incident_priority: Option<&str>,
 ) -> anyhow::Result<EventEnvelope> {
     // Spec `event-payload.schema.json` `message_create_payload` requires
-    // `flow_id` and `track_name` (`flow-and-message.md` §2). The default Flow
-    // for a Realm is `ck:flow:<uuid>` (typed-id re-tag, matching
-    // soland's `flow_id_from_realm_id`); the default track is "discussion".
-    let flow_id = default_flow_id_for_realm(realm_id);
+    // `strand_id` and `track_name` (`strand-and-message.md` §2). The default Strand
+    // for a Realm is `ck:strand:<uuid>` (typed-id re-tag, matching
+    // soland's `strand_id_from_realm_id`); the default track is "discussion".
+    let strand_id = default_strand_id_for_realm(realm_id);
     let mut content = cokret_sdk::ContentBlock::text(body);
     if let Some(priority) = incident_priority.and_then(incident_priority_wire_value) {
         content = content.with_field("priority", json!(priority)).with_field(
@@ -326,7 +326,7 @@ pub(crate) fn message_create_operation(
         );
     }
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(&flow_id)?,
+        strand_id_value(&strand_id)?,
         "discussion",
         sdk_payload_value(content.to_value(), "timeline message content serialize")?,
     );
@@ -341,9 +341,9 @@ pub(crate) fn message_create_operation(
         .build("yougen"))
 }
 
-// YOU-05-009: the main-flow id derivation is a protocol mapping rule; the
+// YOU-05-009: the main-strand id derivation is a protocol mapping rule; the
 // single authoritative copy lives in `crate::local_state`.
-use crate::local_state::default_flow_id_for_realm;
+use crate::local_state::default_strand_id_for_realm;
 
 fn message_revise_operation(
     realm_id: &str,
@@ -918,7 +918,7 @@ pub fn TimelinePanel(
                                             ));
 
                                             // Resolve effective send preference per spec
-                                            // discovery/client-preferences.md §3.6 (flow → realm →
+                                            // discovery/client-preferences.md §3.6 (strand → realm →
                                             // default). Server-side Realm `ck.realm.read_receipt_policy`
                                             // is not yet exposed to the client; until it is, treat
                                             // policy as `Optional` (no override) and defer to user pref.
@@ -2286,10 +2286,10 @@ fn read_cursor_status_label(marker: &ReadMarkerRecord) -> String {
         marker.body.read_scope.track_name.as_deref(),
     ) {
         ("thread", Some(object_ref), _) => format!("thread {}", short_protocol_id(object_ref)),
-        ("flow", Some(object_ref), Some(track)) => {
+        ("strand", Some(object_ref), Some(track)) => {
             format!("{track} {}", short_protocol_id(object_ref))
         }
-        ("flow", Some(object_ref), None) => format!("flow {}", short_protocol_id(object_ref)),
+        ("strand", Some(object_ref), None) => format!("strand {}", short_protocol_id(object_ref)),
         (kind, ..) => kind.to_owned(),
     };
     format!(
@@ -2380,7 +2380,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn message_create_operation_retags_realm_scope_to_flow_id() {
+    fn message_create_operation_retags_realm_scope_to_strand_id() {
         let op = message_create_operation(
             "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
@@ -2391,8 +2391,8 @@ mod tests {
         .expect("builds");
 
         assert_eq!(
-            op.payload["flow_id"],
-            "ck:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
+            op.payload["strand_id"],
+            "ck:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
         assert_eq!(op.payload["track_name"], "discussion");
         assert_eq!(op.payload["content"]["kind"], "ck.content.text");
@@ -2415,8 +2415,8 @@ mod tests {
         .expect("builds");
 
         assert_eq!(
-            op.payload["flow_id"],
-            "ck:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
+            op.payload["strand_id"],
+            "ck:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
         assert!(op.payload.get("priority").is_none());
         assert!(op.payload.get("notification_priority").is_none());

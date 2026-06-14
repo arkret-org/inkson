@@ -6,7 +6,7 @@
 //! only then does the client speak tus against that binding's `base_url`.
 //! No blind endpoint probing.
 //!
-//! Flow: `POST` create (Upload-Length + Upload-Metadata) → chunked `PATCH`
+//! Strand: `POST` create (Upload-Length + Upload-Metadata) → chunked `PATCH`
 //! at `Upload-Offset` (resyncing via `HEAD` after a failed chunk) →
 //! `POST {upload_url}/finalize`, which returns the same
 //! `BlobUploadOutcome` the canonical single-shot upload produces.

@@ -217,7 +217,7 @@ const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetupSection {
     Overview,
-    /// Realm bootstrap flow; the form creates a Realm and emits
+    /// Realm bootstrap strand; the form creates a Realm and emits
     /// `ck.realm.create`.
     Realms,
     /// Phase 3 — `ck.space.create` form: pick a Realm, pick a kind,
@@ -259,12 +259,12 @@ const SPACE_KIND_OPTIONS: [(&str, &str, &str); 5] = [
     (
         "folder",
         "Folder",
-        "Pure navigation container. Holds child Spaces / Flows but isn't a workflow.",
+        "Pure navigation container. Holds child Spaces / Strands but isn't a workflow.",
     ),
     (
         "board",
         "Board",
-        "Kanban / pipeline view. Cells track flow placement (rank cas-register).",
+        "Kanban / pipeline view. Cells track strand placement (rank cas-register).",
     ),
     (
         "list",
@@ -441,7 +441,7 @@ pub fn SetupPanel(
     let mut realm_digest_algorithm = use_signal(|| "sha256".to_owned());
     // Phase 3 — `ck.space.create` form state. The Space inherits all
     // security from its home Realm. The home Realm is supplied by the
-    // sidebar row that opened this flow, not by an in-form picker.
+    // sidebar row that opened this strand, not by an in-form picker.
     let mut new_space_realm_id = use_signal(String::new);
     let mut new_space_title = use_signal(String::new);
     let mut new_space_summary = use_signal(String::new);
@@ -458,7 +458,7 @@ pub fn SetupPanel(
     let mut realm_state = use_signal(|| "Draft not created yet".to_owned());
     let mut realm_create_busy = use_signal(|| false);
     let mut created_realm_id = use_signal(String::new);
-    // S6 (docs/user-flows-key-lifecycle.md §9, key-management §7.11) — recovery
+    // S6 (docs/user-strands-key-lifecycle.md §9, key-management §7.11) — recovery
     // soft-gate for encrypted-Realm creation. Creating an e2ee Realm produces
     // MLS material that is unrecoverable if the device is lost and no recovery
     // path is configured. The gate prompts the user to set up the Recovery Key
@@ -794,7 +794,7 @@ pub fn SetupPanel(
             }
 
             if active_section == SetupSection::Realms {
-                div { class: "setup-shell new-realm-shell", "data-testid": "realm-lifecycle-flow",
+                div { class: "setup-shell new-realm-shell", "data-testid": "realm-lifecycle-strand",
                     div { class: "setup-column",
                         div { class: "event new-realm-hero", "data-testid": "realm-setup-guide",
                             div { class: "event-head",
@@ -1640,7 +1640,7 @@ pub fn SetupPanel(
             }
 
             if active_section == SetupSection::NewSpace {
-                div { class: "setup-shell new-space-shell", "data-testid": "space-create-flow",
+                div { class: "setup-shell new-space-shell", "data-testid": "space-create-strand",
                     div { class: "setup-column",
                         div { class: "event new-space-hero",
                             div { class: "event-head",
@@ -1799,7 +1799,7 @@ pub fn SetupPanel(
                                             }
                                         }
                                         div { class: "muted",
-                                            "New Flows / Morphs / Views created from this Space land in this Realm by default. Doesn't grant access — the user still needs membership."
+                                            "New Strands / Morphs / Views created from this Space land in this Realm by default. Doesn't grant access — the user still needs membership."
                                         }
                                     }
                                 }
@@ -2010,7 +2010,7 @@ pub fn SetupPanel(
                                     Button {
                                         variant: ButtonVariant::Destructive,
                                         "data-testid": "space-lifecycle-tombstone",
-                                        title: "Irreversible. Server rejects if live child Spaces / placement Flows exist.",
+                                        title: "Irreversible. Server rejects if live child Spaces / placement Strands exist.",
                                         onclick: {
                                             let base = base_url.clone();
                                             move |_| {
@@ -2040,7 +2040,7 @@ pub fn SetupPanel(
                                     }
                                 }
                                 div { class: "muted",
-                                    "Tombstone is irreversible — server rejects with space_has_live_dependents if any child Space or placement Flow is still live (spec §3.4)."
+                                    "Tombstone is irreversible — server rejects with space_has_live_dependents if any child Space or placement Strand is still live (spec §3.4)."
                                 }
                             }
                         }

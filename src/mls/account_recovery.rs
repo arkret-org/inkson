@@ -37,12 +37,12 @@ pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "yougen_mls_account_secret";
 /// X5.3 — `item_type` carried by the encrypted local-plaintext sidecar backup.
 ///
 /// The sidecar (`LocalStateStore::mls_private_plaintext`, the author's own
-/// plaintext for their encrypted private flow fields) MUST cross devices: a new
+/// plaintext for their encrypted private strand fields) MUST cross devices: a new
 /// browser can never decrypt the author's own MLS ciphertext (OpenMLS
 /// `validation.rs` rejects own-leaf messages before any key lookup), so without
 /// this backup the author loses sight of everything they wrote after switching
 /// browsers. The sidecar JSON is encrypted under a KEK derived from the ACCOUNT
-/// SECRET (not the passphrase directly) so the restore flow — which imports the
+/// SECRET (not the passphrase directly) so the restore strand — which imports the
 /// account secret first — can decrypt it with NO second passphrase prompt. Both
 /// soland's validator and the yougen client validator allowlist this content
 /// type under the `secret_storage` class.
@@ -63,7 +63,7 @@ pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "yougen_mls_private_plaintext"
 /// source `decrypt_mls_account_secret_backup` stretches on restore), never from
 /// the account secret itself — wrapping the account secret under a KEK derived
 /// from that same account secret would make the backup self-referential and
-/// undecryptable by the recovery flow. (A former `build_mls_account_secret_backup_body`
+/// undecryptable by the recovery strand. (A former `build_mls_account_secret_backup_body`
 /// helper that derived the KEK from the account secret was removed for this
 /// reason; it was dead code and a latent footgun.)
 pub fn build_mls_account_secret_backup_body_with_kek(
@@ -166,7 +166,7 @@ pub fn is_recovery_public_key_account_secret_backup(body: &Value) -> bool {
 /// Mirrors [`build_mls_account_secret_backup_body_with_kek_and_version`] but
 /// with the sidecar identifiers and the sidecar JSON bytes as the encrypted
 /// payload. `sidecar_json` is the serialized `mls_private_plaintext` map
-/// (`serde_json::to_vec` of `realm -> flow -> field -> plaintext`); only its
+/// (`serde_json::to_vec` of `realm -> strand -> field -> plaintext`); only its
 /// ciphertext, salt and nonce travel on the wire. The caller derives `kek` from
 /// the account secret (`derive_vault_kek(account_secret.as_bytes())`), so the
 /// restore path — which imports the account secret first — can decrypt with no
@@ -199,7 +199,7 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
 /// the serialized sidecar JSON bytes.
 ///
 /// The KEK source is the ACCOUNT SECRET bytes (NOT the recovery passphrase):
-/// the restore flow imports the account secret first, then feeds its bytes here
+/// the restore strand imports the account secret first, then feeds its bytes here
 /// so the sidecar is recovered with no second passphrase prompt.
 /// `open_passphrase_kdf_backup_body` derives the Argon2id root from these bytes +
 /// the stored salt, exactly as the account-secret path does.
@@ -363,7 +363,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
         },
         account_secret.as_bytes(),
         // secret_storage class — recovery_policy_ref is an optional hint; omitted
-        // here (the MLS account-secret recovery flow doesn't bind a policy ref).
+        // here (the MLS account-secret recovery strand doesn't bind a policy ref).
         None,
     )
 }
@@ -749,7 +749,7 @@ fn restore_private_plaintext_sidecar(
 
 /// Auto-restore MLS history for a fresh device using the recovery passphrase.
 ///
-/// Flow:
+/// Strand:
 ///   1. Fetch the server's `mls_account_secret` backup when present, decrypt it with `passphrase`,
 ///      and replace the local account key with it. This also repairs stale local secrets left by
 ///      incomplete bootstraps.
@@ -1119,7 +1119,7 @@ pub fn mls_backup_prompt_required(
 /// Wrap the local account MLS secret behind a freshly-derived recovery KEK and
 /// upload it to soland's `secret_storage` endpoint.
 ///
-/// This is the upload half of the backup-prompt flow (the inverse of
+/// This is the upload half of the backup-prompt strand (the inverse of
 /// [`auto_restore_mls_history_with_passphrase`]). It re-uses any prior
 /// account-secret backup's `backup_id`/series so the upload stays in the same
 /// rotation series. Returns the `backup_id` it wrote.
@@ -1225,7 +1225,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
 /// the ACCOUNT SECRET and upload it to soland's `secret_storage` endpoint.
 ///
 /// The KEK source is the account secret (already recoverable via the passphrase
-/// through the X3 `mls_account_secret` backup), so the restore flow decrypts the
+/// through the X3 `mls_account_secret` backup), so the restore strand decrypts the
 /// sidecar with no second passphrase prompt. Reuses any prior sidecar backup's
 /// `backup_id`/series so the upload stays in the same rotation series
 /// (`series_seq++` whenever the sidecar changes). Returns the `backup_id` it
@@ -2180,10 +2180,10 @@ mod tests {
         let mut fields = std::collections::BTreeMap::new();
         fields.insert("body".to_owned(), "\"author body\"".to_owned());
         fields.insert("synthesis".to_owned(), "\"author synthesis\"".to_owned());
-        let mut flows = std::collections::BTreeMap::new();
-        flows.insert("ck:flow:alpha".to_owned(), fields);
+        let mut strands = std::collections::BTreeMap::new();
+        strands.insert("ck:strand:alpha".to_owned(), fields);
         let mut realms = std::collections::BTreeMap::new();
-        realms.insert("ck:realm:demo".to_owned(), flows);
+        realms.insert("ck:realm:demo".to_owned(), strands);
         realms
     }
 
@@ -2316,11 +2316,11 @@ mod tests {
             "sidecar must be restored"
         );
         assert_eq!(
-            state.private_plaintext_for("ck:realm:demo", "ck:flow:alpha", "body"),
+            state.private_plaintext_for("ck:realm:demo", "ck:strand:alpha", "body"),
             Some("\"author body\"".to_owned())
         );
         assert_eq!(
-            state.private_plaintext_for("ck:realm:demo", "ck:flow:alpha", "synthesis"),
+            state.private_plaintext_for("ck:realm:demo", "ck:strand:alpha", "synthesis"),
             Some("\"author synthesis\"".to_owned())
         );
     }

@@ -261,12 +261,12 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
 pub(crate) fn build_read_receipt_preferences_body(
     default_send: bool,
     realm_overrides: &std::collections::BTreeMap<String, bool>,
-    flow_overrides: &std::collections::BTreeMap<String, bool>,
+    strand_overrides: &std::collections::BTreeMap<String, bool>,
 ) -> serde_json::Value {
     json!({
         "default_send": default_send,
         "realm_overrides": realm_overrides,
-        "flow_overrides": flow_overrides,
+        "strand_overrides": strand_overrides,
     })
 }
 
@@ -284,7 +284,7 @@ fn push_read_receipt_account_data(
     let body = build_read_receipt_preferences_body(
         state_store.read().read_receipt_default_send(),
         &state_store.read().read_receipt_realm_overrides(),
-        &state_store.read().read_receipt_flow_overrides(),
+        &state_store.read().read_receipt_strand_overrides(),
     );
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
@@ -841,7 +841,7 @@ fn RealmOverrideRow(
             )
         }
     });
-    // Muted rows keep the legacy testid so existing notification e2e flows
+    // Muted rows keep the legacy testid so existing notification e2e strands
     // (mute from drawer → confirm here) keep resolving.
     let row_testid = if level == WatchLevel::Muted {
         "settings-muted-realm-row"
@@ -1111,7 +1111,7 @@ pub fn SettingsPanel(
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
     // `state_store.set_read_receipt_*` so the timeline view can resolve
-    // (flow → realm → default) before sending `ck.receipt.read`.
+    // (strand → realm → default) before sending `ck.receipt.read`.
     let mut read_receipt_default_send =
         use_signal(|| state_store.read().read_receipt_default_send());
     let mut read_receipt_realm_overrides =
@@ -2139,8 +2139,8 @@ pub fn SettingsPanel(
                                             Ok(response) => {
                                                 // R20: `room_id` is the MIMI-draft wire term
                                                 // (interop-exempt from Room → Realm). On the
-                                                // Cokret app side it identifies a Flow, so we
-                                                // bind it to a `flow_id`-named local to keep
+                                                // Cokret app side it identifies a Strand, so we
+                                                // bind it to a `strand_id`-named local to keep
                                                 // the "Room" term confined to the interop layer.
                                                 mimi_receipt.set(format!(
                                                     "group-info 01JSMIMI binding {} proofs {}",
@@ -2273,7 +2273,7 @@ pub fn SettingsPanel(
                                             let request = cokret_sdk::MimiProxyDownloadRequestBody {
                                                 asset_ref: "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91".to_owned(),
                                                 requester: cokret_sdk::Did::new(actor.trim().to_owned())?,
-                                                flow_id: None,
+                                                strand_id: None,
                                                 ohttp_context: serde_json::Value::Null,
                                                 range: None,
                                             };
@@ -2634,7 +2634,7 @@ pub fn SettingsPanel(
                                         .read_receipt_realm_overrides(),
                                     &state_store
                                         .read()
-                                        .read_receipt_flow_overrides(),
+                                        .read_receipt_strand_overrides(),
                                 );
                                 let base = base_url();
                                 let api_token = token();
@@ -3270,7 +3270,7 @@ pub fn SettingsPanel(
                 // Handles come from signed ck.schema.handle_claim.v1
                 // evidence issued by the org's coauth issuer. So instead
                 // of an "edit your handle" affordance we show a managed
-                // notice + a link out to the issuer flow.
+                // notice + a link out to the issuer strand.
                             div { class: "event", "data-testid": "handle-managed-by-org",
                     div { class: "event-head",
                         span { "Handle" }
@@ -3865,7 +3865,7 @@ pub fn SettingsPanel(
                             // Diagnostics panel that hosts the protocol-level
                             // surfaces (raw event log, audit rows, schema /
                             // profile / event-kind references) which used to
-                            // leak into the main flow.
+                            // leak into the main strand.
                             div { class: "event settings-diagnostics-switcher", "data-testid": "settings-diagnostics-switcher",
                                 div { class: "event-head",
                                     span { "Diagnostics explorer" }
@@ -3961,18 +3961,18 @@ mod tests {
 
     /// The canonical `ck.read_receipt.preferences` body shape other devices
     /// read via `/sync` account_data. Locks the field names
-    /// (`default_send`, `realm_overrides`, `flow_overrides`) so a future
+    /// (`default_send`, `realm_overrides`, `strand_overrides`) so a future
     /// rename can't silently desync devices.
     #[test]
     fn build_read_receipt_preferences_body_has_canonical_field_shape() {
         let mut realms = BTreeMap::new();
         realms.insert("ck:realm:demo".to_owned(), false);
-        let mut flows = BTreeMap::new();
-        flows.insert("ck:flow:demo".to_owned(), true);
-        let body = build_read_receipt_preferences_body(true, &realms, &flows);
+        let mut strands = BTreeMap::new();
+        strands.insert("ck:strand:demo".to_owned(), true);
+        let body = build_read_receipt_preferences_body(true, &realms, &strands);
         assert_eq!(body["default_send"], serde_json::Value::Bool(true));
         assert_eq!(body["realm_overrides"]["ck:realm:demo"], false);
-        assert_eq!(body["flow_overrides"]["ck:flow:demo"], true);
+        assert_eq!(body["strand_overrides"]["ck:strand:demo"], true);
         // Keys we don't expect in this body — explicit guards so a typo
         // (e.g. `default` instead of `default_send`) regression-bisects.
         assert!(body.get("default").is_none());

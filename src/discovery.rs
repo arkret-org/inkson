@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn test_marker_merger_single_device() {
         let mut merger = MarkerMerger::new();
-        let scope = flow_discussion_scope();
+        let scope = strand_discussion_scope();
 
         merger.set_marker(ReadMarker {
             realm_id: "ck:realm:test".to_owned(),
@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn test_marker_merger_multi_device() {
         let mut merger = MarkerMerger::new();
-        let scope = flow_discussion_scope();
+        let scope = strand_discussion_scope();
 
         merger.set_marker(ReadMarker {
             realm_id: "ck:realm:test".to_owned(),
@@ -597,7 +597,7 @@ mod tests {
     #[test]
     fn test_marker_merger_per_device() {
         let mut merger = MarkerMerger::new();
-        let scope = flow_discussion_scope();
+        let scope = strand_discussion_scope();
 
         merger.set_marker(ReadMarker {
             realm_id: "ck:realm:test".to_owned(),
@@ -623,10 +623,10 @@ mod tests {
         );
     }
 
-    fn flow_discussion_scope() -> ReadMarkerScope {
+    fn strand_discussion_scope() -> ReadMarkerScope {
         ReadMarkerScope {
-            kind: "flow".to_owned(),
-            object_ref: Some("ck:flow:test".to_owned()),
+            kind: "strand".to_owned(),
+            object_ref: Some("ck:strand:test".to_owned()),
             track_name: Some("discussion".to_owned()),
             track_scope: None,
         }

@@ -311,7 +311,7 @@ mod tests {
         let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
             "event_id": "ck:event:01904100-0000-7000-8000-00000000000c",
-            "kind": "ck.flow.move",
+            "kind": "ck.strand.move",
             "payload": sample_payload(actor, "Alice"),
         });
         store.ingest_inline(realm, actor, &[event]);

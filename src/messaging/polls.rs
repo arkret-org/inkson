@@ -373,22 +373,22 @@ fn poll_options_from_content(content: &Value) -> Vec<PollOption> {
 }
 
 // YOU-02-001: these helpers return `Result` instead of panicking — the
-// realm/flow ids they parse come from server-synced UI state, and a
+// realm/strand ids they parse come from server-synced UI state, and a
 // non-canonical id must not abort the client (wasm panic = blank page).
 fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> anyhow::Result<Value> {
     result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
 }
 
-fn flow_id_value(value: &str) -> anyhow::Result<cokret_sdk::FlowId> {
-    cokret_sdk::FlowId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid flow id {value:?}: {err:?}"))
+fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
+    cokret_sdk::StrandId::new(value.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
 }
 
 /// Build the `ck.content.poll.create` envelope for the wire.
 pub fn build_poll_create_op(
     realm_id: &str,
     actor: &str,
-    flow_id: &str,
+    strand_id: &str,
     poll_id: &str,
     draft: &PollDraft,
 ) -> anyhow::Result<EventEnvelope> {
@@ -405,13 +405,13 @@ pub fn build_poll_create_op(
         .with_field("options", Value::Array(options))
         .with_field("max_selections", json!(draft.max_selections.max(1)));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(flow_id)?,
+        strand_id_value(strand_id)?,
         "discussion",
         sdk_payload_value(content.to_value(), "poll create content serialize")?,
     )
     .with_message_id(poll_id);
     let mut envelope = OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .target_ref(flow_id)
+        .target_ref(strand_id)
         .body(sdk_payload_value(
             payload.to_value(),
             "poll ck.message.create payload serialize",
@@ -432,12 +432,12 @@ pub fn build_poll_vote_op(
     poll_id: &str,
     option_id: &str,
 ) -> anyhow::Result<EventEnvelope> {
-    let flow_id = flow_id_from_realm_id(realm_id);
+    let strand_id = strand_id_from_realm_id(realm_id);
     let content = cokret_sdk::ContentBlock::new("ck.content.poll.response", "poll response")
         .with_field("poll_id", json!(poll_id))
         .with_field("choice", json!(option_id));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(&flow_id)?,
+        strand_id_value(&strand_id)?,
         "discussion",
         sdk_payload_value(content.to_value(), "poll vote content serialize")?,
     );
@@ -456,11 +456,11 @@ pub fn build_poll_close_op(
     actor: &str,
     poll_id: &str,
 ) -> anyhow::Result<EventEnvelope> {
-    let flow_id = flow_id_from_realm_id(realm_id);
+    let strand_id = strand_id_from_realm_id(realm_id);
     let content = cokret_sdk::ContentBlock::new("ck.content.poll.close", "poll closed")
         .with_field("poll_id", json!(poll_id));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id_value(&flow_id)?,
+        strand_id_value(&strand_id)?,
         "discussion",
         sdk_payload_value(content.to_value(), "poll close content serialize")?,
     );
@@ -478,12 +478,12 @@ pub fn new_poll_id() -> String {
     format!("poll-{}", uuid_v7())
 }
 
-fn flow_id_from_realm_id(realm_id: &str) -> String {
+fn strand_id_from_realm_id(realm_id: &str) -> String {
     let suffix = realm_id
         .trim()
         .strip_prefix("ck:realm:")
         .unwrap_or_else(|| realm_id.trim());
-    format!("ck:flow:{suffix}")
+    format!("ck:strand:{suffix}")
 }
 
 #[cfg(test)]
@@ -556,7 +556,7 @@ mod tests {
         let op = build_poll_create_op(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "ck:flow:01904100-0000-7000-8000-000000000011",
+            "ck:strand:01904100-0000-7000-8000-000000000011",
             "poll-x",
             &draft,
         )

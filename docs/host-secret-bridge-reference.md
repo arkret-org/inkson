@@ -342,7 +342,7 @@ Both platforms follow the same shape:
      → on Android/iOS path returns AndroidKeystoreSecureKeyStore /
        IosKeychainSecureKeyStore which delegate through the
        registered bridge
-5. all subsequent OIDC refresh-token reads / writes / deletes flow
+5. all subsequent OIDC refresh-token reads / writes / deletes strand
    through the OS keychain
 ```
 

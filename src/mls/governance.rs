@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 /// carried. The summary fields make Audit / Conflict UIs cheap to render;
 /// the tuples are what MLS governance Moves attach so the server can enforce
 /// `mls_governance_binding.full.v1` (spec §10) without the client re-deriving
-/// them. Both flow into `canonical_hash`, so changes to either fork yield a
+/// them. Both strand into `canonical_hash`, so changes to either fork yield a
 /// distinct binding hash when threading the binding through Move proof refs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GovernanceBindingPayload {

@@ -8,7 +8,7 @@
 //! [`crate::mls::runtime`]) directly from that sibling device over HPKE,
 //! without the user re-entering the 24-word Recovery Key.
 //!
-//! Two to-device kinds carry the flow:
+//! Two to-device kinds carry the strand:
 //!   * `ck.secret.request` — new device → existing device, advertising the HPKE public key to seal
 //!     to. Carries no secret material.
 //!   * `ck.secret.send` — existing device → new device, the secret HPKE-sealed (RFC 9180, via
@@ -22,7 +22,7 @@
 //! The opened secret feeds [`crate::mls::runtime::replace_account_mls_secret_version`]
 //! — the same landing point the 24-word path uses — so the rest of the MLS
 //! history restore (server-held `mls_history` backups) is shared with the
-//! recovery flow.
+//! recovery strand.
 
 use anyhow::{Result, anyhow, bail};
 use base64::Engine as _;
@@ -51,7 +51,7 @@ pub const SECRET_SHARE_SECRET_ID: &str = "yougen_mls_account_secret";
 /// secret-share envelope can never be confused with a recovery backup envelope.
 const SECRET_SHARE_HPKE_INFO: &[u8] = b"ck-secret-share/v1";
 
-/// Per-flow state held by the requesting (new) device between sending
+/// Per-strand state held by the requesting (new) device between sending
 /// `ck.secret.request` and opening the matching `ck.secret.send`. The private
 /// key never leaves the device.
 pub struct SecretShareRequester {

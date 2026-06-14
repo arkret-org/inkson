@@ -327,7 +327,7 @@ pub fn AgentsPanel(
 ) -> Element {
     let mut agent_id = use_signal(String::new);
     let mut protocol = use_signal(|| "ck.agent.v1".to_owned());
-    let mut capabilities = use_signal(|| "flow.read".to_owned());
+    let mut capabilities = use_signal(|| "strand.read".to_owned());
     let mut status = use_signal(String::new);
 
     // ─────────────────────────────────────────────────────────────
@@ -986,7 +986,7 @@ pub fn AgentsPanel(
 // `ck.agent.action_request` (delivered via chime's push frame
 // parser), the controller MUST review the payload digest + expiry +
 // single-use nonce status before approving. The `ActionApproveDialog`
-// component carries that flow; on confirm it submits a
+// component carries that strand; on confirm it submits a
 // `ck.agent.action_approve` event.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1851,9 +1851,9 @@ pub fn PersonalAgentAdminPanel(
                                         .await
                                         {
                                             Ok(r) => last_op_status.set(format!(
-                                                "sidecar.ensure: circle={} flow={} relation={}",
+                                                "sidecar.ensure: circle={} strand={} relation={}",
                                                 short_protocol_id(r.private_circle_id.as_str()),
-                                                short_protocol_id(r.private_flow_id.as_str()),
+                                                short_protocol_id(r.private_strand_id.as_str()),
                                                 short_protocol_id(r.private_relation_id.as_str())
                                             )),
                                             Err(err) => last_op_status.set(format!(
@@ -1879,7 +1879,7 @@ pub fn PersonalAgentAdminPanel(
             // whether the agent may reply as itself, accept @mentions
             // from other users, and act on the controller's behalf.
             // Each bit is capped by the deployment ⊇ Realm ⊇ Circle ⊇
-            // Flow ceiling; soland rejects selections above it.
+            // Strand ceiling; soland rejects selections above it.
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-participation",
                 div { class: "event-head",
@@ -1887,7 +1887,7 @@ pub fn PersonalAgentAdminPanel(
                     span { class: "badge blue", "ck.self.agent.participation.resource.replace" }
                 }
                 div { class: "muted",
-                    "Per Realm: let the selected agent reply as itself, accept @mentions from other users, or act on your behalf. Each switch is capped by the Realm / Circle / Flow ceiling."
+                    "Per Realm: let the selected agent reply as itself, accept @mentions from other users, or act on your behalf. Each switch is capped by the Realm / Circle / Strand ceiling."
                 }
                 div { class: "workflow-form",
                     Input {
@@ -2314,12 +2314,12 @@ mod tests {
             "did:web:alice.example",
             "did:web:agent.example",
             "ck.agent.v1",
-            &["flow.read"],
+            &["strand.read"],
         )
         .build("yougen");
         assert_eq!(op.payload["agent_id"], "did:web:agent.example");
         assert_eq!(op.payload["endpoints"][0]["protocol"], "ck.agent.v1");
-        assert_eq!(op.payload["endpoints"][0]["capabilities"][0], "flow.read");
+        assert_eq!(op.payload["endpoints"][0]["capabilities"][0], "strand.read");
         assert!(op.payload.get("protocol").is_none());
         assert!(op.payload.get("capabilities").is_none());
     }

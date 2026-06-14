@@ -48,9 +48,9 @@ pub fn DashboardPanel(
 ) -> Element {
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
-    let mut recent_flows = use_signal(Vec::<crate::api::FlowProjectionView>::new);
-    let mut recent_flows_loaded_for = use_signal(String::new);
-    let mut recent_flows_status = use_signal(String::new);
+    let mut recent_strands = use_signal(Vec::<crate::api::StrandProjectionView>::new);
+    let mut recent_strands_loaded_for = use_signal(String::new);
+    let mut recent_strands_status = use_signal(String::new);
     let mut contacts_summary = use_signal(Option::<DashboardContactsSummary>::default);
     let mut contacts_loaded_for = use_signal(String::new);
     let mut contacts_status = use_signal(String::new);
@@ -144,40 +144,40 @@ pub fn DashboardPanel(
     if has_session
         && !active_node_id.trim().is_empty()
         && !active_projection_realm_id.trim().is_empty()
-        && recent_flows_loaded_for() != active_node_id
+        && recent_strands_loaded_for() != active_node_id
     {
-        recent_flows_loaded_for.set(active_node_id.clone());
+        recent_strands_loaded_for.set(active_node_id.clone());
         let base = base_url.clone();
         let api_token = token();
         let realm_id = active_projection_realm_id.clone();
         spawn(async move {
             match with_authed_api(&base, api_token, |api| async move {
-                api.list_flow_projections(&realm_id).await
+                api.list_strand_projections(&realm_id).await
             })
             .await
             {
                 Ok(response) => {
-                    let flow_count = response.items.len();
-                    recent_flows.set(response.items);
-                    recent_flows_status.set(format!(
-                        "{flow_count} flow(s) loaded from Board projection."
+                    let strand_count = response.items.len();
+                    recent_strands.set(response.items);
+                    recent_strands_status.set(format!(
+                        "{strand_count} strand(s) loaded from Board projection."
                     ));
                 }
                 Err(err) => {
-                    recent_flows.set(Vec::new());
-                    recent_flows_status.set(format!("Recent flows unavailable: {}", err.display()));
+                    recent_strands.set(Vec::new());
+                    recent_strands_status.set(format!("Recent strands unavailable: {}", err.display()));
                 }
             }
         });
     }
 
-    let visible_recent_flows = recent_flows()
+    let visible_recent_strands = recent_strands()
         .into_iter()
-        // R11: the Flow state enum is exactly {active, archived, redacted}
-        // (flow.schema.json). "Recent flows" shows only `active`; `archived`
+        // R11: the Strand state enum is exactly {active, archived, redacted}
+        // (strand.schema.json). "Recent strands" shows only `active`; `archived`
         // and `redacted` are hidden here. There is NO `deleted` state in the
         // spec, so it is intentionally not referenced.
-        .filter(|flow| flow.state != "archived" && flow.state != "redacted")
+        .filter(|strand| strand.state != "archived" && strand.state != "redacted")
         .take(5)
         .collect::<Vec<_>>();
     let visible_notifications = notification_summaries
@@ -248,8 +248,8 @@ pub fn DashboardPanel(
                                 view.set(super::View::Kanban);
                             }
                         },
-                        div { class: "lbl", "Active flows" }
-                        div { class: "val", "{visible_recent_flows.len()}" }
+                        div { class: "lbl", "Active strands" }
+                        div { class: "val", "{visible_recent_strands.len()}" }
                         div { class: "delta", "Open Board view" }
                     }
                 } else {
@@ -382,7 +382,7 @@ pub fn DashboardPanel(
 
                     div { class: "surface", "data-testid": "recent-boards",
                         div { class: "row surface-head",
-                            strong { "Recent Flows" }
+                            strong { "Recent Strands" }
                         }
                         table { class: "tbl compact",
                             thead {
@@ -395,24 +395,24 @@ pub fn DashboardPanel(
                                 }
                             }
                             tbody {
-                                if visible_recent_flows.is_empty() {
+                                if visible_recent_strands.is_empty() {
                                     tr {
                                         td { class: "dim", colspan: "5",
-                                            if has_session { "No recent flows loaded" } else { "Sign in to load recent flows" }
+                                            if has_session { "No recent strands loaded" } else { "Sign in to load recent strands" }
                                         }
                                     }
                                 } else {
-                                    for flow in visible_recent_flows.iter() {
+                                    for strand in visible_recent_strands.iter() {
                                         tr {
-                                            key: "{flow.flow_id}",
+                                            key: "{strand.strand_id}",
                                             td { class: "dim", "" }
-                                            td { "{flow.title}" }
+                                            td { "{strand.title}" }
                                             td { "Current Board" }
-                                            td { "{flow.state}" }
+                                            td { "{strand.state}" }
                                             td {
-                                                {flow.fields
+                                                {strand.fields
                                                     .get("due_at")
-                                                    .or_else(|| flow.fields.get("due"))
+                                                    .or_else(|| strand.fields.get("due"))
                                                     .and_then(|value| value.as_str())
                                                     .unwrap_or("-")}
                                             }
@@ -421,8 +421,8 @@ pub fn DashboardPanel(
                                 }
                             }
                         }
-                        if !recent_flows_status().is_empty() {
-                            div { class: "muted", style: "padding: 0 16px 12px;", "{recent_flows_status}" }
+                        if !recent_strands_status().is_empty() {
+                            div { class: "muted", style: "padding: 0 16px 12px;", "{recent_strands_status}" }
                         }
                     }
 

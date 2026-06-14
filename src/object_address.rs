@@ -1,12 +1,12 @@
 //! R3.3 (CKP-0011, cokret-spec @ cced4b8) — client-side shareable object
 //! links.
 //!
-//! A user can share a Realm / Flow / Message as a link. This module is the
+//! A user can share a Realm / Strand / Message as a link. This module is the
 //! yougen-side glue on top of the SDK's client-agnostic addressing grammar
 //! ([`cokret_sdk::model::parse_address`] / [`build_address`] /
 //! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
 //!
-//! * [`ShareTarget`] — a typed "thing I want to share" (realm / flow / message) plus routing hints.
+//! * [`ShareTarget`] — a typed "thing I want to share" (realm / strand / message) plus routing hints.
 //!   [`ShareTarget::build_links`] produces both output forms.
 //! * [`ShareLinks`] — the HTTPS landing form (default copy-paste) and the `web+cokret:` "open in
 //!   app" form.
@@ -32,7 +32,7 @@
 //! query would leak the substituted object id / invite token to the handler
 //! host. [`web_protocol_handler_template`] enforces that invariant for callers
 //! who explicitly opt in, and [`register_web_protocol_handler`] performs the
-//! fragment-only registration on wasm. The default UI flow simply hands out the
+//! fragment-only registration on wasm. The default UI strand simply hands out the
 //! HTTPS-fragment link, which is leak-proof without any registration.
 //!
 //! Native OS deep-link registration (Info.plist `CFBundleURLTypes` /
@@ -48,20 +48,20 @@ use cokret_sdk::model::{
 use crate::routes::Route;
 
 /// The local object a user is sharing. Mirrors the SDK address hierarchy
-/// `realm ⊃ flow ⊃ message`. `realm` is a bare uuid or a domain-style alias
-/// (the `ck:realm:` sigil is stripped); `flow`/`message` are bare uuids.
+/// `realm ⊃ strand ⊃ message`. `realm` is a bare uuid or a domain-style alias
+/// (the `ck:realm:` sigil is stripped); `strand`/`message` are bare uuids.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShareTarget {
     Realm {
         realm: String,
     },
-    Flow {
+    Strand {
         realm: String,
-        flow: String,
+        strand: String,
     },
     Message {
         realm: String,
-        flow: String,
+        strand: String,
         message: String,
     },
 }
@@ -75,17 +75,17 @@ impl ShareTarget {
         }
     }
 
-    pub fn flow(realm_id: &str, flow_id: &str) -> Self {
-        ShareTarget::Flow {
+    pub fn strand(realm_id: &str, strand_id: &str) -> Self {
+        ShareTarget::Strand {
             realm: strip_sigil(realm_id),
-            flow: strip_sigil(flow_id),
+            strand: strip_sigil(strand_id),
         }
     }
 
-    pub fn message(realm_id: &str, flow_id: &str, message_id: &str) -> Self {
+    pub fn message(realm_id: &str, strand_id: &str, message_id: &str) -> Self {
         ShareTarget::Message {
             realm: strip_sigil(realm_id),
-            flow: strip_sigil(flow_id),
+            strand: strip_sigil(strand_id),
             message: strip_sigil(message_id),
         }
     }
@@ -93,16 +93,16 @@ impl ShareTarget {
     fn realm_seg(&self) -> &str {
         match self {
             ShareTarget::Realm { realm }
-            | ShareTarget::Flow { realm, .. }
+            | ShareTarget::Strand { realm, .. }
             | ShareTarget::Message { realm, .. } => realm,
         }
     }
 
-    fn flow_seg(&self) -> Option<&str> {
+    fn strand_seg(&self) -> Option<&str> {
         match self {
             ShareTarget::Realm { .. } => None,
-            ShareTarget::Flow { flow, .. } => Some(flow),
-            ShareTarget::Message { flow, .. } => Some(flow),
+            ShareTarget::Strand { strand, .. } => Some(strand),
+            ShareTarget::Message { strand, .. } => Some(strand),
         }
     }
 
@@ -114,7 +114,7 @@ impl ShareTarget {
     }
 
     /// Lower the target into a [`ParsedAddress`] with the supplied routing
-    /// hints. Current SDK grammar treats Flow and Message ids as globally
+    /// hints. Current SDK grammar treats Strand and Message ids as globally
     /// typed targets under their Realm path, so relay `via` hints are not
     /// serialized into reference links.
     pub fn to_parsed_address(
@@ -126,7 +126,7 @@ impl ShareTarget {
     ) -> ParsedAddress {
         ParsedAddress {
             realm: RealmRef::parse(self.realm_seg()),
-            flow: self.flow_seg().map(str::to_owned),
+            strand: self.strand_seg().map(str::to_owned),
             message: self.message_seg().map(str::to_owned),
             action,
             // A stray token on a reference link is dropped by the SDK builder.
@@ -261,10 +261,10 @@ impl OpenedLink {
     /// route to be navigable; an alias-only address routes to the directory so
     /// the user can resolve it there.
     ///
-    /// yougen routes a Realm/Flow through the Realm timeline
+    /// yougen routes a Realm/Strand through the Realm timeline
     /// (`/realms/:realm_id`, `/timeline/:realm_id`) and a Message as
-    /// `/timeline/:realm_id/message/:message_id`. We route flow targets to the
-    /// flow's timeline and message targets to the message seal.
+    /// `/timeline/:realm_id/message/:message_id`. We route strand targets to the
+    /// strand's timeline and message targets to the message seal.
     pub fn route_for(&self, target_kind: TargetKind) -> Route {
         match target_kind {
             TargetKind::Realm => match &self.address.realm {
@@ -273,18 +273,18 @@ impl OpenedLink {
                 },
                 RealmRef::Alias(_) => Route::Directory,
             },
-            TargetKind::Flow => match self.address.flow.as_deref() {
-                Some(flow) => Route::TimelineRealm {
-                    realm_id: typed_flow(flow),
+            TargetKind::Strand => match self.address.strand.as_deref() {
+                Some(strand) => Route::TimelineRealm {
+                    realm_id: typed_strand(strand),
                 },
                 None => Route::Directory,
             },
             TargetKind::Message => match (
-                self.address.flow.as_deref(),
+                self.address.strand.as_deref(),
                 self.address.message.as_deref(),
             ) {
-                (Some(flow), Some(message)) => Route::TimelineMessage {
-                    realm_id: typed_flow(flow),
+                (Some(strand), Some(message)) => Route::TimelineMessage {
+                    realm_id: typed_strand(strand),
                     message_id: typed_message(message),
                 },
                 _ => Route::Directory,
@@ -315,11 +315,11 @@ fn typed_realm(bare: &str) -> String {
     }
 }
 
-fn typed_flow(bare: &str) -> String {
-    if bare.starts_with("ck:flow:") {
+fn typed_strand(bare: &str) -> String {
+    if bare.starts_with("ck:strand:") {
         bare.to_owned()
     } else {
-        format!("ck:flow:{bare}")
+        format!("ck:strand:{bare}")
     }
 }
 
@@ -344,7 +344,7 @@ pub fn web_protocol_handler_template(landing: &str) -> String {
 /// wasm-only: opt-in registration of the `web+cokret:` web protocol handler,
 /// using the fragment-only template from [`web_protocol_handler_template`].
 ///
-/// This is NOT called by the default UI flow (yougen prefers the
+/// This is NOT called by the default UI strand (yougen prefers the
 /// HTTPS-fragment landing link, which needs no registration). It exists for
 /// embedders that want the "open in app from the browser" affordance and have
 /// confirmed the privacy posture of the fragment-only template.
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn strip_sigil_handles_typed_and_bare_ids() {
         assert_eq!(strip_sigil("ck:realm:abc"), "abc");
-        assert_eq!(strip_sigil("ck:flow:def"), "def");
+        assert_eq!(strip_sigil("ck:strand:def"), "def");
         assert_eq!(strip_sigil("bare-uuid"), "bare-uuid");
         assert_eq!(strip_sigil("team.example.com"), "team.example.com");
     }
@@ -396,23 +396,23 @@ mod tests {
     }
 
     #[test]
-    fn flow_links_ignore_via_and_roundtrip() {
-        let target = ShareTarget::flow(&format!("ck:realm:{R}"), &format!("ck:flow:{F}"));
+    fn strand_links_ignore_via_and_roundtrip() {
+        let target = ShareTarget::strand(&format!("ck:realm:{R}"), &format!("ck:strand:{F}"));
         let links = target.build_reference_links(LANDING, &[VIA.to_owned()], AddressAction::View);
-        assert!(links.web_cokret.contains(&format!("realm/{R}/flow/{F}")));
+        assert!(links.web_cokret.contains(&format!("realm/{R}/strand/{F}")));
         assert!(!links.web_cokret.contains("via="));
         // Both forms reparse to the same address.
         let from_https = OpenedLink::parse(&links.https_landing).unwrap();
         let from_web = OpenedLink::parse(&links.web_cokret).unwrap();
         assert_eq!(from_https.address, from_web.address);
-        assert!(from_web.address.is_flow());
+        assert!(from_web.address.is_strand());
     }
 
     #[test]
     fn message_link_routes_to_message_anchor() {
         let target = ShareTarget::message(
             &format!("ck:realm:{R}"),
-            &format!("ck:flow:{F}"),
+            &format!("ck:strand:{F}"),
             &format!("ck:message:{M}"),
         );
         let links = target.build_links(
@@ -429,7 +429,7 @@ mod tests {
                 realm_id,
                 message_id,
             } => {
-                assert_eq!(realm_id, format!("ck:flow:{F}"));
+                assert_eq!(realm_id, format!("ck:strand:{F}"));
                 assert_eq!(message_id, format!("ck:message:{M}"));
             }
             other => panic!("expected TimelineMessage route, got {other:?}"),
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn invite_link_roundtrips_token_and_binds_digest() {
-        let target = ShareTarget::flow(&format!("ck:realm:{R}"), &format!("ck:flow:{F}"));
+        let target = ShareTarget::strand(&format!("ck:realm:{R}"), &format!("ck:strand:{F}"));
         let links = target.build_links(
             LANDING,
             &[VIA.to_owned()],
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn preview_link_roundtrips_token_and_binds_digest() {
-        let target = ShareTarget::flow(&format!("ck:realm:{R}"), &format!("ck:flow:{F}"));
+        let target = ShareTarget::strand(&format!("ck:realm:{R}"), &format!("ck:strand:{F}"));
         let links = target.build_preview_links(
             LANDING,
             &[VIA.to_owned()],
@@ -517,7 +517,7 @@ mod tests {
     fn parse_fails_closed_on_garbage() {
         assert!(OpenedLink::parse("not-a-link").is_err());
         assert!(OpenedLink::parse(&format!("web+cokret:space/{R}")).is_err());
-        assert!(OpenedLink::parse(&format!("web+cokret:realm/{R}/flow/{F}")).is_ok());
+        assert!(OpenedLink::parse(&format!("web+cokret:realm/{R}/strand/{F}")).is_ok());
     }
 
     #[test]

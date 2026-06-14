@@ -171,7 +171,7 @@ impl LocalStateStore {
     }
 
     /// Read all tracked Moves regardless of Space — used by the
-    /// dashboard "everything failing" banner and the recovery flow.
+    /// dashboard "everything failing" banner and the recovery strand.
     pub fn all_move_submissions(&self) -> Vec<MoveSubmissionRecord> {
         let mut out: Vec<MoveSubmissionRecord> =
             self.load().move_submissions.into_values().collect();

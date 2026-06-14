@@ -96,8 +96,8 @@ impl CokretApi {
 
     /// POST a typed `ck.schema.device_message.v1` envelope to soland's
     /// `/_cokret/self/device_messages` endpoint. Used by device
-    /// verification flows (R3), secret sharing (`ck.secret.*`) and any
-    /// other flow that needs to deliver a message to a specific
+    /// verification strands (R3), secret sharing (`ck.secret.*`) and any
+    /// other strand that needs to deliver a message to a specific
     /// (actor, device_id) pair without going through Space history. The
     /// body shape is the canonical
     /// `messages -> actor -> device_id -> {kind, expires_at, content}` map
@@ -243,7 +243,7 @@ impl CokretApi {
     }
 
     /// CKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
-    /// recovery flow uses to rebuild a backup series by sequence. When
+    /// recovery strand uses to rebuild a backup series by sequence. When
     /// `series_id` is `None` and `backup_class` is `None`, this falls
     /// back to the legacy plain `GET /_cokret/self/keys/backups` shape.
     ///
@@ -393,12 +393,12 @@ impl CokretApi {
             .await
     }
 
-    /// Device trust must be derived from the spec device-message flow.
+    /// Device trust must be derived from the spec device-message strand.
     pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustView> {
         anyhow::bail!("device trust table has no spec-defined Cokret HTTP endpoint")
     }
 
-    /// Device verification must use the spec device-message flow.
+    /// Device verification must use the spec device-message strand.
     pub async fn verify_device(
         &self,
         device_id: &str,

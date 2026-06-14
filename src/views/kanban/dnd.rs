@@ -154,9 +154,9 @@ pub(super) fn submit_column_order_updates(
 }
 
 /// Build + submit a Kanban event and record it in the board write queue.
-/// Card creates emit real `ck.flow.create` envelopes with an initial
-/// `ck.component.flow.position.v1` component; legacy metadata writes still
-/// go through the compatibility `ck.flow.update` patch helper.
+/// Card creates emit real `ck.strand.create` envelopes with an initial
+/// `ck.component.strand.position.v1` component; legacy metadata writes still
+/// go through the compatibility `ck.strand.update` patch helper.
 pub(super) fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
@@ -178,7 +178,7 @@ pub(super) fn submit_kanban_move(
         board_status.set("sign in before updating cards".to_owned());
         return;
     }
-    let envelope = if kind == "ck.flow.create" {
+    let envelope = if kind == "ck.strand.create" {
         let Some(board_space_id) = value.get("board_space_id").and_then(Value::as_str) else {
             board_status.set("cannot create card: missing board_space_id".to_owned());
             return;
@@ -195,7 +195,7 @@ pub(super) fn submit_kanban_move(
             board_status.set("cannot create card: missing rank".to_owned());
             return;
         };
-        crate::operation::ck_ops::kanban_card_flow_create(
+        crate::operation::ck_ops::kanban_card_strand_create(
             &realm_id,
             &actor_id,
             &subject,
@@ -205,7 +205,7 @@ pub(super) fn submit_kanban_move(
             rank,
         )
     } else {
-        crate::operation::ck_ops::flow_position_update(
+        crate::operation::ck_ops::strand_position_update(
             &realm_id,
             &actor_id,
             &subject,
@@ -228,9 +228,9 @@ pub(super) fn submit_kanban_move(
     let cell_id = value
         .get("board_space_id")
         .and_then(Value::as_str)
-        .map(|board_space_id| flow_position_cell_id(board_space_id, &subject))
-        .unwrap_or_else(|| format!("ck:cell:ck.component.flow.position.v1:{subject}"));
-    let effect_summary = if kind == "ck.flow.create" {
+        .map(|board_space_id| strand_position_cell_id(board_space_id, &subject))
+        .unwrap_or_else(|| format!("ck:cell:ck.component.strand.position.v1:{subject}"));
+    let effect_summary = if kind == "ck.strand.create" {
         serde_json::to_string(&envelope.payload).unwrap_or_else(|_| "{}".to_owned())
     } else {
         serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
@@ -349,11 +349,11 @@ pub(super) struct ColumnNeighbours {
 ///
 /// Spec mapping ([views.md §2.6](../../cokret-spec/spec/v1/zh/models/views.md)):
 ///
-/// - Cross-column drop ⇒ `ck.flow.move` Event kind.
-/// - Same-column drop ⇒ `ck.flow.reorder`.
-/// - Both compile to the same `ck:cell:ck.component.flow.position.v1:<board>:<flow>` cas-register
+/// - Cross-column drop ⇒ `ck.strand.move` Event kind.
+/// - Same-column drop ⇒ `ck.strand.reorder`.
+/// - Both compile to the same `ck:cell:ck.component.strand.position.v1:<board>:<strand>` cas-register
 ///   cell; the difference is whether `effect.list_space_id` equals `expected.list_space_id`.
-pub(super) fn dispatch_flow_position_move(
+pub(super) fn dispatch_strand_position_move(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
@@ -413,20 +413,20 @@ pub(super) fn dispatch_flow_position_move(
         board_status.set("internal: dragged card not found in source column".to_owned());
         return;
     };
-    let expected = FlowPositionExpectation::At {
+    let expected = StrandPositionExpectation::At {
         list_space_id: dragged.from_column_id.clone(),
         rank: dragged.from_rank.clone(),
     };
-    let effect = FlowPositionEffect::SetPosition {
+    let effect = StrandPositionEffect::SetPosition {
         list_space_id: target_column_id.clone(),
         rank: new_rank.clone(),
     };
     let kind = if dragged.from_column_id == target_column_id {
-        "ck.flow.reorder"
+        "ck.strand.reorder"
     } else {
-        "ck.flow.move"
+        "ck.strand.move"
     };
-    submit_flow_position_cas_move(
+    submit_strand_position_cas_move(
         base_url,
         token,
         realm_id,
@@ -479,25 +479,25 @@ pub(super) fn space_container_state_from_wire(state: &str) -> SpaceContainerLife
     }
 }
 
-/// Sibling at the Flow object layer. The wire enum is exactly
-/// `{active, archived, redacted}` (`flow.schema.json` state) — `redacted`
+/// Sibling at the Strand object layer. The wire enum is exactly
+/// `{active, archived, redacted}` (`strand.schema.json` state) — `redacted`
 /// is the only irreversible terminal. There is NO `deleted` state in the
 /// spec; if the server ever sends `"deleted"` we log a warning and degrade
 /// to `Active` (the safe non-terminal default — server can correct on next
 /// sync) rather than silently treating it as a terminal.
-pub(super) fn flow_lifecycle_from_wire(state: &str) -> FlowLifecycleState {
+pub(super) fn strand_lifecycle_from_wire(state: &str) -> StrandLifecycleState {
     match state {
-        "archived" => FlowLifecycleState::Archived,
-        "redacted" => FlowLifecycleState::Redacted,
+        "archived" => StrandLifecycleState::Archived,
+        "redacted" => StrandLifecycleState::Redacted,
         "deleted" => {
             tracing::warn!(
                 wire_state = "deleted",
-                "Flow wire state `deleted` is not in the spec enum (active/archived/redacted); \
-                 degrading to Active. Redact, not delete, is the terminal per flow.schema.json."
+                "Strand wire state `deleted` is not in the spec enum (active/archived/redacted); \
+                 degrading to Active. Redact, not delete, is the terminal per strand.schema.json."
             );
-            FlowLifecycleState::Active
+            StrandLifecycleState::Active
         }
-        _ => FlowLifecycleState::Active,
+        _ => StrandLifecycleState::Active,
     }
 }
 
@@ -526,20 +526,20 @@ pub(super) fn capability_gate_for_space_container(
     engine.read().ui_gate(actor, action, &resource, &ctx)
 }
 
-/// Cap-Gate-3 sibling at the Flow object layer.
-pub(super) fn capability_gate_for_flow(
+/// Cap-Gate-3 sibling at the Strand object layer.
+pub(super) fn capability_gate_for_strand(
     engine: &Signal<crate::capability::CapabilityEngine>,
     actor: &str,
     board_space_id: &str,
-    flow_id: &str,
+    strand_id: &str,
     action: &str,
 ) -> crate::capability::CapabilityGate {
     let board_space_id = board_space_id.trim();
     let resource_space_id = (!board_space_id.is_empty()).then(|| board_space_id.to_owned());
     let resource = crate::capability::ResourceRef {
         space_id: resource_space_id.clone(),
-        object_ref: Some(flow_id.to_owned()),
-        object_type: Some("Flow".to_owned()),
+        object_ref: Some(strand_id.to_owned()),
+        object_type: Some("Strand".to_owned()),
         ..Default::default()
     };
     let ctx = crate::capability::EvalContext {
@@ -641,40 +641,40 @@ pub(super) fn dispatch_space_container_lifecycle(
     });
 }
 
-/// Pure guard for Flow lifecycle transitions. Mirrors
-/// `validate_space_container_lifecycle_transition` at the Flow layer — refuses
+/// Pure guard for Strand lifecycle transitions. Mirrors
+/// `validate_space_container_lifecycle_transition` at the Strand layer — refuses
 /// same-state self-transitions and UI-emitted Redacted targets.
-pub(super) fn validate_flow_lifecycle_transition(
-    flow_id: &str,
-    prior: FlowLifecycleState,
-    target: FlowLifecycleState,
+pub(super) fn validate_strand_lifecycle_transition(
+    strand_id: &str,
+    prior: StrandLifecycleState,
+    target: StrandLifecycleState,
 ) -> Result<(), String> {
-    if matches!(target, FlowLifecycleState::Redacted) {
+    if matches!(target, StrandLifecycleState::Redacted) {
         return Err("Redaction is server-only; UI dispatch refused".to_owned());
     }
     if prior == target {
         return Err(format!(
             "card {} already in {target:?} state; refused",
-            short_protocol_id(flow_id)
+            short_protocol_id(strand_id)
         ));
     }
     Ok(())
 }
 
-/// Dispatch `ck.flow.archive` or `ck.flow.restore` for a card and
-/// mark its `FlowLifecycleState` pending locally. Mirrors
-/// `dispatch_space_container_lifecycle` but at the Flow object layer. Spec:
-/// `flow-and-message.md §3`, `common-fields.md §5.1`. SDK reducer
-/// enforces `state == archived` for restore (`flow_not_archived`) and
-/// `state == active` for archive (`flow_not_active` — once SDK round
+/// Dispatch `ck.strand.archive` or `ck.strand.restore` for a card and
+/// mark its `StrandLifecycleState` pending locally. Mirrors
+/// `dispatch_space_container_lifecycle` but at the Strand object layer. Spec:
+/// `strand-and-message.md §3`, `common-fields.md §5.1`. SDK reducer
+/// enforces `state == archived` for restore (`strand_not_archived`) and
+/// `state == active` for archive (`strand_not_active` — once SDK round
 /// 10 lands; today only restore is reducer-enforced).
-pub(super) fn dispatch_flow_lifecycle(
+pub(super) fn dispatch_strand_lifecycle(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
     actor_id: String,
-    flow_id: String,
-    target: FlowLifecycleState,
+    strand_id: String,
+    target: StrandLifecycleState,
     mut columns: Signal<Vec<KanbanColumn>>,
     mut board_status: Signal<String>,
 ) {
@@ -685,9 +685,9 @@ pub(super) fn dispatch_flow_lifecycle(
         let mut cols = columns.write();
         let mut found = None;
         for col in cols.iter_mut() {
-            if let Some(card) = col.cards.iter_mut().find(|c| c.id == flow_id) {
+            if let Some(card) = col.cards.iter_mut().find(|c| c.id == strand_id) {
                 let prior = card.lifecycle;
-                if let Err(msg) = validate_flow_lifecycle_transition(&flow_id, prior, target) {
+                if let Err(msg) = validate_strand_lifecycle_transition(&strand_id, prior, target) {
                     board_status.set(msg);
                     return;
                 }
@@ -701,7 +701,7 @@ pub(super) fn dispatch_flow_lifecycle(
             None => {
                 board_status.set(format!(
                     "internal: card {} not in board state",
-                    short_protocol_id(&flow_id)
+                    short_protocol_id(&strand_id)
                 ));
                 return;
             }
@@ -709,20 +709,20 @@ pub(super) fn dispatch_flow_lifecycle(
     };
 
     let builder = match target {
-        FlowLifecycleState::Archived => {
-            crate::operation::ck_ops::flow_archive(&realm_id, &actor_id, &flow_id)
+        StrandLifecycleState::Archived => {
+            crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, &strand_id)
         }
-        FlowLifecycleState::Active => {
-            crate::operation::ck_ops::flow_restore(&realm_id, &actor_id, &flow_id)
+        StrandLifecycleState::Active => {
+            crate::operation::ck_ops::strand_restore(&realm_id, &actor_id, &strand_id)
         }
-        FlowLifecycleState::Redacted => {
-            // Invariant: `validate_flow_lifecycle_transition` (called above)
+        StrandLifecycleState::Redacted => {
+            // Invariant: `validate_strand_lifecycle_transition` (called above)
             // already rejects any move to Redacted, so by construction the
             // only targets that reach this match are Active|Archived. If we
             // ever land here something upstream broke the contract — fail
             // loud rather than emitting a silently-wrong Move.
             panic!(
-                "invariant violation: validate_flow_lifecycle_transition guarantees target is Active|Archived; got {target:?}"
+                "invariant violation: validate_strand_lifecycle_transition guarantees target is Active|Archived; got {target:?}"
             )
         }
     };
@@ -731,7 +731,7 @@ pub(super) fn dispatch_flow_lifecycle(
         Err(err) => {
             // Roll back the optimistic lifecycle flip applied above.
             for col in columns.write().iter_mut() {
-                if let Some(card) = col.cards.iter_mut().find(|c| c.id == flow_id) {
+                if let Some(card) = col.cards.iter_mut().find(|c| c.id == strand_id) {
                     card.lifecycle = prior_state;
                     break;
                 }
@@ -758,7 +758,7 @@ pub(super) fn dispatch_flow_lifecycle(
             Err(err) => {
                 // Rollback on failure.
                 for col in columns.write().iter_mut() {
-                    if let Some(card) = col.cards.iter_mut().find(|c| c.id == flow_id) {
+                    if let Some(card) = col.cards.iter_mut().find(|c| c.id == strand_id) {
                         card.lifecycle = prior_state;
                         break;
                     }
@@ -815,36 +815,36 @@ pub(super) fn set_card_state_in_columns(
     }
 }
 
-/// Build, sign, and submit a `ck.flow.move` / `ck.flow.reorder` CAS
+/// Build, sign, and submit a `ck.strand.move` / `ck.strand.reorder` CAS
 /// Move via the new spec-compliant builder. Tracks the submission in
 /// `write_records` and, on failed precondition, kicks off automatic
-/// rebase via [`rebase_flow_position_after_conflict`] up to
+/// rebase via [`rebase_strand_position_after_conflict`] up to
 /// [`MAX_CONFLICT_REBASE_ATTEMPTS`] times.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn submit_flow_position_cas_move(
+pub(super) fn submit_strand_position_cas_move(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
     board_space_id: String,
     board_view_id: String,
     actor_id: String,
-    flow_id: String,
+    strand_id: String,
     kind: &'static str,
-    expected: FlowPositionExpectation,
-    effect: FlowPositionEffect,
+    expected: StrandPositionExpectation,
+    effect: StrandPositionEffect,
     columns: Signal<Vec<KanbanColumn>>,
     state_store: Signal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     board_status: Signal<String>,
 ) {
-    submit_flow_position_cas_move_with_attempt(
+    submit_strand_position_cas_move_with_attempt(
         base_url,
         token,
         realm_id,
         board_space_id,
         board_view_id,
         actor_id,
-        flow_id,
+        strand_id,
         kind,
         expected,
         effect,
@@ -856,23 +856,23 @@ pub(super) fn submit_flow_position_cas_move(
     );
 }
 
-/// Internal variant of [`submit_flow_position_cas_move`] that threads
+/// Internal variant of [`submit_strand_position_cas_move`] that threads
 /// the rebase attempt counter. `attempt` is the **next** attempt number
 /// (`0` for the user-initiated drop, `1` for the first rebase, …);
 /// reaching [`MAX_CONFLICT_REBASE_ATTEMPTS`] without an Accepted /
 /// PendingSeal result quarantines the record for manual review.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn submit_flow_position_cas_move_with_attempt(
+pub(super) fn submit_strand_position_cas_move_with_attempt(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
     board_space_id: String,
     board_view_id: String,
     actor_id: String,
-    flow_id: String,
+    strand_id: String,
     kind: &'static str,
-    expected: FlowPositionExpectation,
-    effect: FlowPositionEffect,
+    expected: StrandPositionExpectation,
+    effect: StrandPositionEffect,
     attempt: u8,
     mut columns: Signal<Vec<KanbanColumn>>,
     mut state_store: Signal<LocalStateStore>,
@@ -886,8 +886,8 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
         return;
     }
     let expected_json = match &expected {
-        FlowPositionExpectation::Initial => serde_json::Value::Null,
-        FlowPositionExpectation::At {
+        StrandPositionExpectation::Initial => serde_json::Value::Null,
+        StrandPositionExpectation::At {
             list_space_id,
             rank,
         } => {
@@ -895,20 +895,20 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
         }
     };
     let effect_json = match &effect {
-        FlowPositionEffect::SetPosition {
+        StrandPositionEffect::SetPosition {
             list_space_id,
             rank,
         } => {
             json!({"list_space_id": list_space_id, "rank": rank})
         }
-        FlowPositionEffect::Remove => serde_json::Value::Null,
+        StrandPositionEffect::Remove => serde_json::Value::Null,
     };
-    let envelope = match crate::operation::ck_ops::flow_position_cas_update(
+    let envelope = match crate::operation::ck_ops::strand_position_cas_update(
         &realm_id,
         &actor_id,
         kind,
         &board_space_id,
-        &flow_id,
+        &strand_id,
         expected_json.clone(),
         effect_json.clone(),
     ) {
@@ -919,13 +919,13 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
         }
     };
     let move_id = envelope.local_operation_id().to_owned();
-    let cell_id = flow_position_cell_id(&board_space_id, &flow_id);
+    let cell_id = strand_position_cell_id(&board_space_id, &strand_id);
     let effect_summary = match &effect {
-        FlowPositionEffect::SetPosition {
+        StrandPositionEffect::SetPosition {
             list_space_id,
             rank,
         } => format!("set {{list_space_id={list_space_id}, rank={rank}}}"),
-        FlowPositionEffect::Remove => "set null (remove)".to_owned(),
+        StrandPositionEffect::Remove => "set null (remove)".to_owned(),
     };
     let record = BoardWriteRecord {
         state: CardState::Submitted,
@@ -952,20 +952,20 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
             "move_id": move_id,
             "cell": cell_id,
             "board_space_id": board_space_id,
-            "flow_id": flow_id,
+            "strand_id": strand_id,
             "expected_position": match &expected {
-                FlowPositionExpectation::Initial => serde_json::Value::Null,
-                FlowPositionExpectation::At {
+                StrandPositionExpectation::Initial => serde_json::Value::Null,
+                StrandPositionExpectation::At {
                     list_space_id,
                     rank,
                 } => json!({"space_id": list_space_id, "rank": rank}),
             },
             "target_position": match &effect {
-                FlowPositionEffect::SetPosition {
+                StrandPositionEffect::SetPosition {
                     list_space_id,
                     rank,
                 } => json!({"space_id": list_space_id, "rank": rank}),
-                FlowPositionEffect::Remove => serde_json::Value::Null,
+                StrandPositionEffect::Remove => serde_json::Value::Null,
             },
             "write_state": "submitted",
         }),
@@ -983,7 +983,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
     let realm_for_rebase = realm_id.clone();
     let board_for_rebase = board_space_id.clone();
     let view_for_rebase = board_view_id.clone();
-    let flow_for_rebase = flow_id.clone();
+    let strand_for_rebase = strand_id.clone();
     let effect_for_rebase = effect.clone();
     spawn(async move {
         let submit_result = with_authed_api(&base_url, api_token, |api| async move {
@@ -1023,7 +1023,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                         short_protocol_id(&resp.event_id)
                     );
                 }
-                set_card_state_in_columns(&mut columns, &flow_id, CardState::Accepted);
+                set_card_state_in_columns(&mut columns, &strand_id, CardState::Accepted);
                 board_status.set(format!(
                     "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
                     short_protocol_id(&move_for_track),
@@ -1052,7 +1052,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                     record.state = card_state;
                     record.note = format!("events.submit failed: {err_text}");
                 }
-                set_card_state_in_columns(&mut columns, &flow_id, card_state);
+                set_card_state_in_columns(&mut columns, &strand_id, card_state);
                 board_status.set(format!("{kind_for_record} event {err_text}"));
                 // Auto-rebase the CAS event after a cas_conflict: re-fetch
                 // the cell's current head via the projection endpoint,
@@ -1061,14 +1061,14 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                 if matches!(card_state, CardState::Conflict)
                     && attempt + 1 < MAX_CONFLICT_REBASE_ATTEMPTS
                 {
-                    rebase_flow_position_after_conflict(
+                    rebase_strand_position_after_conflict(
                         base_for_rebase,
                         token,
                         realm_for_rebase,
                         board_for_rebase,
                         view_for_rebase,
                         actor_id.clone(),
-                        flow_for_rebase,
+                        strand_for_rebase,
                         kind_for_record,
                         effect_for_rebase,
                         attempt + 1,
@@ -1096,7 +1096,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                             "cas_conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
                         )),
                     );
-                    set_card_state_in_columns(&mut columns, &flow_id, CardState::Quarantined);
+                    set_card_state_in_columns(&mut columns, &strand_id, CardState::Quarantined);
                     board_status.set(format!(
                         "{kind_for_record} quarantined after {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
                     ));
@@ -1107,7 +1107,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
 }
 
 /// Re-fetch the kanban projection after a CAS conflict to discover the
-/// flow's current cell state, then re-submit the move with a refreshed
+/// strand's current cell state, then re-submit the move with a refreshed
 /// `expected_position`. Effect (target list + rank) is preserved — the
 /// user's drop intent doesn't change just because someone else moved
 /// the card concurrently.
@@ -1116,19 +1116,19 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
 /// the conflict-recovery path takes a snapshot + state witness +
 /// inclusion proof; this MVP approximation just refetches the
 /// collection projection (which the soland reducer derives from the
-/// same cell store) and reads the flow's current `list_space_id` /
+/// same cell store) and reads the strand's current `list_space_id` /
 /// `rank` from it.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn rebase_flow_position_after_conflict(
+pub(super) fn rebase_strand_position_after_conflict(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
     board_space_id: String,
     board_view_id: String,
     actor_id: String,
-    flow_id: String,
+    strand_id: String,
     kind: String,
-    effect: FlowPositionEffect,
+    effect: StrandPositionEffect,
     attempt: u8,
     columns: Signal<Vec<KanbanColumn>>,
     state_store: Signal<LocalStateStore>,
@@ -1152,7 +1152,7 @@ pub(super) fn rebase_flow_position_after_conflict(
         })
         .await
         {
-            Ok(projection) => locate_flow_position_in_projection(&projection, &flow_id),
+            Ok(projection) => locate_strand_position_in_projection(&projection, &strand_id),
             Err(err) => {
                 board_status.set(format!(
                     "rebase aborted (projection refresh failed): {}",
@@ -1163,21 +1163,21 @@ pub(super) fn rebase_flow_position_after_conflict(
         };
         // The static lifetime requirement on `kind` is satisfied by
         // mapping the dynamic String back to one of the known
-        // classifiers. Anything else falls through to ck.flow.move
+        // classifiers. Anything else falls through to ck.strand.move
         // because that's the spec wire shape for drag operations.
         let kind_static: &'static str = match kind.as_str() {
-            "ck.flow.reorder" => "ck.flow.reorder",
-            "ck.flow.move" => "ck.flow.move",
-            _ => "ck.flow.move",
+            "ck.strand.reorder" => "ck.strand.reorder",
+            "ck.strand.move" => "ck.strand.move",
+            _ => "ck.strand.move",
         };
-        submit_flow_position_cas_move_with_attempt(
+        submit_strand_position_cas_move_with_attempt(
             base_url,
             token,
             realm_id,
             board_space_id,
             board_view_id,
             actor_id,
-            flow_id,
+            strand_id,
             kind_static,
             new_expected,
             effect,
@@ -1190,20 +1190,20 @@ pub(super) fn rebase_flow_position_after_conflict(
     });
 }
 
-/// Walk the projection groups looking for the flow's current cell
-/// pre-state. Returns `Initial` if the flow isn't on the board (i.e.
+/// Walk the projection groups looking for the strand's current cell
+/// pre-state. Returns `Initial` if the strand isn't on the board (i.e.
 /// the cell is in initial state) so the next CAS Move uses
 /// `head_eq null`.
-pub(super) fn locate_flow_position_in_projection(
+pub(super) fn locate_strand_position_in_projection(
     projection: &crate::api::CollectionProjectionView,
-    flow_id: &str,
-) -> FlowPositionExpectation {
+    strand_id: &str,
+) -> StrandPositionExpectation {
     for group in &projection.groups {
         for item in &group.items {
             let item_id = item.object.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            if item_id == flow_id {
+            if item_id == strand_id {
                 if let Some(rank) = item.position_rank() {
-                    return FlowPositionExpectation::At {
+                    return StrandPositionExpectation::At {
                         list_space_id: group.key.clone(),
                         rank,
                     };
@@ -1212,17 +1212,17 @@ pub(super) fn locate_flow_position_in_projection(
                 // the cell were initial so we use `head_eq null`. This
                 // is conservative; soland's reducer will reject if the
                 // cell actually has a non-null head.
-                return FlowPositionExpectation::Initial;
+                return StrandPositionExpectation::Initial;
             }
         }
     }
-    FlowPositionExpectation::Initial
+    StrandPositionExpectation::Initial
 }
 
 /// Marks the first queued / soft-failed write as Quarantined. Event
 /// submit is the only write surface now, and a failed event needs the UI
 /// to reconstruct the equivalent envelope (TODO: wire that through
-/// ck_ops::flow_position_*) rather than replay stale bytes.
+/// ck_ops::strand_position_*) rather than replay stale bytes.
 pub(super) fn replay_first_move(
     _base_url: String,
     _token: Signal<String>,
@@ -1244,7 +1244,7 @@ pub(super) fn replay_first_move(
                 .to_owned();
     }
     board_status.set(
-        "replay not available — write quarantined (TODO: rebuild ck.flow.update envelope)"
+        "replay not available — write quarantined (TODO: rebuild ck.strand.update envelope)"
             .to_owned(),
     );
 }

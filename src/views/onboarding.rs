@@ -6,7 +6,7 @@
 //!
 //! Spec sources:
 //! - `identity/identity-did.md` §3 — the default principal DID method is `did:webvh`; `did:web` is
-//!   kept for testing/local flows and is not recommended for production.
+//!   kept for testing/local strands and is not recommended for production.
 //! - `identity/identity-handles.md` — handles are only human-readable entry points.
 //! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → ck.session.grant; device
 //!   authorization → ck.device.authorize; device verification → ck.key.verification.*.
@@ -156,7 +156,7 @@ pub fn OnboardingPanel(
                     span { "step {step().index()} / 4 · {step().label()}" }
                 }
                 div { class: "muted",
-                    "Establish a recoverable identity. Account registration and account recovery happen in the coauth sign-in flow; these four steps configure the on-device identity surface."
+                    "Establish a recoverable identity. Account registration and account recovery happen in the coauth sign-in strand; these four steps configure the on-device identity surface."
                 }
                 div { class: "actions", "data-testid": "onboarding-progress", role: "tablist",
                     for s in [OnboardingStep::DidMethod, OnboardingStep::Handle, OnboardingStep::Device, OnboardingStep::Recovery] {
@@ -171,15 +171,15 @@ pub fn OnboardingPanel(
                 }
             }
 
-            div { class: "event", "data-testid": "account-flow",
+            div { class: "event", "data-testid": "account-strand",
                 role: "region",
-                "aria-labelledby": "account-flow-heading",
-                "aria-describedby": "account-flow-help",
+                "aria-labelledby": "account-strand-heading",
+                "aria-describedby": "account-strand-help",
                 div { class: "event-head",
-                    span { id: "account-flow-heading", "Identity bootstrap" }
+                    span { id: "account-strand-heading", "Identity bootstrap" }
                     span { "account / session checks" }
                 }
-                div { id: "account-flow-help", class: "muted",
+                div { id: "account-strand-help", class: "muted",
                     "Account bootstrap moved out of Realm setup. Routine sign-in still belongs to Login; this card exists so onboarding keeps the identity-side setup and verification actions together."
                 }
                 div {
@@ -187,14 +187,14 @@ pub fn OnboardingPanel(
                     role: "status",
                     "aria-live": "polite",
                     "aria-atomic": "true",
-                    "data-testid": "account-flow-status",
+                    "data-testid": "account-strand-status",
                     "{account_state}"
                 }
                 div { class: "workflow-form",
                     Input {
                         "data-testid": "account-register-did-input",
                         "aria-label": "Account DID",
-                        "aria-describedby": "account-flow-help",
+                        "aria-describedby": "account-strand-help",
                         value: "{register_did}",
                         oninput: move |event: FormEvent| {
                             let value = event.value();
@@ -296,7 +296,7 @@ pub fn OnboardingPanel(
                         span { "identity-did.md §3" }
                     }
                     div { class: "muted",
-                        "Default principal identifiers now use did:webvh. did:web is kept for testing/local flows and is not recommended for production. did:plc and did:keri are placeholders only; placeholder methods cannot be selected here."
+                        "Default principal identifiers now use did:webvh. did:web is kept for testing/local strands and is not recommended for production. did:plc and did:keri are placeholders only; placeholder methods cannot be selected here."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -594,7 +594,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
             let api_token = token();
             spawn(async move {
                 match with_authed_api(&base, api_token, |api| async move {
-                    // CKP B-C / §3.3: recovery flow calls
+                    // CKP B-C / §3.3: recovery strand calls
                     // `LIST?series_id=` (or the bare `LIST` with
                     // `backup_class=did_recovery` filter). For the
                     // first-backup gate we only need at least one
@@ -650,7 +650,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
 
     // Kick off a check once when the component mounts. The
     // dependent-on-account-did effect ensures we re-check if the
-    // identity changes mid-flow.
+    // identity changes mid-strand.
     {
         let do_check = do_check.clone();
         let _account_did = account_did.clone();
@@ -769,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn onboarding_recovery_finish_opens_setup_flow() {
+    fn onboarding_recovery_finish_opens_setup_strand() {
         assert_eq!(
             recovery_setup_label(""),
             "Select a recovery option to continue"

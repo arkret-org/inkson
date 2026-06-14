@@ -57,13 +57,13 @@ Description: Cokret cross-platform client local package
     }
 
     $rpmBuild = Get-Command rpmbuild -ErrorAction SilentlyContinue
-    $evidence.formats += [ordered]@{ format = "rpm"; available = [bool]$rpmBuild; note = "Use docs/RELEASING.md local-only rpmbuild flow when rpmbuild is installed." }
+    $evidence.formats += [ordered]@{ format = "rpm"; available = [bool]$rpmBuild; note = "Use docs/RELEASING.md local-only rpmbuild strand when rpmbuild is installed." }
 
     $appImageTool = Get-Command appimagetool -ErrorAction SilentlyContinue
-    $evidence.formats += [ordered]@{ format = "AppImage"; available = [bool]$appImageTool; note = "Use docs/RELEASING.md local-only AppDir flow when appimagetool is installed." }
+    $evidence.formats += [ordered]@{ format = "AppImage"; available = [bool]$appImageTool; note = "Use docs/RELEASING.md local-only AppDir strand when appimagetool is installed." }
 
     $flatpakBuilder = Get-Command flatpak-builder -ErrorAction SilentlyContinue
-    $evidence.formats += [ordered]@{ format = "Flatpak"; available = [bool]$flatpakBuilder; note = "Use docs/RELEASING.md local-only flatpak-builder flow when installed; do not publish to Flathub." }
+    $evidence.formats += [ordered]@{ format = "Flatpak"; available = [bool]$flatpakBuilder; note = "Use docs/RELEASING.md local-only flatpak-builder strand when installed; do not publish to Flathub." }
 
     $evidencePath = Join-Path $DistDir "linux-package-evidence.json"
     $evidence | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $evidencePath

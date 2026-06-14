@@ -201,7 +201,7 @@ hr {
 html[data-lang="zh"] :is(.en, [lang="en"]) { display: none; }
 html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 
-/* spans inside an inline flow stay inline */
+/* spans inside an inline strand stay inline */
 .i18n { display: inline; }
 .i18n.block { display: block; }
 
@@ -344,10 +344,10 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   font-family: var(--font-mono);
   font-size: 10px;
 }
-.card-link.flow {
+.card-link.strand {
   background: linear-gradient(180deg, var(--accent-soft), var(--surface));
 }
-[data-theme="dark"] .card-link.flow {
+[data-theme="dark"] .card-link.strand {
   background: linear-gradient(180deg, var(--surface-2), var(--surface));
 }
 
@@ -616,7 +616,7 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   overflow: visible;
   text-overflow: clip;
 }
-.flow-title-with-security,
+.strand-title-with-security,
 .discussion-track-name-row {
   display: inline-flex;
   align-items: flex-start;
@@ -624,7 +624,7 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   min-width: 0;
   max-width: 100%;
 }
-.flow-title-with-security .flow-title-text {
+.strand-title-with-security .strand-title-text {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -1746,24 +1746,24 @@ label.avatar-upload-button:active,
 }
 .add-card-btn:hover { background: var(--surface); color: var(--text); }
 
-/* ===== 10. FLOW DETAIL ============================================ */
+/* ===== 10. STRAND DETAIL ============================================ */
 
-.flow-doc {
+.strand-doc {
   max-width: 920px;
   margin: 0 auto;
   padding: 28px 32px 80px;
 }
-.flow-doc .breadcrumb {
+.strand-doc .breadcrumb {
   color: var(--text-3); font-size: 12px;
   margin-bottom: 8px;
   display: flex; align-items: center; gap: 6px;
 }
-.flow-doc h1 {
+.strand-doc h1 {
   font-size: 26px; font-weight: 600;
   margin: 0 0 6px; line-height: 1.25;
   letter-spacing: -0.01em;
 }
-.flow-doc .flow-meta {
+.strand-doc .strand-meta {
   display: flex; gap: 12px; flex-wrap: wrap;
   align-items: center;
   color: var(--text-2); font-size: 12px;
@@ -1791,7 +1791,7 @@ label.avatar-upload-button:active,
 .track-tabs .tab .pill { font-size: 9px; padding: 0 5px; }
 .track-tabs .tab.disabled { opacity: 0.5; cursor: not-allowed; }
 
-.flow-fields {
+.strand-fields {
   display: grid;
   grid-template-columns: 120px 1fr;
   gap: 6px 16px;
@@ -1802,18 +1802,18 @@ label.avatar-upload-button:active,
   border-radius: var(--radius);
   margin-bottom: 16px;
 }
-.flow-fields .label { color: var(--text-2); font-size: 12px; }
-.flow-fields .value { font-size: 13px; }
+.strand-fields .label { color: var(--text-2); font-size: 12px; }
+.strand-fields .value { font-size: 13px; }
 
-.flow-body {
+.strand-body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 18px 22px;
   line-height: 1.65;
 }
-.flow-body h3 { margin-top: 0; font-size: 16px; }
-.flow-body ul { padding-left: 20px; }
+.strand-body h3 { margin-top: 0; font-size: 16px; }
+.strand-body ul { padding-left: 20px; }
 
 .relations-list {
   display: flex; flex-direction: column; gap: 6px;

@@ -325,7 +325,7 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await expect(shell.getByTestId("contacts-manage-page")).toContainText("did:web:bob.example");
 });
 
-test("new space flow uses sidebar realm context without home realm picker", async ({ page }) => {
+test("new space strand uses sidebar realm context without home realm picker", async ({ page }) => {
   await refreshServer(page);
   const shell = latestTestId(page, "client-shell");
   await expect(shell.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
@@ -339,7 +339,7 @@ test("new space flow uses sidebar realm context without home realm picker", asyn
 
   await expect(page).toHaveURL(/\/setup\/new-space$/);
   const setupPanel = page.getByTestId("setup-panel");
-  await expect(setupPanel.getByTestId("space-create-flow")).toBeVisible();
+  await expect(setupPanel.getByTestId("space-create-strand")).toBeVisible();
   await expect(setupPanel).not.toContainText("Home Realm");
   await expect(setupPanel.getByTestId("new-space-realm-input")).toHaveCount(0);
 
@@ -672,7 +672,7 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   await page.getByTestId("seed-members-input").fill("did:web:bob.example");
 
   // No recovery configured in the default mock account, so the S6 gate
-  // intercepts the first Create; accept the override to reach the backup flow.
+  // intercepts the first Create; accept the override to reach the backup strand.
   await page.getByTestId("create-realm-button").click();
   await latestTestId(page, "encrypted-realm-recovery-gate-override").click();
   await expect(latestTestId(page, "encrypted-realm-recovery-gate")).toBeHidden();
@@ -955,11 +955,11 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
       body: JSON.stringify({ items: [], total: 0, spaces: [] }),
     });
   });
-  await page.route("**/_cokret/self/projection/flows**", async (route) => {
+  await page.route("**/_cokret/self/projection/strands**", async (route) => {
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ items: [], total: 0, flows: [] }),
+      body: JSON.stringify({ items: [], total: 0, strands: [] }),
     });
   });
 
@@ -998,15 +998,15 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
   );
   await page.getByTestId("save-card-button").click();
   const eventBody = await eventSubmit.then((request) => request.postDataJSON());
-  expect(eventBody.kind).toBe("ck.flow.create");
+  expect(eventBody.kind).toBe("ck.strand.create");
   const positionComponent = eventBody.payload?.components?.find(
-    (component: { family?: string }) => component.family === "ck.component.flow.position.v1",
+    (component: { family?: string }) => component.family === "ck.component.strand.position.v1",
   );
-  expect(positionComponent?.family).toBe("ck.component.flow.position.v1");
+  expect(positionComponent?.family).toBe("ck.component.strand.position.v1");
   await page.getByTestId("board-queue-toggle").click();
-  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.flow.create");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.strand.create");
   await expect(page.getByTestId("board-event-record").last()).toContainText("sha256:");
-  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.component.flow.position.v1");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.component.strand.position.v1");
   await expect(page.getByTestId("board-conflict-alert")).toHaveCount(0);
 
   await page.getByTestId("replay-board-queue").click();
@@ -1055,7 +1055,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
     "proxy-download ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
   );
 
-  const submit = page.waitForRequest("**/_cokret/open/mimi/flows/01JSMIMI/messages");
+  const submit = page.waitForRequest("**/_cokret/open/mimi/strands/01JSMIMI/messages");
   await page.getByTestId("mimi-submit-message").click();
   expect((await submit).postDataJSON().source_format).toBe("text/markdown;variant=GFM-MIMI");
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("submit-message mimi-msg-e2e");
@@ -1123,7 +1123,7 @@ test("accessibility smoke exposes landmarks and live timeline feed", async ({ pa
   await expect(page.getByTestId("timeline-event").last()).toHaveAttribute("aria-label", /Timeline event from/);
 });
 
-test("directory search resolve and space selection flow works", async ({ page }) => {
+test("directory search resolve and space selection strand works", async ({ page }) => {
   await page.getByTestId("topbar-search-button").click();
   await page.getByTestId("global-search-input").fill("demo");
   await page.getByTestId("global-search-input").press("Enter");
@@ -1372,7 +1372,7 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
   expect(page.url()).toBe(workspaceUrl);
 });
 
-test("setup, onboarding, and space timeline flow works", async ({ page }) => {
+test("setup, onboarding, and space timeline strand works", async ({ page }) => {
   await refreshServer(page);
   await expect(page.getByTestId("sync-cursor")).toContainText("ck:cursor:e2e-2");
 
@@ -1380,7 +1380,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
   await dismissRecoveryMissingModal(page);
   await page.getByTestId("register-account-button").click();
-  await expect(page.getByTestId("account-flow")).toContainText("registered alice.example");
+  await expect(page.getByTestId("account-strand")).toContainText("registered alice.example");
 
   await page.getByTestId("sidebar-new-realm-cta").click();
   const setupPanel = page.getByTestId("setup-panel");
@@ -1394,10 +1394,10 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(setupPanel.getByRole("button", { name: "Remove Member" })).toHaveCount(0);
   await expect(setupPanel.getByRole("button", { name: "Delete Space" })).toHaveCount(0);
 
-  await page.getByTestId("realm-title-input").fill("Setup Flow Space");
+  await page.getByTestId("realm-title-input").fill("Setup Strand Space");
   await page.getByTestId("realm-summary-input").fill("Created from yougen workspace setup");
   await page.getByTestId("new-realm-next-button").click();
-  await expect(page.getByTestId("realm-lifecycle-flow")).toContainText("three independent axes");
+  await expect(page.getByTestId("realm-lifecycle-strand")).toContainText("three independent axes");
   await page.getByTestId("new-realm-next-button").click();
   await page.getByTestId("seed-members-input").fill("did:web:bob.example");
   await expect(setupPanel.getByRole("button", { name: "Create Realm" })).toBeVisible();
@@ -1426,8 +1426,8 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   ]);
   expect(JSON.stringify(realmCreateBody)).toContain("ck.realm.create");
   expect(JSON.stringify(plaintextPolicyBody)).toContain("did:web:server.local");
-  await expect(page.getByTestId("realm-lifecycle-flow")).toContainText(/created ck:realm:/);
-  await expect(page.getByTestId("realm-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
+  await expect(page.getByTestId("realm-lifecycle-strand")).toContainText(/created ck:realm:/);
+  await expect(page.getByTestId("realm-lifecycle-strand")).toContainText("canonical policy listed / invite / shared");
   await expect(page.getByTestId("realm-setup-done")).toBeVisible();
   await expect(latestTestId(page, "mls-backup-modal")).toBeVisible();
   await expect(latestTestId(page, "mls-backup-banner")).toBeVisible();
@@ -1435,24 +1435,24 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(latestTestId(page, "mls-backup-generated-key")).toBeVisible();
   await latestTestId(page, "mls-backup-saved").click();
   await expect(page.getByTestId("mls-backup-modal")).toHaveCount(0);
-  await expect(page.getByTestId("realm-lifecycle-flow").getByTestId("selected-realm-id")).toContainText("ck:realm:");
+  await expect(page.getByTestId("realm-lifecycle-strand").getByTestId("selected-realm-id")).toContainText("ck:realm:");
 
   await page.getByTestId("realm-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
   await expect(page.getByTestId("timeline")).toBeVisible();
-  await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
+  await expect(page.getByTestId("sidebar")).toContainText("Setup Strand Space");
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
   // The reload re-runs account-health detection; dismiss any account-health
   // modal that re-appears so it doesn't block the composer.
   await dismissRecoveryMissingModal(page);
   await dismissMlsBackupModal(page);
-  await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
+  await expect(page.getByTestId("sidebar")).toContainText("Setup Strand Space");
   await expect(page.getByTestId("timeline")).toBeVisible();
   const sendRequest = page.waitForRequest("**/_cokret/self/events");
-  await page.getByTestId("composer-input").fill("setup flow message");
+  await page.getByTestId("composer-input").fill("setup strand message");
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
-  await expect(page.getByTestId("timeline")).toContainText("setup flow message");
+  await expect(page.getByTestId("timeline")).toContainText("setup strand message");
   await expect(page.getByTestId("write-status")).toContainText("persisted");
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:");
@@ -1471,7 +1471,7 @@ test("card detail embeds discussion directly without legacy discussion chrome", 
   await expect(page.getByTestId("channel-create-modal")).toHaveCount(0);
   await expect(page.getByTestId("new-channel-members")).toHaveCount(0);
   await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
-  await expect(page.getByTestId("card-flow-tracks")).toHaveCount(0);
+  await expect(page.getByTestId("card-strand-tracks")).toHaveCount(0);
   await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Launch board discussion");
   await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Primary discussion");
 
@@ -1481,7 +1481,7 @@ test("card detail embeds discussion directly without legacy discussion chrome", 
   const chatBody = await chatSend.then((request) => request.postDataJSON());
   expect(chatBody.kind).toBe("ck.message.create");
   expect(chatBody.payload.message_id).toMatch(/^ck:message:/);
-  expect(chatBody.payload.flow_id).toContain("ck:flow:");
+  expect(chatBody.payload.strand_id).toContain("ck:strand:");
   expect(chatBody.payload.track_name).toBe("discussion");
   expect(chatBody.payload.content.kind).toBe("ck.content.text");
   expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #ck:task:123");
@@ -1664,7 +1664,7 @@ test("chat retries plaintext sends after granting current service visibility", a
   expect(attempts).toBe(2);
 });
 
-test("kanban card drag queues a flow move", async ({ page }) => {
+test("kanban card drag queues a strand move", async ({ page }) => {
   await refreshServer(page);
   await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
@@ -1672,7 +1672,7 @@ test("kanban card drag queues a flow move", async ({ page }) => {
   await page.getByTestId("kanban-card").first().dragTo(page.getByTestId("kanban-column").nth(1));
 
   await page.getByTestId("board-queue-toggle").click();
-  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.flow.move");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.strand.move");
   await expect(page.getByTestId("kanban-column").nth(1)).toContainText("Legal review for public beta");
 });
 
@@ -1681,7 +1681,7 @@ test("kanban projections use home Realm for nested Spaces", async ({ page }) => 
   const projectionRealmIds: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === "/_cokret/self/projection/spaces" || url.pathname === "/_cokret/self/projection/flows") {
+    if (url.pathname === "/_cokret/self/projection/spaces" || url.pathname === "/_cokret/self/projection/strands") {
       projectionRealmIds.push(url.searchParams.get("realm_id") ?? "");
     }
   });
@@ -1765,7 +1765,7 @@ test("timeline mark-read sends public receipt and stores private marker", async 
   await expect(page.getByTestId("read-cursor-badge")).toContainText("Read marker here");
 });
 
-test("timeline blob flow verifies hashes and authenticated downloads", async ({ page }) => {
+test("timeline blob strand verifies hashes and authenticated downloads", async ({ page }) => {
   await refreshServer(page);
   await openTimeline(page);
 

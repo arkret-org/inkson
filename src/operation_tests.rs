@@ -196,11 +196,11 @@ fn document_morph_create_carries_document_body() {
 }
 
 #[test]
-fn kanban_card_flow_create_carries_position_in_metadata_fields() {
-    let op = ck_ops::kanban_card_flow_create(
+fn kanban_card_strand_create_carries_position_in_metadata_fields() {
+    let op = ck_ops::kanban_card_strand_create(
         "ck:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        "ck:flow:0196419b-0000-7000-8000-000000000004",
+        "ck:strand:0196419b-0000-7000-8000-000000000004",
         "ck:space:0196419b-0000-7000-8000-000000000002",
         "ck:space:0196419b-0000-7000-8000-000000000003",
         "Move-backed card",
@@ -209,7 +209,7 @@ fn kanban_card_flow_create_carries_position_in_metadata_fields() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind, "ck.flow.create");
+    assert_eq!(op.kind, "ck.strand.create");
     assert_eq!(op.realm_id, "ck:realm:0196419b-0000-7000-8000-000000000001");
     assert_eq!(
         op.payload["object"]["realm_id"],
@@ -333,19 +333,19 @@ fn document_comment_create_carries_anchor_range() {
 
 #[test]
 fn incident_status_update_uses_schema_safe_fields_patch() {
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
     let op = ck_ops::incident_status_update(
         "ck:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        flow_id,
+        strand_id,
         "mitigated",
     )
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind, "ck.flow.update");
-    assert_eq!(op.payload["target_ref"], flow_id);
-    assert!(op.payload.get("flow_id").is_none());
+    assert_eq!(op.kind, "ck.strand.update");
+    assert_eq!(op.payload["target_ref"], strand_id);
+    assert!(op.payload.get("strand_id").is_none());
     assert!(op.payload["patch"].get("fields.status").is_none());
     assert_eq!(
         op.payload["patch"]["fields"]["value"]["status"],
@@ -356,21 +356,21 @@ fn incident_status_update_uses_schema_safe_fields_patch() {
 }
 
 #[test]
-fn discussion_flow_create_emits_discussion_track() {
-    let op = ck_ops::discussion_flow_create(
+fn discussion_strand_create_emits_discussion_track() {
+    let op = ck_ops::discussion_strand_create(
         "ck:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
-        "ck:flow:0196419b-0000-7000-8000-000000000001",
+        "ck:strand:0196419b-0000-7000-8000-000000000001",
         "Ops",
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind, "ck.flow.create");
+    assert_eq!(op.kind, "ck.strand.create");
     assert_eq!(
         op.payload["object"]["id"],
-        "ck:flow:0196419b-0000-7000-8000-000000000001"
+        "ck:strand:0196419b-0000-7000-8000-000000000001"
     );
-    assert!(op.payload.get("flow_id").is_none());
+    assert!(op.payload.get("strand_id").is_none());
     assert_eq!(
         op.payload["object"]["tracks"]["discussion"]["profile"],
         "discussion"
@@ -386,17 +386,17 @@ fn discussion_flow_create_emits_discussion_track() {
 }
 
 #[test]
-fn flow_tracks_update_primary_uses_is_primary_patch_key() {
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000001";
-    let op = ck_ops::flow_tracks_update_set_primary(
+fn strand_tracks_update_primary_uses_is_primary_patch_key() {
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000001";
+    let op = ck_ops::strand_tracks_update_set_primary(
         "ck:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        flow_id,
+        strand_id,
         "discussion",
     )
     .expect("builds")
     .build("node");
-    assert_eq!(op.kind, "ck.flow.tracks.update");
+    assert_eq!(op.kind, "ck.strand.tracks.update");
     assert_eq!(
         op.payload["patch"]["tracks.discussion.is_primary"]["value"],
         true
@@ -409,12 +409,12 @@ fn flow_tracks_update_primary_uses_is_primary_patch_key() {
 }
 
 #[test]
-fn flow_update_patch_uses_canonical_payload_patch() {
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
-    let op = ck_ops::flow_update_patch(
+fn strand_update_patch_uses_canonical_payload_patch() {
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
+    let op = ck_ops::strand_update_patch(
         "ck:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        flow_id,
+        strand_id,
         json!({
             "title": { "$op": "set", "value": "Launch checklist" },
             "fields.due_at": { "$op": "set", "value": "2026-05-20" },
@@ -422,27 +422,27 @@ fn flow_update_patch_uses_canonical_payload_patch() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(op.kind, "ck.flow.update");
-    assert_eq!(op.local_target_ref(), Some(flow_id));
-    assert_eq!(op.payload["target_ref"], flow_id);
-    assert!(op.payload.get("flow_id").is_none());
+    assert_eq!(op.kind, "ck.strand.update");
+    assert_eq!(op.local_target_ref(), Some(strand_id));
+    assert_eq!(op.payload["target_ref"], strand_id);
+    assert!(op.payload.get("strand_id").is_none());
     assert_eq!(op.payload["patch"]["title"]["value"], "Launch checklist");
     assert!(op.payload.get("fields").is_none());
 }
 
 #[test]
-fn flow_update_builders_match_registered_object_patch_schema() {
+fn strand_update_builders_match_registered_object_patch_schema() {
     let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
     let actor = "did:web:alice.example";
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
     let board_space_id = "ck:space:0196419b-0000-7000-8000-000000000010";
     let list_space_id = "ck:space:0196419b-0000-7000-8000-000000000011";
 
     let events = [
-        ck_ops::flow_update_patch(
+        ck_ops::strand_update_patch(
             realm_id,
             actor,
-            flow_id,
+            strand_id,
             json!({
                 "title": { "$op": "set", "value": "Launch checklist" },
                 "fields.due_at": { "$op": "set", "value": "2026-05-20" },
@@ -450,12 +450,12 @@ fn flow_update_builders_match_registered_object_patch_schema() {
         )
         .expect("builds")
         .build("node"),
-        ck_ops::flow_position_update(
+        ck_ops::strand_position_update(
             realm_id,
             actor,
-            flow_id,
+            strand_id,
             json!({
-                "flow_id": flow_id,
+                "strand_id": strand_id,
                 "board_space_id": board_space_id,
                 "list_space_id": list_space_id,
                 "rank": "U",
@@ -463,15 +463,15 @@ fn flow_update_builders_match_registered_object_patch_schema() {
         )
         .expect("builds")
         .build("node"),
-        // Null effect_position triggers the legacy ck.flow.update fallback
-        // inside flow_position_cas_update. It still must satisfy
+        // Null effect_position triggers the legacy ck.strand.update fallback
+        // inside strand_position_cas_update. It still must satisfy
         // object_patch_payload instead of leaking top-level `position`.
-        ck_ops::flow_position_cas_update(
+        ck_ops::strand_position_cas_update(
             realm_id,
             actor,
-            "ck.flow.move",
+            "ck.strand.move",
             board_space_id,
-            flow_id,
+            strand_id,
             json!({"list_space_id": list_space_id, "rank": "U"}),
             Value::Null,
         )
@@ -480,10 +480,10 @@ fn flow_update_builders_match_registered_object_patch_schema() {
     ];
 
     for event in &events {
-        assert_eq!(event.kind, "ck.flow.update");
+        assert_eq!(event.kind, "ck.strand.update");
         assert!(event.payload.get("patch").is_some());
-        assert_eq!(event.payload["target_ref"], flow_id);
-        assert!(event.payload.get("flow_id").is_none());
+        assert_eq!(event.payload["target_ref"], strand_id);
+        assert!(event.payload.get("strand_id").is_none());
         assert!(event.payload.get("fields").is_none());
         assert!(event.payload.get("position").is_none());
         assert!(event.payload.get("board_space_id").is_none());
@@ -496,12 +496,12 @@ fn flow_update_builders_match_registered_object_patch_schema() {
 fn object_patch_family_builders_match_registered_payload_schema() {
     let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
     let actor = "did:web:alice.example";
-    let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
+    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
     let morph_id = "ck:morph:0196419b-0000-7000-8000-000000000003";
     let space_id = "ck:space:0196419b-0000-7000-8000-000000000004";
 
     let events = [
-        ck_ops::flow_tracks_update_set_primary(realm_id, actor, flow_id, "discussion")
+        ck_ops::strand_tracks_update_set_primary(realm_id, actor, strand_id, "discussion")
             .expect("builds")
             .build("node"),
         ck_ops::morph_update_patch(
@@ -531,8 +531,8 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 
     for event in &events {
         assert!(event.payload.get("patch").is_some(), "{}", event.kind);
-        if event.kind == "ck.flow.tracks.update" {
-            assert_eq!(event.payload["flow_id"], flow_id);
+        if event.kind == "ck.strand.tracks.update" {
+            assert_eq!(event.payload["strand_id"], strand_id);
             assert!(event.payload.get("target_ref").is_none(), "{}", event.kind);
         } else {
             assert!(event.payload.get("target_ref").is_some(), "{}", event.kind);
@@ -542,13 +542,13 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 }
 
 #[test]
-fn flow_position_cas_update_emits_canonical_move_payload() {
-    let op = ck_ops::flow_position_cas_update(
+fn strand_position_cas_update_emits_canonical_move_payload() {
+    let op = ck_ops::strand_position_cas_update(
         "ck:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
-        "ck.flow.move",
+        "ck.strand.move",
         "ck:space:0196419b-0000-7000-8000-000000000010",
-        "ck:flow:0196419b-0000-7000-8000-000000000020",
+        "ck:strand:0196419b-0000-7000-8000-000000000020",
         json!({
             "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
             "rank": "a1"
@@ -561,7 +561,7 @@ fn flow_position_cas_update_emits_canonical_move_payload() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind, "ck.flow.move");
+    assert_eq!(op.kind, "ck.strand.move");
     assert_eq!(
         op.payload["board_space_id"],
         "ck:space:0196419b-0000-7000-8000-000000000010"
@@ -580,13 +580,13 @@ fn flow_position_cas_update_emits_canonical_move_payload() {
 }
 
 #[test]
-fn flow_position_cas_update_emits_canonical_reorder_payload() {
-    let op = ck_ops::flow_position_cas_update(
+fn strand_position_cas_update_emits_canonical_reorder_payload() {
+    let op = ck_ops::strand_position_cas_update(
         "ck:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
-        "ck.flow.reorder",
+        "ck.strand.reorder",
         "ck:space:0196419b-0000-7000-8000-000000000010",
-        "ck:flow:0196419b-0000-7000-8000-000000000020",
+        "ck:strand:0196419b-0000-7000-8000-000000000020",
         json!({
             "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
             "rank": "a1"
@@ -599,7 +599,7 @@ fn flow_position_cas_update_emits_canonical_reorder_payload() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind, "ck.flow.reorder");
+    assert_eq!(op.kind, "ck.strand.reorder");
     assert_eq!(
         op.payload["board_space_id"],
         "ck:space:0196419b-0000-7000-8000-000000000010"
@@ -830,24 +830,24 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
 }
 
 #[test]
-fn flow_lifecycle_helpers_emit_canonical_kinds() {
-    let flow_id = "ck:flow:01904100-0000-7000-8000-1fb50799ad50";
-    let archive = ck_ops::flow_archive("ck:realm:test", "did:web:alice.example", flow_id)
+fn strand_lifecycle_helpers_emit_canonical_kinds() {
+    let strand_id = "ck:strand:01904100-0000-7000-8000-1fb50799ad50";
+    let archive = ck_ops::strand_archive("ck:realm:test", "did:web:alice.example", strand_id)
         .expect("builds")
         .build("node");
-    assert_eq!(archive.kind, "ck.flow.archive");
-    assert_eq!(archive.payload["target_ref"], flow_id);
-    assert!(archive.payload.get("flow_id").is_none());
-    assert_eq!(archive.local_target_ref(), Some(flow_id));
+    assert_eq!(archive.kind, "ck.strand.archive");
+    assert_eq!(archive.payload["target_ref"], strand_id);
+    assert!(archive.payload.get("strand_id").is_none());
+    assert_eq!(archive.local_target_ref(), Some(strand_id));
     assert_registered_payload_valid(&archive);
 
-    let restore = ck_ops::flow_restore("ck:realm:test", "did:web:alice.example", flow_id)
+    let restore = ck_ops::strand_restore("ck:realm:test", "did:web:alice.example", strand_id)
         .expect("builds")
         .build("node");
-    assert_eq!(restore.kind, "ck.flow.restore");
-    assert_eq!(restore.payload["target_ref"], flow_id);
-    assert!(restore.payload.get("flow_id").is_none());
-    assert_eq!(restore.local_target_ref(), Some(flow_id));
+    assert_eq!(restore.kind, "ck.strand.restore");
+    assert_eq!(restore.payload["target_ref"], strand_id);
+    assert!(restore.payload.get("strand_id").is_none());
+    assert_eq!(restore.local_target_ref(), Some(strand_id));
     assert_registered_payload_valid(&restore);
 }
 
@@ -919,7 +919,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     let actor = "did:web:alice.example";
 
     let endpoint =
-        ck_ops::agent_endpoint(realm, actor, agent, "ck.agent.v1", &["flow.read"]).build("node");
+        ck_ops::agent_endpoint(realm, actor, agent, "ck.agent.v1", &["strand.read"]).build("node");
     assert_eq!(endpoint.kind, "ck.agent.endpoint");
     assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "ck.agent.v1");
     assert_eq!(endpoint.local_target_ref(), Some(agent));

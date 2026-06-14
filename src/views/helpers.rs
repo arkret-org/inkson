@@ -63,9 +63,9 @@ pub struct StructuredMention {
 fn audience_mention_audience_from_token(token: &str) -> Option<&'static str> {
     match token.trim().to_ascii_lowercase().as_str() {
         "@all" => Some("effective_scope_members"),
-        "@participants" => Some("flow_participants"),
-        "@watchers" => Some("flow_watchers"),
-        "@here" => Some("flow_engaged"),
+        "@participants" => Some("strand_participants"),
+        "@watchers" => Some("strand_watchers"),
+        "@here" => Some("strand_engaged"),
         "@assigned" | "@assignees" => Some("assigned_actors"),
         _ => None,
     }
@@ -784,7 +784,7 @@ mod tests {
         let mentions = parse_structured_mentions("notify @here and @all but never @online");
 
         assert!(mentions.iter().any(|mention| {
-            mention.kind == "audience_mention" && mention.target == "flow_engaged"
+            mention.kind == "audience_mention" && mention.target == "strand_engaged"
         }));
         assert!(mentions.iter().any(|mention| {
             mention.kind == "audience_mention" && mention.target == "effective_scope_members"

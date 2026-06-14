@@ -37,8 +37,8 @@ pub enum Route {
     #[route("/chat/:realm_id", ChatRealmPage)]
     Chat { realm_id: String },
 
-    #[route("/direct/:realm_id/:flow_id", DirectConversationPage)]
-    DirectConversation { realm_id: String, flow_id: String },
+    #[route("/direct/:realm_id/:strand_id", DirectConversationPage)]
+    DirectConversation { realm_id: String, strand_id: String },
 
     #[route("/directory", crate::app::RouterView)]
     Directory,
@@ -68,7 +68,7 @@ pub enum Route {
     SettingsDevices,
 
     /// G3.Y1 — QR-driven pairing for a sibling device. Live on its
-    /// own URL so the e2e harness can deep-link into the pair flow
+    /// own URL so the e2e harness can deep-link into the pair strand
     /// without scrolling through the device list.
     #[route("/settings/devices/pair", crate::app::RouterView)]
     SettingsDevicesPair,
@@ -105,7 +105,7 @@ pub enum Route {
 
     /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
     /// protocol-level details (schema ids, event kinds, raw event log,
-    /// profile id, conformance) that used to leak into the main flow.
+    /// profile id, conformance) that used to leak into the main strand.
     #[route("/developer", crate::app::RouterView)]
     Developer,
 
@@ -124,7 +124,7 @@ pub enum Route {
     KanbanBoard { realm_id: String, board_id: String },
 
     /// Board + card-detail deep link. Carries the board id alongside the
-    /// flow id so a refresh on an open card restores the right board
+    /// strand id so a refresh on an open card restores the right board
     /// even when the card is a locally-queued draft the server
     /// projection does not yet know about.
     #[route("/kanban/:realm_id/board/:board_id/task/:task_id", KanbanBoardTaskPage)]
@@ -135,7 +135,7 @@ pub enum Route {
     },
 
     /// Board-less card deep link. Retained for share links / global
-    /// search results that only know the flow id; the board is resolved
+    /// search results that only know the strand id; the board is resolved
     /// from the projection (or local queue) on arrival.
     #[route("/kanban/:realm_id/task/:task_id", KanbanTaskPage)]
     KanbanTask { realm_id: String, task_id: String },
@@ -201,8 +201,8 @@ fn ChatRealmPage(realm_id: String) -> Element {
 }
 
 #[component]
-fn DirectConversationPage(realm_id: String, flow_id: String) -> Element {
-    let _ = (realm_id, flow_id);
+fn DirectConversationPage(realm_id: String, strand_id: String) -> Element {
+    let _ = (realm_id, strand_id);
     rsx! { crate::app::RouterView {} }
 }
 

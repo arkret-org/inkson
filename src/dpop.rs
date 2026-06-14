@@ -1,5 +1,5 @@
 //! F-DPOP-1: Proof-of-Possession JWS (DPoP-style) for session-grant
-//! and key-package claim flows.
+//! and key-package claim strands.
 //!
 //! Spec sources:
 //! - `identity/session-grants.md` — every grant exchange MUST carry a proof binding the request to
@@ -9,7 +9,7 @@
 //!
 //! RFC 9449 specifies DPoP in terms of EC-based keys (P-256). Yougen
 //! already carries Ed25519 plumbing throughout its cross-signing and
-//! recovery flows, so this module uses `EdDSA` JWS instead — the
+//! recovery strands, so this module uses `EdDSA` JWS instead — the
 //! [JWA registry] explicitly allows it as a JWS `alg` value, and
 //! soland's verifier mirrors the choice. Switching the wire to EC
 //! later is a Cargo.toml + closure swap; the public API here is

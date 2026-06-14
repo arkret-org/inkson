@@ -158,8 +158,8 @@ mod tests {
             "did:web:alice",
             "ck:relation:r1",
             "ck.relation.parent_of",
-            "ck:flow:f1",
-            "ck:flow:f2",
+            "ck:strand:f1",
+            "ck:strand:f2",
         )
         .expect("builds")
         .build("node");
@@ -171,8 +171,8 @@ mod tests {
             "relation_id is not a relation_create_payload field"
         );
         assert_eq!(op.payload["kind"], "ck.relation.parent_of");
-        assert_eq!(op.payload["from_ref"], "ck:flow:f1");
-        assert_eq!(op.payload["to_ref"], "ck:flow:f2");
+        assert_eq!(op.payload["from_ref"], "ck:strand:f1");
+        assert_eq!(op.payload["to_ref"], "ck:strand:f2");
     }
 
     #[test]
@@ -181,8 +181,8 @@ mod tests {
             "ck:realm:s1",
             "did:web:alice",
             "ck:space:0196419b-0000-7000-8000-000000000001",
-            "ck:flow:f1",
-            "ck:flow:f1",
+            "ck:strand:f1",
+            "ck:strand:f1",
             "r0",
         )
         .build("node");
@@ -195,8 +195,8 @@ mod tests {
             op.payload["container_ref"],
             "ck:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.payload["source_ref"], "ck:flow:f1");
-        assert_eq!(op.payload["target_ref"], "ck:flow:f1");
+        assert_eq!(op.payload["source_ref"], "ck:strand:f1");
+        assert_eq!(op.payload["target_ref"], "ck:strand:f1");
         assert_eq!(op.payload["rank"], "r0");
     }
 
@@ -206,12 +206,12 @@ mod tests {
             "ck:realm:s1",
             "did:web:alice",
             "ck:space:0196419b-0000-7000-8000-000000000001",
-            "ck:flow:f1",
-            "ck:flow:f2",
+            "ck:strand:f1",
+            "ck:strand:f2",
             "r1",
             vec![
-                ("ck:flow:f1".to_owned(), "r0".to_owned()),
-                ("ck:flow:f2".to_owned(), "r1".to_owned()),
+                ("ck:strand:f1".to_owned(), "r0".to_owned()),
+                ("ck:strand:f2".to_owned(), "r1".to_owned()),
             ],
         )
         .build("node");
@@ -220,9 +220,9 @@ mod tests {
             op.payload["container_ref"],
             "ck:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.payload["target_ref"], "ck:flow:f2");
+        assert_eq!(op.payload["target_ref"], "ck:strand:f2");
         assert_eq!(op.payload["rank"], "r1");
-        assert_eq!(op.payload["items"][0]["item_ref"], "ck:flow:f1");
+        assert_eq!(op.payload["items"][0]["item_ref"], "ck:strand:f1");
         assert_eq!(op.payload["items"][1]["rank"], "r1");
     }
 }

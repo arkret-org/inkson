@@ -247,7 +247,7 @@ pub struct DeviceRevokeMlsRemoveOutput {
 /// post-commit group state so the caller can persist it back through
 /// [`crate::mls::persistence::encrypt_state`].
 ///
-/// This wraps the three pieces of a real-world revocation flow (read,
+/// This wraps the three pieces of a real-world revocation strand (read,
 /// mutate, write) so views and orchestrators only need to deal with the
 /// `(envelope, snapshot_secret, target)` triple. Web (wasm32) builds
 /// don't have the OpenMLS runtime available; callers there must either

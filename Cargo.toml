@@ -69,7 +69,7 @@ mobile-ios = []
 # integrate OS keychain / WebAuthn / HSM via the `secure_key_store` path.
 # QR rendering for device-verification handoff. SVG output keeps the
 # crate pure-Rust with no image / font dependencies.
-# Recovery flow (R-recovery-001): real Argon2id passphrase stretching +
+# Recovery strand (R-recovery-001): real Argon2id passphrase stretching +
 # XChaCha20-Poly1305 AEAD for the Encrypted Cloud Vault upload. Both crates
 # are pure-Rust, no_std-friendly and build cleanly under wasm32; the same
 # pin is used for the ciphertext digest's sha256 (already in `sha2`).

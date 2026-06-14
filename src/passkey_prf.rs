@@ -3,7 +3,7 @@
 //! This module intentionally does not register a new Cokret key-backup
 //! recipient method. The PRF output wraps the user's existing 24-word Recovery
 //! Key for the current browser/RP context only; fresh-device recovery remains
-//! the recovery-policy + key-backup flow.
+//! the recovery-policy + key-backup strand.
 
 use anyhow::{Result, anyhow};
 #[cfg(target_arch = "wasm32")]

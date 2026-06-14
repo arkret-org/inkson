@@ -5,7 +5,7 @@
 > `cokret-spec/spec/v1/zh/crypto-media/device-lifecycle.md`（§1.2 / §2 / §10 / §15）、
 > `cokret-spec/spec/v1/zh/models/realm-and-space.md`（§2.3 / §2.8.1）。
 > 本文描述 yougen 客户端面向最终用户的完整流程编排；协议细节以 spec 为准。
-> 配套的 spec 缺口（F1–F6）已于 2026-06-12 全部修复，记录见 `_spec_review/2026-06-12-key-lifecycle-flow-review.md`。
+> 配套的 spec 缺口（F1–F6）已于 2026-06-12 全部修复，记录见 `_spec_review/2026-06-12-key-lifecycle-strand-review.md`。
 > 关键结论：**PCR 的两条加密 floor 已在协议层（`realm.schema.json` PCR 守卫）钉死为 `e2ee_required`**，
 > 因此正确实现下 PCR projection 必然携带达标 floor；"PCR 加密建议"弹窗仅对存量/异常 Realm 生效。
 
@@ -262,7 +262,7 @@ flowchart TD
 
 图例：✅ 已落地 ／ ◑ 既存框架但有缺口 ／ ❌ 缺失。
 
-### 10.3 E2E 测试覆盖（`yougen/tests/e2e/yougen.flows.spec.ts`）
+### 10.3 E2E 测试覆盖（`yougen/tests/e2e/yougen.strands.spec.ts`）
 
 本轮按新流程逻辑更新并新增 Playwright e2e（对 mock soland），全部通过：
 
@@ -273,7 +273,7 @@ flowchart TD
 | `encrypted Realm creation without recovery is gated, then proceeds on override` | **S6 gate**：未配置 recovery 创建加密 Realm → 弹门、阻断 create；override 后再次 create 才提交 |
 | `encrypted Realm backup uses existing Recovery Key …` | 已配置 recovery 时 gate 被绕过（`toHaveCount(0)`），走 existing-key 备份分支 |
 | `mls recovery backup generates 24 recovery words` | gate override 后进入备份流程，生成 24 词 |
-| `setup, onboarding, and space timeline flow works` | 端到端冒烟（注册→建 Realm 经 gate→备份→时间线发消息） |
+| `setup, onboarding, and space timeline strand works` | 端到端冒烟（注册→建 Realm 经 gate→备份→时间线发消息） |
 
 同时修复了 `cotest/e2e/helpers/users.ts` 的 `createRealm` helper，使其对加密 Realm 的 S6 gate 做 override，覆盖所有 cotest 场景的建 Realm 路径。
 
@@ -287,5 +287,5 @@ flowchart TD
 - [x] "PCR 没加密"在协议层不可能（receiver MUST reject），用户语境下的真实含义是 **floor 不达标**——已在 §1/§5 澄清，弹窗语义统一为"推荐加密地板"。
 - [x] 两个"必须设助记词"的强时点（注册 first-backup gate、首次创建加密 Realm）+ 两个"建议"时点（floor 启用、SPOF 提醒）互不冲突，全部收敛到同一个 24 词设置流程。
 - [x] S4 完成后不可能弹"设置助记词"（用户刚输入过）；S3 完成后可能弹——四象限表（§6.1）闭合。
-- [x] 与 spec 的冲突点（PCR floor 未固定、history_visibility 不一致、SSK 域归属矛盾、Realm 创建前置门缺失）已全部修复，见 `_spec_review/2026-06-12-key-lifecycle-flow-review.md` 处置表（F1–F6 resolved，lint 通过）。
+- [x] 与 spec 的冲突点（PCR floor 未固定、history_visibility 不一致、SSK 域归属矛盾、Realm 创建前置门缺失）已全部修复，见 `_spec_review/2026-06-12-key-lifecycle-strand-review.md` 处置表（F1–F6 resolved，lint 通过）。
 - [x] yougen 侧本轮改动：新增 `account_health` 统一解析器（替代散落 suppression）+ S6 加密 Realm 创建 recovery soft-gate；`cargo check --lib` 与 `cargo test --lib -- account_health encryption_floor_prompt`（22 通过）均绿，未引入新 warning。

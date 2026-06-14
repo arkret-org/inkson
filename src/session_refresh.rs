@@ -299,7 +299,7 @@ pub fn commit_refresh(
 }
 
 /// Convenience wrapper that drives the full prep → exchange → commit
-/// flow against a single `&mut LocalStateStore`. Holds the borrow
+/// strand against a single `&mut LocalStateStore`. Holds the borrow
 /// across the network await, so callers backed by a Dioxus
 /// `Signal<LocalStateStore>` must orchestrate the three phases by hand
 /// (see the session-refresh `use_future` in `app.rs`). Test code that

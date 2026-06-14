@@ -2,10 +2,10 @@
 //! comment threads.
 //!
 //! Spec sources:
-//! - `flow-and-message.md §4.3` / `§9` — a kanban card's discussion is a `discussion` track on the
-//!   card's Flow; comments are `ck.message.create` events carrying the card's `flow_id` and
+//! - `strand-and-message.md §4.3` / `§9` — a kanban card's discussion is a `discussion` track on the
+//!   card's Strand; comments are `ck.message.create` events carrying the card's `strand_id` and
 //!   `track_name = "discussion"`.
-//! - `realm-and-space.md §4` — kanban cards ARE Flow objects, so reusing the message-create reducer
+//! - `realm-and-space.md §4` — kanban cards ARE Strand objects, so reusing the message-create reducer
 //!   is the natural binding.
 //!
 //! This module ships the typed representation + the payload builder
@@ -16,7 +16,7 @@
 //!
 //! Schema notes (`event-payload.schema.json $defs.message_create_payload`,
 //! `additionalProperties:false`):
-//! - `flow_id` + `track_name` are required; the comment body rides in `content` (a
+//! - `strand_id` + `track_name` are required; the comment body rides in `content` (a
 //!   `content_block`), never a top-level `body`.
 //! - The author is NOT a payload field — the reducer derives `created_by` from the envelope
 //!   `actor_id`, so we deliberately do not carry an `author_did` here.
@@ -35,7 +35,7 @@ use serde_json::{Value, json};
 
 use crate::models::Mention;
 
-/// Discussion track name comments are attached to on the card's Flow.
+/// Discussion track name comments are attached to on the card's Strand.
 const DISCUSSION_TRACK: &str = "discussion";
 
 /// F-CARD-COMMENT-1: a single comment composed for a kanban card.
@@ -44,9 +44,9 @@ const DISCUSSION_TRACK: &str = "discussion";
 /// `created_by`, so it is intentionally absent here.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CardComment {
-    /// The card's own Flow id — becomes `payload.flow_id` so the
+    /// The card's own Strand id — becomes `payload.strand_id` so the
     /// discussion track on this card receives the comment.
-    pub card_flow_id: String,
+    pub card_strand_id: String,
     /// Raw body text (Markdown allowed; soland renders it).
     pub body: String,
     /// DIDs extracted from `@did:...` patterns in the body. These are
@@ -59,11 +59,11 @@ pub struct CardComment {
 }
 
 impl CardComment {
-    pub fn new(card_flow_id: impl Into<String>, body: impl Into<String>) -> Self {
+    pub fn new(card_strand_id: impl Into<String>, body: impl Into<String>) -> Self {
         let body_str = body.into();
         let mentions = extract_mentions(&body_str);
         Self {
-            card_flow_id: card_flow_id.into(),
+            card_strand_id: card_strand_id.into(),
             body: body_str,
             mentions,
             reply_to: None,
@@ -87,7 +87,7 @@ impl CardComment {
 /// via `reply_to`. The author is omitted on purpose — the reducer derives it
 /// from the envelope `actor_id`.
 ///
-/// `flow_id` is the card's Flow id; card ids ultimately come from server
+/// `strand_id` is the card's Strand id; card ids ultimately come from server
 /// sync data, so a malformed id surfaces as a recoverable error instead of
 /// a panic (YOU-02-001 — on wasm a panic kills the whole page).
 pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value> {
@@ -111,12 +111,12 @@ pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value
         content = content.with_field("mentions", Value::Array(mentions));
     }
 
-    let flow_id = cokret_sdk::FlowId::new(comment.card_flow_id.clone()).map_err(|err| {
-        anyhow::anyhow!("invalid card flow id {:?}: {err:?}", comment.card_flow_id)
+    let strand_id = cokret_sdk::StrandId::new(comment.card_strand_id.clone()).map_err(|err| {
+        anyhow::anyhow!("invalid card strand id {:?}: {err:?}", comment.card_strand_id)
     })?;
 
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(
-        flow_id,
+        strand_id,
         DISCUSSION_TRACK,
         content
             .to_value()
@@ -184,13 +184,13 @@ pub fn extract_mentions(body: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// A syntactically valid Flow id for payloads that get schema-validated.
-    const CARD_FLOW_ID: &str = "ck:flow:01904100-0000-7000-8000-000000000001";
+    /// A syntactically valid Strand id for payloads that get schema-validated.
+    const CARD_STRAND_ID: &str = "ck:strand:01904100-0000-7000-8000-000000000001";
 
     #[test]
     fn new_comment_extracts_mentions_eagerly() {
         let comment = CardComment::new(
-            CARD_FLOW_ID,
+            CARD_STRAND_ID,
             "ping @did:web:bob.example and @did:key:z6Mksample",
         );
         assert_eq!(
@@ -203,11 +203,11 @@ mod tests {
     }
 
     #[test]
-    fn build_payload_uses_flow_track_and_content() {
-        let comment = CardComment::new(CARD_FLOW_ID, "hi @did:web:bob.example");
+    fn build_payload_uses_strand_track_and_content() {
+        let comment = CardComment::new(CARD_STRAND_ID, "hi @did:web:bob.example");
         let payload = build_card_comment_payload(&comment).expect("builds");
         // Required schema fields.
-        assert_eq!(payload["flow_id"], CARD_FLOW_ID);
+        assert_eq!(payload["strand_id"], CARD_STRAND_ID);
         assert_eq!(payload["track_name"], "discussion");
         // Body rides in the content block, not a top-level `body`.
         assert!(payload.get("body").is_none());
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn build_payload_threads_via_reply_to() {
-        let comment = CardComment::new(CARD_FLOW_ID, "agreed")
+        let comment = CardComment::new(CARD_STRAND_ID, "agreed")
             .with_reply_to("ck:message:01904100-0000-7000-8000-000000000002");
         let payload = build_card_comment_payload(&comment).expect("builds");
         assert_eq!(
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn build_payload_validates_against_message_create_schema() {
-        let comment = CardComment::new(CARD_FLOW_ID, "ship it @did:web:bob.example");
+        let comment = CardComment::new(CARD_STRAND_ID, "ship it @did:web:bob.example");
         let payload = build_card_comment_payload(&comment).expect("builds");
         cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload("ck.message.create", &payload)
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn comment_round_trips_through_serde() {
-        let comment = CardComment::new(CARD_FLOW_ID, "@did:web:bob hello");
+        let comment = CardComment::new(CARD_STRAND_ID, "@did:web:bob hello");
         let bytes = serde_json::to_string(&comment).unwrap();
         let restored: CardComment = serde_json::from_str(&bytes).unwrap();
         assert_eq!(restored, comment);

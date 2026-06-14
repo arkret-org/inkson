@@ -11,7 +11,7 @@
 //!   `LocalStateStore::save_private_data` — the words themselves are never uploaded.
 //! - **Restore from backup**: lists the server-side `ck.schema.key_backup.v1` ciphertext envelopes
 //!   and decrypts them on-device with the 24-word Recovery Key. Envelopes sealed by the removed
-//!   vault-passphrase flows are legacy garbage: they can still be listed and deleted, but no longer
+//!   vault-passphrase strands are legacy garbage: they can still be listed and deleted, but no longer
 //!   decrypted.
 //! - **Social Recovery** (advanced, local bookkeeping only): guardian list + Shamir threshold +
 //!   last-rehearsal timestamp persisted as JSON under the same private_data store.
@@ -551,7 +551,7 @@ pub(crate) fn upload_recovery_key_account_backup(
         let mut state_store = state_store;
         let result = with_authed_api(&base, session, |api| async move {
             let did_backup_id =
-                crate::recovery_flow::ensure_recovery_policy_and_did_recovery_backup(
+                crate::recovery_strand::ensure_recovery_policy_and_did_recovery_backup(
                     &api,
                     &actor,
                     &device,
@@ -1360,13 +1360,13 @@ pub fn RecoveryPanel(
             // Key (XChaCha20-Poly1305 AEAD authenticates the tag before any
             // plaintext is returned), and offers a confirmed destructive
             // Delete that goes through the typed delete endpoint. Envelopes
-            // sealed by the removed vault-passphrase flow are legacy garbage:
+            // sealed by the removed vault-passphrase strand are legacy garbage:
             // listable and deletable, but no longer decryptable.
             div { class: "event", "data-testid": "restore-section",
                 div { class: "event-head",
                     span { "Restore from backup" }
                     span { class: "muted", "server-side ciphertext only" }
-                    HelpTip { text: "List every encrypted backup the server still holds for your principal. Decryption happens on-device with your Recovery Key (24 words); the server never sees plaintext. Backups sealed by the removed vault-passphrase flow cannot be decrypted any more — treat them as leftovers to delete." }
+                    HelpTip { text: "List every encrypted backup the server still holds for your principal. Decryption happens on-device with your Recovery Key (24 words); the server never sees plaintext. Backups sealed by the removed vault-passphrase strand cannot be decrypted any more — treat them as leftovers to delete." }
                 }
                 div { class: "actions",
                     Button {
@@ -1754,7 +1754,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "What happens when recovery succeeds" }
                     span { "method-specific evidence" }
-                    HelpTip { text: "A complete recovery session should make the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. This panel currently handles backup unlock; policy proof and device authorization are separate follow-up flows." }
+                    HelpTip { text: "A complete recovery session should make the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. This panel currently handles backup unlock; policy proof and device authorization are separate follow-up strands." }
                 }
             }
         }

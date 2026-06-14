@@ -109,7 +109,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         ClientProfileDeclaration {
             profile_id: PROFILE_MINIMAL_CLIENT,
             label: "minimal_client",
-            description: "Minimal client: sync, directory lookup, timeline, and plaintext message flow.",
+            description: "Minimal client: sync, directory lookup, timeline, and plaintext message strand.",
             local_supported: true,
             degradation_path: "Read-only shell with server discovery and local cached state.",
             tier: ConformanceTier::V1Core,
@@ -213,10 +213,10 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// This list is used by:
 /// - The explanatory panels in `views/audit.rs` / `views/realm_admin.rs`.
 /// - Cross-references in `claude-design/` and `_todos.md`.
-/// - Fixture seals for upcoming `tests/` end-to-end flows.
+/// - Fixture seals for upcoming `tests/` end-to-end strands.
 ///
 /// Spec sources: `overview/current-model.md`, `models/object-model-core.md`,
-/// `models/object-model-standard.md` §5 (Flow / Message / edit and redact),
+/// `models/object-model-standard.md` §5 (Strand / Message / edit and redact),
 /// `crypto-media/device-lifecycle.md`, `authz/capabilities.md`,
 /// `sync/operations-sync.md`, `crypto-media/encryption-and-audit.md`,
 /// `crypto-media/audited-e2ee.md` (attested / disclosed audit profile),
@@ -281,18 +281,18 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.identity.disclosure_receipt",
         "ck.identity.presentation_request",
         "ck.identity.presentation_response",
-        // Flow / track (current-model §3-§4)
-        "ck.flow.archive",
-        "ck.flow.create",
-        "ck.flow.move",
-        "ck.flow.reorder",
-        "ck.flow.restore",
+        // Strand / track (current-model §3-§4)
+        "ck.strand.archive",
+        "ck.strand.create",
+        "ck.strand.move",
+        "ck.strand.reorder",
+        "ck.strand.restore",
         // Per cokret-spec dc01ad7 the four
-        // `ck.flow.track.{enable,disable,update,set_primary}`
-        // events were unified into a single `ck.flow.tracks.update`
-        // carrying a `ck.patch.v1` JSON Patch against `Flow.tracks`.
-        "ck.flow.tracks.update",
-        "ck.flow.update",
+        // `ck.strand.track.{enable,disable,update,set_primary}`
+        // events were unified into a single `ck.strand.tracks.update`
+        // carrying a `ck.patch.v1` JSON Patch against `Strand.tracks`.
+        "ck.strand.tracks.update",
+        "ck.strand.update",
         // Invite (sync/third-party-invites + identity/invites)
         "ck.invite.accept",
         "ck.invite.cancel",
@@ -897,7 +897,7 @@ mod tests {
     #[test]
     fn require_known_event_kind_accepts_canonical_and_rejects_garbage() {
         assert!(require_known_event_kind("ck.message.create").is_ok());
-        assert!(require_known_event_kind("ck.flow.update").is_ok());
+        assert!(require_known_event_kind("ck.strand.update").is_ok());
         assert!(require_known_event_kind("ck.typing").is_ok());
         let err = require_known_event_kind("ck.bogus.kind").expect_err("unknown kind must error");
         assert!(matches!(err, ValidationError::UnknownEventKind(_)));
@@ -937,15 +937,15 @@ mod tests {
     fn known_event_kinds_covers_load_bearing_kinds() {
         let kinds = known_event_kinds();
         // current-model §3 — unified track update (spec dc01ad7)
-        assert!(kinds.contains(&"ck.flow.tracks.update"));
+        assert!(kinds.contains(&"ck.strand.tracks.update"));
         // Legacy split events removed in the dc01ad7 unification.
-        assert!(!kinds.contains(&"ck.flow.track.enable"));
-        assert!(!kinds.contains(&"ck.flow.track.disable"));
-        assert!(!kinds.contains(&"ck.flow.track.update"));
-        assert!(!kinds.contains(&"ck.flow.track.set_primary"));
+        assert!(!kinds.contains(&"ck.strand.track.enable"));
+        assert!(!kinds.contains(&"ck.strand.track.disable"));
+        assert!(!kinds.contains(&"ck.strand.track.update"));
+        assert!(!kinds.contains(&"ck.strand.track.set_primary"));
         // current-model §4 — board / list workflow container
-        assert!(kinds.contains(&"ck.flow.move"));
-        assert!(kinds.contains(&"ck.flow.reorder"));
+        assert!(kinds.contains(&"ck.strand.move"));
+        assert!(kinds.contains(&"ck.strand.reorder"));
         // device-lifecycle §1.2 (login / authorization / verification three axes)
         assert!(kinds.contains(&"ck.session.grant"));
         assert!(kinds.contains(&"ck.device.authorize"));
@@ -962,7 +962,7 @@ mod tests {
         assert!(kinds.contains(&"ck.audit.accessed"));
         assert!(kinds.contains(&"ck.audit.ryw_receipt"));
         // Removed by spec
-        assert!(!kinds.contains(&"ck.flow.convert"));
+        assert!(!kinds.contains(&"ck.strand.convert"));
         assert!(!kinds.contains(&"ck.mls.epoch"));
         // T2.3 (spec 0a5ab85): single 'set' kinds were decomposed into
         // per-component cells / typed lifecycle events.

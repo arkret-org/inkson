@@ -2,12 +2,12 @@
 
 Round 27 deliverable. Drives the five wasm-facing platform contracts
 (SubtleCrypto AES-GCM, PushManager + VAPID, opaque push receive,
-localStorage round-trip of `LocalIdentity`, OIDC PKCE flow start) across **Chromium**,
+localStorage round-trip of `LocalIdentity`, OIDC PKCE strand start) across **Chromium**,
 **Firefox**, and **WebKit (Safari)** so we catch per-engine drift
 before it reaches release.
 
 This harness sits alongside the existing `tests/e2e/` suite (which is
-chromium-only and exercises full app flows). The cross-platform matrix
+chromium-only and exercises full app strands). The cross-platform matrix
 is intentionally narrow: it only validates the platform APIs the
 round-26 `WebCryptoBoundary` / `web_push_subscribe` paths depend on.
 The Rust unit tests in `src/crypto_boundary.rs`, `src/push.rs`,

@@ -25,7 +25,7 @@ const ATTACHMENT_MARKER_SUFFIX: char = ']';
 pub enum ContentBlock {
     /// Raw plaintext — used when the body contains no markdown
     /// constructs and no detectable URLs. Rendered as a `<p>` so the
-    /// surrounding flow keeps a baseline.
+    /// surrounding strand keeps a baseline.
     Text(String),
     /// HTML rendered by pulldown-cmark from a markdown source. Raw
     /// HTML pass-through is disabled at the parser level (see

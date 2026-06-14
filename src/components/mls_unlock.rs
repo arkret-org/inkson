@@ -23,7 +23,7 @@ fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
     }
 }
 
-/// Account-MLS-secret auto-unlock prompt (step 3 of the recovery flow).
+/// Account-MLS-secret auto-unlock prompt (step 3 of the recovery strand).
 ///
 /// Mounted once near the app shell and rendered ONLY when `needs_mls_unlock`
 /// is `true` — which the boot-time detection in `App` sets when this device

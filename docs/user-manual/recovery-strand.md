@@ -1,4 +1,4 @@
-# yougen — Recovery Flow
+# yougen — Recovery Strand
 
 > How to recover Cokret Principal access and encrypted backup material when
 > the device that holds your signing key is lost, broken, or revoked. Spec
@@ -33,7 +33,7 @@ Use this when:
    decrypts via XChaCha20-Poly1305, then re-bootstraps the device key and
    imports the account MLS history secret when one is present.
 4. After the active `recovery_policy` accepts a bound `recovery_session`
-   proof, the device-authorization flow can publish `ck.device.authorize`.
+   proof, the device-authorization strand can publish `ck.device.authorize`.
 
 Current yougen status: the restore panel re-hydrates local backup payload and
 MLS account-secret material. It does not yet submit the policy proof or
@@ -130,7 +130,7 @@ cached remains readable on that device.
 
 If you missed the 24-hour successor window the cross-signing chain may
 have rotated past you. yougen's `late_recovery` module surfaces a
-**Late recovery** banner with one-click flows for:
+**Late recovery** banner with one-click strands for:
 
 - **Restart cross-signing** — publishes a fresh CSR with a `reset_reason`.
 - **Re-verify contacts** — prompts each peer to confirm the new key.

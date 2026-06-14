@@ -346,9 +346,9 @@ pub fn VerifyDevicePanel(
                 }
             }
 
-            // QR Code verification flow
+            // QR Code verification strand
             if verify_method() == VerifyMethod::QrCode {
-                div { class: "event", "data-testid": "qr-verify-flow",
+                div { class: "event", "data-testid": "qr-verify-strand",
                     div { class: "event-head",
                         span { {crate::i18n::tr("verify_device.qr_section")} }
                         span { {crate::i18n::tr("verify_device.qr_section_hint")} }
@@ -411,9 +411,9 @@ pub fn VerifyDevicePanel(
                 }
             }
 
-            // SAS verification flow
+            // SAS verification strand
             if verify_method() == VerifyMethod::Sas {
-                div { class: "event", "data-testid": "sas-verify-flow",
+                div { class: "event", "data-testid": "sas-verify-strand",
                     div { class: "event-head",
                         span { {crate::i18n::tr("verify_device.sas_section")} }
                         span { {crate::i18n::tr("verify_device.sas_section_hint")} }

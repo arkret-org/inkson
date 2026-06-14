@@ -13,7 +13,7 @@
 //! This module centralizes the decision: given the boolean state variables, it
 //! returns the single highest-priority prompt that should be visible. The
 //! priority order is the canonical "account health check" chain documented in
-//! `docs/user-flows-key-lifecycle.md` §3.
+//! `docs/user-strands-key-lifecycle.md` §3.
 
 /// The single prompt that should be visible, in strict descending priority.
 ///
@@ -90,7 +90,7 @@ pub fn resolve(i: AccountHealthInputs) -> AccountHealthPrompt {
     }
     // While the device probe is still running, or the device still needs
     // authorization, suppress every downstream prompt: their inputs are not yet
-    // trustworthy and the device-auth flow owns the screen.
+    // trustworthy and the device-auth strand owns the screen.
     if !i.device_check_complete || i.needs_device_authorization {
         return AccountHealthPrompt::None;
     }
@@ -131,7 +131,7 @@ pub fn resolve(i: AccountHealthInputs) -> AccountHealthPrompt {
 /// synced, device-authorized, but no recovery path configured) AND the user has
 /// not been auto-prompted before. The caller persists the "prompted" flag so
 /// this fires at most once per account — the passive dashboard banner still
-/// remains for subsequent sessions. See `docs/user-flows-key-lifecycle.md` §3/S1.
+/// remains for subsequent sessions. See `docs/user-strands-key-lifecycle.md` §3/S1.
 pub fn should_auto_prompt_recovery_setup(i: AccountHealthInputs, already_prompted: bool) -> bool {
     !already_prompted && resolve(i) == AccountHealthPrompt::RecoverySetupReminder
 }

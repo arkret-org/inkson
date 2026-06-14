@@ -199,7 +199,7 @@ impl CokretApi {
             .await
     }
 
-    /// R3.3 (CKP-0011) — resolve a shareable object address (Realm / Flow /
+    /// R3.3 (CKP-0011) — resolve a shareable object address (Realm / Strand /
     /// Message) to a directory preview via `ck.find.directory.query.resolve_target`
     /// (`POST /_cokret/find/directory/resolve-target`).
     ///

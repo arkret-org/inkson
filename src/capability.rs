@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionGroup {
     Common,
-    SpaceFlow,
+    SpaceStrand,
     Conversation,
     Morph,
     Administrative,
@@ -19,7 +19,7 @@ impl ActionGroup {
     /// Action names are the **canonical, fully-qualified** forms from the
     /// spec `capability-action-registry.json` (always `ck.` prefixed).
     /// F-CAP-FIX-1 (2026-05-19) brought this table in line with spec
-    /// fixtures, which write `actions: ["ck.flow.read", ...]` — under the
+    /// fixtures, which write `actions: ["ck.strand.read", ...]` — under the
     /// previous bare-name table a wire-shaped grant from any conforming
     /// server would have failed `CapabilityEngine::check`'s string
     /// comparison and produced false denies.
@@ -35,11 +35,11 @@ impl ActionGroup {
                 "ck.space.archive",
                 "ck.space.restore",
                 "ck.space.tombstone",
-                "ck.flow.create",
-                "ck.flow.read",
-                "ck.flow.update",
-                "ck.flow.archive",
-                "ck.flow.restore",
+                "ck.strand.create",
+                "ck.strand.read",
+                "ck.strand.update",
+                "ck.strand.archive",
+                "ck.strand.restore",
                 "ck.relation.create",
                 "ck.relation.read",
                 "ck.relation.tombstone",
@@ -50,15 +50,15 @@ impl ActionGroup {
                 "ck.invite.accept",
                 "ck.invite.cancel",
             ],
-            Self::SpaceFlow => &[
-                "ck.flow.move",
-                "ck.flow.reorder",
+            Self::SpaceStrand => &[
+                "ck.strand.move",
+                "ck.strand.reorder",
                 // Per cokret-spec dc01ad7 the four
-                // `flow.track.{enable,disable,update,set_primary}`
-                // verbs were unified into a single `ck.flow.tracks.update`
+                // `strand.track.{enable,disable,update,set_primary}`
+                // verbs were unified into a single `ck.strand.tracks.update`
                 // capability covering all track mutations via a
-                // `ck.patch.v1` JSON Patch against `Flow.tracks`.
-                "ck.flow.tracks.update",
+                // `ck.patch.v1` JSON Patch against `Strand.tracks`.
+                "ck.strand.tracks.update",
             ],
             Self::Conversation => &[
                 "ck.message.create",
@@ -634,7 +634,7 @@ mod tests {
     fn test_grant() -> CapabilityGrant {
         grant(
             "did:web:bob",
-            &["ck.flow.read", "ck.flow.update"],
+            &["ck.strand.read", "ck.strand.update"],
             vec![Constraint::Temporal {
                 not_before: None,
                 expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
@@ -647,24 +647,24 @@ mod tests {
         // F-CAP-FIX-1: spec capability-action-registry.json uses the
         // fully-qualified `ck.<noun>.<verb>` form everywhere; the local
         // ActionGroup table mirrors that exactly. A bare-name lookup
-        // (`flow.create`) is now an explicit miss so we catch any
+        // (`strand.create`) is now an explicit miss so we catch any
         // regression that re-introduces the legacy short form.
         // Realm security-boundary actions live in ck.realm.*; Space
         // container actions live in ck.space.*.
         assert!(ActionGroup::Common.contains("ck.realm.read"));
-        assert!(ActionGroup::Common.contains("ck.flow.create"));
+        assert!(ActionGroup::Common.contains("ck.strand.create"));
         assert!(ActionGroup::Conversation.contains("ck.message.create"));
         assert!(ActionGroup::Administrative.contains("ck.capability.grant"));
         assert!(!ActionGroup::Common.contains("ck.message.create"));
-        assert!(!ActionGroup::Common.contains("flow.create"));
+        assert!(!ActionGroup::Common.contains("strand.create"));
     }
 
     #[test]
     fn test_lifecycle_archive_restore_symmetry() {
         // Spec contract: every lifecycle family with `*.archive` MUST also
         // expose `*.restore` (canonical archived -> active transition).
-        assert!(ActionGroup::Common.contains("ck.flow.archive"));
-        assert!(ActionGroup::Common.contains("ck.flow.restore"));
+        assert!(ActionGroup::Common.contains("ck.strand.archive"));
+        assert!(ActionGroup::Common.contains("ck.strand.restore"));
         assert!(ActionGroup::Common.contains("ck.space.archive"));
         assert!(ActionGroup::Common.contains("ck.space.restore"));
         assert!(ActionGroup::Morph.contains("ck.morph.archive"));
@@ -794,7 +794,7 @@ mod tests {
 
         let resource = ResourceRef {
             space_id: Some("ck:space:test".to_owned()),
-            object_ref: Some("ck:flow:0196419b-0000-7000-8000-000000000001".to_owned()),
+            object_ref: Some("ck:strand:0196419b-0000-7000-8000-000000000001".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext {
@@ -802,7 +802,7 @@ mod tests {
             ..Default::default()
         };
 
-        let decision = engine.check("did:web:bob", "ck.flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
         assert_eq!(decision, AuthzDecision::Allow);
     }
 
@@ -812,7 +812,7 @@ mod tests {
         let resource = ResourceRef::default();
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "ck.flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -827,7 +827,7 @@ mod tests {
         };
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "ck.flow.archive", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ck.strand.archive", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -842,7 +842,7 @@ mod tests {
         };
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "ck.flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -851,14 +851,14 @@ mod tests {
         // R5: an unconstrained grant covering the action/resource yields a
         // positive Allow (not a fail-open fallthrough).
         let mut engine = CapabilityEngine::new();
-        engine.add_grant(grant("did:web:bob", &["ck.flow.read"], Vec::new()));
+        engine.add_grant(grant("did:web:bob", &["ck.strand.read"], Vec::new()));
 
         let resource = ResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext::default();
-        let decision = engine.check("did:web:bob", "ck.flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
         assert_eq!(decision, AuthzDecision::Allow);
     }
 
@@ -869,7 +869,7 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(grant(
             "did:web:bob",
-            &["ck.flow.read"],
+            &["ck.strand.read"],
             vec![Constraint::ApprovalWorkflow {
                 approvers: vec!["did:web:alice".to_owned()],
                 min_approvals: 1,
@@ -881,7 +881,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = EvalContext::default();
-        let decision = engine.check("did:web:bob", "ck.flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::RequireReview(_)));
     }
 
@@ -940,19 +940,19 @@ mod tests {
     #[test]
     fn test_constraint_type_restriction_checks_facets() {
         let constraint = Constraint::TypeRestriction {
-            allowed_object_types: vec!["flow".to_owned()],
+            allowed_object_types: vec!["strand".to_owned()],
             allowed_facets: vec!["stateful".to_owned(), "rankable".to_owned()],
         };
 
         let ctx_allowed = EvalContext {
-            object_type: Some("flow".to_owned()),
+            object_type: Some("strand".to_owned()),
             facets: vec!["stateful".to_owned(), "rankable".to_owned()],
             ..Default::default()
         };
         assert_eq!(constraint.evaluate(&ctx_allowed), ConstraintResult::Allow);
 
         let ctx_denied = EvalContext {
-            object_type: Some("flow".to_owned()),
+            object_type: Some("strand".to_owned()),
             facets: vec!["stateful".to_owned()],
             ..Default::default()
         };

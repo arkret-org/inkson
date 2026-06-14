@@ -109,10 +109,10 @@ pub const RECOMMENDED_REALM_ENCRYPTION_PROFILE: &str = "mls_rfc9420";
 pub const RECOMMENDED_REALM_ENCRYPTION_FLOOR: &str = "e2ee_required";
 
 /// Generic wrapper for soland's
-/// `/_cokret/self/projection/{spaces|flows}` lifecycle endpoints. Keeps
+/// `/_cokret/self/projection/{spaces|strands}` lifecycle endpoints. Keeps
 /// the query response shape symmetric across the two surfaces so the kanban
 /// hydrate path can pluck projection rows with the same code. The decoder
-/// normalizes spec `spaces` / `flows` / `morphs` collection keys into `items`.
+/// normalizes spec `spaces` / `strands` / `morphs` collection keys into `items`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LifecycleProjectionView<T> {
     pub realm_id: String,
@@ -121,7 +121,7 @@ pub struct LifecycleProjectionView<T> {
     #[serde(
         default = "Vec::new",
         alias = "spaces",
-        alias = "flows",
+        alias = "strands",
         alias = "morphs"
     )]
     pub items: Vec<T>,
@@ -148,10 +148,10 @@ pub struct SpaceContainerProjectionView {
     pub parent_space_id: Option<String>,
 }
 
-/// Server-side Flow row from `GET /_cokret/self/projection/flows`.
+/// Server-side Strand row from `GET /_cokret/self/projection/strands`.
 #[derive(Clone, Debug, Deserialize)]
-pub struct FlowProjectionView {
-    pub flow_id: String,
+pub struct StrandProjectionView {
+    pub strand_id: String,
     pub realm_id: String,
     #[serde(default)]
     pub title: String,
@@ -293,7 +293,7 @@ impl ProjectionItemView {
 }
 
 /// Server-side Morph row from
-/// `GET /_cokret/self/projection/morphs`. Same enum as Flow per spec §5.1.
+/// `GET /_cokret/self/projection/morphs`. Same enum as Strand per spec §5.1.
 #[derive(Clone, Debug, Deserialize)]
 pub struct MorphProjectionView {
     pub morph_id: String,
@@ -527,7 +527,7 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 /// not active). Soland currently maps these through `capability_denied`
 /// because the failure happens in the session-grant capability bridge, but
 /// the client must treat them as session loss, not as an ordinary Space/
-/// Flow capability denial.
+/// Strand capability denial.
 pub fn is_terminal_session_grant_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<CokretApiError>()
@@ -2320,10 +2320,10 @@ mod tests {
             "ck:space:01904100-0000-7000-8000-f10dc0000001"
         );
 
-        let flows: LifecycleProjectionView<FlowProjectionView> = serde_json::from_value(json!({
+        let strands: LifecycleProjectionView<StrandProjectionView> = serde_json::from_value(json!({
             "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
-            "flows": [{
-                "flow_id": "ck:flow:01904100-0000-7000-8000-f20dc0000001",
+            "strands": [{
+                "strand_id": "ck:strand:01904100-0000-7000-8000-f20dc0000001",
                 "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                 "title": "Card",
                 "summary": "Projection-backed card",
@@ -2335,10 +2335,10 @@ mod tests {
             }]
         }))
         .unwrap();
-        assert_eq!(flows.items[0].realm_id, flows.realm_id);
-        assert_eq!(flows.items[0].state, "archived");
+        assert_eq!(strands.items[0].realm_id, strands.realm_id);
+        assert_eq!(strands.items[0].state, "archived");
         assert_eq!(
-            flows.items[0].board_space_id.as_deref(),
+            strands.items[0].board_space_id.as_deref(),
             Some("ck:space:01904100-0000-7000-8000-b0ard0000001")
         );
     }
@@ -2808,7 +2808,7 @@ mod tests {
 
     #[test]
     fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
-        let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
+        let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
         let mut patch = cokret_sdk::Patch::new();
         patch
             .insert_op(
@@ -2816,16 +2816,16 @@ mod tests {
                 cokret_sdk::PatchOp::set(json!({ "blocks": [] })),
             )
             .unwrap();
-        let payload = cokret_sdk::ObjectPatchPayload::for_target(flow_id, patch)
+        let payload = cokret_sdk::ObjectPatchPayload::for_target(strand_id, patch)
             .unwrap()
             .to_value()
             .unwrap();
         let event = OperationBuilder::new(
             "ck:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "ck.flow.update",
+            "ck.strand.update",
         )
-        .target_ref(flow_id)
+        .target_ref(strand_id)
         .body(payload)
         .build("yougen");
 

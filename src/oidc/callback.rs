@@ -1,6 +1,6 @@
 //! OIDC callback orchestrator.
 //!
-//! The lower-level pieces of the PKCE authorization-code flow already
+//! The lower-level pieces of the PKCE authorization-code strand already
 //! exist:
 //!
 //! * [`crate::coauth::build_oidc_scaffold_bundle`] / [`persist_oidc_scaffold`] mint cryptographic
@@ -146,7 +146,7 @@ pub fn extract_callback_error(callback_url: &str) -> Option<(String, Option<Stri
 /// Validate the OIDC `nonce` claim from an ID token against the scaffolded
 /// nonce generated before opening the authorization URL. This does not replace
 /// issuer signature validation at coauth; it is the client-side replay guard
-/// that prevents accepting a token minted for a different browser flow.
+/// that prevents accepting a token minted for a different browser strand.
 pub fn validate_id_token_nonce(id_token: Option<&str>, expected_nonce: &str) -> anyhow::Result<()> {
     let expected_nonce = expected_nonce.trim();
     if expected_nonce.is_empty() {

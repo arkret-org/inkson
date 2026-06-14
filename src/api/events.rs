@@ -65,7 +65,7 @@ impl CokretApi {
     }
 
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
-    /// (`ck.typing`). They MUST flow through the canonical
+    /// (`ck.typing`). They MUST strand through the canonical
     /// `ck.self.ephemeral.command.send` operation (`POST /_cokret/self/ephemeral`), never
     /// through `ck.self.events.command.submit` or a deployment-local typing shim.
     pub async fn send_typing(
@@ -83,7 +83,7 @@ impl CokretApi {
     }
 
     /// Round R2/R3 (T02) — read receipts (`ck.receipt.read`) are wire-scope-
-    /// ephemeral. They MUST flow through `ck.self.ephemeral.command.send`; the
+    /// ephemeral. They MUST strand through `ck.self.ephemeral.command.send`; the
     /// `ck.self.events.command.submit` durable path and deployment-local `/receipts`
     /// shims MUST NOT be used.
     pub async fn send_receipt(

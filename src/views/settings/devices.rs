@@ -13,7 +13,7 @@
 //!   a [`crate::api::CokretApi::revoke_device`], then rotates the account MLS history secret and
 //!   rewraps local `mls_history` backups.
 //!
-//! The pair flow on `/settings/devices/pair` carries:
+//! The pair strand on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — on the device being added, generates a pairing request payload.
 //! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with the encoded payload mirrored as
 //!   plain text in `pair-device-secret` so e2e harnesses that don't OCR can read it directly.
@@ -386,7 +386,7 @@ pub fn SettingsDevicesPanel(
             }
 
             if pair_mode {
-                {render_pair_flow(
+                {render_pair_strand(
                     account_did,
                     device_id,
                     base_url,
@@ -934,7 +934,7 @@ fn render_rename_modal(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_pair_flow(
+fn render_pair_strand(
     account_did: Signal<String>,
     device_id: Signal<String>,
     base_url: Signal<String>,

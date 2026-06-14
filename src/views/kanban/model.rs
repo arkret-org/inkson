@@ -48,18 +48,18 @@ pub(super) fn actor_is_current_account(actor_id: &str, account_did: &str) -> boo
 
 pub(super) const LOCAL_PENDING_CARD_DESCRIPTION: &str =
     "New local card waiting for reducer receipt.";
-pub(super) const DEMO_FLOW_LEGAL_REVIEW_ID: &str = "ck:flow:0196419b-0000-7000-8000-000000000101";
-pub(super) const DEMO_FLOW_ONBOARDING_COPY_ID: &str =
-    "ck:flow:0196419b-0000-7000-8000-000000000102";
-pub(super) const DEMO_FLOW_SECURITY_SIGNOFF_ID: &str =
-    "ck:flow:0196419b-0000-7000-8000-000000000103";
-pub(super) const DEMO_FLOW_REVIEW_DISCUSSION_ID: &str =
-    "ck:flow:0196419b-0000-7000-8000-000000000201";
-pub(super) const DEMO_FLOW_SUPPORT_DISCUSSION_ID: &str =
-    "ck:flow:0196419b-0000-7000-8000-000000000202";
-pub(super) const DEMO_FLOW_SECURITY_REVIEW_ID: &str =
-    "ck:flow:0196419b-0000-7000-8000-000000000203";
-pub(super) const KANBAN_PRIVATE_FLOW_PATCH_PATHS: &[&str] = &[
+pub(super) const DEMO_STRAND_LEGAL_REVIEW_ID: &str = "ck:strand:0196419b-0000-7000-8000-000000000101";
+pub(super) const DEMO_STRAND_ONBOARDING_COPY_ID: &str =
+    "ck:strand:0196419b-0000-7000-8000-000000000102";
+pub(super) const DEMO_STRAND_SECURITY_SIGNOFF_ID: &str =
+    "ck:strand:0196419b-0000-7000-8000-000000000103";
+pub(super) const DEMO_STRAND_REVIEW_DISCUSSION_ID: &str =
+    "ck:strand:0196419b-0000-7000-8000-000000000201";
+pub(super) const DEMO_STRAND_SUPPORT_DISCUSSION_ID: &str =
+    "ck:strand:0196419b-0000-7000-8000-000000000202";
+pub(super) const DEMO_STRAND_SECURITY_REVIEW_ID: &str =
+    "ck:strand:0196419b-0000-7000-8000-000000000203";
+pub(super) const KANBAN_PRIVATE_STRAND_PATCH_PATHS: &[&str] = &[
     "body",
     "synthesis",
     "content",
@@ -72,8 +72,8 @@ pub(super) const KANBAN_PRIVATE_FLOW_PATCH_PATHS: &[&str] = &[
 pub(super) const KANBAN_BODY_PRIVATE_FIELD_PATHS: &[&str] = &["body", "fields.body"];
 pub(super) const KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS: &[&str] =
     &["synthesis", "fields.synthesis", "tracks.synthesis.body"];
-pub(super) const KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE: &str =
-    "application/vnd.cokret.flow.patch-value+json";
+pub(super) const KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE: &str =
+    "application/vnd.cokret.strand.patch-value+json";
 
 /// X10.2 — shown for an encrypted private field (body/synthesis) that this
 /// device cannot read yet: no local plaintext sidecar AND the author can't
@@ -233,18 +233,18 @@ pub(super) enum SpaceContainerLifecycleState {
 pub(super) struct KanbanCard {
     pub(super) id: String,
     /// The card's current rank inside its column. This is the local
-    /// mirror of the `ck.component.flow.position.v1` cell's `rank`
+    /// mirror of the `ck.component.strand.position.v1` cell's `rank`
     /// field and seeds the `expected_position` of any subsequent
-    /// `ck.flow.move` / `ck.flow.reorder` Move. When the projection
+    /// `ck.strand.move` / `ck.strand.reorder` Move. When the projection
     /// refreshes (server-side cell update), this must be re-synced.
     pub(super) rank: String,
     pub(super) title: String,
-    /// Flow `summary` — short one-line/paragraph overview.
+    /// Strand `summary` — short one-line/paragraph overview.
     pub(super) description: String,
-    /// Flow `body` — rich long-form content shown in the Description tab.
+    /// Strand `body` — rich long-form content shown in the Description tab.
     pub(super) body: String,
-    /// Flow `synthesis` — rich content shown in the Synthesis tab. Stored
-    /// on the Flow object alongside `body` so the kanban popup can edit
+    /// Strand `synthesis` — rich content shown in the Synthesis tab. Stored
+    /// on the Strand object alongside `body` so the kanban popup can edit
     /// it inline without round-tripping through the Document/Morph view.
     /// Canonical wire path: `object.synthesis` (with `object.tracks.synthesis.body`
     /// honored as a back-compat fallback in projection reads).
@@ -263,21 +263,21 @@ pub(super) struct KanbanCard {
     pub(super) assignee: String,
     pub(super) assigned_to_relations: Vec<CardAssignedToRelation>,
     pub(super) due: String,
-    pub(super) primary_flow_id: String,
-    pub(super) locked_flow: Option<LockedFlow>,
+    pub(super) primary_strand_id: String,
+    pub(super) locked_strand: Option<LockedStrand>,
     pub(super) external_visibility: String,
     pub(super) history_visibility: String,
-    /// Explicit Flow security state from projection metadata. `None`
-    /// means the Flow inherits the active Realm / Space posture.
+    /// Explicit Strand security state from projection metadata. `None`
+    /// means the Strand inherits the active Realm / Space posture.
     pub(super) security_encrypted: Option<bool>,
     pub(super) state: CardState,
-    /// Flow lifecycle state (orthogonal to `state` above which is
-    /// Move-lifecycle). Spec: `flow-and-message.md §3`,
+    /// Strand lifecycle state (orthogonal to `state` above which is
+    /// Move-lifecycle). Spec: `strand-and-message.md §3`,
     /// `common-fields.md §5.1`. Active cards render in the column;
     /// Archived cards move to the archived-cards drawer. Redacted is the
     /// irreversible terminal (content cleared, envelope/audit retained); UI
     /// never emits it but renders a "[消息已撤回]" placeholder for it.
-    pub(super) lifecycle: FlowLifecycleState,
+    pub(super) lifecycle: StrandLifecycleState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -331,9 +331,9 @@ pub(super) fn apply_card_assignment_projection(
 pub(super) struct CardDetailDraft {
     pub(super) title: String,
     pub(super) description: String,
-    /// Flow `body` — long-form content shown in the Description tab.
+    /// Strand `body` — long-form content shown in the Description tab.
     pub(super) body: String,
-    /// Flow `synthesis` — long-form content shown in the Synthesis tab.
+    /// Strand `synthesis` — long-form content shown in the Synthesis tab.
     pub(super) synthesis: String,
     pub(super) labels: Vec<String>,
     pub(super) assignee: String,
@@ -363,30 +363,30 @@ pub(super) struct CardSynthesisTrackEntry {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum FlowLifecycleState {
+pub(super) enum StrandLifecycleState {
     #[default]
     Active,
     Archived,
-    /// Irreversible terminal per the wire enum (`flow.schema.json` state =
+    /// Irreversible terminal per the wire enum (`strand.schema.json` state =
     /// {`active`,`archived`,`redacted`}). `redacted` clears content but
     /// retains the envelope/audit trail, so the UI renders a
-    /// "[消息已撤回]" placeholder rather than hiding the Flow. There is NO
-    /// `deleted` terminal in the spec; `flow_lifecycle_from_wire` downgrades
+    /// "[消息已撤回]" placeholder rather than hiding the Strand. There is NO
+    /// `deleted` terminal in the spec; `strand_lifecycle_from_wire` downgrades
     /// any stray `"deleted"` wire value (logging a warning) instead of
     /// treating it as terminal.
     Redacted,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct LockedFlow {
-    pub(super) flow_id_hash: String,
+pub(super) struct LockedStrand {
+    pub(super) strand_id_hash: String,
     pub(super) reason: String,
 }
 
 /// Snapshot of the card-being-dragged's pre-move state. The cas-register
 /// model in [`operations-sync.md` §9.1](../../cokret-spec/spec/v1/zh/sync/operations-sync.md)
 /// requires the source `(list_space_id, rank)` to seed `head_eq` on the
-/// resulting `ck.flow.move` / `ck.flow.reorder` Move. We capture it on
+/// resulting `ck.strand.move` / `ck.strand.reorder` Move. We capture it on
 /// `ondragstart` so the drop handler doesn't have to re-derive it from
 /// the column state (which may have been mutated optimistically in the
 /// meantime).
@@ -428,10 +428,10 @@ pub(super) enum CardDetailContentTab {
 }
 
 /// Which tab the right-hand card-detail sidebar is showing.
-/// - `Details`: per-card metadata (Flow ID, Assignees, Due, Visibility) + Activity hints.
+/// - `Details`: per-card metadata (Strand ID, Assignees, Due, Visibility) + Activity hints.
 /// - `Members`: every actor in the surrounding Realm/Space — sourced from the cached space
 ///   projection (`members`/`participants`/`owners` keys). Each row is also marked when the actor
-///   has authored an event against the current Flow (derived from local raw operations), so
+///   has authored an event against the current Strand (derived from local raw operations), so
 ///   participation is surfaced inline instead of in a separate tab.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum CardDetailSidebarTab {
@@ -551,8 +551,8 @@ pub(super) fn card_state_from_write_state(write_state: &str) -> CardState {
 /// canonical body lives in `cell_id` + `effect_summary` (string preview);
 /// `move_id` is the content-addressed `sha256:...` id. `kind`
 /// mirrors the MoveSubmissionState classifier (`ck.space.create` /
-/// `ck.flow.create` /
-/// `ck.flow.position`) so the tracker UI can decorate state pills.
+/// `ck.strand.create` /
+/// `ck.strand.position`) so the tracker UI can decorate state pills.
 ///
 /// `signed_move_json` is the typed [`cokret_sdk::Move`] serialised to
 /// JSON. We persist it on the queued record so that Replay can re-POST
@@ -593,7 +593,7 @@ impl BoardWriteRecord {
 /// T20 — Where the board projection data comes from.
 ///
 /// The UI prefers API-derived board state from either the collection view
-/// projection or the server's Space-container / Flow projection endpoints.
+/// projection or the server's Space-container / Strand projection endpoints.
 /// The local seed path is explicit demo-only so hard-coded cards are never
 /// mistaken for persisted board data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -866,7 +866,7 @@ pub(super) fn collection_projection_to_columns(
 /// `state.discussion` object (`{enabled, visibility, lazy_link}` — the
 /// registered `projection_item.state` is an open object; the dedicated
 /// `discussion` field of the SDK's draft DTO is not on the registered
-/// wire shape): `visibility="locked"` produces a [`LockedFlow`] with an
+/// wire shape): `visibility="locked"` produces a [`LockedStrand`] with an
 /// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
 /// without leaking room contents.
 pub(super) fn card_from_projection_item(
@@ -877,7 +877,7 @@ pub(super) fn card_from_projection_item(
         .object
         .get("id")
         .and_then(|v| v.as_str())
-        .unwrap_or("ck:flow:unknown")
+        .unwrap_or("ck:strand:unknown")
         .to_owned();
     let title = item
         .object
@@ -885,7 +885,7 @@ pub(super) fn card_from_projection_item(
         .and_then(|v| v.as_str())
         .unwrap_or("(untitled)")
         .to_owned();
-    let primary_flow_id = id.clone();
+    let primary_strand_id = id.clone();
     let discussion = item
         .state
         .as_ref()
@@ -905,7 +905,7 @@ pub(super) fn card_from_projection_item(
                 "lazy_link (cross-Realm)".to_owned()
             } else if enabled {
                 // Tracks do not carry independent access; a private
-                // discussion uses a Circle-scoped Flow.
+                // discussion uses a Circle-scoped Strand.
                 "Circle-scoped discussion".to_owned()
             } else {
                 "synthesis-only".to_owned()
@@ -918,10 +918,10 @@ pub(super) fn card_from_projection_item(
                 "synthesis-only".to_owned(),
             )
         });
-    let locked_flow = discussion.and_then(|d| {
+    let locked_strand = discussion.and_then(|d| {
         if d.get("visibility").and_then(Value::as_str) == Some("locked") {
-            Some(LockedFlow {
-                flow_id_hash: format!("sha256:{}", id),
+            Some(LockedStrand {
+                strand_id_hash: format!("sha256:{}", id),
                 reason: "Locked discussion: title and members are not disclosed.".to_owned(),
             })
         } else {
@@ -970,27 +970,27 @@ pub(super) fn card_from_projection_item(
         rank,
         title,
         description: object_str(&["summary", "description"]),
-        body: private_flow_field_text(
+        body: private_strand_field_text(
             decrypt_ctx,
-            &primary_flow_id,
+            &primary_strand_id,
             item_body_path,
             item_body_value,
         ),
-        body_locked: private_flow_field_locked(
+        body_locked: private_strand_field_locked(
             decrypt_ctx,
-            &primary_flow_id,
+            &primary_strand_id,
             item_body_path,
             item_body_value,
         ),
-        synthesis: private_flow_field_text(
+        synthesis: private_strand_field_text(
             decrypt_ctx,
-            &primary_flow_id,
+            &primary_strand_id,
             item_synthesis_path,
             item_synthesis_value,
         ),
-        synthesis_locked: private_flow_field_locked(
+        synthesis_locked: private_strand_field_locked(
             decrypt_ctx,
-            &primary_flow_id,
+            &primary_strand_id,
             item_synthesis_path,
             item_synthesis_value,
         ),
@@ -1017,19 +1017,19 @@ pub(super) fn card_from_projection_item(
             .and_then(|v| v.as_str())
             .unwrap_or("—")
             .to_owned(),
-        primary_flow_id,
-        locked_flow,
+        primary_strand_id,
+        locked_strand,
         external_visibility,
         history_visibility,
-        security_encrypted: crate::security_state::flow_projection_security_state(&item.object),
+        security_encrypted: crate::security_state::strand_projection_security_state(&item.object),
         state: CardState::Synced,
-        lifecycle: FlowLifecycleState::Active,
+        lifecycle: StrandLifecycleState::Active,
     }
 }
 
 pub(super) fn columns_from_lifecycle_projection(
     containers: &[crate::api::SpaceContainerProjectionView],
-    flows: &[crate::api::FlowProjectionView],
+    strands: &[crate::api::StrandProjectionView],
     preferred_board_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
@@ -1071,20 +1071,20 @@ pub(super) fn columns_from_lifecycle_projection(
             .then(left.id.cmp(&right.id))
     });
 
-    for flow in flows.iter().filter(|flow| {
-        flow_projection_field_string(flow, flow.board_space_id.as_deref(), &["board_space_id"])
+    for strand in strands.iter().filter(|strand| {
+        strand_projection_field_string(strand, strand.board_space_id.as_deref(), &["board_space_id"])
             .as_deref()
             == Some(board_id.as_str())
     }) {
         let Some(list_space_id) =
-            flow_projection_field_string(flow, flow.list_space_id.as_deref(), &["list_space_id"])
+            strand_projection_field_string(strand, strand.list_space_id.as_deref(), &["list_space_id"])
         else {
             continue;
         };
         if let Some(column) = cols.iter_mut().find(|col| col.id == list_space_id) {
             column
                 .cards
-                .push(card_from_flow_projection(flow, decrypt_ctx));
+                .push(card_from_strand_projection(strand, decrypt_ctx));
         }
     }
 
@@ -1097,7 +1097,7 @@ pub(super) fn columns_from_lifecycle_projection(
 
 pub(super) fn columns_from_lifecycle_projection_with_local(
     containers: &[crate::api::SpaceContainerProjectionView],
-    flows: &[crate::api::FlowProjectionView],
+    strands: &[crate::api::StrandProjectionView],
     preferred_board_id: &str,
     raw_operations: &[RawOperationRecord],
     realm_id: &str,
@@ -1105,7 +1105,7 @@ pub(super) fn columns_from_lifecycle_projection_with_local(
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let merged_containers =
         containers_with_local_space_creates(containers, raw_operations, realm_id);
-    columns_from_lifecycle_projection(&merged_containers, flows, preferred_board_id, decrypt_ctx)
+    columns_from_lifecycle_projection(&merged_containers, strands, preferred_board_id, decrypt_ctx)
 }
 
 pub(super) fn sort_kanban_cards(cards: &mut [KanbanCard]) {
@@ -1144,8 +1144,8 @@ pub(super) fn reorder_column_before(
     true
 }
 
-pub(super) fn flow_projection_field_string(
-    flow: &crate::api::FlowProjectionView,
+pub(super) fn strand_projection_field_string(
+    strand: &crate::api::StrandProjectionView,
     top_level: Option<&str>,
     field_names: &[&str],
 ) -> Option<String> {
@@ -1154,7 +1154,7 @@ pub(super) fn flow_projection_field_string(
         .map(ToOwned::to_owned)
         .or_else(|| {
             field_names.iter().find_map(|field_name| {
-                flow.fields
+                strand.fields
                     .get(*field_name)
                     .and_then(Value::as_str)
                     .filter(|value| !value.trim().is_empty())
@@ -1163,8 +1163,8 @@ pub(super) fn flow_projection_field_string(
         })
 }
 
-pub(super) fn flow_projection_labels(flow: &crate::api::FlowProjectionView) -> Vec<String> {
-    match flow.fields.get("labels") {
+pub(super) fn strand_projection_labels(strand: &crate::api::StrandProjectionView) -> Vec<String> {
+    match strand.fields.get("labels") {
         Some(Value::Array(labels)) => labels
             .iter()
             .filter_map(Value::as_str)
@@ -1177,17 +1177,17 @@ pub(super) fn flow_projection_labels(flow: &crate::api::FlowProjectionView) -> V
     }
 }
 
-pub(super) fn flow_projection_assignee(flow: &crate::api::FlowProjectionView) -> Option<String> {
-    if flow.assigned_actor_ids.is_empty() {
+pub(super) fn strand_projection_assignee(strand: &crate::api::StrandProjectionView) -> Option<String> {
+    if strand.assigned_actor_ids.is_empty() {
         return None;
     }
-    Some(flow.assigned_actor_ids.join(", "))
+    Some(strand.assigned_actor_ids.join(", "))
 }
 
-pub(super) fn flow_projection_assigned_to_relations(
-    flow: &crate::api::FlowProjectionView,
+pub(super) fn strand_projection_assigned_to_relations(
+    strand: &crate::api::StrandProjectionView,
 ) -> Vec<CardAssignedToRelation> {
-    flow.assigned_to_relations
+    strand.assigned_to_relations
         .iter()
         .filter_map(|relation| {
             let relation_id = relation.relation_id.trim();
@@ -1200,18 +1200,18 @@ pub(super) fn flow_projection_assigned_to_relations(
         .collect()
 }
 
-pub(super) fn flow_projection_security_state(
-    flow: &crate::api::FlowProjectionView,
+pub(super) fn strand_projection_security_state(
+    strand: &crate::api::StrandProjectionView,
 ) -> Option<bool> {
     let mut value = Map::new();
-    value.insert("fields".to_owned(), Value::Object(flow.fields.clone()));
-    if let Some(body) = flow.body.as_ref() {
+    value.insert("fields".to_owned(), Value::Object(strand.fields.clone()));
+    if let Some(body) = strand.body.as_ref() {
         value.insert("body".to_owned(), body.clone());
     }
-    crate::security_state::flow_projection_security_state(&Value::Object(value))
+    crate::security_state::strand_projection_security_state(&Value::Object(value))
 }
 
-pub(super) fn flow_body_display_text(value: Option<&Value>) -> String {
+pub(super) fn strand_body_display_text(value: Option<&Value>) -> String {
     let Some(value) = value else {
         return String::new();
     };
@@ -1311,14 +1311,14 @@ pub(super) fn value_is_mls_envelope(value: &Value) -> bool {
     mls_envelope_value(value).is_some()
 }
 
-/// Decrypt a single private flow patch value if (and only if) it is an MLS
+/// Decrypt a single private strand patch value if (and only if) it is an MLS
 /// envelope. Returns the decrypted plaintext patch value parsed as JSON
 /// (e.g. a string `"…body text…"` or an object `{"body":"…"}`), or `None`
 /// when `value` is not an envelope or the decrypt softly fails (no
 /// snapshot / wrong device secret / payload that doesn't decrypt). On
 /// `None` the caller keeps the original value (plaintext realms) or falls
 /// back to a blank field (encrypted-but-locked).
-pub(super) fn decrypt_private_flow_value(ctx: &MlsDecryptCtx<'_>, value: &Value) -> Option<Value> {
+pub(super) fn decrypt_private_strand_value(ctx: &MlsDecryptCtx<'_>, value: &Value) -> Option<Value> {
     let envelope = mls_envelope_value(value)?;
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         ctx.state_store,
@@ -1334,8 +1334,8 @@ pub(super) fn decrypt_private_flow_value(ctx: &MlsDecryptCtx<'_>, value: &Value)
 /// it is an MLS envelope and a decrypt context is available. When the
 /// value is an envelope but decryption is not possible (no `ctx`, no
 /// snapshot, wrong key), the field renders blank rather than leaking the
-/// raw envelope JSON through `flow_body_display_text`.
-pub(super) fn private_flow_display_text(
+/// raw envelope JSON through `strand_body_display_text`.
+pub(super) fn private_strand_display_text(
     ctx: Option<&MlsDecryptCtx<'_>>,
     value: Option<&Value>,
 ) -> String {
@@ -1343,23 +1343,23 @@ pub(super) fn private_flow_display_text(
         return String::new();
     };
     if value_is_mls_envelope(value) {
-        return match ctx.and_then(|ctx| decrypt_private_flow_value(ctx, value)) {
-            Some(plaintext) => flow_body_display_text(Some(&plaintext)),
+        return match ctx.and_then(|ctx| decrypt_private_strand_value(ctx, value)) {
+            Some(plaintext) => strand_body_display_text(Some(&plaintext)),
             // Encrypted but un-decryptable: return BLANK (never the raw
             // envelope, never crash). The locked state is surfaced
-            // separately via `private_flow_field_locked` so the placeholder
+            // separately via `private_strand_field_locked` so the placeholder
             // text never contaminates `card.body` / the editable draft
             // (which would let an edit overwrite the real ciphertext). See
             // X10.2.
             None => String::new(),
         };
     }
-    flow_body_display_text(Some(value))
+    strand_body_display_text(Some(value))
 }
 
 pub(super) fn private_plaintext_display_text(plaintext: &str) -> String {
     if let Ok(parsed) = serde_json::from_str::<Value>(plaintext) {
-        return flow_body_display_text(Some(&parsed));
+        return strand_body_display_text(Some(&parsed));
     }
     plaintext.to_owned()
 }
@@ -1371,9 +1371,9 @@ pub(super) fn private_plaintext_display_text(plaintext: &str) -> String {
 /// the user can tell "encrypted, unlock to view" apart from "no content" —
 /// WITHOUT putting the placeholder text into `card.body` (which the editor
 /// copies and could re-save, corrupting the real encrypted content).
-pub(super) fn private_flow_field_locked(
+pub(super) fn private_strand_field_locked(
     ctx: Option<&MlsDecryptCtx<'_>>,
-    flow_id: &str,
+    strand_id: &str,
     field_path: &str,
     value: Option<&Value>,
 ) -> bool {
@@ -1389,7 +1389,7 @@ pub(super) fn private_flow_field_locked(
     if let Some(ctx) = ctx
         && let Some(plaintext) =
             ctx.state_store
-                .private_plaintext_for(ctx.realm_id, flow_id, field_path)
+                .private_plaintext_for(ctx.realm_id, strand_id, field_path)
         && !private_plaintext_display_text(&plaintext).trim().is_empty()
     {
         return false;
@@ -1398,8 +1398,8 @@ pub(super) fn private_flow_field_locked(
     // locked. Empty decrypted text is treated like a missing plaintext for an
     // encrypted `set`, so the UI does not collapse unreadable private content
     // into a misleading empty state.
-    if let Some(plaintext) = ctx.and_then(|ctx| decrypt_private_flow_value(ctx, value))
-        && !flow_body_display_text(Some(&plaintext)).trim().is_empty()
+    if let Some(plaintext) = ctx.and_then(|ctx| decrypt_private_strand_value(ctx, value))
+        && !strand_body_display_text(Some(&plaintext)).trim().is_empty()
     {
         return false;
     }
@@ -1407,24 +1407,24 @@ pub(super) fn private_flow_field_locked(
     true
 }
 
-/// X5.2 — resolve the display text for an author-private flow field
+/// X5.2 — resolve the display text for an author-private strand field
 /// (`body` / `synthesis`) with a 3-tier precedence:
 ///
 /// 1. **Local plaintext sidecar** (`save_private_plaintext`) — the author's own content, the ONLY
 ///    source the author can ever see for their own encrypted fields (OpenMLS refuses to decrypt the
 ///    author's own ciphertext). Stored as the JSON-serialized patch value, so we parse it back and
-///    run it through `flow_body_display_text` exactly as the decrypt tier would, keeping write+read
+///    run it through `strand_body_display_text` exactly as the decrypt tier would, keeping write+read
 ///    symmetric.
-/// 2. **Decrypt** (`private_flow_display_text`) — for ciphertext written by *other* members / other
+/// 2. **Decrypt** (`private_strand_display_text`) — for ciphertext written by *other* members / other
 ///    leaves synced in, which we *can* decrypt.
 /// 3. **Blank** — encrypted-but-unreadable; never leaks the raw envelope.
 ///
 /// `field_path` MUST match the token the writer stored under (the patch
 /// key from `collect_encryptable_private_patch_values`: `"body"` /
 /// `"synthesis"`).
-pub(super) fn private_flow_field_text(
+pub(super) fn private_strand_field_text(
     ctx: Option<&MlsDecryptCtx<'_>>,
-    flow_id: &str,
+    strand_id: &str,
     field_path: &str,
     value: Option<&Value>,
 ) -> String {
@@ -1432,7 +1432,7 @@ pub(super) fn private_flow_field_text(
     if let Some(ctx) = ctx
         && let Some(plaintext) =
             ctx.state_store
-                .private_plaintext_for(ctx.realm_id, flow_id, field_path)
+                .private_plaintext_for(ctx.realm_id, strand_id, field_path)
     {
         let text = private_plaintext_display_text(&plaintext);
         if !text.trim().is_empty() {
@@ -1440,110 +1440,110 @@ pub(super) fn private_flow_field_text(
         }
     }
     // Tiers 2 + 3: decrypt another member's ciphertext, else blank.
-    private_flow_display_text(ctx, value)
+    private_strand_display_text(ctx, value)
 }
 
-pub(super) fn card_from_flow_projection(
-    flow: &crate::api::FlowProjectionView,
+pub(super) fn card_from_strand_projection(
+    strand: &crate::api::StrandProjectionView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> KanbanCard {
-    let title = if flow.title.trim().is_empty() {
-        flow.flow_id.clone()
+    let title = if strand.title.trim().is_empty() {
+        strand.strand_id.clone()
     } else {
-        flow.title.clone()
+        strand.title.clone()
     };
     let description =
-        flow_projection_field_string(flow, flow.summary.as_deref(), &["summary", "description"])
+        strand_projection_field_string(strand, strand.summary.as_deref(), &["summary", "description"])
             .unwrap_or_default();
     let discussion_visibility =
-        flow_projection_field_string(flow, None, &["discussion_visibility", "visibility"]);
-    let locked_flow = if discussion_visibility.as_deref() == Some("locked") {
-        Some(LockedFlow {
-            flow_id_hash: flow_projection_field_string(flow, None, &["discussion_ref_hash"])
-                .unwrap_or_else(|| format!("sha256:{}", flow.flow_id)),
-            reason: flow_projection_field_string(flow, None, &["locked_reason"]).unwrap_or_else(
+        strand_projection_field_string(strand, None, &["discussion_visibility", "visibility"]);
+    let locked_strand = if discussion_visibility.as_deref() == Some("locked") {
+        Some(LockedStrand {
+            strand_id_hash: strand_projection_field_string(strand, None, &["discussion_ref_hash"])
+                .unwrap_or_else(|| format!("sha256:{}", strand.strand_id)),
+            reason: strand_projection_field_string(strand, None, &["locked_reason"]).unwrap_or_else(
                 || "Locked discussion: title and members are not disclosed.".to_owned(),
             ),
         })
     } else {
         None
     };
-    let external_visibility = if locked_flow.is_some() {
+    let external_visibility = if locked_strand.is_some() {
         "Locked discussion (lazy_link)".to_owned()
     } else {
         "No external discussions linked".to_owned()
     };
-    let history_visibility = flow_projection_field_string(flow, None, &["history_visibility"])
+    let history_visibility = strand_projection_field_string(strand, None, &["history_visibility"])
         .unwrap_or_else(|| {
-            if locked_flow.is_some() {
+            if locked_strand.is_some() {
                 "lazy_link (cross-Space)".to_owned()
             } else {
                 "Managed by board".to_owned()
             }
         });
     // X10.2: bind the private-field value exprs once so text + locked agree.
-    let flow_body_field =
-        flow_projection_private_field_value(flow, KANBAN_BODY_PRIVATE_FIELD_PATHS);
-    let flow_body_value = flow_body_field.map(|(value, _)| value);
-    let flow_body_path = flow_body_field.map(|(_, path)| path).unwrap_or("body");
-    let flow_synthesis_field =
-        flow_projection_private_field_value(flow, KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS);
-    let flow_synthesis_value = flow_synthesis_field.map(|(value, _)| value);
-    let flow_synthesis_path = flow_synthesis_field
+    let strand_body_field =
+        strand_projection_private_field_value(strand, KANBAN_BODY_PRIVATE_FIELD_PATHS);
+    let strand_body_value = strand_body_field.map(|(value, _)| value);
+    let strand_body_path = strand_body_field.map(|(_, path)| path).unwrap_or("body");
+    let strand_synthesis_field =
+        strand_projection_private_field_value(strand, KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS);
+    let strand_synthesis_value = strand_synthesis_field.map(|(value, _)| value);
+    let strand_synthesis_path = strand_synthesis_field
         .map(|(_, path)| path)
         .unwrap_or("synthesis");
     KanbanCard {
-        id: flow.flow_id.clone(),
-        rank: flow_projection_field_string(flow, flow.rank.as_deref(), &["rank"])
+        id: strand.strand_id.clone(),
+        rank: strand_projection_field_string(strand, strand.rank.as_deref(), &["rank"])
             .unwrap_or_default(),
         title: title.clone(),
         description,
-        body: private_flow_field_text(decrypt_ctx, &flow.flow_id, flow_body_path, flow_body_value),
-        body_locked: private_flow_field_locked(
+        body: private_strand_field_text(decrypt_ctx, &strand.strand_id, strand_body_path, strand_body_value),
+        body_locked: private_strand_field_locked(
             decrypt_ctx,
-            &flow.flow_id,
-            flow_body_path,
-            flow_body_value,
+            &strand.strand_id,
+            strand_body_path,
+            strand_body_value,
         ),
-        synthesis: private_flow_field_text(
+        synthesis: private_strand_field_text(
             decrypt_ctx,
-            &flow.flow_id,
-            flow_synthesis_path,
-            flow_synthesis_value,
+            &strand.strand_id,
+            strand_synthesis_path,
+            strand_synthesis_value,
         ),
-        synthesis_locked: private_flow_field_locked(
+        synthesis_locked: private_strand_field_locked(
             decrypt_ctx,
-            &flow.flow_id,
-            flow_synthesis_path,
-            flow_synthesis_value,
+            &strand.strand_id,
+            strand_synthesis_path,
+            strand_synthesis_value,
         ),
-        created_by: flow
+        created_by: strand
             .created_by
             .clone()
-            .or_else(|| flow_projection_field_string(flow, None, &["created_by", "actor_id"]))
+            .or_else(|| strand_projection_field_string(strand, None, &["created_by", "actor_id"]))
             .unwrap_or_default(),
-        created_at: flow
+        created_at: strand
             .created_at
             .clone()
-            .or_else(|| flow_projection_field_string(flow, None, &["created_at", "timestamp"]))
+            .or_else(|| strand_projection_field_string(strand, None, &["created_at", "timestamp"]))
             .unwrap_or_default(),
-        updated_at: flow
+        updated_at: strand
             .updated_at
             .clone()
-            .or_else(|| flow_projection_field_string(flow, None, &["updated_at", "edited_at"]))
+            .or_else(|| strand_projection_field_string(strand, None, &["updated_at", "edited_at"]))
             .unwrap_or_default(),
-        labels: flow_projection_labels(flow),
-        assignee: flow_projection_assignee(flow).unwrap_or_else(|| "—".to_owned()),
-        assigned_to_relations: flow_projection_assigned_to_relations(flow),
-        due: flow_projection_field_string(flow, None, &["due_at", "due"])
+        labels: strand_projection_labels(strand),
+        assignee: strand_projection_assignee(strand).unwrap_or_else(|| "—".to_owned()),
+        assigned_to_relations: strand_projection_assigned_to_relations(strand),
+        due: strand_projection_field_string(strand, None, &["due_at", "due"])
             .unwrap_or_else(|| "—".to_owned()),
-        primary_flow_id: flow.flow_id.clone(),
-        locked_flow,
+        primary_strand_id: strand.strand_id.clone(),
+        locked_strand,
         external_visibility,
         history_visibility,
-        security_encrypted: flow_projection_security_state(flow),
+        security_encrypted: strand_projection_security_state(strand),
         state: CardState::Synced,
-        lifecycle: flow_lifecycle_from_wire(&flow.state),
+        lifecycle: strand_lifecycle_from_wire(&strand.state),
     }
 }
 
@@ -1555,14 +1555,14 @@ pub(super) struct LocalCardCreate {
 }
 
 pub(super) fn local_created_card(
-    flow_id: String,
+    strand_id: String,
     title: String,
     rank: String,
     description: String,
     state: CardState,
 ) -> KanbanCard {
     KanbanCard {
-        id: flow_id.clone(),
+        id: strand_id.clone(),
         rank,
         title,
         description,
@@ -1577,13 +1577,13 @@ pub(super) fn local_created_card(
         assignee: "yougen".to_owned(),
         assigned_to_relations: Vec::new(),
         due: "unscheduled".to_owned(),
-        primary_flow_id: flow_id,
-        locked_flow: None,
+        primary_strand_id: strand_id,
+        locked_strand: None,
         external_visibility: "Not shared externally".to_owned(),
         history_visibility: "board default".to_owned(),
         security_encrypted: None,
         state,
-        lifecycle: FlowLifecycleState::Active,
+        lifecycle: StrandLifecycleState::Active,
     }
 }
 
@@ -1656,10 +1656,10 @@ pub(super) fn overlay_card_projection_with_operations_and_decrypt(
     overlay_local_card_assignment_records(columns, &state.raw_operations)
 }
 
-pub(super) fn flow_update_operations_from_events(events: &[Value]) -> Vec<RawOperationRecord> {
+pub(super) fn strand_update_operations_from_events(events: &[Value]) -> Vec<RawOperationRecord> {
     events
         .iter()
-        .filter_map(flow_update_operation_from_event)
+        .filter_map(strand_update_operation_from_event)
         .collect()
 }
 
@@ -1670,8 +1670,8 @@ pub(super) fn space_create_operations_from_events(events: &[Value]) -> Vec<RawOp
         .collect()
 }
 
-pub(super) fn flow_update_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
-    raw_operation_from_event(event, "ck.flow.update")
+pub(super) fn strand_update_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
+    raw_operation_from_event(event, "ck.strand.update")
 }
 
 pub(super) fn space_create_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
@@ -1729,7 +1729,7 @@ pub(super) fn sync_selected_card_from_columns(
     let Some(current) = selected_card.read().clone() else {
         return;
     };
-    let Some(next) = find_card_by_flow_id(columns, &current.id) else {
+    let Some(next) = find_card_by_strand_id(columns, &current.id) else {
         return;
     };
     if next != current {
@@ -1769,10 +1769,10 @@ pub(super) fn local_operation_state_for_target(
         let body = payload.get("body").or_else(|| payload.get("payload"));
         let effect = payload.get("effect");
         let matches_target = json_path_string(body, &["object", "id"])
-            .or_else(|| json_path_string(body, &["flow_id"]))
+            .or_else(|| json_path_string(body, &["strand_id"]))
             .or_else(|| json_path_string(body, &["target_ref"]))
-            .or_else(|| json_path_string(effect, &["flow_id"]))
-            .or_else(|| json_path_string(Some(payload), &["flow_id"]))
+            .or_else(|| json_path_string(effect, &["strand_id"]))
+            .or_else(|| json_path_string(Some(payload), &["strand_id"]))
             .as_deref()
             == Some(target_id);
         matches_target.then(|| raw_operation_card_state(payload))
@@ -1794,16 +1794,16 @@ pub(super) fn local_space_create_state_for_target(
 
 pub(super) fn displayed_card_state(
     card: &KanbanCard,
-    projected_flow_ids: &BTreeSet<String>,
+    projected_strand_ids: &BTreeSet<String>,
 ) -> CardState {
-    if projected_flow_ids.contains(&card.id) || projected_flow_ids.contains(&card.primary_flow_id) {
+    if projected_strand_ids.contains(&card.id) || projected_strand_ids.contains(&card.primary_strand_id) {
         CardState::Synced
     } else {
         card.state
     }
 }
 
-/// Re-apply locally-queued `ck.flow.update` patches on top of the
+/// Re-apply locally-queued `ck.strand.update` patches on top of the
 /// server projection. Without this overlay, optimistic edits to a
 /// card's title / summary / body / fields would vanish on page reload
 /// because the server projection is refetched but the local mutation
@@ -1825,7 +1825,7 @@ pub(super) fn overlay_local_card_update_records(
             if let Some(card) = column
                 .cards
                 .iter_mut()
-                .find(|card| card.id == update.flow_id)
+                .find(|card| card.id == update.strand_id)
             {
                 apply_card_update_overlay(card, &update);
             }
@@ -1859,7 +1859,7 @@ fn overlay_local_assignment_create(columns: &mut [KanbanColumn], payload: &Value
     if relation_kind != "assigned_to" {
         return;
     }
-    let Some(flow_id) = json_path_string(body, &["from_ref"]) else {
+    let Some(strand_id) = json_path_string(body, &["from_ref"]) else {
         return;
     };
     let Some(actor_id) = json_path_string(body, &["to_ref"])
@@ -1874,7 +1874,7 @@ fn overlay_local_assignment_create(columns: &mut [KanbanColumn], payload: &Value
         return;
     };
     for column in columns.iter_mut() {
-        if let Some(card) = column.cards.iter_mut().find(|card| card.id == flow_id) {
+        if let Some(card) = column.cards.iter_mut().find(|card| card.id == strand_id) {
             let mut actor_ids = card_assigned_actor_ids(card)
                 .into_iter()
                 .collect::<BTreeSet<_>>();
@@ -1951,7 +1951,7 @@ pub(super) enum PrivateFieldOverlay {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct LocalCardUpdate {
-    pub(super) flow_id: String,
+    pub(super) strand_id: String,
     pub(super) title: Option<Option<String>>,
     pub(super) summary: Option<Option<String>>,
     pub(super) body: Option<PrivateFieldOverlay>,
@@ -1967,14 +1967,14 @@ pub(super) fn local_card_update_from_raw_operation(
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "ck.flow.update" {
+    if kind != "ck.strand.update" {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {
         return None;
     }
     let body = payload.get("body").or_else(|| payload.get("payload"))?;
-    let flow_id = json_path_string(Some(body), &["flow_id"])
+    let strand_id = json_path_string(Some(body), &["strand_id"])
         .or_else(|| json_path_string(Some(body), &["target_ref"]))?;
     let patch = body.get("patch")?.as_object()?;
 
@@ -1993,7 +1993,7 @@ pub(super) fn local_card_update_from_raw_operation(
     fn extract_private_set_unset(
         op: &Value,
         decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-        flow_id: &str,
+        strand_id: &str,
         field_path: &str,
     ) -> Option<PrivateFieldOverlay> {
         let op_kind = op.get("$op").and_then(Value::as_str)?;
@@ -2003,14 +2003,14 @@ pub(super) fn local_card_update_from_raw_operation(
                 let value = op.get("value")?;
                 if value_is_mls_envelope(value) {
                     let text =
-                        private_flow_field_text(decrypt_ctx, flow_id, field_path, Some(value));
+                        private_strand_field_text(decrypt_ctx, strand_id, field_path, Some(value));
                     if !text.trim().is_empty() {
                         Some(PrivateFieldOverlay::Set(text))
                     } else {
                         Some(PrivateFieldOverlay::Locked)
                     }
                 } else {
-                    Some(PrivateFieldOverlay::Set(flow_body_display_text(Some(
+                    Some(PrivateFieldOverlay::Set(strand_body_display_text(Some(
                         value,
                     ))))
                 }
@@ -2023,11 +2023,11 @@ pub(super) fn local_card_update_from_raw_operation(
         patch: &Map<String, Value>,
         paths: &[&'static str],
         decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-        flow_id: &str,
+        strand_id: &str,
     ) -> Option<PrivateFieldOverlay> {
         paths.iter().find_map(|path| {
             let op = patch_op_for_private_path(patch, path)?;
-            extract_private_set_unset(op.as_ref(), decrypt_ctx, flow_id, path)
+            extract_private_set_unset(op.as_ref(), decrypt_ctx, strand_id, path)
         })
     }
 
@@ -2043,13 +2043,13 @@ pub(super) fn local_card_update_from_raw_operation(
         patch,
         KANBAN_BODY_PRIVATE_FIELD_PATHS,
         decrypt_ctx,
-        &flow_id,
+        &strand_id,
     );
     let synthesis = extract_private_for_paths(
         patch,
         KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS,
         decrypt_ctx,
-        &flow_id,
+        &strand_id,
     );
     let fields = patch
         .get("metadata.fields")
@@ -2063,7 +2063,7 @@ pub(super) fn local_card_update_from_raw_operation(
         });
 
     Some(LocalCardUpdate {
-        flow_id,
+        strand_id,
         title,
         summary,
         body: body_op,
@@ -2176,7 +2176,7 @@ pub(super) fn local_card_create_from_raw_operation(
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "ck.flow.create" {
+    if kind != "ck.strand.create" {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {
@@ -2185,9 +2185,9 @@ pub(super) fn local_card_create_from_raw_operation(
 
     let effect = payload.get("effect");
     let body = payload.get("body").or_else(|| payload.get("payload"));
-    let position_component = flow_position_component(body);
-    let flow_id = json_path_string(effect, &["flow_id"])
-        .or_else(|| json_path_string(body, &["flow_id"]))
+    let position_component = strand_position_component(body);
+    let strand_id = json_path_string(effect, &["strand_id"])
+        .or_else(|| json_path_string(body, &["strand_id"]))
         .or_else(|| json_path_string(body, &["object", "id"]))?;
     let board_space_id = json_path_string(effect, &["board_space_id"])
         .or_else(|| json_path_string(position_component, &["board_space_id"]))
@@ -2200,7 +2200,7 @@ pub(super) fn local_card_create_from_raw_operation(
     let title = json_path_string(effect, &["title"])
         .or_else(|| json_path_string(body, &["object", "title"]))
         .or_else(|| json_path_string(body, &["title"]))
-        .unwrap_or_else(|| flow_id.clone());
+        .unwrap_or_else(|| strand_id.clone());
     let rank = json_path_string(effect, &["rank"])
         .or_else(|| json_path_string(position_component, &["rank"]))
         .or_else(|| json_path_string(body, &["object", "fields", "rank"]))
@@ -2216,7 +2216,7 @@ pub(super) fn local_card_create_from_raw_operation(
         board_space_id,
         list_space_id,
         card: local_created_card(
-            flow_id,
+            strand_id,
             title,
             rank,
             description,
@@ -2272,13 +2272,13 @@ pub(super) fn local_space_create_from_raw_operation(
     })
 }
 
-pub(super) fn flow_position_component(body: Option<&Value>) -> Option<&Value> {
+pub(super) fn strand_position_component(body: Option<&Value>) -> Option<&Value> {
     body?
         .get("components")?
         .as_array()?
         .iter()
         .find(|component| {
-            component.get("family").and_then(Value::as_str) == Some("ck.component.flow.position.v1")
+            component.get("family").and_then(Value::as_str) == Some("ck.component.strand.position.v1")
         })
 }
 
@@ -2321,17 +2321,17 @@ pub(super) fn collection_item_private_field_value<'a>(
         .find_map(|path| value_dotted_value(object, path).map(|value| (value, *path)))
 }
 
-pub(super) fn flow_projection_private_field_value<'a>(
-    flow: &'a crate::api::FlowProjectionView,
+pub(super) fn strand_projection_private_field_value<'a>(
+    strand: &'a crate::api::StrandProjectionView,
     paths: &[&'static str],
 ) -> Option<(&'a Value, &'static str)> {
     paths.iter().find_map(|path| {
         let value = if *path == "body" {
-            flow.body.as_ref()
+            strand.body.as_ref()
         } else if let Some(field_path) = path.strip_prefix("fields.") {
-            map_dotted_value(&flow.fields, field_path)
+            map_dotted_value(&strand.fields, field_path)
         } else {
-            map_dotted_value(&flow.fields, path)
+            map_dotted_value(&strand.fields, path)
         }?;
         Some((value, *path))
     })

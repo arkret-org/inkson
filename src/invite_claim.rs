@@ -1,4 +1,4 @@
-//! Round 4 (spec a77b995) — invite-claim flow helpers.
+//! Round 4 (spec a77b995) — invite-claim strand helpers.
 //!
 //! The round-4 `ck.invite.claim` wire shape requires the claimant to
 //! produce:

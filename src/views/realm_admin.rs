@@ -1183,7 +1183,7 @@ pub fn RealmAdminPanel(
     let mut principal_admission_denied_dids = use_signal(String::new);
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut status_msg = use_signal(String::new);
-    // Capability grant/revoke Move-flow inputs (see capability-grant-card)
+    // Capability grant/revoke Move-strand inputs (see capability-grant-card)
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
     let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
@@ -1649,7 +1649,7 @@ pub fn RealmAdminPanel(
                         span { "ck.component.notary.v1" }
                     }
                     div { class: "muted",
-                        "Recovery notary mode for this Realm — controls who can re-seal a paused frontier. Read-only; modifications go through the dedicated notary-rotation flow."
+                        "Recovery notary mode for this Realm — controls who can re-seal a paused frontier. Read-only; modifications go through the dedicated notary-rotation strand."
                     }
                     div { class: "actions",
                         Button {
@@ -2693,7 +2693,7 @@ async fn run_device_revoke_from_snapshot(
 /// af1dce3 (2026-05, inside an unrelated feature commit) — the MLS Remove
 /// machinery (`crate::device_revoke::execute_mls_remove_from_snapshot`)
 /// is kept headless until the operator surface is re-wired alongside the
-/// durable `ck.device.revoke` flow (YOU-01-008 MLS Remove/Epoch 联动).
+/// durable `ck.device.revoke` strand (YOU-01-008 MLS Remove/Epoch 联动).
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
 async fn run_device_revoke_from_snapshot(
@@ -2892,5 +2892,5 @@ mod principal_admission_policy_tests {
     }
 }
 
-// (Move-flow test module removed; the wire shapes are now covered by soland's events.submit tests
+// (Move-strand test module removed; the wire shapes are now covered by soland's events.submit tests
 // and cokret-spec fixtures.)

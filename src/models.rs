@@ -41,7 +41,7 @@ pub struct IndexSearchView {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DirectConversationSummary {
     pub realm_id: String,
-    pub main_flow_id: String,
+    pub main_strand_id: String,
     #[serde(default)]
     pub binding_event_ref: Option<String>,
     pub state: String,
@@ -161,7 +161,7 @@ impl DirectConversationSummary {
     pub fn from_sdk(summary: cokret_sdk::DirectConversationSummary) -> Self {
         Self {
             realm_id: summary.realm_id.to_string(),
-            main_flow_id: summary.main_flow_id.to_string(),
+            main_strand_id: summary.main_strand_id.to_string(),
             binding_event_ref: summary.binding_event_ref.map(|value| value.to_string()),
             state: direct_conversation_binding_state_wire(summary.state).to_owned(),
         }
@@ -945,7 +945,7 @@ impl ResolveHandleView {
 }
 
 /// Structured mention node embedded in message body. Spec
-/// `models/flow-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
+/// `models/strand-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
 ///
 /// YOU-05-006: the former hand-rolled weakly-typed mirror (all-`String`
 /// fields) duplicated the SDK's authoritative strongly-typed model

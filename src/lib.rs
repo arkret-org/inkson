@@ -14,7 +14,7 @@ pub mod account_data;
 /// chain (device authorization → MLS unlock → MLS backup → recovery-missing →
 /// recommended encryption floor → recovery reminder). Replaces the scattered
 /// per-prompt suppression conditions that used to live inline in `app.rs`.
-/// See `docs/user-flows-key-lifecycle.md` §3.
+/// See `docs/user-strands-key-lifecycle.md` §3.
 pub mod account_health;
 pub mod api;
 pub mod app;
@@ -57,7 +57,7 @@ pub mod hlc;
 pub mod hpke_backup;
 pub mod i18n;
 pub mod identity_handle;
-/// Round 4 (spec a77b995) — invite-claim flow (subject_proof +
+/// Round 4 (spec a77b995) — invite-claim strand (subject_proof +
 /// binding_proof transcript + 5 terminal states UI).
 pub mod invite_claim;
 pub mod key_backup;
@@ -105,7 +105,7 @@ pub mod rank;
 /// hierarchy + projection-parsing logic is unit-testable in isolation.
 pub(crate) mod realm_tree;
 pub mod recovery_crypto;
-pub mod recovery_flow;
+pub mod recovery_strand;
 pub mod recovery_proof;
 pub mod routes;
 pub mod secure_key_store;

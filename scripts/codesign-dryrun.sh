@@ -3,7 +3,7 @@
 #
 # NOT FOR PRODUCTION USE. This script never submits to Apple, Microsoft
 # timestamp authorities, or external signing services. It records what the
-# live signing flow WOULD do given the current host environment.
+# live signing strand WOULD do given the current host environment.
 #
 # P5 (2026-05-27): POSIX sibling of scripts/codesign-dryrun.ps1.
 
@@ -124,10 +124,10 @@ ${PLATFORM_JSON}
   "notes": [
     "NOT FOR PRODUCTION USE — this is a reproducible dry-run only.",
     "No remote endpoint (Apple notarytool, MS timestamp authority, GPG keyserver) is contacted.",
-    "Real signing happens through a separate manual flow with a paid Developer ID / EV cert."
+    "Real signing happens through a separate manual strand with a paid Developer ID / EV cert."
   ]
 }
 EOF
 
 echo "Wrote codesign dry-run evidence to ${EVIDENCE_PATH}"
-echo "NOT FOR PRODUCTION USE — see SECURITY.md for the real signing flow."
+echo "NOT FOR PRODUCTION USE — see SECURITY.md for the real signing strand."

@@ -274,7 +274,7 @@ fn ContactRow(
             }
             if let Some(summary) = &contact.direct_conversation {
                 div { class: "muted mono",
-                    "{short_protocol_id(&summary.realm_id)} / {short_protocol_id(&summary.main_flow_id)}"
+                    "{short_protocol_id(&summary.realm_id)} / {short_protocol_id(&summary.main_strand_id)}"
                 }
             }
 
@@ -378,12 +378,12 @@ fn ContactRow(
                                     .await
                                     {
                                         Ok(outcome) => {
-                                            match (outcome.realm_id, outcome.main_flow_id) {
-                                                (Some(realm_id), Some(flow_id)) => {
+                                            match (outcome.realm_id, outcome.main_strand_id) {
+                                                (Some(realm_id), Some(strand_id)) => {
                                                     row_status.set(String::new());
                                                     nav.push(Route::DirectConversation {
                                                         realm_id: realm_id.to_string(),
-                                                        flow_id: flow_id.to_string(),
+                                                        strand_id: strand_id.to_string(),
                                                     });
                                                 }
                                                 _ => row_status.set(tr("contacts.dm.not_ready")),

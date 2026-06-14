@@ -10,8 +10,8 @@ pub mod avatar_uploader;
 /// localized user-facing string.
 pub mod circle_error_toast;
 /// CKP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
-/// discussion-of cross-link banner. Shared between the new-Flow form,
-/// the composer header, and the Flow detail view.
+/// discussion-of cross-link banner. Shared between the new-Strand form,
+/// the composer header, and the Strand detail view.
 pub mod circle_scope_picker;
 pub mod device_authorization_prompt;
 pub mod dismissible_popup;

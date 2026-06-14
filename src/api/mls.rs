@@ -6,7 +6,7 @@ impl CokretApi {
     /// `query_keys` and `add_member()` against it. Other key fields
     /// (one_time_keys / fallback_keys / device_signature) carry their
     /// default-test shape; soland tolerates them being placeholder when
-    /// the only consumer is the MLS Welcome flow.
+    /// the only consumer is the MLS Welcome strand.
     #[cfg(feature = "demo-crypto")]
     pub async fn publish_mls_key_package(
         &self,
@@ -20,7 +20,7 @@ impl CokretApi {
             key_packages: vec![serde_json::to_value(record)?],
             device_signature: json!({"alg": "EdDSA", "signature": "yougen-dev-signature"}),
             expires_at: None,
-            flow_id: None,
+            strand_id: None,
             mls_group_id: None,
         };
         self.post_json("_cokret/self/keys/keypackages/upload", &body)
@@ -102,7 +102,7 @@ impl CokretApi {
         request: &cokret_sdk::MimiRoomUpdateRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiRoomUpdateOutcome> {
         self.put_json(
-            &format!("_cokret/open/mimi/flows/{room_id}/update"),
+            &format!("_cokret/open/mimi/strands/{room_id}/update"),
             request,
         )
         .await
@@ -114,7 +114,7 @@ impl CokretApi {
         request: &cokret_sdk::MimiNotifyRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiNotifyOutcome> {
         self.post_json(
-            &format!("_cokret/open/mimi/flows/{room_id}/notify"),
+            &format!("_cokret/open/mimi/strands/{room_id}/notify"),
             request,
         )
         .await
@@ -126,7 +126,7 @@ impl CokretApi {
         request: &cokret_sdk::MimiSubmitMessageRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiSubmitMessageOutcome> {
         self.post_json(
-            &format!("_cokret/open/mimi/flows/{room_id}/messages"),
+            &format!("_cokret/open/mimi/strands/{room_id}/messages"),
             request,
         )
         .await
@@ -136,7 +136,7 @@ impl CokretApi {
         &self,
         room_id: &str,
     ) -> anyhow::Result<cokret_sdk::MimiGroupInfoOutcome> {
-        self.get_json(&format!("_cokret/open/mimi/flows/{room_id}/group-info"))
+        self.get_json(&format!("_cokret/open/mimi/strands/{room_id}/group-info"))
             .await
     }
 

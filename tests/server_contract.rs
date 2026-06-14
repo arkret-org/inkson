@@ -863,17 +863,17 @@ fn bare_401_does_not_count_as_session_loss() {
 #[test]
 fn decoder_handles_all_envelope_shapes() {
     // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints (e.g. the cell ref the server
-    //    is reporting the conflict on) must flow through the `details` map so the conflict UI can
+    //    is reporting the conflict on) must strand through the `details` map so the conflict UI can
     //    surface them.
     let wrapped = decode_cokret_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ck:cell:ck.component.flow.position.v1:demo"}}}"#,
+        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ck:cell:ck.component.strand.position.v1:demo"}}}"#,
     );
     assert_eq!(wrapped.code(), "expected_head_mismatch");
     assert_eq!(wrapped.retry_after_ms(), Some(250));
     assert_eq!(
         wrapped.details()["cell"],
-        "ck:cell:ck.component.flow.position.v1:demo"
+        "ck:cell:ck.component.strand.position.v1:demo"
     );
 
     // 2. Plain envelope without `request_id`.

@@ -770,7 +770,7 @@ pub fn build_plaintext_visible_services_event(
     // SDK PlaintextDataClassKind / PlaintextServiceVisibility enums).
     //
     // Spec rename (head 37ce729 / SDK 4d5a1af): privacy / service feature enums
-    // renamed `flow_body / message_body / body_only` → `flow_content /
+    // renamed `strand_body / message_body / body_only` → `strand_content /
     // message_content / content_only`. No serde alias — aggressive migration.
     use cokret_sdk::{PlaintextDataClassKind, PlaintextServiceVisibility, PlaintextVisibleService};
     let services = service_dids

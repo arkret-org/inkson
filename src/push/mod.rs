@@ -74,7 +74,7 @@ pub fn is_placeholder_push_key(key: &str) -> bool {
 
 /// Returns the request when its push key is real material, otherwise an error
 /// describing why the registration must NOT be sent. Callers in the login /
-/// settings flow should funnel through this helper before POSTing a register
+/// settings strand should funnel through this helper before POSTing a register
 /// request to a non-loopback push gateway.
 pub fn ensure_production_register_request(
     request: &ChimePushRegisterDeviceRequest,
@@ -96,7 +96,7 @@ const BLIND_WAKEUP_FORBIDDEN_KEYS: &[&str] = &[
     "device_id",
     "did",
     "event_id",
-    "flow_id",
+    "strand_id",
     "local_name",
     "message_id",
     "note",
@@ -115,7 +115,7 @@ const BLIND_WAKEUP_FORBIDDEN_KEYS: &[&str] = &[
 /// Lint a push wakeup payload before it leaves the client / bridge tests.
 ///
 /// Spec `discovery/push-notifications.md` requires blind wakeups: the payload
-/// must not carry stable identities or Realm/Space/Event/Flow ids. The delivery route
+/// must not carry stable identities or Realm/Space/Event/Strand ids. The delivery route
 /// already knows the push target; the app resolves the actual notification body
 /// locally after waking and syncing.
 pub fn validate_blind_wakeup_payload(payload: &Value) -> anyhow::Result<()> {
@@ -145,7 +145,7 @@ fn validate_blind_wakeup_payload_at(payload: &Value, path: &str) -> anyhow::Resu
             if value.starts_with("did:")
                 || value.starts_with("ck:space:")
                 || value.starts_with("ck:realm:")
-                || value.starts_with("ck:flow:")
+                || value.starts_with("ck:strand:")
                 || value.starts_with("ck:event:") =>
         {
             anyhow::bail!("blind push payload leaks stable id at {path}");
@@ -994,7 +994,7 @@ fn load_or_create_push_token_wrap_seed(
 /// token). After this call, every ciphertext stored under
 /// [`PUSH_TOKEN_ENTRY_PREFIX`]`*` becomes undecryptable, so callers
 /// should follow up with [`PushTokenBinding::store_token`] or
-/// [`PushTokenBinding::rotate`] before the next register-device flow.
+/// [`PushTokenBinding::rotate`] before the next register-device strand.
 pub fn rotate_push_token_wrap_seed(
     store: &dyn SecureKeyStore,
 ) -> Result<[u8; 32], SecureKeyStoreError> {
@@ -1130,7 +1130,7 @@ impl std::fmt::Debug for PushTokenBinding {
 /// [`build_register_request_for_actor`] — the binding effect is purely
 /// on the at-rest secret storage side.
 ///
-/// Use this in the login / settings flow when you already have an
+/// Use this in the login / settings strand when you already have an
 /// [`Arc<dyn SecureKeyStore>`] from
 /// [`crate::secure_key_store::default_secure_key_store`].
 pub fn build_register_request_with_secure_store(
@@ -1283,7 +1283,7 @@ mod tests {
             serde_json::json!({"realm_id": "ck:realm:demo"}),
             serde_json::json!({"event": {"event_id": "ck:event:1"}}),
             serde_json::json!({"sender": "did:web:alice.example"}),
-            serde_json::json!({"items": [{"flow_id": "ck:flow:demo"}]}),
+            serde_json::json!({"items": [{"strand_id": "ck:strand:demo"}]}),
             serde_json::json!({"local_name": "Alice from Ops"}),
             serde_json::json!({"remark": "private label"}),
             serde_json::json!({"opaque": "did:web:alice.example"}),

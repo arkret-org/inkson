@@ -157,7 +157,7 @@ pub fn LoginPanel(
                         is_busy.set(true);
                         auth_status.set("Opening server sign-in...".to_owned());
                         spawn(async move {
-                            match start_oidc_flow(&principal, device.trim()).await {
+                            match start_oidc_strand(&principal, device.trim()).await {
                                 Ok(()) => {
                                     persist_config(
                                         config_store,
@@ -341,7 +341,7 @@ fn compute_session_status(
     }
 }
 
-pub(crate) async fn start_oidc_flow(
+pub(crate) async fn start_oidc_strand(
     principal_server_url: &str,
     device_id: &str,
 ) -> Result<(), String> {

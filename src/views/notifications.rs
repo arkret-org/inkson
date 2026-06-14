@@ -41,7 +41,7 @@ struct Notification {
     title: String,
     body: String,
     realm_id: String,
-    flow_id: Option<String>,
+    strand_id: Option<String>,
     realm_label: Option<String>,
     kind: String,
     read: bool,
@@ -526,7 +526,7 @@ fn mark_all_notifications_read(
                         actor_id.clone(),
                         device_id.clone(),
                         target.realm_id,
-                        target.flow_id,
+                        target.strand_id,
                         target.event_id,
                     )
                 })
@@ -566,7 +566,7 @@ fn mark_all_notifications_read(
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NotificationReadTarget {
     realm_id: String,
-    flow_id: Option<String>,
+    strand_id: Option<String>,
     event_id: String,
     timestamp: String,
 }
@@ -582,7 +582,7 @@ fn read_cursor_targets(notifications: &[Notification]) -> Vec<NotificationReadTa
         }
         let target = NotificationReadTarget {
             realm_id: notification.realm_id.clone(),
-            flow_id: notification.flow_id.clone(),
+            strand_id: notification.strand_id.clone(),
             event_id,
             timestamp: notification.timestamp.clone(),
         };
@@ -985,7 +985,7 @@ fn notification_from_value(
     // T4.4 — When the watch level (not DND, not muted-short-circuit)
     // is the reason we'd drop this entry, keep it in the list with a
     // small inline hint so the user can change watch level. Muted
-    // flows still drop (they signal explicit user intent) and DND
+    // strands still drop (they signal explicit user intent) and DND
     // continues to suppress quietly during the configured window.
     let watch_hint = if decision.watch_suppressed && !decision.muted_short_circuit {
         Some(watch_hint_for_event(&eval_ctx))
@@ -1010,10 +1010,10 @@ fn notification_from_value(
         "ck:event:",
     )
     .or_else(|| id.strip_prefix("ck:event:").map(|_| id.clone()));
-    let flow_id = value_string_with_prefix(
+    let strand_id = value_string_with_prefix(
         &value,
-        &["flow_id", "target_flow_id", "space_id"],
-        "ck:flow:",
+        &["strand_id", "target_strand_id", "space_id"],
+        "ck:strand:",
     );
     let client_state = local_state
         .notification_client_state
@@ -1056,7 +1056,7 @@ fn notification_from_value(
         title,
         body,
         realm_id,
-        flow_id,
+        strand_id,
         realm_label,
         kind: kind.clone(),
         read: value_bool(&value, "read").unwrap_or(client_state.read),
@@ -1190,8 +1190,8 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
         event_kind,
         notification_type,
         realm_id: value_string(value, &["realm_id"]).unwrap_or_default(),
-        flow_id: value_string(value, &["flow_id"]),
-        flow_track: value_string(value, &["flow_track", "track_name"]),
+        strand_id: value_string(value, &["strand_id"]),
+        strand_track: value_string(value, &["strand_track", "track_name"]),
         // Canonical notification attribution comes from the EventEnvelope
         // actor_id. Deprecated sender/sender_did wire names are ignored in
         // the default protocol path.
@@ -1413,7 +1413,7 @@ mod tests {
             "notification_type": "mention",
             "actor_id": "did:web:alice.example",
             "realm_id": "ck:realm:e2ee",
-            "flow_id": "ck:flow:1",
+            "strand_id": "ck:strand:1",
             "track_name": "discussion",
             "watch_state": "participating",
             "encrypted": true,
@@ -1423,7 +1423,7 @@ mod tests {
 
         assert_eq!(ctx.event_kind, "ck.message.create");
         assert_eq!(ctx.notification_type, "mention");
-        assert_eq!(ctx.flow_track.as_deref(), Some("discussion"));
+        assert_eq!(ctx.strand_track.as_deref(), Some("discussion"));
         assert_eq!(ctx.watch_level, Some(WatchLevel::Participating));
         assert!(ctx.is_e2ee);
         assert!(!ctx.local_decrypted);
@@ -1448,14 +1448,14 @@ mod tests {
     #[test]
     fn read_cursor_targets_pick_latest_event_per_realm() {
         let realm_a = "ck:realm:01904100-0000-7000-8000-000000000002";
-        let flow_a = "ck:flow:01904100-0000-7000-8000-000000000003";
+        let strand_a = "ck:strand:01904100-0000-7000-8000-000000000003";
         let realm_b = "ck:realm:01904100-0000-7000-8000-000000000004";
         let raw = vec![
             json!({
                 "notification_id": "old-a",
                 "notification_type": "message",
                 "realm_id": realm_a,
-                "flow_id": flow_a,
+                "strand_id": strand_a,
                 "source_event_id": "ck:event:01904100-0000-7000-8000-000000000005",
                 "timestamp": "2026-05-29T00:00:00Z",
             }),
@@ -1463,7 +1463,7 @@ mod tests {
                 "notification_id": "new-a",
                 "notification_type": "message",
                 "realm_id": realm_a,
-                "flow_id": flow_a,
+                "strand_id": strand_a,
                 "event_id": "ck:event:01904100-0000-7000-8000-000000000006",
                 "timestamp": "2026-05-29T00:00:01Z",
             }),
@@ -1494,7 +1494,7 @@ mod tests {
             target_a.event_id,
             "ck:event:01904100-0000-7000-8000-000000000006"
         );
-        assert_eq!(target_a.flow_id.as_deref(), Some(flow_a));
+        assert_eq!(target_a.strand_id.as_deref(), Some(strand_a));
         let target_b = targets
             .iter()
             .find(|target| target.realm_id == realm_b)
@@ -1503,7 +1503,7 @@ mod tests {
             target_b.event_id,
             "ck:event:01904100-0000-7000-8000-000000000007"
         );
-        assert!(target_b.flow_id.is_none());
+        assert!(target_b.strand_id.is_none());
     }
 
     #[test]

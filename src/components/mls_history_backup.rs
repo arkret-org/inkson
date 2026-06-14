@@ -208,7 +208,7 @@ fn upsert_mls_history_backup_job(
 /// Hook: call after a `ck.mls.commit` was ACCEPTED by the server and the local
 /// MLS snapshot advanced (persist-on-accept), or after a Welcome application
 /// persisted a fresh snapshot. Debounced + deduped; no-op until the 24-word
-/// Recovery Key flow has configured server-side recovery
+/// Recovery Key strand has configured server-side recovery
 /// (`mls_recovery_backup_configured`), matching the sidecar backup gate.
 pub(crate) fn schedule_mls_history_backup_after_commit(
     base_url: String,

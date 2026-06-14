@@ -11,7 +11,7 @@ use crate::components::{
 };
 use crate::hlc::Hlc;
 use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState, RawOperationRecord};
-use crate::move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id};
+use crate::move_builder::{StrandPositionEffect, StrandPositionExpectation, strand_position_cell_id};
 use crate::operation::{trim_realm_id, uuid_v7};
 use crate::rank::{RankError, rank_for_drop};
 use crate::routes::Route;
@@ -458,7 +458,7 @@ pub fn KanbanPanel(
     let route = use_route::<Route>();
     let local_realm_id = local_projection_realm_id(&selected_realm_id, &projection_realm_id);
     // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
-    // its `/task/<flow>` extension). Seeding `selected_board_space_id`
+    // its `/task/<strand>` extension). Seeding `selected_board_space_id`
     // from the route — instead of always `board_options.first()` — is
     // what makes a refresh restore the exact board the user had open,
     // including when the open card is a local draft the server
@@ -480,7 +480,7 @@ pub fn KanbanPanel(
         let initial_columns =
             if initial_columns.is_empty() && !initial_board_space_id.trim().is_empty() {
                 // Empty server projections here (local raw-op overlay
-                // only): no encrypted flow cards are produced, so no
+                // only): no encrypted strand cards are produced, so no
                 // decrypt context is required.
                 let (local_columns, ..) = columns_from_lifecycle_projection_with_local(
                     &[],
@@ -510,7 +510,7 @@ pub fn KanbanPanel(
     let mut board_view_id = use_signal(String::new);
     let mut lifecycle_container_projection =
         use_signal(Vec::<crate::api::SpaceContainerProjectionView>::new);
-    let mut lifecycle_flow_projection = use_signal(Vec::<crate::api::FlowProjectionView>::new);
+    let mut lifecycle_strand_projection = use_signal(Vec::<crate::api::StrandProjectionView>::new);
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
     // carries no grants for the actor the gate stays open (yougen still
@@ -584,18 +584,18 @@ pub fn KanbanPanel(
     };
 
     {
-        let routed_flow_id = route_card_flow_id(&route);
+        let routed_strand_id = route_card_strand_id(&route);
         use_effect(move || {
-            let Some(flow_id) = routed_flow_id.clone() else {
+            let Some(strand_id) = routed_strand_id.clone() else {
                 return;
             };
             if selected_card()
                 .as_ref()
-                .is_some_and(|card| card_matches_flow_id(card, &flow_id))
+                .is_some_and(|card| card_matches_strand_id(card, &strand_id))
             {
                 return;
             }
-            if let Some(card) = find_card_by_flow_id(&columns.read(), &flow_id) {
+            if let Some(card) = find_card_by_strand_id(&columns.read(), &strand_id) {
                 let draft = card_detail_draft_from_card(&card);
                 card_edit_title.set(draft.title);
                 card_edit_description.set(draft.description);
@@ -619,7 +619,7 @@ pub fn KanbanPanel(
                 card_detail_actions_open.set(false);
                 let routed_tab = card_detail_tab_from_current_url();
                 if routed_tab == CardDetailContentTab::Discussion {
-                    card_detail_discussion_mounted_for.set(Some(card.primary_flow_id.clone()));
+                    card_detail_discussion_mounted_for.set(Some(card.primary_strand_id.clone()));
                 }
                 card_detail_tab.set(routed_tab);
                 card_synthesis_history_open_id.set(None);
@@ -631,7 +631,7 @@ pub fn KanbanPanel(
 
     // Route board → selection sync. The board id is authoritative when
     // it is present in the URL (`/kanban/<realm>/board/<board>` and the
-    // `/task/<flow>` extension). This effect keeps
+    // `/task/<strand>` extension). This effect keeps
     // `selected_board_space_id` aligned with the route across in-app
     // navigations (back/forward, arriving from another KanbanPanel) and
     // re-projects the columns from the cached lifecycle snapshot so the
@@ -653,9 +653,9 @@ pub fn KanbanPanel(
             }
             selected_board_space_id.set(board_id.clone());
             let containers = lifecycle_container_projection();
-            let flows = lifecycle_flow_projection();
+            let strands = lifecycle_strand_projection();
             let raw_operations = state_store.read().load().raw_operations;
-            if containers.is_empty() && flows.is_empty() && raw_operations.is_empty() {
+            if containers.is_empty() && strands.is_empty() && raw_operations.is_empty() {
                 return;
             }
             let decrypt_store = state_store.read();
@@ -668,7 +668,7 @@ pub fn KanbanPanel(
             let (projected_columns, options, projected_board_id) =
                 columns_from_lifecycle_projection_with_local(
                     &containers,
-                    &flows,
+                    &strands,
                     &board_id,
                     &raw_operations,
                     &route_local_realm_id,
@@ -694,7 +694,7 @@ pub fn KanbanPanel(
     }
 
     // Route → board reconciler. When the URL points at a card-detail
-    // page (`/kanban/<realm>/task/<flow>`) and the card's home board
+    // page (`/kanban/<realm>/task/<strand>`) and the card's home board
     // is NOT the currently-selected board, switch the board and
     // re-project the columns from the cached lifecycle snapshot. This
     // handles the case where the user arrives at the card-detail URL
@@ -703,34 +703,34 @@ pub fn KanbanPanel(
     // previous selection) — the bootstrap fetch may have already
     // picked `board_options.first()` before this reconciler runs, so
     // we override here whenever the URL's task_id resolves to a known
-    // flow with a different `board_space_id`.
+    // strand with a different `board_space_id`.
     {
-        let routed_flow_id = route_card_flow_id(&route);
+        let routed_strand_id = route_card_strand_id(&route);
         let route_local_realm_id = local_realm_id.clone();
         let decrypt_realm_id = selected_realm_id.clone();
         let decrypt_actor = account_did.clone();
         let decrypt_device = device_id.clone();
         use_effect(move || {
-            let Some(flow_id) = routed_flow_id.clone() else {
+            let Some(strand_id) = routed_strand_id.clone() else {
                 return;
             };
-            let flow_items = lifecycle_flow_projection.read();
-            let Some(flow_board) = flow_items
+            let strand_items = lifecycle_strand_projection.read();
+            let Some(strand_board) = strand_items
                 .iter()
-                .find(|f| f.flow_id == flow_id)
+                .find(|f| f.strand_id == strand_id)
                 .and_then(|f| f.board_space_id.clone())
             else {
                 return;
             };
-            if selected_board_space_id() == flow_board {
+            if selected_board_space_id() == strand_board {
                 return;
             }
             // Re-project columns for the resolved board so the existing
             // card-detail effect (above) can find the card on the next
             // render cycle.
             let containers = lifecycle_container_projection.read().clone();
-            let flows = flow_items.clone();
-            drop(flow_items);
+            let strands = strand_items.clone();
+            drop(strand_items);
             let raw_operations = state_store.read().load().raw_operations;
             let decrypt_store = state_store.read();
             let decrypt_ctx = MlsDecryptCtx {
@@ -742,8 +742,8 @@ pub fn KanbanPanel(
             let (projected_columns, options, projected_board_id) =
                 columns_from_lifecycle_projection_with_local(
                     &containers,
-                    &flows,
-                    &flow_board,
+                    &strands,
+                    &strand_board,
                     &raw_operations,
                     &route_local_realm_id,
                     Some(&decrypt_ctx),
@@ -801,7 +801,7 @@ pub fn KanbanPanel(
             let view = auto_board_view_id();
             if view.trim().is_empty() {
                 board_status.set(
-                    "No board View selected; using Space-container/Flow projections and local queue only"
+                    "No board View selected; using Space-container/Strand projections and local queue only"
                         .to_owned(),
                 );
                 return;
@@ -818,7 +818,7 @@ pub fn KanbanPanel(
             };
             let remote_update_operations = events_res
                 .as_ref()
-                .map(|resp| flow_update_operations_from_events(&resp.events))
+                .map(|resp| strand_update_operations_from_events(&resp.events))
                 .unwrap_or_default();
             match with_authed_api(&base, api_token, |api| async move {
                 api.collection_projection(&view).await
@@ -874,7 +874,7 @@ pub fn KanbanPanel(
 
     // F-KANBAN-LIVE-1: refresh the board projection only when account
     // subscribe advances. The global SyncEngine owns the liveness channel;
-    // this panel must not poll `spaces` / `flows` / `events` on a timer while
+    // this panel must not poll `spaces` / `strands` / `events` on a timer while
     // no durable event has arrived.
     let mut live_refresh_key_seen = use_signal({
         let initial_realm_id = local_realm_id.clone();
@@ -926,7 +926,7 @@ pub fn KanbanPanel(
                 };
                 let remote_update_operations = events_res
                     .as_ref()
-                    .map(|resp| flow_update_operations_from_events(&resp.events))
+                    .map(|resp| strand_update_operations_from_events(&resp.events))
                     .unwrap_or_default();
                 if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
                     api.collection_projection(&view_for_call).await
@@ -965,10 +965,10 @@ pub fn KanbanPanel(
                     })
                     .await
                 };
-                let flows_res = {
+                let strands_res = {
                     let realm_id = lifecycle_realm_id.clone();
                     with_authed_api(&base, api_token.clone(), |api| async move {
-                        api.list_flow_projections(&realm_id).await
+                        api.list_strand_projections(&realm_id).await
                     })
                     .await
                 };
@@ -979,14 +979,14 @@ pub fn KanbanPanel(
                     })
                     .await
                 };
-                if containers_res.is_ok() || flows_res.is_ok() {
+                if containers_res.is_ok() || strands_res.is_ok() {
                     let container_items = containers_res
                         .ok()
                         .map(|resp| resp.items)
                         .unwrap_or_default();
-                    let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
+                    let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
                     let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                    let remote_update_operations = flow_update_operations_from_events(&event_items);
+                    let remote_update_operations = strand_update_operations_from_events(&event_items);
                     let remote_space_create_operations =
                         space_create_operations_from_events(&event_items);
                     let container_items = containers_with_local_space_creates(
@@ -995,7 +995,7 @@ pub fn KanbanPanel(
                         &lifecycle_local_realm_id,
                     );
                     lifecycle_container_projection.set(container_items.clone());
-                    lifecycle_flow_projection.set(flow_items.clone());
+                    lifecycle_strand_projection.set(strand_items.clone());
                     let current_board = selected_board_space_id();
                     let raw_operations = state_store.read().load().raw_operations;
                     let decrypt_store = state_store.read();
@@ -1008,7 +1008,7 @@ pub fn KanbanPanel(
                     let (projected_columns, options, projected_board_id) =
                         columns_from_lifecycle_projection_with_local(
                             &container_items,
-                            &flow_items,
+                            &strand_items,
                             &current_board,
                             &raw_operations,
                             &lifecycle_local_realm_id,
@@ -1048,8 +1048,8 @@ pub fn KanbanPanel(
         });
     });
 
-    // Hydrate Space-container / Flow lifecycle state from the soland
-    // `/_cokret/self/projection/{spaces|flows}` endpoints so
+    // Hydrate Space-container / Strand lifecycle state from the soland
+    // `/_cokret/self/projection/{spaces|strands}` endpoints so
     // an Archive accepted on the server stays archived after a page
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
     // columns/cards in their `Active` default and the user is no worse
@@ -1057,19 +1057,19 @@ pub fn KanbanPanel(
     let mut lifecycle_bootstrapped_for = use_signal(String::new);
     let lifecycle_realm_id = local_realm_id.clone();
     // When the kanban panel mounts on a card-detail URL
-    // (`/kanban/<realm>/task/<flow>`), the user typically came from a
+    // (`/kanban/<realm>/task/<strand>`), the user typically came from a
     // different shell (e.g. `/spaces/<realm>` with the Board tab open)
     // and the freshly-mounted panel has no `selected_board_space_id`
     // yet. Without a hint, `columns_from_lifecycle_projection` falls
     // back to `board_options.first()`, which may not be the board that
-    // actually contains the card. Capture the routed flow id so the
+    // actually contains the card. Capture the routed strand id so the
     // lifecycle fetch below can resolve the card's home board.
-    let lifecycle_routed_flow_id = route_card_flow_id(&route);
+    let lifecycle_routed_strand_id = route_card_strand_id(&route);
     if !lifecycle_realm_id.is_empty() && lifecycle_bootstrapped_for() != lifecycle_realm_id {
         lifecycle_bootstrapped_for.set(lifecycle_realm_id.clone());
         let base = base_url.clone();
         let lifecycle_token = token;
-        let lifecycle_routed_flow_id = lifecycle_routed_flow_id.clone();
+        let lifecycle_routed_strand_id = lifecycle_routed_strand_id.clone();
         let lifecycle_local_realm_id = local_realm_id.clone();
         let decrypt_realm_id = selected_realm_id.clone();
         let decrypt_actor = account_did.clone();
@@ -1084,10 +1084,10 @@ pub fn KanbanPanel(
                 })
                 .await
             };
-            let flows_res = {
+            let strands_res = {
                 let realm_id = realm_id.clone();
                 with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.list_flow_projections(&realm_id).await
+                    api.list_strand_projections(&realm_id).await
                 })
                 .await
             };
@@ -1101,15 +1101,15 @@ pub fn KanbanPanel(
             let mut applied = 0_usize;
             let mut server_projection_applied = false;
             let containers_ok = containers_res.is_ok();
-            let flows_ok = flows_res.is_ok();
-            if containers_ok || flows_ok {
+            let strands_ok = strands_res.is_ok();
+            if containers_ok || strands_ok {
                 let container_items = containers_res
                     .ok()
                     .map(|resp| resp.items)
                     .unwrap_or_default();
-                let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
+                let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
                 let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                let remote_update_operations = flow_update_operations_from_events(&event_items);
+                let remote_update_operations = strand_update_operations_from_events(&event_items);
                 let remote_space_create_operations =
                     space_create_operations_from_events(&event_items);
                 let container_items = containers_with_local_space_creates(
@@ -1118,19 +1118,19 @@ pub fn KanbanPanel(
                     &lifecycle_local_realm_id,
                 );
                 lifecycle_container_projection.set(container_items.clone());
-                lifecycle_flow_projection.set(flow_items.clone());
+                lifecycle_strand_projection.set(strand_items.clone());
                 let current_board = selected_board_space_id();
                 // If the user landed on a card-detail URL and no board
                 // is selected yet, resolve the card's home board from
-                // the just-fetched flow projection so the matching
+                // the just-fetched strand projection so the matching
                 // board is loaded (instead of `board_options.first()`).
                 let current_board = if current_board.trim().is_empty() {
-                    lifecycle_routed_flow_id
+                    lifecycle_routed_strand_id
                         .as_deref()
-                        .and_then(|flow_id| {
-                            flow_items
+                        .and_then(|strand_id| {
+                            strand_items
                                 .iter()
-                                .find(|f| f.flow_id == flow_id)
+                                .find(|f| f.strand_id == strand_id)
                                 .and_then(|f| f.board_space_id.clone())
                         })
                         .unwrap_or(current_board)
@@ -1148,7 +1148,7 @@ pub fn KanbanPanel(
                 let (projected_columns, options, projected_board_id) =
                     columns_from_lifecycle_projection_with_local(
                         &container_items,
-                        &flow_items,
+                        &strand_items,
                         &current_board,
                         &raw_operations,
                         &lifecycle_local_realm_id,
@@ -1194,11 +1194,11 @@ pub fn KanbanPanel(
                             }
                         }
                     }
-                    for view in &flow_items {
+                    for view in &strand_items {
                         for col in cols.iter_mut() {
-                            if let Some(card) = col.cards.iter_mut().find(|c| c.id == view.flow_id)
+                            if let Some(card) = col.cards.iter_mut().find(|c| c.id == view.strand_id)
                             {
-                                let new_lifecycle = flow_lifecycle_from_wire(&view.state);
+                                let new_lifecycle = strand_lifecycle_from_wire(&view.state);
                                 if card.lifecycle != new_lifecycle {
                                     card.lifecycle = new_lifecycle;
                                     applied += 1;
@@ -1382,9 +1382,9 @@ pub fn KanbanPanel(
         .into_iter()
         .map(|view| view.space_id)
         .collect::<BTreeSet<_>>();
-    let projected_flow_ids = lifecycle_flow_projection()
+    let projected_strand_ids = lifecycle_strand_projection()
         .into_iter()
-        .map(|view| view.flow_id)
+        .map(|view| view.strand_id)
         .collect::<BTreeSet<_>>();
     rsx! {
         div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
@@ -1420,7 +1420,7 @@ pub fn KanbanPanel(
                                                     board_route_realm_id_for_select.clone(),
                                                     local_realm_id_for_select.clone(),
                                                     lifecycle_container_projection,
-                                                    lifecycle_flow_projection,
+                                                    lifecycle_strand_projection,
                                                     columns,
                                                     adding_card_to,
                                                     board_status,
@@ -1493,7 +1493,7 @@ pub fn KanbanPanel(
                                                         board_route_realm_id_for_empty.clone(),
                                                         local_realm_id_for_empty.clone(),
                                                         lifecycle_container_projection,
-                                                        lifecycle_flow_projection,
+                                                        lifecycle_strand_projection,
                                                         columns,
                                                         adding_card_to,
                                                         board_status,
@@ -1538,7 +1538,7 @@ pub fn KanbanPanel(
                                                                 board_route_realm_id_for_option.clone(),
                                                                 local_realm_id_for_option.clone(),
                                                                 lifecycle_container_projection,
-                                                                lifecycle_flow_projection,
+                                                                lifecycle_strand_projection,
                                                                 columns,
                                                                 adding_card_to,
                                                                 board_status,
@@ -1822,7 +1822,7 @@ pub fn KanbanPanel(
                                                     };
                                                     let remote_update_operations = events_res
                                                         .as_ref()
-                                                        .map(|resp| flow_update_operations_from_events(&resp.events))
+                                                        .map(|resp| strand_update_operations_from_events(&resp.events))
                                                         .unwrap_or_default();
                                                     match with_authed_api(&base, api_token, |api| async move {
                                                         api.collection_projection(&view).await
@@ -2080,7 +2080,7 @@ pub fn KanbanPanel(
                                     next_rank: None,
                                 };
                                 let view_id_for_rebase = board_view_id();
-                                dispatch_flow_position_move(
+                                dispatch_strand_position_move(
                                     base.clone(),
                                     token,
                                     realm.clone(),
@@ -2185,7 +2185,7 @@ pub fn KanbanPanel(
                     .cards
                     .iter()
                     .enumerate()
-                    .filter(|(_, c)| c.lifecycle == FlowLifecycleState::Active)
+                    .filter(|(_, c)| c.lifecycle == StrandLifecycleState::Active)
                 {
                             div {
                                 key: "{card.id}",
@@ -2238,7 +2238,7 @@ pub fn KanbanPanel(
                                             next_rank: Some(this_rank.clone()),
                                         };
                                         let view_id_for_rebase = board_view_id();
-                                        dispatch_flow_position_move(
+                                        dispatch_strand_position_move(
                                             base.clone(),
                                             token,
                                             realm.clone(),
@@ -2305,15 +2305,15 @@ pub fn KanbanPanel(
                                     }
                                 },
                                 div { class: "event-head",
-                                    span { class: "entity-title flow-title-with-security",
+                                    span { class: "entity-title strand-title-with-security",
                                         SecurityStateBadge {
                                             encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted_or_secure),
                                             compact: true,
-                                            test_id: Some("flow-card-security-state".to_owned()),
+                                            test_id: Some("strand-card-security-state".to_owned()),
                                         }
-                                        span { class: "flow-title-text", "{card.title}" }
+                                        span { class: "strand-title-text", "{card.title}" }
                                     }
-                                    WriteStateBadge { state: displayed_card_state(card, &projected_flow_ids) }
+                                    WriteStateBadge { state: displayed_card_state(card, &projected_strand_ids) }
                                 }
                                 div { class: "actions",
                                     for label in &card.labels {
@@ -2324,15 +2324,15 @@ pub fn KanbanPanel(
                                 div { class: "card-meta", "assignees {card.assignee} / due {card.due}" }
                                 div { class: "board-card-footer",
                                     {
-                                        let gate = capability_gate_for_flow(
+                                        let gate = capability_gate_for_strand(
                                             &capability_engine,
                                             &account_did,
                                             &selected_board_space_id(),
                                             &card.id,
-                                            "ck.flow.archive",
+                                            "ck.strand.archive",
                                         );
                                         let title_text = if gate.enabled {
-                                            "Archive this card (ck.flow.archive)".to_owned()
+                                            "Archive this card (ck.strand.archive)".to_owned()
                                         } else {
                                             format!("Archive gated: {}", gate.reason)
                                         };
@@ -2342,7 +2342,7 @@ pub fn KanbanPanel(
                                                 variant: ButtonVariant::Secondary,
                                                 class: "kanban-inline-action",
                                                 "data-testid": "card-archive-button",
-                                                "data-flow-id": "{card.id}",
+                                                "data-strand-id": "{card.id}",
                                                 "data-cap-gate": testid_state,
                                                 disabled: !gate.enabled,
                                                 title: title_text,
@@ -2350,16 +2350,16 @@ pub fn KanbanPanel(
                                                     let base = base_url.clone();
                                                     let realm = selected_realm_id.clone();
                                                     let actor = account_did.clone();
-                                                    let flow_id = card.id.clone();
+                                                    let strand_id = card.id.clone();
                                                     move |evt: dioxus::events::MouseEvent| {
                                                         evt.stop_propagation();
-                                                        dispatch_flow_lifecycle(
+                                                        dispatch_strand_lifecycle(
                                                             base.clone(),
                                                             token,
                                                             realm.clone(),
                                                             actor.clone(),
-                                                            flow_id.clone(),
-                                                            FlowLifecycleState::Archived,
+                                                            strand_id.clone(),
+                                                            StrandLifecycleState::Archived,
                                                             columns,
                                                             board_status,
                                                         );
@@ -2373,21 +2373,21 @@ pub fn KanbanPanel(
                             }
                         }
 
-                        // R11: `redacted` clears Flow content but retains the
-                        // envelope/audit trail (flow.schema.json terminal). The
+                        // R11: `redacted` clears Strand content but retains the
+                        // envelope/audit trail (strand.schema.json terminal). The
                         // UI MUST surface a "[消息已撤回]" placeholder rather than
-                        // hiding the Flow, so the card stays visible without
+                        // hiding the Strand, so the card stays visible without
                         // leaking its (now-cleared) title/body.
                         for redacted_card in column
                             .cards
                             .iter()
-                            .filter(|c| c.lifecycle == FlowLifecycleState::Redacted)
+                            .filter(|c| c.lifecycle == StrandLifecycleState::Redacted)
                         {
                             div {
                                 key: "{redacted_card.id}",
                                 class: "event board-card board-card-redacted",
                                 "data-testid": "kanban-card-redacted",
-                                "data-flow-id": "{redacted_card.id}",
+                                "data-strand-id": "{redacted_card.id}",
                                 div { class: "event-head",
                                     span { class: "entity-title muted", "{crate::i18n::tr(\"timeline.redacted\")}" }
                                 }
@@ -2417,9 +2417,9 @@ pub fn KanbanPanel(
                                         "aria-label": "Save card",
                                         onclick: {
                                             // Card create submits a real
-                                            // ck.flow.create envelope. The
+                                            // ck.strand.create envelope. The
                                             // initial Board/List placement
-                                            // rides in the flow.position
+                                            // rides in the strand.position
                                             // component so the projection can
                                             // materialise it in this column.
                                             let base = base_url.clone();
@@ -2436,7 +2436,7 @@ pub fn KanbanPanel(
                                                     board_status.set("select or create a Board Space before adding cards".to_owned());
                                                     return;
                                                 }
-                                                let flow_id = format!("ck:flow:{}", uuid_v7());
+                                                let strand_id = format!("ck:strand:{}", uuid_v7());
                                                 // Insert the new card at the end of the column.
                                                 // Look up the column's current tail rank and ask
                                                 // `rank_between` for a strictly-greater rank. If
@@ -2453,7 +2453,7 @@ pub fn KanbanPanel(
                                                 )
                                                 .unwrap_or_else(|_| "U".to_owned());
                                                 let card = local_created_card(
-                                                    flow_id.clone(),
+                                                    strand_id.clone(),
                                                     title.clone(),
                                                     rank.clone(),
                                                     LOCAL_PENDING_CARD_DESCRIPTION.to_owned(),
@@ -2463,20 +2463,20 @@ pub fn KanbanPanel(
                                                     col.cards.push(card);
                                                 }
                                                 let value = json!({
-                                                    "flow_id": flow_id,
+                                                    "strand_id": strand_id,
                                                     "board_space_id": board_space_id,
                                                     "list_space_id": col_id,
                                                     "title": title,
                                                     "rank": rank,
-                                                    "flow_kind": "card",
+                                                    "strand_kind": "card",
                                                 });
                                                 submit_kanban_move(
                                                     base.clone(),
                                                     token,
                                                     realm.clone(),
                                                     actor.clone(),
-                                                    flow_id.clone(),
-                                                    "ck.flow.create",
+                                                    strand_id.clone(),
+                                                    "ck.strand.create",
                                                     value,
                                                     selected_scope_security_encrypted,
                                                     columns,
@@ -2649,11 +2649,11 @@ pub fn KanbanPanel(
                 }
             }
 
-            // Archived cards drawer — Flow lifecycle `archived` state.
-            // Cards appear here after `ck.flow.archive` is accepted and
+            // Archived cards drawer — Strand lifecycle `archived` state.
+            // Cards appear here after `ck.strand.archive` is accepted and
             // are removed from the column above. Each row carries the
             // column title (where it came from) + a Restore button that
-            // submits `ck.flow.restore` (SDK reducer enforces
+            // submits `ck.strand.restore` (SDK reducer enforces
             // `state == archived` per common-fields.md §5.1).
             {
                 #[derive(Clone)]
@@ -2667,7 +2667,7 @@ pub fn KanbanPanel(
                         let col_title = col.title.clone();
                         col.cards
                             .iter()
-                            .filter(|c| c.lifecycle == FlowLifecycleState::Archived)
+                            .filter(|c| c.lifecycle == StrandLifecycleState::Archived)
                             .cloned()
                             .map(move |card| ArchivedCardRow {
                                 card,
@@ -2692,25 +2692,25 @@ pub fn KanbanPanel(
                             for row in archived_cards.iter() {
                                 div { class: "event", "data-testid": "kanban-archived-card-row",
                                     div { class: "event-head",
-                                        span { class: "entity-title flow-title-with-security",
+                                        span { class: "entity-title strand-title-with-security",
                                             SecurityStateBadge {
                                                 encrypted: row.card.security_encrypted.unwrap_or(selected_scope_security_encrypted_or_secure),
                                                 compact: true,
-                                                test_id: Some("flow-card-security-state".to_owned()),
+                                                test_id: Some("strand-card-security-state".to_owned()),
                                             }
-                                            span { class: "flow-title-text", "{row.card.title}" }
+                                            span { class: "strand-title-text", "{row.card.title}" }
                                         }
                                         span { "from list: {row.column_title}" }
                                         {
-                                            let gate = capability_gate_for_flow(
+                                            let gate = capability_gate_for_strand(
                                                 &capability_engine,
                                                 &account_did,
                                                 &selected_board_space_id(),
                                                 &row.card.id,
-                                                "ck.flow.restore",
+                                                "ck.strand.restore",
                                             );
                                             let title_text = if gate.enabled {
-                                                "Restore this card (ck.flow.restore)".to_owned()
+                                                "Restore this card (ck.strand.restore)".to_owned()
                                             } else {
                                                 format!("Restore gated: {}", gate.reason)
                                             };
@@ -2719,7 +2719,7 @@ pub fn KanbanPanel(
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     "data-testid": "card-restore-button",
-                                                    "data-flow-id": "{row.card.id}",
+                                                    "data-strand-id": "{row.card.id}",
                                                     "data-cap-gate": testid_state,
                                                     disabled: !gate.enabled,
                                                     title: title_text,
@@ -2727,15 +2727,15 @@ pub fn KanbanPanel(
                                                         let base = base_url.clone();
                                                         let realm = selected_realm_id.clone();
                                                         let actor = account_did.clone();
-                                                        let flow_id = row.card.id.clone();
+                                                        let strand_id = row.card.id.clone();
                                                         move |_| {
-                                                            dispatch_flow_lifecycle(
+                                                            dispatch_strand_lifecycle(
                                                                 base.clone(),
                                                                 token,
                                                                 realm.clone(),
                                                                 actor.clone(),
-                                                                flow_id.clone(),
-                                                                FlowLifecycleState::Active,
+                                                                strand_id.clone(),
+                                                                StrandLifecycleState::Active,
                                                                 columns,
                                                                 board_status,
                                                             );
@@ -2805,7 +2805,7 @@ pub fn KanbanPanel(
                         String::new()
                     };
                     let active_detail_tab = card_detail_tab();
-                    let card_link_path = flow_detail_deep_link_path_with_tab(
+                    let card_link_path = strand_detail_deep_link_path_with_tab(
                         &selected_realm_id,
                         &card.id,
                         active_detail_tab,
@@ -2834,7 +2834,7 @@ pub fn KanbanPanel(
                         == CardDetailContentTab::Discussion
                         || card_detail_discussion_mounted_for()
                             .as_deref()
-                            .is_some_and(|flow_id| flow_id == card.primary_flow_id.as_str());
+                            .is_some_and(|strand_id| strand_id == card.primary_strand_id.as_str());
                     let action_menu_class = if editing_card_detail() {
                         "card-detail-action-menu is-editing"
                     } else {
@@ -2936,11 +2936,11 @@ pub fn KanbanPanel(
                                             SecurityStateBadge {
                                                 encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted_or_secure),
                                                 compact: true,
-                                                test_id: Some("flow-detail-security-state".to_owned()),
+                                                test_id: Some("strand-detail-security-state".to_owned()),
                                             }
                                             h2 { "{card.title}" }
                                             div { class: "card-detail-title-meta",
-                                                WriteStateBadge { state: displayed_card_state(card, &projected_flow_ids) }
+                                                WriteStateBadge { state: displayed_card_state(card, &projected_strand_ids) }
                                                 for label in &card.labels {
                                                     span { class: "badge", "{label}" }
                                                 }
@@ -2952,13 +2952,13 @@ pub fn KanbanPanel(
                                             variant: ButtonVariant::Secondary,
                                             class: "card-detail-header-button",
                                             "data-testid": "card-detail-share-link-button",
-                                            "aria-label": "Copy flow link",
-                                            title: "Copy flow link",
+                                            "aria-label": "Copy strand link",
+                                            title: "Copy strand link",
                                             onclick: {
                                                 let link_path = card_link_path.clone();
                                                 move |_| {
-                                                    share_kanban_flow_link(&link_path);
-                                                    board_status.set("Flow link copied".to_owned());
+                                                    share_kanban_strand_link(&link_path);
+                                                    board_status.set("Strand link copied".to_owned());
                                                     card_detail_actions_open.set(false);
                                                 }
                                             },
@@ -3057,29 +3057,29 @@ pub fn KanbanPanel(
                                                             span { {crate::i18n::tr("common.edit")} }
                                                         }
                                                         {
-                                                            let target = if card.lifecycle == FlowLifecycleState::Archived {
-                                                                FlowLifecycleState::Active
+                                                            let target = if card.lifecycle == StrandLifecycleState::Archived {
+                                                                StrandLifecycleState::Active
                                                             } else {
-                                                                FlowLifecycleState::Archived
+                                                                StrandLifecycleState::Archived
                                                             };
-                                                            let action = if target == FlowLifecycleState::Archived {
-                                                                "ck.flow.archive"
+                                                            let action = if target == StrandLifecycleState::Archived {
+                                                                "ck.strand.archive"
                                                             } else {
-                                                                "ck.flow.restore"
+                                                                "ck.strand.restore"
                                                             };
-                                                            let gate = capability_gate_for_flow(
+                                                            let gate = capability_gate_for_strand(
                                                                 &capability_engine,
                                                                 &account_did,
                                                                 &selected_board_space_id(),
                                                                 &card.id,
                                                                 action,
                                                             );
-                                                            let label = if target == FlowLifecycleState::Archived {
+                                                            let label = if target == StrandLifecycleState::Archived {
                                                                 crate::i18n::tr("kanban.archive_action")
                                                             } else {
                                                                 crate::i18n::tr("kanban.restore_action")
                                                             };
-                                                            let testid = if target == FlowLifecycleState::Archived {
+                                                            let testid = if target == StrandLifecycleState::Archived {
                                                                 "card-detail-archive-button"
                                                             } else {
                                                                 "card-detail-restore-button"
@@ -3097,7 +3097,7 @@ pub fn KanbanPanel(
                                                                     variant: ButtonVariant::Secondary,
                                                                     class: "card-detail-action-menu-item",
                                                                     "data-testid": testid,
-                                                                    "data-flow-id": "{card.id}",
+                                                                    "data-strand-id": "{card.id}",
                                                                     "data-cap-gate": testid_state,
                                                                     disabled: !gate.enabled,
                                                                     title: title_text,
@@ -3105,14 +3105,14 @@ pub fn KanbanPanel(
                                                                         let base = base_url.clone();
                                                                         let realm = selected_realm_id.clone();
                                                                         let actor = account_did.clone();
-                                                                        let flow_id = card.id.clone();
+                                                                        let strand_id = card.id.clone();
                                                                         move |_| {
-                                                                            dispatch_flow_lifecycle(
+                                                                            dispatch_strand_lifecycle(
                                                                                 base.clone(),
                                                                                 token,
                                                                                 realm.clone(),
                                                                                 actor.clone(),
-                                                                                flow_id.clone(),
+                                                                                strand_id.clone(),
                                                                                 target,
                                                                                 columns,
                                                                                 board_status,
@@ -3126,7 +3126,7 @@ pub fn KanbanPanel(
                                                                             }
                                                                         }
                                                                     },
-                                                                    UiIcon { name: if target == FlowLifecycleState::Archived { "archive" } else { "refresh" } }
+                                                                    UiIcon { name: if target == StrandLifecycleState::Archived { "archive" } else { "refresh" } }
                                                                     span { "{label}" }
                                                                 }
                                                             }
@@ -3299,7 +3299,7 @@ pub fn KanbanPanel(
                                                     class: "card-detail-tabs",
                                                     "data-testid": "card-detail-tabs",
                                                     role: "tablist",
-                                                    "aria-label": "Flow tracks",
+                                                    "aria-label": "Strand tracks",
                                                     button {
                                                         r#type: "button",
                                                         class: "{description_tab_class}",
@@ -3334,9 +3334,9 @@ pub fn KanbanPanel(
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Discussion}",
                                                         disabled: editing_card_detail(),
                                                         onclick: {
-                                                            let flow_id = card.primary_flow_id.clone();
+                                                            let strand_id = card.primary_strand_id.clone();
                                                             move |_| {
-                                                                card_detail_discussion_mounted_for.set(Some(flow_id.clone()));
+                                                                card_detail_discussion_mounted_for.set(Some(strand_id.clone()));
                                                                 card_detail_tab.set(CardDetailContentTab::Discussion);
                                                                 replace_card_detail_tab_query(CardDetailContentTab::Discussion);
                                                             }
@@ -3936,7 +3936,7 @@ pub fn KanbanPanel(
                                                             sync_cursor,
                                                             frontier_state,
                                                             state_store,
-                                                            initial_flow_id: card.primary_flow_id.clone(),
+                                                            initial_strand_id: card.primary_strand_id.clone(),
                                                             embedded: true,
                                                             direct_mode: false,
                                                         }
@@ -3959,9 +3959,9 @@ pub fn KanbanPanel(
                                                     projection,
                                                 );
                                                 let realm_member_count = realm_member_rows.len();
-                                                let participant_set: BTreeSet<String> = flow_participant_dids(
+                                                let participant_set: BTreeSet<String> = strand_participant_dids(
                                                     &store.raw_operations,
-                                                    &card.primary_flow_id,
+                                                    &card.primary_strand_id,
                                                 )
                                                 .into_iter()
                                                 .collect();
@@ -4058,7 +4058,7 @@ pub fn KanbanPanel(
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
                                                                 div {
-                                                                    dt { "Flow ID" }
+                                                                    dt { "Strand ID" }
                                                                     dd { class: "card-detail-field-code", title: "{card.id}", "{card_id_label}" }
                                                                 }
                                                                 div {
@@ -4626,19 +4626,19 @@ pub fn KanbanPanel(
                                                                             identity.as_ref(),
                                                                             cached_handle.as_deref(),
                                                                         );
-                                                                        let in_flow = participant_set.contains(&did);
-                                                                        let row_class = if in_flow {
+                                                                        let in_strand = participant_set.contains(&did);
+                                                                        let row_class = if in_strand {
                                                                             "card-detail-actor-row participant"
                                                                         } else {
                                                                             "card-detail-actor-row"
                                                                         };
-                                                                        let dot_class = if in_flow {
+                                                                        let dot_class = if in_strand {
                                                                             "card-detail-actor-dot participant"
                                                                         } else {
                                                                             "card-detail-actor-dot"
                                                                         };
-                                                                        let dot_title = if in_flow {
-                                                                            "Participated in this Flow"
+                                                                        let dot_title = if in_strand {
+                                                                            "Participated in this Strand"
                                                                         } else {
                                                                             "Realm member"
                                                                         };
@@ -4646,7 +4646,7 @@ pub fn KanbanPanel(
                                                                             li {
                                                                                 key: "{did}",
                                                                                 class: "{row_class}",
-                                                                                "data-flow-participant": "{in_flow}",
+                                                                                "data-strand-participant": "{in_strand}",
                                                                                 span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
                                                                                 span { class: "card-detail-actor-did", title: "{did}", "{label}" }
                                                                             }
@@ -4670,7 +4670,7 @@ pub fn KanbanPanel(
     }
 }
 
-fn route_card_flow_id(route: &Route) -> Option<String> {
+fn route_card_strand_id(route: &Route) -> Option<String> {
     match route {
         Route::KanbanTask { task_id, .. } | Route::KanbanBoardTask { task_id, .. } => {
             let task_id = task_id.trim();
@@ -4686,7 +4686,7 @@ fn route_card_flow_id(route: &Route) -> Option<String> {
 
 /// Extract the board Space-container id carried by the board-aware
 /// kanban routes. `None` for the board-less routes (plain `/kanban`,
-/// `/kanban/<realm>`, and the legacy `/kanban/<realm>/task/<flow>`
+/// `/kanban/<realm>`, and the legacy `/kanban/<realm>/task/<strand>`
 /// share-link form) where the board must be resolved from projection.
 fn route_board_id(route: &Route) -> Option<String> {
     match route {
@@ -4735,16 +4735,16 @@ fn kanban_card_task_route(realm_id: &str, board_id: &str, task_id: &str) -> Rout
     }
 }
 
-fn card_matches_flow_id(card: &KanbanCard, flow_id: &str) -> bool {
-    let flow_id = flow_id.trim();
-    !flow_id.is_empty() && (card.id == flow_id || card.primary_flow_id == flow_id)
+fn card_matches_strand_id(card: &KanbanCard, strand_id: &str) -> bool {
+    let strand_id = strand_id.trim();
+    !strand_id.is_empty() && (card.id == strand_id || card.primary_strand_id == strand_id)
 }
 
-fn find_card_by_flow_id(columns: &[KanbanColumn], flow_id: &str) -> Option<KanbanCard> {
+fn find_card_by_strand_id(columns: &[KanbanColumn], strand_id: &str) -> Option<KanbanCard> {
     columns
         .iter()
         .flat_map(|column| column.cards.iter())
-        .find(|card| card_matches_flow_id(card, flow_id))
+        .find(|card| card_matches_strand_id(card, strand_id))
         .cloned()
 }
 
@@ -5082,25 +5082,25 @@ impl RealmRosterPagination {
 }
 
 /// Collect a deduped list of actor DIDs that have authored *any*
-/// queued / accepted raw operation that targets the given flow id
-/// (matched against `target_ref`, `flow_id`, or `object.id`). This
-/// gives the "who's interacted with this Flow" list shown on the
+/// queued / accepted raw operation that targets the given strand id
+/// (matched against `target_ref`, `strand_id`, or `object.id`). This
+/// gives the "who's interacted with this Strand" list shown on the
 /// sidebar's Participants tab even before the server returns a
 /// canonical discussion-roster projection.
-fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -> Vec<String> {
-    let flow_id = flow_id.trim();
-    if flow_id.is_empty() {
+fn strand_participant_dids(raw_operations: &[RawOperationRecord], strand_id: &str) -> Vec<String> {
+    let strand_id = strand_id.trim();
+    if strand_id.is_empty() {
         return Vec::new();
     }
     let mut dids: BTreeSet<String> = BTreeSet::new();
     for op in raw_operations {
         let payload = &op.payload;
         let target = json_path_string(Some(payload), &["body", "target_ref"])
-            .or_else(|| json_path_string(Some(payload), &["body", "flow_id"]))
+            .or_else(|| json_path_string(Some(payload), &["body", "strand_id"]))
             .or_else(|| json_path_string(Some(payload), &["body", "object", "id"]))
             .or_else(|| json_path_string(Some(payload), &["payload", "target_ref"]))
-            .or_else(|| json_path_string(Some(payload), &["payload", "flow_id"]));
-        if target.as_deref() != Some(flow_id) {
+            .or_else(|| json_path_string(Some(payload), &["payload", "strand_id"]));
+        if target.as_deref() != Some(strand_id) {
             continue;
         }
         for path in [
@@ -5203,16 +5203,16 @@ fn projection_card_activity_items(card: &KanbanCard) -> Vec<CardActivityItem> {
 }
 
 fn raw_operation_targets_card(payload: &Value, card: &KanbanCard) -> bool {
-    let ids = [card.id.trim(), card.primary_flow_id.trim()];
+    let ids = [card.id.trim(), card.primary_strand_id.trim()];
     for path in [
-        &["assignment_flow_id"][..],
-        &["flow_id"][..],
+        &["assignment_strand_id"][..],
+        &["strand_id"][..],
         &["target_ref"][..],
-        &["body", "flow_id"][..],
+        &["body", "strand_id"][..],
         &["body", "target_ref"][..],
         &["body", "from_ref"][..],
         &["body", "object", "id"][..],
-        &["payload", "flow_id"][..],
+        &["payload", "strand_id"][..],
         &["payload", "target_ref"][..],
         &["payload", "from_ref"][..],
         &["payload", "object", "id"][..],
@@ -5319,15 +5319,15 @@ fn activity_title_from_operation(kind: &str, payload: &Value, _card: &KanbanCard
                 "Relation removed".to_owned()
             }
         }
-        "ck.flow.update" => flow_update_activity_title(payload),
-        "ck.flow.move" => "Card moved".to_owned(),
-        "ck.flow.reorder" => "Card reordered".to_owned(),
-        "ck.flow.create" => "Card created".to_owned(),
+        "ck.strand.update" => strand_update_activity_title(payload),
+        "ck.strand.move" => "Card moved".to_owned(),
+        "ck.strand.reorder" => "Card reordered".to_owned(),
+        "ck.strand.create" => "Card created".to_owned(),
         _ => kind.to_owned(),
     }
 }
 
-fn flow_update_activity_title(payload: &Value) -> String {
+fn strand_update_activity_title(payload: &Value) -> String {
     let patch = payload
         .get("body")
         .and_then(|body| body.get("patch"))
@@ -5766,9 +5766,9 @@ fn synthesis_revision_from_raw_operation(
         });
     let author_label = card_author_display_label(state_store, author_context, &actor_id);
     let entry_id = json_path_string(Some(payload), &["synthesis_entry_id"])
-        .unwrap_or_else(|| format!("{}:synthesis", update.flow_id));
+        .unwrap_or_else(|| format!("{}:synthesis", update.strand_id));
     Some((
-        update.flow_id,
+        update.strand_id,
         entry_id,
         CardSynthesisRevision {
             id: record.operation_id.clone(),
@@ -5825,7 +5825,7 @@ fn card_synthesis_track_entries_with_author_context(
         .filter_map(|record| {
             synthesis_revision_from_raw_operation(record, state_store, author_context)
         })
-        .filter(|(flow_id, ..)| flow_id == &card.id)
+        .filter(|(strand_id, ..)| strand_id == &card.id)
     {
         grouped.entry(entry_id).or_default().push(revision);
     }
@@ -5972,27 +5972,27 @@ fn replace_card_detail_tab_query(tab: CardDetailContentTab) {
     let _ = document::eval(&script);
 }
 
-fn flow_detail_deep_link_path(realm_id: &str, flow_id: &str) -> String {
+fn strand_detail_deep_link_path(realm_id: &str, strand_id: &str) -> String {
     format!(
         "/kanban/{}/task/{}",
         card_detail_route_realm_id(realm_id),
-        flow_id.trim()
+        strand_id.trim()
     )
 }
 
-fn flow_detail_deep_link_path_with_tab(
+fn strand_detail_deep_link_path_with_tab(
     realm_id: &str,
-    flow_id: &str,
+    strand_id: &str,
     tab: CardDetailContentTab,
 ) -> String {
     format!(
         "{}?tab={}",
-        flow_detail_deep_link_path(realm_id, flow_id),
+        strand_detail_deep_link_path(realm_id, strand_id),
         card_detail_tab_slug(tab)
     )
 }
 
-fn share_kanban_flow_link(path: &str) {
+fn share_kanban_strand_link(path: &str) {
     let Ok(encoded) = serde_json::to_string(path) else {
         return;
     };
@@ -6149,7 +6149,7 @@ fn patch_touches_private_paths(payload: &Value, private_paths: &[&str]) -> bool 
 
 fn kanban_event_carries_plaintext_private_content(event: &crate::operation::EventEnvelope) -> bool {
     match event.kind.as_str() {
-        "ck.flow.create" => [
+        "ck.strand.create" => [
             &["body"][..],
             &["object", "body"][..],
             &["synthesis"][..],
@@ -6167,8 +6167,8 @@ fn kanban_event_carries_plaintext_private_content(event: &crate::operation::Even
         .any(|path| {
             value_at_path(&event.payload, path).is_some_and(value_is_plaintext_private_content)
         }),
-        "ck.flow.update" => {
-            patch_touches_private_paths(&event.payload, KANBAN_PRIVATE_FLOW_PATCH_PATHS)
+        "ck.strand.update" => {
+            patch_touches_private_paths(&event.payload, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
         }
         _ => false,
     }
@@ -6179,7 +6179,7 @@ fn kanban_event_carries_plaintext_private_content(event: &crate::operation::Even
 /// plaintext even inside an encrypted Realm. Container creation (`ck.space.create`
 /// for Board and List) is the canonical example: a second device needs the
 /// plaintext title to render the Board/List name instead of falling back to
-/// `generated_board_fallback_title` (`ck:space:...`). Only Flow card private
+/// `generated_board_fallback_title` (`ck:space:...`). Only Strand card private
 /// content fields (body / synthesis / discussion) are E2EE — never the
 /// container scaffold. Exempting these kinds here is a hard invariant: it
 /// guarantees the plaintext-block decision can never silently drop a container
@@ -6362,7 +6362,7 @@ fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
 }
 
 fn kanban_private_patch_path(path: &str) -> bool {
-    KANBAN_PRIVATE_FLOW_PATCH_PATHS
+    KANBAN_PRIVATE_STRAND_PATCH_PATHS
         .iter()
         .any(|private_path| path == *private_path || path.starts_with(&format!("{private_path}.")))
 }
@@ -6714,7 +6714,7 @@ struct EncryptedWriteMlsEvents {
 fn encrypt_private_card_detail_patch_values(
     patch: Value,
     realm_id: &str,
-    flow_id: &str,
+    strand_id: &str,
     actor_id: &str,
     device_id: &str,
     mut state_store: Signal<LocalStateStore>,
@@ -6724,7 +6724,7 @@ fn encrypt_private_card_detail_patch_values(
     encrypt_private_card_detail_patch_values_with_store(
         patch,
         realm_id,
-        flow_id,
+        strand_id,
         actor_id,
         device_id,
         &mut store,
@@ -6735,7 +6735,7 @@ fn encrypt_private_card_detail_patch_values(
 fn encrypt_private_card_detail_patch_values_with_store(
     patch: Value,
     realm_id: &str,
-    flow_id: &str,
+    strand_id: &str,
     actor_id: &str,
     device_id: &str,
     state_store: &mut LocalStateStore,
@@ -6771,7 +6771,7 @@ fn encrypt_private_card_detail_patch_values_with_store(
             realm_id,
             actor_id,
             device_id,
-            KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
             &plaintext_values,
         )
         .map_err(|err| err.user_message())?;
@@ -6792,11 +6792,11 @@ fn encrypt_private_card_detail_patch_values_with_store(
     // The stored value is the JSON-serialized patch *value* (the same
     // `plaintext_values` bytes that were just encrypted) as a UTF-8 string;
     // the read path parses it back with `serde_json::from_str` and feeds it
-    // to `flow_body_display_text`, keeping write+read symmetric. This is
+    // to `strand_body_display_text`, keeping write+read symmetric. This is
     // local-only and NEVER enters the op / `append_raw_operation` payload.
     for (path, plaintext_bytes) in &values {
         if let Ok(plaintext_str) = std::str::from_utf8(plaintext_bytes) {
-            state_store.save_private_plaintext(realm_id, flow_id, path, plaintext_str);
+            state_store.save_private_plaintext(realm_id, strand_id, path, plaintext_str);
         }
     }
     let paths = values.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
@@ -6873,7 +6873,7 @@ fn dispatch_card_detail_update(
     } = mls_events;
 
     let op =
-        match crate::operation::ck_ops::flow_update_patch(&realm_id, &actor_id, &current.id, patch)
+        match crate::operation::ck_ops::strand_update_patch(&realm_id, &actor_id, &current.id, patch)
         {
             Ok(builder) => builder.build("yougen"),
             Err(err) => {
@@ -6944,7 +6944,7 @@ fn dispatch_card_detail_update(
         short_protocol_id(&operation_id)
     ));
     let api_token = token();
-    let flow_id = current.id.clone();
+    let strand_id = current.id.clone();
     let kind = op.kind.clone();
     let mls_commit_operation_id = mls_commit_op
         .as_ref()
@@ -6987,10 +6987,10 @@ fn dispatch_card_detail_update(
                             None,
                             Some(err_text.clone()),
                         );
-                        set_card_state_in_columns(&mut columns, &flow_id, CardState::SoftFailed);
+                        set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
                         let selected = selected_card.read().clone();
                         if let Some(mut card) = selected
-                            && card.id == flow_id
+                            && card.id == strand_id
                         {
                             card.state = CardState::SoftFailed;
                             selected_card.set(Some(card));
@@ -7052,10 +7052,10 @@ fn dispatch_card_detail_update(
                         None,
                         Some(err_text.clone()),
                     );
-                    set_card_state_in_columns(&mut columns, &flow_id, CardState::SoftFailed);
+                    set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
                     let selected = selected_card.read().clone();
                     if let Some(mut card) = selected
-                        && card.id == flow_id
+                        && card.id == strand_id
                     {
                         card.state = CardState::SoftFailed;
                         selected_card.set(Some(card));
@@ -7077,10 +7077,10 @@ fn dispatch_card_detail_update(
                     Some(resp.event_id.clone()),
                     None,
                 );
-                set_card_state_in_columns(&mut columns, &flow_id, CardState::Accepted);
+                set_card_state_in_columns(&mut columns, &strand_id, CardState::Accepted);
                 let selected = selected_card.read().clone();
                 if let Some(mut card) = selected
-                    && card.id == flow_id
+                    && card.id == strand_id
                 {
                     card.state = CardState::Accepted;
                     selected_card.set(Some(card));
@@ -7119,10 +7119,10 @@ fn dispatch_card_detail_update(
                     None,
                     Some(err.display().to_string()),
                 );
-                set_card_state_in_columns(&mut columns, &flow_id, CardState::SoftFailed);
+                set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
                 let selected = selected_card.read().clone();
                 if let Some(mut card) = selected
-                    && card.id == flow_id
+                    && card.id == strand_id
                 {
                     card.state = CardState::SoftFailed;
                     selected_card.set(Some(card));
@@ -7313,13 +7313,13 @@ fn assignment_relations_after_mutations(
 
 fn update_card_assignees_in_columns(
     columns: &mut [KanbanColumn],
-    flow_id: &str,
+    strand_id: &str,
     selected_actor_ids: &BTreeSet<String>,
     relations: Vec<CardAssignedToRelation>,
     state: CardState,
 ) -> Option<KanbanCard> {
     for column in columns.iter_mut() {
-        if let Some(card) = column.cards.iter_mut().find(|card| card.id == flow_id) {
+        if let Some(card) = column.cards.iter_mut().find(|card| card.id == strand_id) {
             apply_card_assignment_projection(card, selected_actor_ids, relations, state);
             return Some(card.clone());
         }
@@ -7413,7 +7413,7 @@ fn dispatch_card_assignees_update(
                 "created_at": operation.created_at.clone(),
                 "write_state": "queued",
                 "body": operation.payload.clone(),
-                "assignment_flow_id": current.id.clone(),
+                "assignment_strand_id": current.id.clone(),
                 "assignment_actor_id": mutation.actor_id(),
                 "assignment_relation_id": mutation.relation_id(),
                 "activity_summary": assignment_activity_summary(mutation),
@@ -7428,7 +7428,7 @@ fn dispatch_card_assignees_update(
     ));
     assignee_edit_status.set("Saving...".to_owned());
     let api_token = token();
-    let flow_id = current.id.clone();
+    let strand_id = current.id.clone();
     spawn(async move {
         for mutation in mutations {
             let operation = mutation.operation().clone();
@@ -7455,10 +7455,10 @@ fn dispatch_card_assignees_update(
                         None,
                         Some(err_text.clone()),
                     );
-                    set_card_state_in_columns(&mut columns, &flow_id, CardState::SoftFailed);
+                    set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
                     let selected = selected_card.read().clone();
                     if let Some(mut card) = selected
-                        && card.id == flow_id
+                        && card.id == strand_id
                     {
                         card.state = CardState::SoftFailed;
                         selected_card.set(Some(card));
@@ -7469,10 +7469,10 @@ fn dispatch_card_assignees_update(
                 }
             }
         }
-        set_card_state_in_columns(&mut columns, &flow_id, CardState::Accepted);
+        set_card_state_in_columns(&mut columns, &strand_id, CardState::Accepted);
         let selected = selected_card.read().clone();
         if let Some(mut card) = selected
-            && card.id == flow_id
+            && card.id == strand_id
         {
             card.state = CardState::Accepted;
             selected_card.set(Some(card));
@@ -7492,7 +7492,7 @@ fn select_kanban_board(
     board_route_realm_id: String,
     local_realm_id: String,
     lifecycle_container_projection: Signal<Vec<crate::api::SpaceContainerProjectionView>>,
-    lifecycle_flow_projection: Signal<Vec<crate::api::FlowProjectionView>>,
+    lifecycle_strand_projection: Signal<Vec<crate::api::StrandProjectionView>>,
     mut columns: Signal<Vec<KanbanColumn>>,
     mut adding_card_to: Signal<Option<String>>,
     mut board_status: Signal<String>,
@@ -7509,7 +7509,7 @@ fn select_kanban_board(
     // switch should not keep a card from a different board mounted.
     selected_card.set(None);
     let containers = lifecycle_container_projection();
-    let flows = lifecycle_flow_projection();
+    let strands = lifecycle_strand_projection();
     if board_id.trim().is_empty() {
         columns.set(Vec::new());
         adding_card_to.set(None);
@@ -7517,7 +7517,7 @@ fn select_kanban_board(
         replace_kanban_board_url(&board_route_realm_id, &board_id);
         return;
     }
-    if containers.is_empty() && flows.is_empty() {
+    if containers.is_empty() && strands.is_empty() {
         let raw_operations = state_store.read().load().raw_operations;
         if raw_operations.is_empty() {
             board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
@@ -7534,7 +7534,7 @@ fn select_kanban_board(
         let (projected_columns, options, projected_board_id) =
             columns_from_lifecycle_projection_with_local(
                 &containers,
-                &flows,
+                &strands,
                 &board_id,
                 &raw_operations,
                 &local_realm_id,
@@ -7576,7 +7576,7 @@ fn select_kanban_board(
     let (projected_columns, options, projected_board_id) =
         columns_from_lifecycle_projection_with_local(
             &containers,
-            &flows,
+            &strands,
             &board_id,
             &raw_operations,
             &local_realm_id,
@@ -7629,12 +7629,12 @@ fn replace_kanban_board_url(realm_id: &str, board_id: &str) {
     let _ = document::eval(&script);
 }
 
-/// Build + sign + submit a `ck.component.flow.position.v1` Move via
+/// Build + sign + submit a `ck.component.strand.position.v1` Move via
 /// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
 /// queue regardless of submit outcome. Used by both list and card create
-/// paths - `subject` is the cell subject (Space-container id or Flow id), `kind` is
+/// paths - `subject` is the cell subject (Space-container id or Strand id), `kind` is
 /// the classifier the MoveSubmissionState tracker uses to decorate state
-/// pills (`ck.space.create` / `ck.flow.create`).
+/// pills (`ck.space.create` / `ck.strand.create`).
 fn write_state_samples() -> Vec<CardState> {
     vec![
         CardState::Optimistic,
@@ -7654,7 +7654,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
             title: "To Do".to_owned(),
             rank: "U".to_owned(),
             cards: vec![KanbanCard {
-                id: DEMO_FLOW_LEGAL_REVIEW_ID.to_owned(),
+                id: DEMO_STRAND_LEGAL_REVIEW_ID.to_owned(),
                 // Seed cards seed `cards[i].rank` from the
                 // lexofractional alphabet so the next rank_between
                 // call has well-formed neighbours to work with. "U" is
@@ -7674,16 +7674,16 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Alice".to_owned(),
                 assigned_to_relations: Vec::new(),
                 due: "May 08".to_owned(),
-                primary_flow_id: DEMO_FLOW_REVIEW_DISCUSSION_ID.to_owned(),
-                locked_flow: Some(LockedFlow {
-                    flow_id_hash: "sha256:locked-private-decision".to_owned(),
+                primary_strand_id: DEMO_STRAND_REVIEW_DISCUSSION_ID.to_owned(),
+                locked_strand: Some(LockedStrand {
+                    strand_id_hash: "sha256:locked-private-decision".to_owned(),
                 reason: "You can see that a restricted discussion is linked, but not its name or members.".to_owned(),
                 }),
                 external_visibility: "External counsel discussion only".to_owned(),
                 history_visibility: "joined history".to_owned(),
                 security_encrypted: None,
                 state: CardState::Synced,
-                lifecycle: FlowLifecycleState::Active,
+                lifecycle: StrandLifecycleState::Active,
             }],
             state: SpaceContainerLifecycleState::Active,
         },
@@ -7692,7 +7692,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
             title: "In Progress".to_owned(),
             rank: "f".to_owned(),
             cards: vec![KanbanCard {
-                id: DEMO_FLOW_ONBOARDING_COPY_ID.to_owned(),
+                id: DEMO_STRAND_ONBOARDING_COPY_ID.to_owned(),
                 rank: "U".to_owned(),
                 title: "Onboarding copy".to_owned(),
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
@@ -7707,13 +7707,13 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Bob".to_owned(),
                 assigned_to_relations: Vec::new(),
                 due: "May 10".to_owned(),
-                primary_flow_id: DEMO_FLOW_SUPPORT_DISCUSSION_ID.to_owned(),
-                locked_flow: None,
+                primary_strand_id: DEMO_STRAND_SUPPORT_DISCUSSION_ID.to_owned(),
+                locked_strand: None,
                 external_visibility: "No external discussions linked".to_owned(),
                 history_visibility: "shared history".to_owned(),
                 security_encrypted: None,
                 state: CardState::Queued,
-                lifecycle: FlowLifecycleState::Active,
+                lifecycle: StrandLifecycleState::Active,
             }],
             state: SpaceContainerLifecycleState::Active,
         },
@@ -7722,7 +7722,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
             title: "Done".to_owned(),
             rank: "p".to_owned(),
             cards: vec![KanbanCard {
-                id: DEMO_FLOW_SECURITY_SIGNOFF_ID.to_owned(),
+                id: DEMO_STRAND_SECURITY_SIGNOFF_ID.to_owned(),
                 rank: "U".to_owned(),
                 title: "Security sign-off".to_owned(),
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
@@ -7737,16 +7737,16 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Carol".to_owned(),
                 assigned_to_relations: Vec::new(),
                 due: "May 01".to_owned(),
-                primary_flow_id: DEMO_FLOW_SECURITY_REVIEW_ID.to_owned(),
-                locked_flow: Some(LockedFlow {
-                    flow_id_hash: "sha256:locked-incident-notes".to_owned(),
+                primary_strand_id: DEMO_STRAND_SECURITY_REVIEW_ID.to_owned(),
+                locked_strand: Some(LockedStrand {
+                    strand_id_hash: "sha256:locked-incident-notes".to_owned(),
                     reason: "Incident notes require separate discussion capability.".to_owned(),
                 }),
                 external_visibility: "Internal discussions only".to_owned(),
                 history_visibility: "restricted history".to_owned(),
                 security_encrypted: None,
                 state: CardState::Conflict,
-                lifecycle: FlowLifecycleState::Active,
+                lifecycle: StrandLifecycleState::Active,
             }],
             state: SpaceContainerLifecycleState::Active,
         },

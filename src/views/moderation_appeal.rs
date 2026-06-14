@@ -1,4 +1,4 @@
-//! Round R2/R3 (T06) — moderation appeal user flow.
+//! Round R2/R3 (T06) — moderation appeal user strand.
 //!
 //! Per `governance/content-moderation.md` §4 (Round R2/R3), every
 //! moderation decision the reducer emits MUST give the affected user an
@@ -82,7 +82,7 @@ impl AppealState {
 /// - `decision_event_id` — the `ck:event:` id of the original moderation decision being appealed
 ///   (used as `decision_ref`).
 /// - `target_ref` — opaque pointer to the moderated content (`ck:event:…` for a message,
-///   `ck:flow:…` for a flow, etc.).
+///   `ck:strand:…` for a strand, etc.).
 /// - `reason_text_ref` — blob ref or inline string carrying the appeal narrative (server may
 ///   require a `ck:blob:…` ref for E2EE Realms).
 pub fn build_appeal_submit_op(

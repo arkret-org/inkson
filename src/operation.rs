@@ -587,7 +587,7 @@ pub mod ck_ops {
 
     // YOU-02-001: every fallible helper below returns `anyhow::Result`
     // instead of panicking. The ids these helpers parse ultimately come from
-    // server sync data (bare `String` fields in `models.rs` flow into local
+    // server sync data (bare `String` fields in `models.rs` strand into local
     // UI state), so a non-canonical id from a buggy or malicious server must
     // surface as a recoverable error — on wasm a panic kills the whole page.
 
@@ -625,9 +625,9 @@ pub mod ck_ops {
             .map_err(|err| anyhow::anyhow!("invalid circle id {value:?}: {err:?}"))
     }
 
-    fn flow_id_value(value: &str) -> anyhow::Result<cokret_sdk::FlowId> {
-        cokret_sdk::FlowId::new(value.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid flow id {value:?}: {err:?}"))
+    fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
+        cokret_sdk::StrandId::new(value.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
     }
 
     fn morph_id_value(value: &str) -> anyhow::Result<cokret_sdk::MorphId> {
@@ -661,75 +661,75 @@ pub mod ck_ops {
             .map_err(|err| anyhow::anyhow!("invalid object_patch_payload for {object_ref}: {err}"))
     }
 
-    fn flow_object_patch_payload_value(
-        flow_id: &str,
+    fn strand_object_patch_payload_value(
+        strand_id: &str,
         patch: cokret_sdk::Patch,
     ) -> anyhow::Result<Value> {
-        object_patch_payload_value(flow_id, patch)
+        object_patch_payload_value(strand_id, patch)
     }
 
-    fn flow_tracks_update_payload_value(
-        flow_id: &str,
+    fn strand_tracks_update_payload_value(
+        strand_id: &str,
         patch: cokret_sdk::Patch,
     ) -> anyhow::Result<Value> {
-        cokret_sdk::FlowPatchPayload::for_flow(flow_id_value(flow_id)?, patch)
+        cokret_sdk::StrandPatchPayload::for_strand(strand_id_value(strand_id)?, patch)
             .and_then(|payload| payload.to_value())
             .map_err(|err| {
-                anyhow::anyhow!("invalid ck.flow.tracks.update payload for {flow_id}: {err}")
+                anyhow::anyhow!("invalid ck.strand.tracks.update payload for {strand_id}: {err}")
             })
     }
 
-    fn flow_watch_level_value(level: &str) -> anyhow::Result<cokret_sdk::FlowWatchLevel> {
+    fn strand_watch_level_value(level: &str) -> anyhow::Result<cokret_sdk::StrandWatchLevel> {
         match level {
-            "mentions_only" => Ok(cokret_sdk::FlowWatchLevel::MentionsOnly),
-            "participating" => Ok(cokret_sdk::FlowWatchLevel::Participating),
-            "all" => Ok(cokret_sdk::FlowWatchLevel::All),
-            "muted" => Ok(cokret_sdk::FlowWatchLevel::Muted),
-            other => Err(anyhow::anyhow!("unknown ck.flow.watch.set level {other:?}")),
+            "mentions_only" => Ok(cokret_sdk::StrandWatchLevel::MentionsOnly),
+            "participating" => Ok(cokret_sdk::StrandWatchLevel::Participating),
+            "all" => Ok(cokret_sdk::StrandWatchLevel::All),
+            "muted" => Ok(cokret_sdk::StrandWatchLevel::Muted),
+            other => Err(anyhow::anyhow!("unknown ck.strand.watch.set level {other:?}")),
         }
     }
 
-    /// Build the canonical `flow_watch_set_payload` body via the SDK strong
+    /// Build the canonical `strand_watch_set_payload` body via the SDK strong
     /// type. `level=None` clears the cell (`level:null`); per the schema
     /// `allOf`, the typed constructor forces `level_public` off on that path.
-    fn flow_watch_set_payload_value(
-        flow_id: &str,
+    fn strand_watch_set_payload_value(
+        strand_id: &str,
         watcher_actor_id: &str,
         level: Option<&str>,
         level_public: Option<bool>,
     ) -> anyhow::Result<Value> {
         let payload = match level {
-            Some(level) => cokret_sdk::FlowWatchSetPayload::set(
-                flow_id_value(flow_id)?,
+            Some(level) => cokret_sdk::StrandWatchSetPayload::set(
+                strand_id_value(strand_id)?,
                 did_id(watcher_actor_id)?,
-                flow_watch_level_value(level)?,
+                strand_watch_level_value(level)?,
                 level_public,
             ),
-            None => cokret_sdk::FlowWatchSetPayload::clear(
-                flow_id_value(flow_id)?,
+            None => cokret_sdk::StrandWatchSetPayload::clear(
+                strand_id_value(strand_id)?,
                 did_id(watcher_actor_id)?,
             ),
         };
         payload
             .to_value()
-            .map_err(|err| anyhow::anyhow!("invalid flow_watch_set_payload for {flow_id}: {err}"))
+            .map_err(|err| anyhow::anyhow!("invalid strand_watch_set_payload for {strand_id}: {err}"))
     }
 
-    /// Build the canonical `flow_move_payload` body via the SDK strong type.
+    /// Build the canonical `strand_move_payload` body via the SDK strong type.
     /// `additionalProperties:false` — the destination is single-sourced by
     /// `target_space_id`; the optional `from_space_id` / `expected_position`
     /// (space_id + rank) are CAS hints.
-    fn flow_move_payload_value(
+    fn strand_move_payload_value(
         board_space_id: &str,
-        flow_id: &str,
+        strand_id: &str,
         target_space_id: &str,
         rank: &str,
         from_space_id: Option<&str>,
         expected: Option<(Option<&str>, Option<&str>)>,
     ) -> anyhow::Result<Value> {
-        let mut payload = cokret_sdk::FlowMovePayload::new(
+        let mut payload = cokret_sdk::StrandMovePayload::new(
             space_id_value(board_space_id)?,
-            flow_id_value(flow_id)?,
+            strand_id_value(strand_id)?,
             space_id_value(target_space_id)?,
             rank.to_owned(),
         );
@@ -737,7 +737,7 @@ pub mod ck_ops {
             payload = payload.with_from_space_id(space_id_value(from)?);
         }
         if let Some((expected_space, expected_rank)) = expected {
-            payload = payload.with_expected_position(cokret_sdk::FlowMoveExpectedPosition {
+            payload = payload.with_expected_position(cokret_sdk::StrandMoveExpectedPosition {
                 space_id: expected_space.map(space_id_value).transpose()?,
                 rank: expected_rank.map(ToOwned::to_owned),
                 relation_id: None,
@@ -745,34 +745,34 @@ pub mod ck_ops {
         }
         payload
             .to_value()
-            .map_err(|err| anyhow::anyhow!("invalid flow_move_payload for {flow_id}: {err}"))
+            .map_err(|err| anyhow::anyhow!("invalid strand_move_payload for {strand_id}: {err}"))
     }
 
-    /// Build the canonical `flow_reorder_payload` body via the SDK strong
+    /// Build the canonical `strand_reorder_payload` body via the SDK strong
     /// type. Re-ranks within a single List Space (`space_id`); the optional
     /// `expected_position` carries only a rank (no space_id field).
-    fn flow_reorder_payload_value(
+    fn strand_reorder_payload_value(
         board_space_id: &str,
-        flow_id: &str,
+        strand_id: &str,
         space_id: &str,
         rank: &str,
         expected_rank: Option<&str>,
     ) -> anyhow::Result<Value> {
-        let mut payload = cokret_sdk::FlowReorderPayload::new(
+        let mut payload = cokret_sdk::StrandReorderPayload::new(
             space_id_value(board_space_id)?,
-            flow_id_value(flow_id)?,
+            strand_id_value(strand_id)?,
             space_id_value(space_id)?,
             rank.to_owned(),
         );
         if let Some(expected_rank) = expected_rank {
-            payload = payload.with_expected_position(cokret_sdk::FlowReorderExpectedPosition {
+            payload = payload.with_expected_position(cokret_sdk::StrandReorderExpectedPosition {
                 rank: Some(expected_rank.to_owned()),
                 relation_id: None,
             });
         }
         payload
             .to_value()
-            .map_err(|err| anyhow::anyhow!("invalid flow_reorder_payload for {flow_id}: {err}"))
+            .map_err(|err| anyhow::anyhow!("invalid strand_reorder_payload for {strand_id}: {err}"))
     }
 
     /// Build the canonical `object_lifecycle_payload` body via the SDK strong
@@ -816,43 +816,43 @@ pub mod ck_ops {
 
     fn patch_from_value(patch: Value) -> anyhow::Result<cokret_sdk::Patch> {
         let patch: cokret_sdk::Patch = serde_json::from_value(patch)
-            .map_err(|err| anyhow::anyhow!("ck.flow.update patch must match ck.patch.v1: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}"))?;
         patch
             .validate()
-            .map_err(|err| anyhow::anyhow!("ck.flow.update patch must match ck.patch.v1: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}"))?;
         Ok(patch)
     }
 
-    /// Build a canonical `ck.flow.create` discussion operation with the full
-    /// typed Flow payload expected by the current reducers.
+    /// Build a canonical `ck.strand.create` discussion operation with the full
+    /// typed Strand payload expected by the current reducers.
     ///
-    /// The full Flow lives under the spec-canonical `object` key —
-    /// see soland `routing/events/operations.rs::FLOW_CREATE_REQUIREMENTS`
+    /// The full Strand lives under the spec-canonical `object` key —
+    /// see soland `routing/events/operations.rs::STRAND_CREATE_REQUIREMENTS`
     /// and SDK `crates/core/src/schema/payloads.rs` which both gate
-    /// `ck.flow.create` on `payload.object`.
-    pub fn discussion_flow_create(
+    /// `ck.strand.create` on `payload.object`.
+    pub fn discussion_strand_create(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         title: &str,
     ) -> anyhow::Result<OperationBuilder> {
         let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
             .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
         let did = cokret_sdk::Did::new(actor.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-        let typed_flow_id = cokret_sdk::FlowId::new(flow_id.to_owned())
-            .map_err(|e| anyhow::anyhow!("invalid flow_id: {e:?}"))?;
-        let flow = cokret_sdk::FlowCreateObject::new(typed_flow_id, typed_realm_id, did)
+        let typed_strand_id = cokret_sdk::StrandId::new(strand_id.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid strand_id: {e:?}"))?;
+        let strand = cokret_sdk::StrandCreateObject::new(typed_strand_id, typed_realm_id, did)
             .with_metadata_title(title)
             .with_track(
                 "discussion",
-                cokret_sdk::FlowTrackConfig::discussion_primary(),
+                cokret_sdk::StrandTrackConfig::discussion_primary(),
             );
-        let payload = cokret_sdk::ObjectCreatePayload::new(flow)
+        let payload = cokret_sdk::ObjectCreatePayload::new(strand)
             .to_value()
-            .map_err(|e| anyhow::anyhow!("ck.flow.create payload serialize: {e}"))?;
-        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.create")
-            .target_ref(flow_id)
+            .map_err(|e| anyhow::anyhow!("ck.strand.create payload serialize: {e}"))?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.strand.create")
+            .target_ref(strand_id)
             .body(payload))
     }
 
@@ -884,12 +884,12 @@ pub mod ck_ops {
             .body(body))
     }
 
-    /// Build a `ck.flow.create` operation whose full Flow scope is a
+    /// Build a `ck.strand.create` operation whose full Strand scope is a
     /// private discussion Circle.
-    pub fn scoped_discussion_flow_create(
+    pub fn scoped_discussion_strand_create(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         circle_id: &str,
         title: &str,
     ) -> anyhow::Result<OperationBuilder> {
@@ -897,49 +897,49 @@ pub mod ck_ops {
             .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
         let did = cokret_sdk::Did::new(actor.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-        let typed_flow_id = cokret_sdk::FlowId::new(flow_id.to_owned())
-            .map_err(|e| anyhow::anyhow!("invalid flow_id: {e:?}"))?;
-        let mut flow = cokret_sdk::FlowCreateObject::new(typed_flow_id, typed_realm_id, did)
+        let typed_strand_id = cokret_sdk::StrandId::new(strand_id.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid strand_id: {e:?}"))?;
+        let mut strand = cokret_sdk::StrandCreateObject::new(typed_strand_id, typed_realm_id, did)
             .with_metadata_title(title)
             .with_track(
                 "discussion",
-                cokret_sdk::FlowTrackConfig::discussion_primary(),
+                cokret_sdk::StrandTrackConfig::discussion_primary(),
             );
-        flow.scope_circle_id = Some(circle_id_value(circle_id)?);
-        let payload = cokret_sdk::ObjectCreatePayload::new(flow)
+        strand.scope_circle_id = Some(circle_id_value(circle_id)?);
+        let payload = cokret_sdk::ObjectCreatePayload::new(strand)
             .to_value()
-            .map_err(|e| anyhow::anyhow!("ck.flow.create payload serialize: {e}"))?;
-        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.create")
-            .target_ref(flow_id)
+            .map_err(|e| anyhow::anyhow!("ck.strand.create payload serialize: {e}"))?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.strand.create")
+            .target_ref(strand_id)
             .body(payload))
     }
 
-    /// Build the private-side relation from a Circle-scoped discussion Flow
-    /// back to the public seal Flow/message.
+    /// Build the private-side relation from a Circle-scoped discussion Strand
+    /// back to the public seal Strand/message.
     pub fn confidential_discussion_relation_create(
         realm_id: &str,
         actor: &str,
-        private_flow_id: &str,
+        private_strand_id: &str,
         public_seal_ref: &str,
         circle_id: &str,
     ) -> anyhow::Result<OperationBuilder> {
         // `circle_id` is unused on the wire: relation_create_payload is
         // additionalProperties:false and the private-side scope is already
-        // carried by the Circle-scoped Flow itself.
+        // carried by the Circle-scoped Strand itself.
         let _ = circle_id;
         Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
-            .target_ref(private_flow_id)
+            .target_ref(private_strand_id)
             .body(relation_create_payload_value(
                 "confidential_discussion_of",
-                private_flow_id,
+                private_strand_id,
                 public_seal_ref,
             )?))
     }
 
-    /// Build a `ck.flow.watch.set` operation. Spec:
-    /// `cokret-spec/spec/v1/zh/models/flow-and-message.md §8.3` —
-    /// writes the cas-register cell `ck.component.flow.watch.v1` keyed by
-    /// `(flow_id, watcher_actor_id)`.
+    /// Build a `ck.strand.watch.set` operation. Spec:
+    /// `cokret-spec/spec/v1/zh/models/strand-and-message.md §8.3` —
+    /// writes the cas-register cell `ck.component.strand.watch.v1` keyed by
+    /// `(strand_id, watcher_actor_id)`.
     ///
     /// `level` is one of `mentions_only` / `participating` / `all` / `muted`,
     /// or `None` to clear the cell (equivalent to `mentions_only` default).
@@ -948,34 +948,34 @@ pub mod ck_ops {
     /// stays invisible). Caller MUST omit `level_public` when `level` is None.
     ///
     /// Default reducer invariant: `target_actor` MUST equal `sender_actor`
-    /// unless the sender holds `ck.flow.watch.set.others`. Callers
-    /// helping someone else subscribe (e.g. Flow creator seeding
+    /// unless the sender holds `ck.strand.watch.set.others`. Callers
+    /// helping someone else subscribe (e.g. Strand creator seeding
     /// watchers on create) need that capability.
-    pub fn flow_watch_set(
+    pub fn strand_watch_set(
         realm_id: &str,
         sender_actor: &str,
         target_actor_id: &str,
-        flow_id: &str,
+        strand_id: &str,
         level: Option<&str>,
         level_public: Option<bool>,
     ) -> anyhow::Result<OperationBuilder> {
-        // Strong type: flow_watch_set_payload (additionalProperties:false +
+        // Strong type: strand_watch_set_payload (additionalProperties:false +
         // allOf forbidding level_public when level is null). The typed
         // constructors keep the clear path (level:null) free of level_public.
-        let payload = flow_watch_set_payload_value(flow_id, target_actor_id, level, level_public)?;
+        let payload = strand_watch_set_payload_value(strand_id, target_actor_id, level, level_public)?;
         Ok(
-            OperationBuilder::new(realm_id, sender_actor, "ck.flow.watch.set")
-                .target_ref(flow_id)
+            OperationBuilder::new(realm_id, sender_actor, "ck.strand.watch.set")
+                .target_ref(strand_id)
                 .body(payload),
         )
     }
 
-    /// Build a `ck.flow.tracks.update` operation. Spec:
-    /// `cokret-spec/spec/v1/zh/models/flow-and-message.md §3` (post dc01ad7).
+    /// Build a `ck.strand.tracks.update` operation. Spec:
+    /// `cokret-spec/spec/v1/zh/models/strand-and-message.md §3` (post dc01ad7).
     ///
     /// This is the single unified track-mutation event that replaces
-    /// `ck.flow.track.{enable,disable,update,set_primary}`.
-    /// `patch` is a `ck.patch.v1` JSON Patch object against the `Flow.tracks`
+    /// `ck.strand.track.{enable,disable,update,set_primary}`.
+    /// `patch` is a `ck.patch.v1` JSON Patch object against the `Strand.tracks`
     /// map (keys are track names like `synthesis` / `discussion`). For
     /// example, enabling the `discussion` track is:
     ///
@@ -983,62 +983,62 @@ pub mod ck_ops {
     /// { "tracks.discussion.enabled": { "$op": "set", "value": true } }
     /// ```
     ///
-    /// Disabling, renaming, or marking a track primary all flow through the
+    /// Disabling, renaming, or marking a track primary all strand through the
     /// same patch shape. Callers that only know a track name should compose
-    /// the patch via the helpers below (`flow_tracks_update_enable`,
-    /// `flow_tracks_update_disable`, `flow_tracks_update_set_primary`).
-    pub fn flow_tracks_update(
+    /// the patch via the helpers below (`strand_tracks_update_enable`,
+    /// `strand_tracks_update_disable`, `strand_tracks_update_set_primary`).
+    pub fn strand_tracks_update(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         patch: serde_json::Value,
     ) -> anyhow::Result<OperationBuilder> {
         let patch = patch_from_value(patch)?;
         Ok(
-            OperationBuilder::new(realm_id, actor, "ck.flow.tracks.update")
-                .target_ref(flow_id)
-                .body(flow_tracks_update_payload_value(flow_id, patch)?),
+            OperationBuilder::new(realm_id, actor, "ck.strand.tracks.update")
+                .target_ref(strand_id)
+                .body(strand_tracks_update_payload_value(strand_id, patch)?),
         )
     }
 
-    /// Convenience wrapper: enable `track` on `flow_id`. Emits the unified
-    /// `ck.flow.tracks.update` event with a `ck.patch.v1` set-op against
+    /// Convenience wrapper: enable `track` on `strand_id`. Emits the unified
+    /// `ck.strand.tracks.update` event with a `ck.patch.v1` set-op against
     /// `tracks.<name>.enabled`.
-    pub fn flow_tracks_update_enable(
+    pub fn strand_tracks_update_enable(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         track: &str,
     ) -> anyhow::Result<OperationBuilder> {
         let key = format!("tracks.{track}.enabled");
         let patch = json!({ key: { "$op": "set", "value": true } });
-        flow_tracks_update(realm_id, actor, flow_id, patch)
+        strand_tracks_update(realm_id, actor, strand_id, patch)
     }
 
-    /// Convenience wrapper: disable `track` on `flow_id`.
-    pub fn flow_tracks_update_disable(
+    /// Convenience wrapper: disable `track` on `strand_id`.
+    pub fn strand_tracks_update_disable(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         track: &str,
     ) -> anyhow::Result<OperationBuilder> {
         let key = format!("tracks.{track}.enabled");
         let patch = json!({ key: { "$op": "set", "value": false } });
-        flow_tracks_update(realm_id, actor, flow_id, patch)
+        strand_tracks_update(realm_id, actor, strand_id, patch)
     }
 
-    /// Convenience wrapper: mark `track` as the Flow's primary track.
+    /// Convenience wrapper: mark `track` as the Strand's primary track.
     /// Carries a single set-op against `tracks.<name>.is_primary`. The reducer
     /// is responsible for clearing the previous primary cell.
-    pub fn flow_tracks_update_set_primary(
+    pub fn strand_tracks_update_set_primary(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         track: &str,
     ) -> anyhow::Result<OperationBuilder> {
         let key = format!("tracks.{track}.is_primary");
         let patch = json!({ key: { "$op": "set", "value": true } });
-        flow_tracks_update(realm_id, actor, flow_id, patch)
+        strand_tracks_update(realm_id, actor, strand_id, patch)
     }
 
     /// Build a `ck.space.create` operation for Board/List container Spaces.
@@ -1101,94 +1101,94 @@ pub mod ck_ops {
             )?))
     }
 
-    /// Build a `ck.flow.create` for an incident response Flow. The
+    /// Build a `ck.strand.create` for an incident response Strand. The
     /// common incident workflow status is carried in `fields.status` so
     /// soland can enforce the profile FSM and emit
     /// `incident.status.transition` audit rows on subsequent updates.
-    pub fn incident_flow_create(
+    pub fn incident_strand_create(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         title: &str,
         status: &str,
         priority: &str,
     ) -> anyhow::Result<OperationBuilder> {
         let realm_id = trim_realm_id(realm_id);
-        let object = cokret_sdk::FlowCreateObject::new(
-            flow_id_value(flow_id)?,
+        let object = cokret_sdk::StrandCreateObject::new(
+            strand_id_value(strand_id)?,
             realm_id_value(&realm_id)?,
             did_id(actor)?,
         )
         .with_metadata_title(title)
-        .with_metadata_field("flow_kind", json!("incident"))
+        .with_metadata_field("strand_kind", json!("incident"))
         .with_metadata_field("status", json!(status))
         .with_metadata_field("incident_priority", json!(priority))
         .with_track(
             "synthesis",
-            cokret_sdk::FlowTrackConfig::new()
+            cokret_sdk::StrandTrackConfig::new()
                 .primary()
                 .with_profile("incident_response"),
         )
         .with_track(
             "discussion",
-            cokret_sdk::FlowTrackConfig::new().with_profile("war_room"),
+            cokret_sdk::StrandTrackConfig::new().with_profile("war_room"),
         );
-        Ok(OperationBuilder::new(&realm_id, actor, "ck.flow.create")
-            .target_ref(flow_id)
+        Ok(OperationBuilder::new(&realm_id, actor, "ck.strand.create")
+            .target_ref(strand_id)
             .body(object_create_payload_value(
                 object,
-                "ck.flow.create incident payload serialize",
+                "ck.strand.create incident payload serialize",
             )?))
     }
 
-    /// Build a `ck.flow.update` for the incident `fields.status` FSM.
+    /// Build a `ck.strand.update` for the incident `fields.status` FSM.
     pub fn incident_status_update(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         status: &str,
     ) -> anyhow::Result<OperationBuilder> {
-        flow_update_patch(
+        strand_update_patch(
             realm_id,
             actor,
-            flow_id,
+            strand_id,
             json!({ "fields": { "$op": "set", "value": { "status": status } } }),
         )
     }
 
-    /// Build a `ck.flow.create` for a Kanban card Flow and include the
+    /// Build a `ck.strand.create` for a Kanban card Strand and include the
     /// initial Board/List position component used by board projections.
-    pub fn kanban_card_flow_create(
+    pub fn kanban_card_strand_create(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         board_space_id: &str,
         list_space_id: &str,
         title: &str,
         rank: &str,
     ) -> anyhow::Result<OperationBuilder> {
         let realm_id = trim_realm_id(realm_id);
-        let object = cokret_sdk::FlowCreateObject::new(
-            flow_id_value(flow_id)?,
+        let object = cokret_sdk::StrandCreateObject::new(
+            strand_id_value(strand_id)?,
             realm_id_value(&realm_id)?,
             did_id(actor)?,
         )
         .with_metadata_title(title)
-        .with_metadata_field("flow_kind", json!("card"))
+        .with_metadata_field("strand_kind", json!("card"))
         .with_metadata_field("board_space_id", json!(board_space_id))
         .with_metadata_field("list_space_id", json!(list_space_id))
         .with_metadata_field("rank", json!(rank))
         .with_track(
             "synthesis",
-            cokret_sdk::FlowTrackConfig::new()
+            cokret_sdk::StrandTrackConfig::new()
                 .primary()
                 .with_profile("kanban_card"),
         );
-        Ok(OperationBuilder::new(&realm_id, actor, "ck.flow.create")
-            .target_ref(flow_id)
+        Ok(OperationBuilder::new(&realm_id, actor, "ck.strand.create")
+            .target_ref(strand_id)
             .body(object_create_payload_value(
                 object,
-                "ck.flow.create kanban card payload serialize",
+                "ck.strand.create kanban card payload serialize",
             )?))
     }
 
@@ -1225,9 +1225,9 @@ pub mod ck_ops {
         reply_to: Option<&str>,
     ) -> anyhow::Result<OperationBuilder> {
         let realm_id = trim_realm_id(realm_id);
-        let discussion_flow_id = realm_id
+        let discussion_strand_id = realm_id
             .strip_prefix("ck:realm:")
-            .map(|suffix| format!("ck:flow:{suffix}"))
+            .map(|suffix| format!("ck:strand:{suffix}"))
             .unwrap_or_else(|| morph_id.to_owned());
         let content = cokret_sdk::ContentBlock::text(body)
             .with_field(
@@ -1240,7 +1240,7 @@ pub mod ck_ops {
             )
             .with_field("morph_id", json!(morph_id));
         let mut payload = cokret_sdk::MessageCreatePayload::with_content(
-            flow_id_value(&discussion_flow_id)?,
+            strand_id_value(&discussion_strand_id)?,
             "discussion",
             sdk_payload_value(content.to_value(), "document comment content serialize")?,
         );
@@ -1293,24 +1293,24 @@ pub mod ck_ops {
             .body(json!({ "relation_id": relation_id }))
     }
 
-    /// Build a `ck.flow.update` delta operation using the canonical
-    /// `ck.patch.v1` payload shape. Non-create Flow updates should carry
+    /// Build a `ck.strand.update` delta operation using the canonical
+    /// `ck.patch.v1` payload shape. Non-create Strand updates should carry
     /// only changed fields; callers are responsible for composing patch paths
-    /// that are valid for the Flow schema/profile.
-    pub fn flow_update_patch(
+    /// that are valid for the Strand schema/profile.
+    pub fn strand_update_patch(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         patch: serde_json::Value,
     ) -> anyhow::Result<OperationBuilder> {
         let patch = patch_from_value(patch)?;
-        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.update")
-            .target_ref(flow_id)
-            .body(flow_object_patch_payload_value(flow_id, patch)?))
+        Ok(OperationBuilder::new(realm_id, actor, "ck.strand.update")
+            .target_ref(strand_id)
+            .body(strand_object_patch_payload_value(strand_id, patch)?))
     }
 
     /// Build a `ck.morph.update` patch operation. Mirrors
-    /// [`flow_update_patch`] for Morph objects; soland's
+    /// [`strand_update_patch`] for Morph objects; soland's
     /// `apply_morph_update` reducer accepts `payload.patch` with the
     /// standard `ck.schema.patch.v1` shape.
     pub fn morph_update_patch(
@@ -1522,34 +1522,34 @@ pub mod ck_ops {
             .body(json!({ "space_id": container_space_id }))
     }
 
-    /// Build a `ck.flow.archive` operation. Spec: `flow-and-message.md §3`
+    /// Build a `ck.strand.archive` operation. Spec: `strand-and-message.md §3`
     /// and `common-fields.md §5.1`; payload shape is the
     /// `object_lifecycle_payload` from
     /// `artifacts/schemas/event-payload.schema.json`, which requires
     /// `target_ref`. SDK reducer rejects with
-    /// `flow_not_active` when source state is not `active`.
-    pub fn flow_archive(
+    /// `strand_not_active` when source state is not `active`.
+    pub fn strand_archive(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
     ) -> anyhow::Result<OperationBuilder> {
-        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.archive")
-            .target_ref(flow_id)
-            .body(object_lifecycle_payload_value(flow_id)?))
+        Ok(OperationBuilder::new(realm_id, actor, "ck.strand.archive")
+            .target_ref(strand_id)
+            .body(object_lifecycle_payload_value(strand_id)?))
     }
 
-    /// Build a `ck.flow.restore` operation. Reverses [`flow_archive`]
-    /// (`archived -> active`). SDK reducer rejects with `flow_not_archived`
+    /// Build a `ck.strand.restore` operation. Reverses [`strand_archive`]
+    /// (`archived -> active`). SDK reducer rejects with `strand_not_archived`
     /// when source state is not `archived`. Payload shape mirrors the
     /// archive op (spec `object_lifecycle_payload`).
-    pub fn flow_restore(
+    pub fn strand_restore(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
     ) -> anyhow::Result<OperationBuilder> {
-        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.restore")
-            .target_ref(flow_id)
-            .body(object_lifecycle_payload_value(flow_id)?))
+        Ok(OperationBuilder::new(realm_id, actor, "ck.strand.restore")
+            .target_ref(strand_id)
+            .body(object_lifecycle_payload_value(strand_id)?))
     }
 
     // ── Capability (OrSet cell `ck.component.capability.grant.v1`) ───
@@ -1875,39 +1875,39 @@ pub mod ck_ops {
             .body(object_patch_payload_value(realm_id, patch)?))
     }
 
-    /// Legacy flow position update (kanban card position).
+    /// Legacy strand position update (kanban card position).
     ///
     /// Current protocol writes new position changes through
-    /// `ck.flow.move` / `ck.flow.reorder`; this helper remains for old
+    /// `ck.strand.move` / `ck.strand.reorder`; this helper remains for old
     /// local drafts that still carry a generic `position` object, but it
     /// still emits the canonical `object_patch_payload` shape.
-    pub fn flow_position_update(
+    pub fn strand_position_update(
         realm_id: &str,
         actor: &str,
-        flow_id: &str,
+        strand_id: &str,
         position_value: Value,
     ) -> anyhow::Result<OperationBuilder> {
-        flow_update_patch(
+        strand_update_patch(
             realm_id,
             actor,
-            flow_id,
+            strand_id,
             json!({
                 "position": { "$op": "set", "value": position_value },
             }),
         )
     }
 
-    /// Flow position CAS update — same cell as
-    /// [`flow_position_update`] but carries an `expected_position`
+    /// Strand position CAS update — same cell as
+    /// [`strand_position_update`] but carries an `expected_position`
     /// the server reducer compares to the cell's current value; on
     /// mismatch the response is `cas_conflict` and the client should
     /// rebase against the new head.
-    pub fn flow_position_cas_update(
+    pub fn strand_position_cas_update(
         realm_id: &str,
         actor: &str,
         kind: &str,
         board_space_id: &str,
-        flow_id: &str,
+        strand_id: &str,
         expected_position: Value,
         effect_position: Value,
     ) -> anyhow::Result<OperationBuilder> {
@@ -1928,35 +1928,35 @@ pub mod ck_ops {
 
         let Some(effect_space) = effect_space else {
             let payload =
-                flow_object_patch_payload_value(flow_id, patch_set("position", effect_position)?)?;
-            return Ok(OperationBuilder::new(realm_id, actor, "ck.flow.update")
-                .target_ref(flow_id)
+                strand_object_patch_payload_value(strand_id, patch_set("position", effect_position)?)?;
+            return Ok(OperationBuilder::new(realm_id, actor, "ck.strand.update")
+                .target_ref(strand_id)
                 .body(payload));
         };
         let Some(effect_rank) = effect_rank else {
             let payload =
-                flow_object_patch_payload_value(flow_id, patch_set("position", effect_position)?)?;
-            return Ok(OperationBuilder::new(realm_id, actor, "ck.flow.update")
-                .target_ref(flow_id)
+                strand_object_patch_payload_value(strand_id, patch_set("position", effect_position)?)?;
+            return Ok(OperationBuilder::new(realm_id, actor, "ck.strand.update")
+                .target_ref(strand_id)
                 .body(payload));
         };
 
-        // Strong types: flow_reorder_payload / flow_move_payload
+        // Strong types: strand_reorder_payload / strand_move_payload
         // (additionalProperties:false). The reorder path stays within a
         // single List Space (effect_space == space_id); the move path treats
         // effect_space as the destination target_space_id and carries the
         // optional from_space_id / expected_position CAS hints.
         match kind {
-            "ck.flow.reorder" => {
-                let payload = flow_reorder_payload_value(
+            "ck.strand.reorder" => {
+                let payload = strand_reorder_payload_value(
                     board_space_id,
-                    flow_id,
+                    strand_id,
                     &effect_space,
                     &effect_rank,
                     expected_rank.as_deref(),
                 )?;
-                Ok(OperationBuilder::new(realm_id, actor, "ck.flow.reorder")
-                    .target_ref(flow_id)
+                Ok(OperationBuilder::new(realm_id, actor, "ck.strand.reorder")
+                    .target_ref(strand_id)
                     .body(payload))
             }
             _ => {
@@ -1966,16 +1966,16 @@ pub mod ck_ops {
                     (Some(space), Some(rank)) => Some((Some(space), Some(rank))),
                     _ => None,
                 };
-                let payload = flow_move_payload_value(
+                let payload = strand_move_payload_value(
                     board_space_id,
-                    flow_id,
+                    strand_id,
                     &effect_space,
                     &effect_rank,
                     expected_space.as_deref(),
                     expected,
                 )?;
-                Ok(OperationBuilder::new(realm_id, actor, "ck.flow.move")
-                    .target_ref(flow_id)
+                Ok(OperationBuilder::new(realm_id, actor, "ck.strand.move")
+                    .target_ref(strand_id)
                     .body(payload))
             }
         }
@@ -2118,7 +2118,7 @@ pub mod ck_ops {
     // Spec: `extensions/agent-integration.md` + canonical event-kind
     // registry rows `ck.agent.endpoint` / `ck.agent.interop_session.
     // {start,status,result}`. Agents are server-side delegates a member
-    // grants narrow capabilities to (e.g. a read-flow Researcher Agent);
+    // grants narrow capabilities to (e.g. a read-strand Researcher Agent);
     // the wire shape lets soland and the SDK reducer track which agent
     // owns which session, what status, and what result.
 

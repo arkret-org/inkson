@@ -1,6 +1,6 @@
 //! Inline Recovery Key setup prompt used by encryption onboarding.
 //!
-//! This is intentionally a modal flow instead of a settings-page redirect:
+//! This is intentionally a modal strand instead of a settings-page redirect:
 //! users choosing recommended encryption need the single required action
 //! directly in context, namely generating and saving the 24-word Recovery Key.
 

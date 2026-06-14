@@ -1,7 +1,7 @@
 //! 6.1 / 6.3 — recovery client orchestration.
 //!
 //! Pure request builders (unit-tested) + thin async wrappers over
-//! [`crate::api::CokretApi`] that drive the REC-1 recovery flow:
+//! [`crate::api::CokretApi`] that drive the REC-1 recovery strand:
 //!
 //! - 6.1: fetch + parse the active recovery policy.
 //! - 6.3: open a recovery session, sign + submit a `principal_signing` proof, then complete with

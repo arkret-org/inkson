@@ -13,7 +13,7 @@
 //!   `ck.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
 //! - `discovery/profiles-presence.md` — `ck.presence` carries `{actor_id, status, last_seen?}` with
 //!   status ∈ {`online`, `away`, `dnd`, `offline`}.
-//! - `flow-and-message.md §10` — `ck.typing` is short-TTL signaling carrying `{actor_id, flow_id,
+//! - `strand-and-message.md §10` — `ck.typing` is short-TTL signaling carrying `{actor_id, strand_id,
 //!   started_at}`.
 //!
 //! The parsers are deliberately permissive at the field level — they
@@ -65,7 +65,7 @@ impl PresenceStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypingEvent {
     pub actor_id: String,
-    pub flow_id: String,
+    pub strand_id: String,
     /// Optional Unix-seconds timestamp the typing notification was
     /// issued at. None when the server didn't include one — the
     /// receiver should treat that as "now" for staleness checks.
@@ -139,7 +139,7 @@ pub fn parse_typing(
     let payload = &envelope.payload;
     Ok(TypingEvent {
         actor_id: required_str(payload, "ck.typing", "actor_id")?.to_owned(),
-        flow_id: required_str(payload, "ck.typing", "flow_id")?.to_owned(),
+        strand_id: required_str(payload, "ck.typing", "strand_id")?.to_owned(),
         started_at: payload.get("started_at").and_then(|v| v.as_i64()),
     })
 }
@@ -174,7 +174,7 @@ pub fn parse_read_cursor(
         })?;
     if !matches!(
         read_scope.kind.as_str(),
-        "realm" | "flow" | "thread" | "view" | "message" | "morph"
+        "realm" | "strand" | "thread" | "view" | "message" | "morph"
     ) {
         return Err(PresenceRxError::MissingField {
             event_kind: "ck.read_cursor.advance",
@@ -240,7 +240,7 @@ fn required_value<'a>(
 #[derive(Clone, Debug, Default)]
 pub struct PresenceAggregate {
     presence: HashMap<String, PresenceEvent>,
-    /// `(actor_id, flow_id) -> received_unix_seconds`.
+    /// `(actor_id, strand_id) -> received_unix_seconds`.
     typing: HashMap<(String, String), i64>,
     /// `(realm_id, actor_id, read_scope) -> ReadMarkerEvent`.
     read_cursors: HashMap<(String, String, String), ReadMarkerEvent>,
@@ -255,7 +255,7 @@ impl PresenceAggregate {
     }
 
     pub fn ingest_typing(&mut self, event: TypingEvent, now_unix: i64) {
-        let key = (event.actor_id, event.flow_id);
+        let key = (event.actor_id, event.strand_id);
         self.typing.insert(key, now_unix);
     }
 
@@ -272,14 +272,14 @@ impl PresenceAggregate {
         self.read_cursors.insert(key, event);
     }
 
-    /// Active typing indicators in `flow_id`, filtered by TTL.
+    /// Active typing indicators in `strand_id`, filtered by TTL.
     /// `now_unix` is supplied by the caller (typically `Utc::now()`)
     /// so unit tests can fix the clock.
-    pub fn typing_in_flow(&self, flow_id: &str, now_unix: i64) -> Vec<String> {
+    pub fn typing_in_strand(&self, strand_id: &str, now_unix: i64) -> Vec<String> {
         self.typing
             .iter()
-            .filter_map(|((actor, flow), received_at)| {
-                if flow == flow_id && now_unix - received_at <= TYPING_TTL_SECONDS {
+            .filter_map(|((actor, strand), received_at)| {
+                if strand == strand_id && now_unix - received_at <= TYPING_TTL_SECONDS {
                     Some(actor.clone())
                 } else {
                     None
@@ -375,14 +375,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_typing_extracts_actor_and_flow() {
+    fn parse_typing_extracts_actor_and_strand() {
         let env = envelope(
             "ck.typing",
-            json!({"actor_id": "did:web:alice", "flow_id": "ck:flow:1", "started_at": 1716000000}),
+            json!({"actor_id": "did:web:alice", "strand_id": "ck:strand:1", "started_at": 1716000000}),
         );
         let parsed = parse_typing(&env).expect("parse");
         assert_eq!(parsed.actor_id, "did:web:alice");
-        assert_eq!(parsed.flow_id, "ck:flow:1");
+        assert_eq!(parsed.strand_id, "ck:strand:1");
         assert_eq!(parsed.started_at, Some(1716000000));
     }
 
@@ -390,7 +390,7 @@ mod tests {
     fn parse_typing_started_at_is_optional() {
         let env = envelope(
             "ck.typing",
-            json!({"actor_id": "did:web:alice", "flow_id": "ck:flow:1"}),
+            json!({"actor_id": "did:web:alice", "strand_id": "ck:strand:1"}),
         );
         let parsed = parse_typing(&env).expect("parse");
         assert_eq!(parsed.started_at, None);
@@ -413,7 +413,7 @@ mod tests {
         let env = envelope("ck.typing", json!({"actor_id": "did:web:alice"}));
         match parse_typing(&env) {
             Err(PresenceRxError::MissingField { field, .. }) => {
-                assert_eq!(field, "flow_id");
+                assert_eq!(field, "strand_id");
             }
             other => panic!("expected MissingField, got {other:?}"),
         }
@@ -439,8 +439,8 @@ mod tests {
                 "actor_id": "did:web:alice",
                 "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
                 "read_scope": {
-                    "kind": "flow",
-                    "ref": "ck:flow:01904100-0000-7000-8000-000000000001",
+                    "kind": "strand",
+                    "ref": "ck:strand:01904100-0000-7000-8000-000000000001",
                     "track_name": "discussion"
                 },
                 "position": {
@@ -455,7 +455,7 @@ mod tests {
             "ck:realm:01904100-0000-7000-8000-000000000001"
         );
         assert_eq!(parsed.actor_id, "did:web:alice");
-        assert_eq!(parsed.read_scope.kind, "flow");
+        assert_eq!(parsed.read_scope.kind, "strand");
         assert_eq!(parsed.read_scope.track_name.as_deref(), Some("discussion"));
         assert_eq!(
             parsed.position.event_id,
@@ -465,15 +465,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_read_cursor_rejects_removed_flow_discussion_kind() {
+    fn parse_read_cursor_rejects_removed_strand_discussion_kind() {
         let env = envelope(
             "ck.read_cursor.advance",
             json!({
                 "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
                 "actor_id": "did:web:alice",
                 "read_scope": {
-                    "kind": "flow_discussion",
-                    "ref": "ck:flow:01904100-0000-7000-8000-000000000001"
+                    "kind": "strand_discussion",
+                    "ref": "ck:strand:01904100-0000-7000-8000-000000000001"
                 },
                 "position": {
                     "event_id": "ck:event:01904100-0000-7000-8000-000000000042",
@@ -490,20 +490,20 @@ mod tests {
         agg.ingest_typing(
             TypingEvent {
                 actor_id: "did:web:alice".to_owned(),
-                flow_id: "ck:flow:1".to_owned(),
+                strand_id: "ck:strand:1".to_owned(),
                 started_at: Some(1000),
             },
             1000,
         );
         // 4 seconds later — still within TTL.
-        let still_typing = agg.typing_in_flow("ck:flow:1", 1004);
+        let still_typing = agg.typing_in_strand("ck:strand:1", 1004);
         assert_eq!(still_typing, vec!["did:web:alice".to_owned()]);
         // 6 seconds later — past TTL.
-        let stale = agg.typing_in_flow("ck:flow:1", 1006);
+        let stale = agg.typing_in_strand("ck:strand:1", 1006);
         assert!(stale.is_empty());
         agg.evict_stale_typing(1006);
         // Map should be empty now.
-        assert!(agg.typing_in_flow("ck:flow:1", 1006).is_empty());
+        assert!(agg.typing_in_strand("ck:strand:1", 1006).is_empty());
     }
 
     #[test]
@@ -519,8 +519,8 @@ mod tests {
             actor_id: "did:web:alice".to_owned(),
             device_id: "ck:device:01904100-0000-7000-8000-000000000001".to_owned(),
             read_scope: ReadScopeEvent {
-                kind: "flow".to_owned(),
-                object_ref: Some("ck:flow:01904100-0000-7000-8000-000000000001".to_owned()),
+                kind: "strand".to_owned(),
+                object_ref: Some("ck:strand:01904100-0000-7000-8000-000000000001".to_owned()),
                 track_name: Some("discussion".to_owned()),
                 track_scope: None,
             },
@@ -532,8 +532,8 @@ mod tests {
         let presence = agg.presence_for("did:web:alice").unwrap();
         assert_eq!(presence.status, PresenceStatus::Away);
         let scope = ReadScopeEvent {
-            kind: "flow".to_owned(),
-            object_ref: Some("ck:flow:01904100-0000-7000-8000-000000000001".to_owned()),
+            kind: "strand".to_owned(),
+            object_ref: Some("ck:strand:01904100-0000-7000-8000-000000000001".to_owned()),
             track_name: Some("discussion".to_owned()),
             track_scope: None,
         };

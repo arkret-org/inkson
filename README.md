@@ -69,7 +69,7 @@ normative source.
   verification). This is transparent to end users but is a
   wire-breaking change for any third-party client built against the
   old yougen behaviour.
-- **Moderation appeal flow** — when a moderation decision blocks a
+- **Moderation appeal strand** — when a moderation decision blocks a
   member, they can now file an appeal directly from the timeline.
   Status surfaces back to the appellant as `Submitted → UnderReview →
   Decided → Closed`.
@@ -175,7 +175,7 @@ cd ../soland
 cargo run -- --bind local.host:443
 ```
 
-The Connect action probes server discovery first. Authenticated sync, directory, device, and push flows run only after a real session is available.
+The Connect action probes server discovery first. Authenticated sync, directory, device, and push strands run only after a real session is available.
 
 ## Product Shell
 

@@ -19,7 +19,7 @@ yougen ships two surfaces that share the same Rust core:
 
 <!-- TODO(screenshot): platform-picker.png — three OS cards + web card -->
 
-If you only need to test a flow once, use the web build. For day-to-day use,
+If you only need to test a strand once, use the web build. For day-to-day use,
 install the desktop build so your signing keys land in the OS keychain instead
 of `localStorage` / IndexedDB.
 

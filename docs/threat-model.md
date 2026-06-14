@@ -15,7 +15,7 @@ properties at the client boundary.
 - DPoP private keys and proof material.
 - Local device identity and cross-signing state.
 - Local encryption keys and secure-store handles.
-- Recovery keys and recovery-flow state.
+- Recovery keys and recovery-strand state.
 - Push tokens and push registration identifiers.
 - Cached plaintext message content and attachments.
 
@@ -76,7 +76,7 @@ Controls now in place:
   server and device binding, mints introspection proof headers, and fails
   closed when grant material is missing or mismatched.
 
-## Recovery flow risks
+## Recovery strand risks
 
 Threats:
 
@@ -154,7 +154,7 @@ Controls:
 - Release checklist explicitly forbids tags, registry pushes, and crates.io
   publication for this local phase.
 
-## MLS-Exporter SFrame key derivation flow
+## MLS-Exporter SFrame key derivation strand
 
 yougen's E2EE call layer derives SFrame keying material from an MLS group
 via the MLS Exporter interface. This section is the canonical reference

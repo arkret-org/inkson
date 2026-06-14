@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn canonical_event_digest_round_trip() {
-        let body = json!({"flow_id": "ck:flow:abc", "title": "Ops"});
+        let body = json!({"strand_id": "ck:strand:abc", "title": "Ops"});
         let d = canonical_event_digest(&body).unwrap();
         assert!(d.starts_with("sha256:"));
         assert_eq!(d, canonical_sha256(&body).unwrap());
@@ -142,8 +142,8 @@ mod tests {
         // Two semantically identical move payloads with different
         // serialization orders MUST produce the same canonical bytes,
         // otherwise downstream signatures diverge.
-        let a = json!({"flow_id": "ck:flow:1", "patch": {"title": "x"}});
-        let b = json!({"patch": {"title": "x"}, "flow_id": "ck:flow:1"});
+        let a = json!({"strand_id": "ck:strand:1", "patch": {"title": "x"}});
+        let b = json!({"patch": {"title": "x"}, "strand_id": "ck:strand:1"});
         assert_eq!(
             canonical_move_bytes(&a).unwrap(),
             canonical_move_bytes(&b).unwrap()

@@ -279,16 +279,16 @@ pub fn ChatPanel(
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
-    initial_flow_id: String,
+    initial_strand_id: String,
     embedded: bool,
     direct_mode: bool,
 ) -> Element {
     let navigator = use_navigator();
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
-        .then(|| discussion_channel_for_flow(&selected_realm_id, &initial_flow_id));
+        .then(|| discussion_channel_for_strand(&selected_realm_id, &initial_strand_id));
     let initial_selected_channel = initial_default_channel
         .as_ref()
-        .map(|channel| channel.flow_id.clone())
+        .map(|channel| channel.strand_id.clone())
         .unwrap_or_default();
     let mut channels = use_signal(move || {
         initial_default_channel
@@ -298,23 +298,23 @@ pub fn ChatPanel(
     });
     let mut selected_channel = use_signal(move || initial_selected_channel.clone());
     {
-        let selected_realm_for_initial_flow = selected_realm_id.clone();
-        let initial_flow_id_for_effect = initial_flow_id.clone();
+        let selected_realm_for_initial_strand = selected_realm_id.clone();
+        let initial_strand_id_for_effect = initial_strand_id.clone();
         use_effect(move || {
-            if selected_realm_for_initial_flow.trim().is_empty() {
+            if selected_realm_for_initial_strand.trim().is_empty() {
                 return;
             }
-            let desired_channel = discussion_channel_for_flow(
-                &selected_realm_for_initial_flow,
-                &initial_flow_id_for_effect,
+            let desired_channel = discussion_channel_for_strand(
+                &selected_realm_for_initial_strand,
+                &initial_strand_id_for_effect,
             );
-            if selected_channel() != desired_channel.flow_id {
-                selected_channel.set(desired_channel.flow_id.clone());
+            if selected_channel() != desired_channel.strand_id {
+                selected_channel.set(desired_channel.strand_id.clone());
             }
             let has_channel = channels
                 .read()
                 .iter()
-                .any(|channel| channel.flow_id == desired_channel.flow_id);
+                .any(|channel| channel.strand_id == desired_channel.strand_id);
             if !has_channel {
                 channels.write().push(desired_channel);
             }
@@ -339,7 +339,7 @@ pub fn ChatPanel(
     //
     // TODO(soland): replace `pinned_messages` with the canonical
     // `ck.message.pin` event family per spec
-    // `flow-and-message.md §8.6` once soland ships it.
+    // `strand-and-message.md §8.6` once soland ships it.
     let mut pinned_messages = use_signal(Vec::<String>::new);
     // Currently-open context menu (right-click on a message). Stores
     // the message id whose menu is open; None means no menu visible.
@@ -348,10 +348,10 @@ pub fn ChatPanel(
     let mut new_channel_topic = use_signal(String::new);
     let mut new_channel_create_card = use_signal(|| false);
     let mut create_dialog_open = use_signal(|| false);
-    // T7.2: per-Flow watch level signal for the topbar fast switcher.
+    // T7.2: per-Strand watch level signal for the topbar fast switcher.
     // Optimistically updates on user click; a failed submit rolls back to
     // the prior value.
-    let mut flow_watch_level = use_signal(|| WatchLevel::All);
+    let mut strand_watch_level = use_signal(|| WatchLevel::All);
     let mut watch_level_menu_open = use_signal(|| false);
     let mut status_msg = use_signal(String::new);
     let mut reply_to_message = use_signal(|| Option::<String>::None);
@@ -384,10 +384,10 @@ pub fn ChatPanel(
     let presence_labels = use_signal(std::collections::BTreeMap::<String, String>::new);
     let mut presence_sync_key_seen = use_signal(String::new);
     // G3.Y2 — discussion promote modal. Holds the source message id
-    // (or Flow id) + the desired private discussion title.
+    // (or Strand id) + the desired private discussion title.
     let mut promote_discussion_draft =
         use_signal(crate::messaging::discussion_promote::PromoteDiscussionDraft::default);
-    // Map of `source_message_id -> private_discussion_flow_id` for the
+    // Map of `source_message_id -> private_discussion_strand_id` for the
     // `discussion-promoted-indicator` row. Populated optimistically
     // on submit and updated from the server response.
     let mut promoted_targets = use_signal(std::collections::BTreeMap::<String, String>::new);
@@ -426,7 +426,7 @@ pub fn ChatPanel(
     let visible_channels_empty = visible_channels.is_empty();
     let selected_channel_info = visible_channels
         .iter()
-        .find(|channel| channel.flow_id == selected_channel_value)
+        .find(|channel| channel.strand_id == selected_channel_value)
         .cloned()
         .or_else(|| visible_channels.first().cloned());
     let selected_channel_name = if embedded {
@@ -481,21 +481,21 @@ pub fn ChatPanel(
     let visible_messages = all_messages_snapshot
         .iter()
         .filter(|msg| {
-            msg.flow_id == selected_channel_value
+            msg.strand_id == selected_channel_value
                 && (selected_realm_id.trim().is_empty() || msg.realm_id == selected_realm_id)
         })
         .cloned()
         .collect::<Vec<_>>();
-    // CKP-0007 P3B.2.4 — per-flow Circle-scope lookup used by the
-    // timeline accent rail. We index by `flow_id` once instead of
+    // CKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
+    // timeline accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
-    let flow_scope_lookup: std::collections::BTreeMap<String, FlowScopeCircle> = all_channels
+    let strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle> = all_channels
         .iter()
         .filter_map(|channel| {
             channel
                 .scope_circle
                 .clone()
-                .map(|circle| (channel.flow_id.clone(), circle))
+                .map(|circle| (channel.strand_id.clone(), circle))
         })
         .collect();
     let visible_message_count = visible_messages.len();
@@ -675,7 +675,7 @@ pub fn ChatPanel(
         if selected_channel().trim().is_empty()
             && let Some(first_channel) = channels.read().first()
         {
-            selected_channel.set(first_channel.flow_id.clone());
+            selected_channel.set(first_channel.strand_id.clone());
         }
         if !local_messages.is_empty() {
             merge_chat_messages(&mut messages.write(), local_messages);
@@ -757,7 +757,7 @@ pub fn ChatPanel(
             if selected_channel().trim().is_empty()
                 && let Some(first_channel) = channels.read().first()
             {
-                selected_channel.set(first_channel.flow_id.clone());
+                selected_channel.set(first_channel.strand_id.clone());
             }
             if !loaded_messages.is_empty() {
                 merge_chat_messages(&mut messages.write(), loaded_messages);
@@ -836,14 +836,14 @@ pub fn ChatPanel(
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
                             h2 { {crate::i18n::tr("chat.discussions_header")} }
-                            HelpTip { text: "Discussion is the selected Flow's track. The default Flow is always available for this Realm; the alternate filter includes every Flow with a discussion track." }
+                            HelpTip { text: "Discussion is the selected Strand's track. The default Strand is always available for this Realm; the alternate filter includes every Strand with a discussion track." }
                         }
                         div { class: "discussion-panel-head-actions",
                             Button {
                                 variant: ButtonVariant::Primary,
                                 class: "icon-button",
-                                "aria-label": crate::i18n::tr("chat.new_flow"),
-                                title: crate::i18n::tr("chat.new_flow"),
+                                "aria-label": crate::i18n::tr("chat.new_strand"),
+                                title: crate::i18n::tr("chat.new_strand"),
                                 "data-testid": "open-channel-dialog",
                                 onclick: move |_| create_dialog_open.set(true),
                                 UiIcon { name: "plus" }
@@ -871,17 +871,17 @@ pub fn ChatPanel(
                             class: if track_filter() == "with_discussion_track" { "segment active" } else { "segment" },
                             "data-testid": "discussion-filter-track",
                             onclick: move |_| track_filter.set("with_discussion_track".to_owned()),
-                            "All Flow tracks"
+                            "All Strand tracks"
                         }
                     }
                     div { class: "discussion-list", "data-testid": "channel-list",
                         for channel in visible_channels {
                             Button {
                                 variant: ButtonVariant::Secondary,
-                                class: if channel.flow_id == selected_channel() { "discussion-track-row active" } else { "discussion-track-row" },
+                                class: if channel.strand_id == selected_channel() { "discussion-track-row active" } else { "discussion-track-row" },
                                 "data-testid": "channel-item",
                                 onclick: {
-                                    let id = channel.flow_id.clone();
+                                    let id = channel.strand_id.clone();
                                     move |_| selected_channel.set(id.clone())
                                 },
                                 div { class: "discussion-track-main",
@@ -889,7 +889,7 @@ pub fn ChatPanel(
                                         SecurityStateBadge {
                                             encrypted: channel.security_encrypted.unwrap_or(selected_realm_security_encrypted),
                                             compact: true,
-                                            test_id: Some("flow-track-security-state".to_owned()),
+                                            test_id: Some("strand-track-security-state".to_owned()),
                                         }
                                         span { class: "discussion-track-name", "{channel.name}" }
                                     }
@@ -936,12 +936,12 @@ pub fn ChatPanel(
                         }
                     },
                     "data-testid": "channel-create-modal",
-                    "aria-label": "New Flow",
+                    "aria-label": "New Strand",
                     div { class: "discussion-modal",
                         div { class: "discussion-modal-head",
                             div { class: "discussion-title-row",
-                                h2 { "New Flow" }
-                                HelpTip { text: "Creates an additional Flow. Its discussion track is available from this view; enable the card option when the same Flow should also carry a synthesis track." }
+                                h2 { "New Strand" }
+                                HelpTip { text: "Creates an additional Strand. Its discussion track is available from this view; enable the card option when the same Strand should also carry a synthesis track." }
                             }
                             Button {
                                 variant: ButtonVariant::Secondary,
@@ -958,7 +958,7 @@ pub fn ChatPanel(
                                 id: "new-channel-name-input",
                                 "data-testid": "new-channel-name",
                                 value: "{new_channel_name}",
-                                placeholder: "Flow title",
+                                placeholder: "Strand title",
                                 oninput: move |event: FormEvent| new_channel_name.set(event.value()),
                             }
                             Label { html_for: "new-channel-topic-input", {crate::i18n::tr("chat.label.summary")} }
@@ -995,18 +995,18 @@ pub fn ChatPanel(
                                     move |_| {
                                         let title = new_channel_name().trim().to_owned();
                                         if title.is_empty() {
-                                            status_msg.set("Flow title is required".to_owned());
+                                            status_msg.set("Strand title is required".to_owned());
                                             return;
                                         }
                                         let category = "general".to_owned();
                                         let summary = new_channel_topic().trim().to_owned();
                                         let create_card = new_channel_create_card();
-                                        let flow_id = format!("ck:flow:{}", uuid_v7());
+                                        let strand_id = format!("ck:strand:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
-                                        let op = match ck_ops::discussion_flow_create(
+                                        let op = match ck_ops::discussion_strand_create(
                                             &realm,
                                             &actor,
-                                            &flow_id,
+                                            &strand_id,
                                             &title,
                                         ) {
                                             Ok(builder) => {
@@ -1032,7 +1032,7 @@ pub fn ChatPanel(
                                                 }
                                                 if let Err(error) = op.refresh_proof_hashes() {
                                                     status_msg.set(format!(
-                                                        "Could not create Flow proof: {error}"
+                                                        "Could not create Strand proof: {error}"
                                                     ));
                                                     return;
                                                 }
@@ -1040,7 +1040,7 @@ pub fn ChatPanel(
                                             }
                                             Err(error) => {
                                                 status_msg.set(format!(
-                                                    "Could not create Flow: {error}"
+                                                    "Could not create Strand: {error}"
                                                 ));
                                                 return;
                                             }
@@ -1050,7 +1050,7 @@ pub fn ChatPanel(
                                         let channel_topic = if summary.is_empty() { None } else { Some(summary) };
                                         let base = base.clone();
                                         let realm = realm.clone();
-                                        status_msg.set("Creating Flow".to_owned());
+                                        status_msg.set("Creating Strand".to_owned());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token.clone(), wait_for) {
                                                 Ok(api) => match api
@@ -1059,7 +1059,7 @@ pub fn ChatPanel(
                                                     {
                                                         Ok(submitted) => {
                                                             channels.write().push(ChannelEntity {
-                                                                flow_id: flow_id.clone(),
+                                                                strand_id: strand_id.clone(),
                                                                 name: title.clone(),
                                                                 kind: "discussion".to_owned(),
                                                                 category: category.clone(),
@@ -1067,15 +1067,15 @@ pub fn ChatPanel(
                                                                 unread: 0,
                                                                 is_default: false,
                                                                 security_encrypted: None,
-                                                                // P3B.2.3 — the new-Flow form
+                                                                // P3B.2.3 — the new-Strand form
                                                                 // currently creates Realm-scoped
-                                                                // Flows only; Circle scope
+                                                                // Strands only; Circle scope
                                                                 // selection arrives once the
                                                                 // CircleScopePicker is mounted
                                                                 // on this form.
                                                                 scope_circle: None,
                                                             });
-                                                            selected_channel.set(flow_id.clone());
+                                                            selected_channel.set(strand_id.clone());
                                                             frontier_state.set(submitted.event_id.clone());
                                                             {
                                                                 let mut store = state_store.write();
@@ -1086,8 +1086,8 @@ pub fn ChatPanel(
                                                                     op.local_operation_id().to_owned(),
                                                                     Some(realm.clone()),
                                                                     json!({
-                                                                        "flow_id": flow_id,
-                                                                        "kind": "ck.flow.create",
+                                                                        "strand_id": strand_id,
+                                                                        "kind": "ck.strand.create",
                                                                         "title": title,
                                                                         "category": category,
                                                                         "summary": channel_topic,
@@ -1097,13 +1097,13 @@ pub fn ChatPanel(
                                                                     }),
                                                                 );
                                                             }
-                                                            status_msg.set("Flow created".to_owned());
+                                                            status_msg.set("Strand created".to_owned());
                                                             new_channel_name.set(String::new());
                                                             new_channel_topic.set(String::new());
                                                             new_channel_create_card.set(false);
                                                             create_dialog_open.set(false);
                                                         }
-                                                        Err(error) => status_msg.set(format!("Flow create failed: {error}")),
+                                                        Err(error) => status_msg.set(format!("Strand create failed: {error}")),
                                                     },
                                                     Err(error) => status_msg.set(format!("Invalid server URL: {error}")),
                                                 }
@@ -1124,7 +1124,7 @@ pub fn ChatPanel(
                             SecurityStateBadge {
                                 encrypted: selected_channel_security_encrypted,
                                 compact: true,
-                                test_id: Some("selected-flow-security-state".to_owned()),
+                                test_id: Some("selected-strand-security-state".to_owned()),
                             }
                             h1 { "{selected_channel_name}" }
                         }
@@ -1132,17 +1132,17 @@ pub fn ChatPanel(
                     if !embedded {
                     div { class: "discussion-head-actions",
                         // T7.2: watch-level fast switcher. Issues a
-                        // `ck.flow.watch.set` event on selection. We
+                        // `ck.strand.watch.set` event on selection. We
                         // optimistically update the local signal first;
                         // a network failure rolls back via status_msg.
                         {
-                            let level_now = flow_watch_level();
+                            let level_now = strand_watch_level();
                             let menu_open = watch_level_menu_open();
                             let level_label = crate::i18n::tr(watch_level_label_key(level_now));
-                            let flow_id_for_watch = selected_channel_value.clone();
+                            let strand_id_for_watch = selected_channel_value.clone();
                             let realm_for_watch = selected_realm_id.clone();
                             let actor_for_watch = account_did.clone();
-                            let watch_disabled = flow_id_for_watch.trim().is_empty();
+                            let watch_disabled = strand_id_for_watch.trim().is_empty();
                             rsx! {
                                 div { class: "watch-level-picker", "data-testid": "watch-level-picker",
                                     Button {
@@ -1173,7 +1173,7 @@ pub fn ChatPanel(
                                                     for option in options.iter().copied() {
                                                         {
                                                             let option_label = crate::i18n::tr(watch_level_label_key(option));
-                                                            let flow_id_for_click = flow_id_for_watch.clone();
+                                                            let strand_id_for_click = strand_id_for_watch.clone();
                                                             let realm_for_click = realm_for_watch.clone();
                                                             let actor_for_click = actor_for_watch.clone();
                                                             let base_for_click = base_url.clone();
@@ -1185,24 +1185,24 @@ pub fn ChatPanel(
                                                                     class: if is_active { "watch-level-option active" } else { "watch-level-option" },
                                                                     "data-testid": "watch-level-option",
                                                                     onclick: move |_| {
-                                                                        let prev = flow_watch_level();
-                                                                        flow_watch_level.set(option);
+                                                                        let prev = strand_watch_level();
+                                                                        strand_watch_level.set(option);
                                                                         watch_level_menu_open.set(false);
                                                                         status_msg.set(crate::i18n::tr("chat.watch_level.pending"));
                                                                         let api_token = token();
                                                                         let wait_for = active_sync_token(sync_cursor());
-                                                                        let watch_op = match ck_ops::flow_watch_set(
+                                                                        let watch_op = match ck_ops::strand_watch_set(
                                                                             &realm_for_click,
                                                                             &actor_for_click,
                                                                             &actor_for_click,
-                                                                            &flow_id_for_click,
+                                                                            &strand_id_for_click,
                                                                             Some(watch_level_wire_value(option)),
                                                                             None,
                                                                         ) {
                                                                             Ok(builder) => builder.build("yougen"),
                                                                             Err(err) => {
-                                                                                tracing::warn!("flow_watch_set build failed: {err:#}");
-                                                                                flow_watch_level.set(prev);
+                                                                                tracing::warn!("strand_watch_set build failed: {err:#}");
+                                                                                strand_watch_level.set(prev);
                                                                                 status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
                                                                                 return;
                                                                             }
@@ -1216,12 +1216,12 @@ pub fn ChatPanel(
                                                                                     }
                                                                                     Err(_) => {
                                                                                         // Rollback on failure.
-                                                                                        flow_watch_level.set(prev);
+                                                                                        strand_watch_level.set(prev);
                                                                                         status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
                                                                                     }
                                                                                 },
                                                                                 Err(_) => {
-                                                                                    flow_watch_level.set(prev);
+                                                                                    strand_watch_level.set(prev);
                                                                                     status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
                                                                                 }
                                                                             }
@@ -1358,7 +1358,7 @@ pub fn ChatPanel(
                 }
 
                 // G3.Y2 — typing indicator. Shown when one or more
-                // other actors in the active flow have sent a
+                // other actors in the active strand have sent a
                 // `ck.typing` ephemeral within `TYPING_TTL_SECONDS`.
                 // The DIDs live on `data-typing-actors` so cotest can
                 // assert on them without scraping localised text.
@@ -1400,7 +1400,7 @@ pub fn ChatPanel(
                 div { class: "discussion-chat-feed", "data-testid": "message-list",
                     for msg in visible_messages {
                         {
-                            let scope_circle = flow_scope_lookup.get(&msg.flow_id).cloned();
+                            let scope_circle = strand_scope_lookup.get(&msg.strand_id).cloned();
                             let scope_class = if scope_circle.is_some() {
                                 " has-circle-accent-rail"
                             } else {
@@ -1467,7 +1467,7 @@ pub fn ChatPanel(
                             // CKP-0007 P3B.2.4 — Circle scope accent
                             // rail. Renders a left-edge coloured ribbon
                             // with the Circle title as a tooltip when
-                            // the message's enclosing Flow has a
+                            // the message's enclosing Strand has a
                             // `scope_circle_id`. The CSS class
                             // `has-circle-accent-rail` on the outer
                             // message div positions the ribbon at the
@@ -1723,7 +1723,7 @@ pub fn ChatPanel(
                                                 let actor = account_did.clone();
                                                 let local_id = msg.id.clone();
                                                 let body = msg.body.clone();
-                                                let flow_id = msg.flow_id.clone();
+                                                let strand_id = msg.strand_id.clone();
                                                 let mentions = msg.mentions.clone();
                                                 let reply_to = msg.reply_to.clone();
                                                 move |_| {
@@ -1751,7 +1751,7 @@ pub fn ChatPanel(
                                                     let message_id_for_store = message_id.clone();
                                                     let body_for_store = body.clone();
                                                     let actor_for_store = actor.clone();
-                                                    let flow_id_for_store = flow_id.clone();
+                                                    let strand_id_for_store = strand_id.clone();
                                                     let reply_to_for_store = reply_to.clone();
                                                     let projection = state_store
                                                         .read()
@@ -1766,7 +1766,7 @@ pub fn ChatPanel(
                                                     let op = match chat_message_create_operation(
                                                         &realm,
                                                         &actor,
-                                                        &flow_id,
+                                                        &strand_id,
                                                         "discussion",
                                                         &message_id,
                                                         &body,
@@ -1812,7 +1812,7 @@ pub fn ChatPanel(
                                                                             "kind": "ck.message.create",
                                                                             "actor_id": actor_for_store,
                                                                             "body": body_for_store,
-                                                                            "flow_id": flow_id_for_store,
+                                                                            "strand_id": strand_id_for_store,
                                                                             "message_id": message_id_for_store,
                                                                             "mentions": mention_values_for_store,
                                                                             "reply_to": reply_to_for_store,
@@ -2180,10 +2180,10 @@ pub fn ChatPanel(
                                 // G3.Y2 — discussion-promoted indicator.
                                 // Lights up after a successful promote
                                 // round-trip; the target is the private
-                                // Circle-scoped discussion Flow.
+                                // Circle-scoped discussion Strand.
                                 {
                                     // After a successful promote, the
-                                    // resulting private discussion Flow id lives in
+                                    // resulting private discussion Strand id lives in
                                     // `promoted_targets` keyed by the
                                     // source message id; we render an
                                     // seal row so the parent timeline
@@ -2192,9 +2192,9 @@ pub fn ChatPanel(
                                         .get(&msg.id)
                                         .cloned();
                                     match promoted_to {
-                                        Some(discussion_flow_id) => {
-                                            let discussion_flow_id_label = short_protocol_id(&discussion_flow_id);
-                                            let discussion_flow_href = format!(
+                                        Some(discussion_strand_id) => {
+                                            let discussion_strand_id_label = short_protocol_id(&discussion_strand_id);
+                                            let discussion_strand_href = format!(
                                                 "/chat/{}",
                                                 selected_realm_id
                                             );
@@ -2202,12 +2202,12 @@ pub fn ChatPanel(
                                                 div {
                                                     class: "discussion-promoted-indicator",
                                                     "data-testid": "discussion-promoted-indicator",
-                                                    "data-discussion-flow-id": "{discussion_flow_id}",
-                                                    span { "Discussion moved to private Flow " }
+                                                    "data-discussion-strand-id": "{discussion_strand_id}",
+                                                    span { "Discussion moved to private Strand " }
                                                     a {
-                                                        href: "{discussion_flow_href}",
-                                                        title: "{discussion_flow_id}",
-                                                        "{discussion_flow_id_label}"
+                                                        href: "{discussion_strand_href}",
+                                                        title: "{discussion_strand_id}",
+                                                        "{discussion_strand_id_label}"
                                                     }
                                                 }
                                             }
@@ -2606,13 +2606,13 @@ pub fn ChatPanel(
                 // shows an explanatory hint instead of pretending to be
                 // a checkbox.
                 let realm_id_for_mute = selected_realm_id.clone();
-                let flow_id_for_rr = selected_channel_value.clone();
+                let strand_id_for_rr = selected_channel_value.clone();
                 let muted_realms_now = state_store.read().muted_realms();
                 let realm_is_muted = muted_realms_now.contains(&realm_id_for_mute);
                 let rr_default_send = state_store.read().read_receipt_default_send();
-                let rr_flow_override =
-                    state_store.read().read_receipt_flow_override(&flow_id_for_rr);
-                let rr_active = rr_flow_override.unwrap_or(rr_default_send);
+                let rr_strand_override =
+                    state_store.read().read_receipt_strand_override(&strand_id_for_rr);
+                let rr_active = rr_strand_override.unwrap_or(rr_default_send);
                 rsx! {
                 aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-settings-panel",
                     div { class: "discussion-panel-head",
@@ -2665,13 +2665,13 @@ pub fn ChatPanel(
                                 "data-testid": "discussion-settings-read-receipts",
                                 checked: if rr_active { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                 on_checked_change: {
-                                    let flow_id = flow_id_for_rr.clone();
+                                    let strand_id = strand_id_for_rr.clone();
                                     move |state: CheckboxState| {
                                         let new_value = bool::from(state);
                                         state_store
                                             .write()
-                                            .set_read_receipt_flow_override(
-                                                flow_id.clone(),
+                                            .set_read_receipt_strand_override(
+                                                strand_id.clone(),
                                                 Some(new_value),
                                             );
                                     }
@@ -2747,7 +2747,7 @@ pub fn ChatPanel(
                                         // server round-trip completes.
                                         promoted_targets
                                             .write()
-                                            .insert(source_id.clone(), ids.discussion_flow_id.clone());
+                                            .insert(source_id.clone(), ids.discussion_strand_id.clone());
                                         promote_discussion_draft.write().close();
 
                                         let base = base.clone();
@@ -2832,7 +2832,7 @@ pub fn ChatPanel(
             div { class: "{composer_class}", "data-testid": "chat-composer",
                 // CKP-0007 P3B.2.3 — Circle composer banner. Rendered
                 // at the top of the composer surface when the active
-                // Flow carries a `scope_circle_id`. The component is
+                // Strand carries a `scope_circle_id`. The component is
                 // pure: `CircleScope::Realm` renders nothing, so the
                 // surface stays quiet during normal Realm-scoped
                 // writes.
@@ -3304,7 +3304,7 @@ pub fn ChatPanel(
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
                                     let actor = account_did.clone();
-                                    let selected_flow = selected_channel_value.clone();
+                                    let selected_strand = selected_channel_value.clone();
                                     move |_| {
                                         let Some(draft_snapshot) = poll_draft.read().clone() else {
                                             return;
@@ -3328,7 +3328,7 @@ pub fn ChatPanel(
                                             sender: actor.clone(),
                                             body: format!("[poll] {}", draft_snapshot.question),
                                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                            flow_id: selected_flow.clone(),
+                                            strand_id: selected_strand.clone(),
                                             reply_to: None,
                                             reactions: Vec::new(),
                                             redacted: false,
@@ -3345,7 +3345,7 @@ pub fn ChatPanel(
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         let actor = actor.clone();
-                                        let flow_id = selected_flow.clone();
+                                        let strand_id = selected_strand.clone();
                                         let api_token = token();
                                         let draft_for_op = draft_snapshot.clone();
                                         let poll_id_for_op = poll_id.clone();
@@ -3358,7 +3358,7 @@ pub fn ChatPanel(
                                                     let op = crate::messaging::polls::build_poll_create_op(
                                                         &realm,
                                                         &actor,
-                                                        &flow_id,
+                                                        &strand_id,
                                                         &poll_id_for_op,
                                                         &draft_for_op,
                                                     )?;
@@ -3401,7 +3401,7 @@ pub fn ChatPanel(
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
                                     let actor = account_did.clone();
-                                    let selected_flow = selected_channel_value.clone();
+                                    let selected_strand = selected_channel_value.clone();
                                     move |_| {
                                         let Some(draft_snapshot) = poll_draft.read().clone() else {
                                             return;
@@ -3421,7 +3421,7 @@ pub fn ChatPanel(
                                             sender: actor.clone(),
                                             body: format!("[poll] {}", draft_snapshot.question),
                                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                            flow_id: selected_flow.clone(),
+                                            strand_id: selected_strand.clone(),
                                             reply_to: None,
                                             reactions: Vec::new(),
                                             redacted: false,
@@ -3438,7 +3438,7 @@ pub fn ChatPanel(
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         let actor = actor.clone();
-                                        let flow_id = selected_flow.clone();
+                                        let strand_id = selected_strand.clone();
                                         let api_token = token();
                                         let draft_for_op = draft_snapshot.clone();
                                         let poll_id_for_op = poll_id.clone();
@@ -3451,7 +3451,7 @@ pub fn ChatPanel(
                                                     let op = crate::messaging::polls::build_poll_create_op(
                                                         &realm,
                                                         &actor,
-                                                        &flow_id,
+                                                        &strand_id,
                                                         &poll_id_for_op,
                                                         &draft_for_op,
                                                     )?;
@@ -3551,7 +3551,7 @@ pub fn ChatPanel(
                                 let local_id = new_chat_message_id();
                                 let channel = channels()
                                     .iter()
-                                    .find(|candidate| candidate.flow_id == selected_channel())
+                                    .find(|candidate| candidate.strand_id == selected_channel())
                                     .cloned();
                                 let Some(channel) = channel else {
                                     status_msg.set("select a discussion first".to_owned());
@@ -3563,7 +3563,7 @@ pub fn ChatPanel(
                                     sender: actor.clone(),
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                    flow_id: channel.flow_id.clone(),
+                                    strand_id: channel.strand_id.clone(),
                                     reply_to: reply_to_message(),
                                     reactions: Vec::new(),
                                     redacted: false,
@@ -3574,7 +3574,7 @@ pub fn ChatPanel(
                                     error: None,
                                     mentions: mentions.clone(),
                                     // Local-only sends start plaintext;
-                                    // the Send Secure flow may upgrade
+                                    // the Send Secure strand may upgrade
                                     // them via a separate `messages.write()`
                                     // patch after `encrypt_payload`.
                                     crypto_state: MessageCryptoState::Plaintext,
@@ -3585,7 +3585,7 @@ pub fn ChatPanel(
                                 let realm = realm.clone();
                                 let api_token = token();
                                 let actor = actor.clone();
-                                let flow_id = channel.flow_id.clone();
+                                let strand_id = channel.strand_id.clone();
                                 let channel_kind = channel.kind.clone();
                                 let message_id = local_id.clone();
                                 let reply_to = reply_to_message();
@@ -3598,7 +3598,7 @@ pub fn ChatPanel(
                                 let body_for_store = body.clone();
                                 let body_for_restore = body.clone();
                                 let body_for_resolve = body.clone();
-                                let flow_id_for_store = flow_id.clone();
+                                let strand_id_for_store = strand_id.clone();
                                 let message_id_for_store = message_id.clone();
                                 let reply_to_for_store = reply_to.clone();
                                 let projection = state_store
@@ -3635,7 +3635,7 @@ pub fn ChatPanel(
                                     let mut op = match chat_message_create_operation(
                                         &realm,
                                         &actor,
-                                        &flow_id,
+                                        &strand_id,
                                         &channel_kind,
                                         &message_id,
                                         &body_for_resolve,
@@ -3716,7 +3716,7 @@ pub fn ChatPanel(
                                                         "kind": "ck.message.create",
                                                         "actor_id": actor_for_store,
                                                         "body": body_for_store,
-                                                        "flow_id": flow_id_for_store,
+                                                        "strand_id": strand_id_for_store,
                                                         "message_id": message_id_for_store,
                                                         "mentions": mention_values_for_store,
                                                         "reply_to": reply_to_for_store,
@@ -3779,7 +3779,7 @@ pub fn ChatPanel(
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
-                            let selected_flow = selected_channel_value.clone();
+                            let selected_strand = selected_channel_value.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -3788,10 +3788,10 @@ pub fn ChatPanel(
                                 }
                                 let realm = realm.clone();
                                 let actor = actor.clone();
-                                let flow_id = if selected_flow.trim().is_empty() {
-                                    default_discussion_flow_id(&realm)
+                                let strand_id = if selected_strand.trim().is_empty() {
+                                    default_discussion_strand_id(&realm)
                                 } else {
-                                    selected_flow.clone()
+                                    selected_strand.clone()
                                 };
                                 // P2: preserve the composer's reply target on the
                                 // encrypted path (it was silently dropped before).
@@ -3804,7 +3804,7 @@ pub fn ChatPanel(
                                     sender: actor.clone(),
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                    flow_id: flow_id.clone(),
+                                    strand_id: strand_id.clone(),
                                     reply_to: reply_to.clone(),
                                     reactions: Vec::new(),
                                     redacted: false,
@@ -4121,7 +4121,7 @@ pub fn ChatPanel(
                                             return;
                                         }
                                     };
-                                let typed_flow_id = match flow_id_value(&flow_id) {
+                                let typed_strand_id = match strand_id_value(&strand_id) {
                                     Ok(value) => value,
                                     Err(err) => {
                                         fail_optimistic_chat_send(
@@ -4130,14 +4130,14 @@ pub fn ChatPanel(
                                             status_msg,
                                             &message_id,
                                             &body,
-                                            format!("Send Secure flow id invalid: {err:#}"),
+                                            format!("Send Secure strand id invalid: {err:#}"),
                                         );
                                         return;
                                     }
                                 };
                                 let mut message_payload =
                                     cokret_sdk::MessageCreatePayload::with_encrypted_content(
-                                        typed_flow_id,
+                                        typed_strand_id,
                                         "discussion",
                                         encrypted_payload_json,
                                     )
@@ -4201,13 +4201,13 @@ pub fn ChatPanel(
                                 // rebuild can reconstruct the sidecar key.
                                 let message_id_for_record = message_id.clone();
                                 let actor_for_record = actor.clone();
-                                // The synced event carries this exact flow_id
+                                // The synced event carries this exact strand_id
                                 // string (the payload was built with
-                                // `flow_id_value(&flow_id)`, which wraps it
+                                // `strand_id_value(&strand_id)`, which wraps it
                                 // verbatim), so the read-side sidecar lookup
-                                // keyed on the event's `flow_id` matches.
-                                let flow_id_for_sidecar = flow_id.clone();
-                                let flow_id_for_record = flow_id.clone();
+                                // keyed on the event's `strand_id` matches.
+                                let strand_id_for_sidecar = strand_id.clone();
+                                let strand_id_for_record = strand_id.clone();
                                 let body_for_sidecar = body.clone();
                                 // P2: recoverable draft — if the encrypted send
                                 // fails we restore the composer text instead of
@@ -4298,7 +4298,7 @@ pub fn ChatPanel(
                                                 {
                                                     let mut store = state_store.write();
                                                     // X10.6: persist the message
-                                                    // identity (message_id + flow_id +
+                                                    // identity (message_id + strand_id +
                                                     // actor), NOT the plaintext body,
                                                     // into the raw_operation record.
                                                     // The encrypted send originally
@@ -4309,9 +4309,9 @@ pub fn ChatPanel(
                                                     // `chat_messages_from_local_state_with_sidecar`
                                                     // — could NOT reconstruct the sidecar
                                                     // key `message:{message_id}` under
-                                                    // `flow_id`. The sidecar lookup in
+                                                    // `strand_id`. The sidecar lookup in
                                                     // `chat_message_from_event_with_sidecar`
-                                                    // bails (`message_id`/`flow_id`
+                                                    // bails (`message_id`/`strand_id`
                                                     // missing → `None`), then there is no
                                                     // plaintext body → the author's own
                                                     // (undecryptable) message is dropped
@@ -4334,7 +4334,7 @@ pub fn ChatPanel(
                                                             "event_id": resp.event_id.clone(),
                                                             "kind": "ck.message.create",
                                                             "actor_id": actor_for_record.clone(),
-                                                            "flow_id": flow_id_for_record.clone(),
+                                                            "strand_id": strand_id_for_record.clone(),
                                                             "message_id": message_id_for_record.clone(),
                                                             "encrypted_content": true,
                                                             "status": resp.status.clone(),
@@ -4347,13 +4347,13 @@ pub fn ChatPanel(
                                                     // messages (OpenMLS forbids an author
                                                     // from decrypting their own ciphertext).
                                                     // Keyed by `message:{message_id}` under
-                                                    // the discussion flow, sharing the
+                                                    // the discussion strand, sharing the
                                                     // `mls_private_plaintext` map that the
                                                     // X5.3 cross-device backup already
                                                     // snapshots — no extra backup wiring.
                                                     store.save_private_plaintext(
                                                         &realm_for_record,
-                                                        &flow_id_for_sidecar,
+                                                        &strand_id_for_sidecar,
                                                         &format!("message:{message_id_for_sidecar}"),
                                                         &body_for_sidecar,
                                                     );
@@ -4707,7 +4707,7 @@ mod tests {
             "causal": {"actor_seq": 42},
             "body": {
                 "body": "restored from durable history",
-                "flow_id": "ck:flow:announce",
+                "strand_id": "ck:strand:announce",
                 "message_id": "chat-msg-local",
                 "mentions": [{"kind": "actor", "target": "did:web:bob.example", "token": "@bob"}]
             }
@@ -4717,7 +4717,7 @@ mod tests {
 
         assert_eq!(message.id, "ck:event:body-shape");
         assert_eq!(message.realm_id, "ck:realm:demo");
-        assert_eq!(message.flow_id, "ck:flow:announce");
+        assert_eq!(message.strand_id, "ck:strand:announce");
         assert_eq!(message.body, "restored from durable history");
         assert_eq!(message.sender, "did:web:alice.example");
         assert_eq!(message.mentions[0].target, "did:web:bob.example");
@@ -4736,7 +4736,7 @@ mod tests {
                         "kind": "ck.content.text",
                         "body": "nested payload message"
                     },
-                    "flow_id": "ck:flow:support",
+                    "strand_id": "ck:strand:support",
                     "message_id": "chat-msg-nested"
                 }
             }
@@ -4745,7 +4745,7 @@ mod tests {
         let message = chat_message_from_event("ck:realm:demo", &event).unwrap();
 
         assert_eq!(message.id, "ck:event:nested");
-        assert_eq!(message.flow_id, "ck:flow:support");
+        assert_eq!(message.strand_id, "ck:strand:support");
         assert_eq!(message.body, "nested payload message");
     }
 
@@ -4754,7 +4754,7 @@ mod tests {
         let op = chat_message_create_operation(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "ck:flow:01904100-0000-7000-8000-000000000001",
+            "ck:strand:01904100-0000-7000-8000-000000000001",
             "discussion",
             "ck:message:01904100-0000-7000-8000-000000000001",
             "hello from chat",
@@ -4769,8 +4769,8 @@ mod tests {
             Some("ck:message:01904100-0000-7000-8000-000000000001")
         );
         assert_eq!(
-            op.payload["flow_id"].as_str(),
-            Some("ck:flow:01904100-0000-7000-8000-000000000001")
+            op.payload["strand_id"].as_str(),
+            Some("ck:strand:01904100-0000-7000-8000-000000000001")
         );
         assert_eq!(op.payload["track_name"].as_str(), Some("discussion"));
         assert_eq!(
@@ -4801,7 +4801,7 @@ mod tests {
         let op = chat_message_create_operation(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "ck:flow:01904100-0000-7000-8000-000000000001",
+            "ck:strand:01904100-0000-7000-8000-000000000001",
             "discussion",
             "ck:message:01904100-0000-7000-8000-000000000002",
             "ping @here and @carol:example.com",
@@ -4812,7 +4812,7 @@ mod tests {
 
         assert_eq!(
             op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
-            Some("flow_engaged")
+            Some("strand_engaged")
         );
         assert!(op.payload.get("audience_mentions").is_none());
         assert!(op.payload.get("mentions").is_none());
@@ -4839,7 +4839,7 @@ mod tests {
         let op = chat_message_create_operation(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:bob.example",
-            "ck:flow:01904100-0000-7000-8000-000000000001",
+            "ck:strand:01904100-0000-7000-8000-000000000001",
             "discussion",
             "ck:message:01904100-0000-7000-8000-000000000003",
             "ask @alice:example.com/summary",
@@ -4875,7 +4875,7 @@ mod tests {
         let op = chat_message_create_operation(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "ck:flow:01904100-0000-7000-8000-000000000001",
+            "ck:strand:01904100-0000-7000-8000-000000000001",
             "discussion",
             "ck:message:01904100-0000-7000-8000-000000000003",
             "reply body",
@@ -4917,7 +4917,7 @@ mod tests {
                     "kind": "ck.message.create",
                     "actor": "did:web:alice.example",
                     "body": "local fallback message",
-                    "flow_id": "ck:flow:announce",
+                    "strand_id": "ck:strand:announce",
                     "message_id": "chat-msg-local"
                 }),
             }],
@@ -4928,7 +4928,7 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].realm_id, "ck:realm:local");
-        assert_eq!(messages[0].flow_id, "ck:flow:announce");
+        assert_eq!(messages[0].strand_id, "ck:strand:announce");
         assert_eq!(messages[0].sender, "did:web:alice.example");
         assert_eq!(messages[0].body, "local fallback message");
     }
@@ -4945,7 +4945,7 @@ mod tests {
                     "kind": "ck.message.create",
                     "actor_id": "did:web:local.host:users:alice",
                     "body": "canonical local message",
-                    "flow_id": "ck:flow:announce",
+                    "strand_id": "ck:strand:announce",
                     "message_id": "chat-msg-local"
                 }),
             }],
@@ -4964,17 +4964,17 @@ mod tests {
         // X10.6 regression: an encrypted send persists a body-less
         // raw_operation stub (it MUST NOT store the plaintext in
         // raw_operations) plus the plaintext into the account-private
-        // sidecar keyed by `message:{message_id}` under the flow. On a
+        // sidecar keyed by `message:{message_id}` under the strand. On a
         // card-detail Discussion tab switch / reload the ChatPanel remounts
         // and re-derives the feed from raw_operations via
         // `chat_messages_from_local_state_with_sidecar`. The stub now carries
-        // `message_id` + `flow_id`, so the rebuild can re-key the sidecar and
+        // `message_id` + `strand_id`, so the rebuild can re-key the sidecar and
         // restore the author's own (otherwise undecryptable) message body.
         let temp = std::env::temp_dir().join(format!("yougen-x10_6-rebuild-sidecar-{}", uuid_v7()));
         let mut store = LocalStateStore::with_path(temp);
         store.save_private_plaintext(
             "ck:realm:local",
-            "ck:flow:announce",
+            "ck:strand:announce",
             "message:chat-msg-enc",
             "secret discussion body",
         );
@@ -4989,7 +4989,7 @@ mod tests {
                     "event_id": "ck:event:enc",
                     "kind": "ck.message.create",
                     "actor_id": "did:web:alice.example",
-                    "flow_id": "ck:flow:announce",
+                    "strand_id": "ck:strand:announce",
                     "message_id": "chat-msg-enc",
                     "encrypted_content": true,
                     "status": "accepted"
@@ -5003,7 +5003,7 @@ mod tests {
         // discussion does not look empty.
         let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None, None);
         assert_eq!(without_sidecar.len(), 1);
-        assert_eq!(without_sidecar[0].flow_id, "ck:flow:announce");
+        assert_eq!(without_sidecar[0].strand_id, "ck:strand:announce");
         assert_eq!(without_sidecar[0].sender, "did:web:alice.example");
         assert_eq!(without_sidecar[0].body, "");
         assert!(matches!(
@@ -5015,7 +5015,7 @@ mod tests {
         // restored and the message is fully resolved (not stuck decrypting).
         let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
         assert_eq!(restored.len(), 1);
-        assert_eq!(restored[0].flow_id, "ck:flow:announce");
+        assert_eq!(restored[0].strand_id, "ck:strand:announce");
         assert_eq!(restored[0].sender, "did:web:alice.example");
         assert_eq!(restored[0].body, "secret discussion body");
         assert!(matches!(
@@ -5459,7 +5459,7 @@ mod tests {
             sender: "did:web:example.com:users:bob".to_owned(),
             body: "@alice:example.com/summary".to_owned(),
             timestamp: "10:00".to_owned(),
-            flow_id: "ck:flow:demo".to_owned(),
+            strand_id: "ck:strand:demo".to_owned(),
             reply_to: None,
             reactions: Vec::new(),
             redacted: false,
@@ -5573,17 +5573,17 @@ mod tests {
     }
 
     #[test]
-    fn channel_from_flow_event_requires_real_discussion_track() {
+    fn channel_from_strand_event_requires_real_discussion_track() {
         let event = json!({
-            "event_id": "ck:event:flow",
-            "kind": "ck.flow.create",
+            "event_id": "ck:event:strand",
+            "kind": "ck.strand.create",
             "realm_id": "ck:realm:demo",
-            "flow_id": "ck:flow:ops",
+            "strand_id": "ck:strand:ops",
             "title": "Ops discussion",
             "category": "support",
             "summary": "Operations support",
-            "flow": {
-                "id": "ck:flow:ops",
+            "strand": {
+                "id": "ck:strand:ops",
                 "title": "Ops discussion",
                 "tracks": {
                     "discussion": {"profile": "discussion"}
@@ -5591,9 +5591,9 @@ mod tests {
             }
         });
 
-        let channel = channel_from_flow_event("ck:realm:demo", &event).unwrap();
+        let channel = channel_from_strand_event("ck:realm:demo", &event).unwrap();
 
-        assert_eq!(channel.flow_id, "ck:flow:ops");
+        assert_eq!(channel.strand_id, "ck:strand:ops");
         assert_eq!(channel.name, "Ops discussion");
         assert_eq!(channel.category, "support");
         assert_eq!(channel.kind, "discussion");
@@ -5602,32 +5602,32 @@ mod tests {
     }
 
     #[test]
-    fn channel_from_flow_event_ignores_non_discussion_flows() {
+    fn channel_from_strand_event_ignores_non_discussion_strands() {
         let event = json!({
-            "event_id": "ck:event:flow",
-            "kind": "ck.flow.create",
+            "event_id": "ck:event:strand",
+            "kind": "ck.strand.create",
             "realm_id": "ck:realm:demo",
-            "flow_id": "ck:flow:doc",
-            "title": "Doc flow",
-            "flow": {
-                "id": "ck:flow:doc",
-                "title": "Doc flow",
+            "strand_id": "ck:strand:doc",
+            "title": "Doc strand",
+            "strand": {
+                "id": "ck:strand:doc",
+                "title": "Doc strand",
                 "tracks": {
                     "document": {"profile": "document"}
                 }
             }
         });
 
-        assert!(channel_from_flow_event("ck:realm:demo", &event).is_none());
+        assert!(channel_from_strand_event("ck:realm:demo", &event).is_none());
     }
 
     #[test]
-    fn default_discussion_channel_uses_realm_default_flow_projection() {
+    fn default_discussion_channel_uses_realm_default_strand_projection() {
         let body = json!({
             "summary": {
                 "title": "Demo Realm",
-                "flow": {
-                    "flow_id": "ck:flow:demo",
+                "strand": {
+                    "strand_id": "ck:strand:demo",
                     "title": "General",
                     "summary": "Realm-wide conversation",
                     "tracks": {
@@ -5640,7 +5640,7 @@ mod tests {
 
         let channel = default_discussion_channel("ck:realm:demo", Some(&body));
 
-        assert_eq!(channel.flow_id, "ck:flow:demo");
+        assert_eq!(channel.strand_id, "ck:strand:demo");
         assert_eq!(channel.name, "General");
         assert_eq!(channel.kind, "discussion");
         assert_eq!(channel.topic.as_deref(), Some("Realm-wide conversation"));
@@ -5648,12 +5648,12 @@ mod tests {
     }
 
     #[test]
-    fn default_discussion_channel_synthesizes_default_flow_when_projection_is_absent() {
+    fn default_discussion_channel_synthesizes_default_strand_when_projection_is_absent() {
         let channel = default_discussion_channel("ck:realm:demo", None);
 
-        assert_eq!(channel.flow_id, "ck:flow:demo");
+        assert_eq!(channel.strand_id, "ck:strand:demo");
         assert_eq!(channel.name, "Discussion");
-        assert_eq!(channel.category, "default flow");
+        assert_eq!(channel.category, "default strand");
         assert!(channel.is_default);
     }
 
@@ -5778,7 +5778,7 @@ mod tests {
             "content": {
                 "type": "ck.message.create",
                 "body": "[encrypted]",
-                "flow_id": "ck:flow:1",
+                "strand_id": "ck:strand:1",
                 "encrypted_content": {"ciphertext": "blob"},
             }
         });
@@ -5792,7 +5792,7 @@ mod tests {
             "event_id": "evt:bodyless",
             "content": {
                 "type": "ck.message.create",
-                "flow_id": "ck:flow:1",
+                "strand_id": "ck:strand:1",
                 "message_id": "ck:message:1",
                 "encrypted_content": {
                     "scheme": "mls-rfc9420",
@@ -5809,7 +5809,7 @@ mod tests {
         let msg = chat_message_from_event("ck:realm:demo", &event).expect("message");
 
         assert_eq!(msg.body, "");
-        assert_eq!(msg.flow_id, "ck:flow:1");
+        assert_eq!(msg.strand_id, "ck:strand:1");
         assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
     }
 

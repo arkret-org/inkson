@@ -37,7 +37,7 @@
 //!
 //! The happy path is encrypt -> write through `LocalStateStore` -> read
 //! back -> decrypt -> SDK restore_from_state_record. That is the same
-//! path the device rehydrate flow drives.
+//! path the device rehydrate strand drives.
 //!
 //! ### Crypto choice
 //!

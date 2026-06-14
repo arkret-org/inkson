@@ -896,7 +896,7 @@ pub fn RouterView() -> Element {
     // gate when no grants for the subject are loaded yet, so the existing
     // "trust the server" behavior is preserved until something hydrates
     // grants. The capability-grant hydrate path is a follow-up — once
-    // `ck.capability.grant` projection events ship, the post-login flow
+    // `ck.capability.grant` projection events ship, the post-login strand
     // will `engine.write().add_grant(...)` and the kanban Archive /
     // Restore buttons will start gating themselves.
     use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
@@ -971,7 +971,7 @@ pub fn RouterView() -> Element {
     // menu the user never touches.
     let sidebar_row_perms = use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
     let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
-    // Step 3 of the account-MLS-secret auto-unlock flow: set by the bootstrap
+    // Step 3 of the account-MLS-secret auto-unlock strand: set by the bootstrap
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
     let needs_mls_unlock = use_signal(|| false);
@@ -1072,7 +1072,7 @@ pub fn RouterView() -> Element {
                         }
                         None => {
                             // Keep the current bearer alive; a reactive 401
-                            // (or the login flow) handles a genuinely dead
+                            // (or the login strand) handles a genuinely dead
                             // session. Surface the last issue for dev tools.
                             last_error.set(Some(
                                 "background session refresh produced no new bearer".to_owned(),
@@ -1127,7 +1127,7 @@ pub fn RouterView() -> Element {
                 .await
                 {
                     Ok((policy, backups)) => {
-                        let state = crate::recovery_flow::account_recovery_state_from_payloads(
+                        let state = crate::recovery_strand::account_recovery_state_from_payloads(
                             &policy,
                             &backups,
                             local_fingerprint,
@@ -1620,7 +1620,7 @@ pub fn RouterView() -> Element {
         // passive dashboard banner remains as the steady-state reminder. The
         // in-memory `recovery_auto_prompt_fired` guard makes "once" robust within
         // a session. See account_health::should_auto_prompt_recovery_setup and
-        // docs/user-flows-key-lifecycle.md §3/S1.
+        // docs/user-strands-key-lifecycle.md §3/S1.
         let mut recovery_key_setup_prompt = recovery_key_setup_prompt;
         let mut recovery_auto_prompt_fired = recovery_auto_prompt_fired;
         let mut state_store = state_store;
@@ -2382,7 +2382,7 @@ pub fn RouterView() -> Element {
     // Single source of truth for the post-boot account-health prompt chain.
     // Each prompt below renders iff it is the resolved highest-priority one,
     // replacing the per-prompt inline suppression that used to drift apart.
-    // See `account_health` and `docs/user-flows-key-lifecycle.md` §3.
+    // See `account_health` and `docs/user-strands-key-lifecycle.md` §3.
     let active_prompt = {
         let store = state_store.read();
         let actor = account_did();
@@ -2598,7 +2598,7 @@ pub fn RouterView() -> Element {
                     actor_id: account_did,
                 }
             }
-            // Step 3 of the account-MLS-secret auto-unlock flow: a
+            // Step 3 of the account-MLS-secret auto-unlock strand: a
             // recovery-passphrase banner that restores encrypted history on
             // a fresh device. Renders nothing unless boot detection flagged
             // `needs_mls_unlock`.
@@ -3179,7 +3179,7 @@ pub fn RouterView() -> Element {
                                                         {
                                                             let _ = navigator.push(Route::DirectConversation {
                                                                 realm_id: summary.realm_id,
-                                                                flow_id: summary.main_flow_id,
+                                                                strand_id: summary.main_strand_id,
                                                             });
                                                             return;
                                                         }
@@ -3201,11 +3201,11 @@ pub fn RouterView() -> Element {
                                                                         cokret_sdk::DirectConversationResolveState::Found
                                                                             | cokret_sdk::DirectConversationResolveState::Created
                                                                     )
-                                                                        && let (Some(realm_id), Some(flow_id)) = (response.realm_id, response.main_flow_id)
+                                                                        && let (Some(realm_id), Some(strand_id)) = (response.realm_id, response.main_strand_id)
                                                                     {
                                                                         let _ = navigator.push(Route::DirectConversation {
                                                                             realm_id: realm_id.to_string(),
-                                                                            flow_id: flow_id.to_string(),
+                                                                            strand_id: strand_id.to_string(),
                                                                         });
                                                                     } else {
                                                                         status.set(format!("direct conversation: {:?}", response.state));
@@ -3976,7 +3976,7 @@ pub fn RouterView() -> Element {
                         // / Space) that scopes the new Space to that
                         // parent. A floating "+ New Space" with no
                         // parent context was confusing — it actually
-                        // opened the Realm bootstrap flow.
+                        // opened the Realm bootstrap strand.
                         div { class: "account-menu-wrap",
                             Button {
                                 variant: ButtonVariant::Ghost,
@@ -4529,7 +4529,7 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "minimal_client" } }
                         }
                     },
-                    Route::DirectConversation { realm_id, flow_id } => {
+                    Route::DirectConversation { realm_id, strand_id } => {
                         if selected_realm_id() != *realm_id {
                             selected_realm_id.set(realm_id.clone());
                         }
@@ -4545,7 +4545,7 @@ pub fn RouterView() -> Element {
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
-                                    initial_flow_id: flow_id.clone(),
+                                    initial_strand_id: strand_id.clone(),
                                     embedded: false,
                                     direct_mode: true,
                                 }
@@ -4572,7 +4572,7 @@ pub fn RouterView() -> Element {
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
-                                    initial_flow_id: default_flow_id_for_realm(&active_realm_id),
+                                    initial_strand_id: default_strand_id_for_realm(&active_realm_id),
                                     embedded: false,
                                     direct_mode: false,
                                 }
@@ -5990,9 +5990,9 @@ fn persist_realm_surface_preference(
     );
 }
 
-// YOU-05-009: the main-flow id derivation is a protocol mapping rule; the
+// YOU-05-009: the main-strand id derivation is a protocol mapping rule; the
 // single authoritative copy lives in `crate::local_state`.
-use crate::local_state::default_flow_id_for_realm;
+use crate::local_state::default_strand_id_for_realm;
 
 fn resolve_realm_surface(
     route: &Route,
@@ -6694,11 +6694,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             description.service_type, description.protocol_version
                         ));
                         // Round 4 — cache the advertised trust_domain so
-                        // downstream signing flows (cross_signing.publish,
+                        // downstream signing strands (cross_signing.publish,
                         // S2S transcripts) can pull a canonical
                         // value off local state without an extra round
                         // trip. Cleared when describe fails so a stale
-                        // domain can't leak into the next flow.
+                        // domain can't leak into the next strand.
                         {
                             let mut store = state_store.write();
                             let mut snapshot = store.load();

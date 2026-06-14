@@ -204,7 +204,7 @@ impl CrossSigningSetupPlan {
     /// without threading the policy through.
     pub fn build_reset(principal_id: &str, device_id: &str, previous_generation: u64) -> Self {
         // The reset write is represented by the prelude; the main setup
-        // flow follows immediately after.
+        // strand follows immediately after.
         let mut steps = vec![CrossSigningSetupStep::SignSubordinateBindings];
         // The reset event itself is modeled by SDK CrossSigningResetContent,
         // not as a step here — UI surfaces it separately so the reset proof

@@ -4,11 +4,11 @@
  * mocked Cokret server.
  *
  * Each test makes a single concrete claim about a stable UI surface
- * (panel data-testid + key control). The deeper protocol flow (full
+ * (panel data-testid + key control). The deeper protocol strand (full
  * SAS exchange, full Shamir reconstruct, full
  * quorum-with-2-signatures, etc.) is exercised by unit tests in the
  * underlying Rust crates - the e2e layer keeps watch over the UI
- * handles those flows bind to, so a regression that strips a panel
+ * handles those strands bind to, so a regression that strips a panel
  * or renames a testid fails loudly.
  *
  * Each test cites the spec section it pins so a future contributor
@@ -65,18 +65,18 @@ test.describe("feature coverage placeholders", () => {
     }
   });
 
-  // ---- Board / Flow / ck.flow.move drag conflict ----
+  // ---- Board / Strand / ck.strand.move drag conflict ----
   // UI surface: board
   // spec: overview/current-model.md §4, models/views.md §6
-  test("board: drag flow across lists writes ck.flow.move", async ({ page }) => {
+  test("board: drag strand across lists writes ck.strand.move", async ({ page }) => {
     // The drag-drop pipeline is exercised end-to-end by
-    // yougen.flows.spec.ts::"kanban card drag queues a flow move".
+    // yougen.strands.spec.ts::"kanban card drag queues a strand move".
     // This placeholder pins the structural contract the drop relies
     // on: the move-queue + write-records data-testids MUST
-    // exist on /kanban so soland can dispatch ck.flow.move /
-    // ck.flow.reorder write records through them. The HLC tiebreak
+    // exist on /kanban so soland can dispatch ck.strand.move /
+    // ck.strand.reorder write records through them. The HLC tiebreak
     // assertion called out in the spec is exercised in the SDK's
-    // reducer unit tests (`flow_position_cas_*`), not at the UI layer.
+    // reducer unit tests (`strand_position_cas_*`), not at the UI layer.
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId("board-offline-queue")).toBeVisible();
@@ -94,8 +94,8 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("renderer-board")).toHaveCount(0);
   });
 
-  // ---- Flow detail · embedded discussion ----
-  // UI surface: flow detail
+  // ---- Strand detail · embedded discussion ----
+  // UI surface: strand detail
   // spec: overview/current-model.md §3
   test("card detail drawer embeds the discussion composer", async ({ page }) => {
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
@@ -106,7 +106,7 @@ test.describe("feature coverage placeholders", () => {
     await expect(drawer.getByTestId("card-description-panel")).toBeVisible();
     await drawer.getByTestId("card-detail-tab-discussion").click();
     await expect(drawer.getByTestId("chat-panel")).toBeVisible();
-    await expect(drawer.getByTestId("card-flow-tracks")).toHaveCount(0);
+    await expect(drawer.getByTestId("card-strand-tracks")).toHaveCount(0);
     await expect(drawer.getByTestId("open-primary-discussion")).toHaveCount(0);
     await drawer.getByTestId("card-detail-edit-button").click();
     await expect(drawer.getByTestId("card-detail-description-rich-editor")).toBeVisible();
@@ -121,12 +121,12 @@ test.describe("feature coverage placeholders", () => {
     // full SAS exchange + cross_sign + ck.device.authorize event emit
     // happen inside the SDK + soland's identity store; this test
     // makes sure the data-testid handles the next layer down expects
-    // (sas-verify-flow, sas-emoji-row, sas-digits, sas-match-button)
-    // continue to render so the full flow can plug in without a UI
+    // (sas-verify-strand, sas-emoji-row, sas-digits, sas-match-button)
+    // continue to render so the full strand can plug in without a UI
     // rewrite.
     await page.goto("/verify-device", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await page.getByTestId("sas-verify-button").click();
-    await expect(page.getByTestId("sas-verify-flow")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("sas-verify-strand")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("sas-target-device").fill("ck:device:01904100-0000-7000-8000-d0d0d0d0d0d0");
     await page.getByTestId("start-sas-button").click();
     await expect(page.getByTestId("sas-display")).toBeVisible({ timeout: 30_000 });
@@ -336,10 +336,10 @@ test.describe("feature coverage placeholders", () => {
   test("recovery: social recovery surfaces guardian configuration", async ({ page }) => {
     // the recovery view's three layers
     // (vault / recovery-key / social) each expose a dedicated
-    // data-testid section. The 3-of-5 social-recovery reconstruct flow
+    // data-testid section. The 3-of-5 social-recovery reconstruct strand
     // requires the social-recovery-section + recovery-key-section
     // surfaces to render. The Shamir share release/reconstruct path is
-    // not wired yet; this e2e pins the UI surface so the flow has
+    // not wired yet; this e2e pins the UI surface so the strand has
     // somewhere to plug in when the policy-backed recovery session lands.
     await page.goto("/settings/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
     const recoveryPanel = latestTestId(page, "recovery-panel");

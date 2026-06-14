@@ -87,11 +87,11 @@ fn direct_security_state(value: &Value) -> Option<bool> {
         .and_then(|visibility| plaintext_visibility_security_state(&visibility))
 }
 
-pub fn flow_projection_security_state(value: &Value) -> Option<bool> {
+pub fn strand_projection_security_state(value: &Value) -> Option<bool> {
     let paths: &[&[&str]] = &[
         &[],
         &["object"],
-        &["flow"],
+        &["strand"],
         &["body"],
         &["fields"],
         &["scope"],
@@ -108,8 +108,8 @@ pub fn flow_projection_security_state(value: &Value) -> Option<bool> {
         .find_map(direct_security_state)
 }
 
-pub fn flow_projection_is_encrypted(value: &Value, inherited_realm_encrypted: bool) -> bool {
-    flow_projection_security_state(value).unwrap_or(inherited_realm_encrypted)
+pub fn strand_projection_is_encrypted(value: &Value, inherited_realm_encrypted: bool) -> bool {
+    strand_projection_security_state(value).unwrap_or(inherited_realm_encrypted)
 }
 
 pub fn projection_for_scope_id<'a>(
@@ -224,17 +224,17 @@ mod tests {
     }
 
     #[test]
-    fn flow_projection_uses_explicit_security_before_inheritance() {
+    fn strand_projection_uses_explicit_security_before_inheritance() {
         assert_eq!(
-            flow_projection_security_state(&json!({"fields": {"encrypted": true}})),
+            strand_projection_security_state(&json!({"fields": {"encrypted": true}})),
             Some(true)
         );
         assert_eq!(
-            flow_projection_security_state(&json!({"object": {"encryption_profile": "none"}})),
+            strand_projection_security_state(&json!({"object": {"encryption_profile": "none"}})),
             Some(false)
         );
-        assert!(flow_projection_is_encrypted(&json!({}), true));
-        assert!(!flow_projection_is_encrypted(&json!({}), false));
+        assert!(strand_projection_is_encrypted(&json!({}), true));
+        assert!(!strand_projection_is_encrypted(&json!({}), false));
     }
 
     #[test]

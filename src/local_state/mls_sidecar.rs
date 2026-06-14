@@ -34,7 +34,7 @@ impl LocalStateStore {
 
     /// Snapshot of every persisted MLS envelope. Used by the boot
     /// path to rehydrate every known Realm's group in one pass and by
-    /// device-recovery flows to enumerate the encrypted snapshots that
+    /// device-recovery strands to enumerate the encrypted snapshots that
     /// can be restored for this device.
     pub fn mls_snapshots(&self) -> BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope> {
         self.load().mls_snapshots
@@ -149,7 +149,7 @@ impl LocalStateStore {
     }
 
     /// X5.1 — persist the author's own plaintext for an encrypted private
-    /// flow field into the local-only sidecar. `field_path` is the dotted
+    /// strand field into the local-only sidecar. `field_path` is the dotted
     /// private patch path (e.g. `"body"`, `"synthesis"`); `plaintext` is
     /// the JSON-serialized patch value the writer encrypted. Empty values
     /// are removed rather than stored so a cleared field doesn't keep a
@@ -161,32 +161,32 @@ impl LocalStateStore {
     pub fn save_private_plaintext(
         &mut self,
         realm_id: &str,
-        flow_id: &str,
+        strand_id: &str,
         field_path: &str,
         plaintext: &str,
     ) {
         let realm_id = realm_id.trim();
-        let flow_id = flow_id.trim();
+        let strand_id = strand_id.trim();
         let field_path = field_path.trim();
-        if realm_id.is_empty() || flow_id.is_empty() || field_path.is_empty() {
+        if realm_id.is_empty() || strand_id.is_empty() || field_path.is_empty() {
             return;
         }
         self.ensure_cached_loaded();
         let mut changed = false;
         if plaintext.is_empty() {
             // Cleared field: drop the sidecar entry (and prune empty maps).
-            if let Some(flows) = self.cached.mls_private_plaintext.get_mut(realm_id)
-                && let Some(fields) = flows.get_mut(flow_id)
+            if let Some(strands) = self.cached.mls_private_plaintext.get_mut(realm_id)
+                && let Some(fields) = strands.get_mut(strand_id)
             {
                 if fields.remove(field_path).is_some() {
                     changed = true;
                 }
                 if fields.is_empty() {
-                    flows.remove(flow_id);
+                    strands.remove(strand_id);
                 }
             }
-            if let Some(flows) = self.cached.mls_private_plaintext.get(realm_id)
-                && flows.is_empty()
+            if let Some(strands) = self.cached.mls_private_plaintext.get(realm_id)
+                && strands.is_empty()
             {
                 self.cached.mls_private_plaintext.remove(realm_id);
             }
@@ -196,7 +196,7 @@ impl LocalStateStore {
                 .mls_private_plaintext
                 .entry(realm_id.to_owned())
                 .or_default()
-                .entry(flow_id.to_owned())
+                .entry(strand_id.to_owned())
                 .or_default()
                 .entry(field_path.to_owned())
                 .or_default();
@@ -212,41 +212,41 @@ impl LocalStateStore {
 
     /// X5.1 — read back a single author-owned plaintext field from the
     /// local sidecar, if present. Returns `None` when no plaintext was
-    /// ever stored for this (Realm, flow, field) — the read path then
+    /// ever stored for this (Realm, strand, field) — the read path then
     /// falls back to decrypting another member's ciphertext.
     pub fn private_plaintext_for(
         &self,
         realm_id: &str,
-        flow_id: &str,
+        strand_id: &str,
         field_path: &str,
     ) -> Option<String> {
         self.load()
             .mls_private_plaintext
             .get(realm_id.trim())
-            .and_then(|flows| flows.get(flow_id.trim()))
+            .and_then(|strands| strands.get(strand_id.trim()))
             .and_then(|fields| fields.get(field_path.trim()))
             .filter(|plaintext| !plaintext.is_empty())
             .cloned()
     }
 
-    /// X5.1 — all sidecar plaintext fields for a single flow (`field_path
+    /// X5.1 — all sidecar plaintext fields for a single strand (`field_path
     /// -> plaintext`). Convenience for callers that want to enumerate
     /// every stored field at once.
     pub fn private_plaintext_fields(
         &self,
         realm_id: &str,
-        flow_id: &str,
+        strand_id: &str,
     ) -> BTreeMap<String, String> {
         self.load()
             .mls_private_plaintext
             .get(realm_id.trim())
-            .and_then(|flows| flows.get(flow_id.trim()))
+            .and_then(|strands| strands.get(strand_id.trim()))
             .cloned()
             .unwrap_or_default()
     }
 
     /// X5.3 — serialize the ENTIRE local-plaintext sidecar map
-    /// (`realm -> flow -> field -> plaintext`) to JSON bytes for the encrypted
+    /// (`realm -> strand -> field -> plaintext`) to JSON bytes for the encrypted
     /// cross-device backup. Returns the serialization of an empty map (`{}`)
     /// when no sidecar entries exist, so callers can cheaply detect "nothing to
     /// back up" via [`Self::private_plaintext_is_empty`] first.
@@ -254,7 +254,7 @@ impl LocalStateStore {
         serde_json::to_vec(&self.load().mls_private_plaintext).unwrap_or_else(|_| b"{}".to_vec())
     }
 
-    /// X5.3 — true when the sidecar holds no plaintext for any Realm/flow/field.
+    /// X5.3 — true when the sidecar holds no plaintext for any Realm/strand/field.
     /// Used to skip the cross-device backup upload when there is nothing to
     /// protect.
     pub fn private_plaintext_is_empty(&self) -> bool {
@@ -265,7 +265,7 @@ impl LocalStateStore {
     /// backup) into the local cache, then flush.
     ///
     /// Merge semantics: incoming entries only FILL fields that are missing
-    /// locally; on a (Realm, flow, field) conflict the EXISTING LOCAL value is
+    /// locally; on a (Realm, strand, field) conflict the EXISTING LOCAL value is
     /// kept. Rationale: the local sidecar is written synchronously on every
     /// encrypted write by the author on THIS device, so a locally-present value
     /// is at least as fresh as the backup (which is only re-uploaded
@@ -280,14 +280,14 @@ impl LocalStateStore {
         }
         self.ensure_cached_loaded();
         let mut changed = false;
-        for (realm_id, flows) in incoming {
-            let local_flows = self
+        for (realm_id, strands) in incoming {
+            let local_strands = self
                 .cached
                 .mls_private_plaintext
                 .entry(realm_id)
                 .or_default();
-            for (flow_id, fields) in flows {
-                let local_fields = local_flows.entry(flow_id).or_default();
+            for (strand_id, fields) in strands {
+                let local_fields = local_strands.entry(strand_id).or_default();
                 for (field_path, plaintext) in fields {
                     if plaintext.is_empty() {
                         continue;
