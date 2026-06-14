@@ -311,10 +311,12 @@ impl CokretApi {
         actor_id: &str,
     ) -> anyhow::Result<serde_json::Value> {
         let proof = crate::key_backup::key_backup_delete_ownership_proof(actor_id, backup_id);
-        let body = serde_json::json!({
-            "proof": proof,
-            "reason": "user_requested",
-        });
+        let body = cokret_sdk::KeysBackupsDeleteRequestBody {
+            proof: cokret_sdk::KeyBackupDeleteProof::Development(
+                cokret_sdk::KeyBackupDeleteDevelopmentProof::new(proof),
+            ),
+            reason: Some("user_requested".to_owned()),
+        };
         let request = self
             .http
             .delete(self.endpoint(&format!("_cokret/self/keys/backups/{backup_id}"))?)

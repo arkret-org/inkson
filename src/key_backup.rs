@@ -10,7 +10,6 @@ use crate::recovery_crypto::{
 
 const KEY_BACKUP_SCHEMA: &str = "ck.schema.key_backup.v1";
 const KEY_BACKUP_RAW_SIGNATURE_ALGORITHM: &str = "Ed25519";
-pub const KEY_BACKUP_DELETE_PROOF_HEADER: &str = "x-cokret-key-backup-delete-proof";
 pub const KEY_BACKUP_UNLOCK_PROOF_HEADER: &str = "x-cokret-key-backup-unlock-proof";
 pub const KEY_BACKUP_UNLOCK_PROOF_SCHEMA: &str = "ck.schema.key_backup_unlock_proof.v1";
 pub const KEY_BACKUP_PLAINTEXT_SCHEMA: &str = "ck.schema.key_backup_plaintext.v1";
