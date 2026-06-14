@@ -241,7 +241,7 @@ fn build_signed_genesis_recovery_policy_with_signer(
         "expires_at": null,
         "auth_data": {
             "verification_method": verification_method,
-            "signature_algorithm": signer.algorithm(),
+            "signature_algorithm": "Ed25519",
             "signed_fields": RECOVERY_POLICY_SIGNED_FIELDS,
             "signature": ""
         }

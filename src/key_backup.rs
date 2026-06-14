@@ -9,6 +9,7 @@ use crate::recovery_crypto::{
 };
 
 const KEY_BACKUP_SCHEMA: &str = "ck.schema.key_backup.v1";
+const KEY_BACKUP_RAW_SIGNATURE_ALGORITHM: &str = "Ed25519";
 pub const KEY_BACKUP_DELETE_PROOF_HEADER: &str = "x-cokret-key-backup-delete-proof";
 pub const KEY_BACKUP_UNLOCK_PROOF_HEADER: &str = "x-cokret-key-backup-unlock-proof";
 pub const KEY_BACKUP_UNLOCK_PROOF_SCHEMA: &str = "ck.schema.key_backup_unlock_proof.v1";
@@ -30,6 +31,7 @@ pub const KEY_BACKUP_SIGNED_FIELDS: &[&str] = &[
     "supersedes",
     "supersedes_digest",
     "encryption",
+    "domain_separation",
     "contents",
     "ciphertext_digest",
     "frontier_ref",
@@ -49,6 +51,7 @@ const KEY_BACKUP_SIGNED_FIELDS_MANDATORY: &[&str] = &[
     "series_id",
     "series_seq",
     "encryption",
+    "domain_separation",
     "contents",
     "ciphertext_digest",
 ];
@@ -77,7 +80,7 @@ pub fn sign_key_backup_auth_data(
     let mut auth = json!({
         "device_id": device_id,
         "verification_method": verification_method,
-        "signature_algorithm": "EdDSA",
+        "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
         "signed_fields": signed_fields,
     });
     if let Some(generation) = ssk_generation {
@@ -118,7 +121,7 @@ pub fn sign_key_backup_with_active_device(
     body["auth_data"] = json!({
         "device_id": device_id,
         "verification_method": signer.verification_method(),
-        "signature_algorithm": signer.algorithm(),
+        "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
         "ssk_generation": DEFAULT_SSK_GENERATION,
         "signed_fields": signed_fields,
     });
@@ -142,8 +145,10 @@ pub fn verify_key_backup_auth_data(
         .get("auth_data")
         .and_then(Value::as_object)
         .ok_or_else(|| "auth_data is required".to_owned())?;
-    if auth.get("signature_algorithm").and_then(Value::as_str) != Some("EdDSA") {
-        return Err("auth_data.signature_algorithm must be EdDSA".to_owned());
+    if auth.get("signature_algorithm").and_then(Value::as_str)
+        != Some(KEY_BACKUP_RAW_SIGNATURE_ALGORITHM)
+    {
+        return Err("auth_data.signature_algorithm must be Ed25519".to_owned());
     }
     if !auth
         .get("ssk_generation")
@@ -286,7 +291,7 @@ pub fn build_key_backup_unlock_proof_active(
         "auth_data": {
             "device_id": requesting_device_id,
             "verification_method": signer.verification_method(),
-            "signature_algorithm": signer.algorithm(),
+            "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
             "signed_fields": signed_fields,
         }
     });
@@ -553,7 +558,7 @@ pub fn build_passphrase_kdf_backup_body(
     body["encryption"]["kdf"]["salt"] = Value::String(sealed.salt_b64);
     body["encryption"]["aead"]["nonce"] = Value::String(sealed.nonce_b64);
     body["encryption"]["aead"]["nonce_salt"] = Value::String(sealed.nonce_salt_b64);
-    body["key_commitment"] = Value::String(sealed.key_commitment);
+    body["encryption"]["key_commitment"] = Value::String(sealed.key_commitment);
     body["ciphertext"] = Value::String(sealed.ciphertext_b64);
     body["ciphertext_digest"] = Value::String(sealed.ciphertext_digest);
     // Phase 2: sign the completed envelope with the active device signer. Errors
@@ -597,11 +602,7 @@ pub fn open_passphrase_kdf_backup_body(passphrase: &[u8], body: &Value) -> anyho
     let salt_b64 = str_at(&["encryption", "kdf", "salt"])?;
     let nonce_b64 = str_at(&["encryption", "aead", "nonce"])?;
     let nonce_salt_b64 = str_at(&["encryption", "aead", "nonce_salt"])?;
-    let key_commitment = body
-        .get("key_commitment")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+    let key_commitment = str_at(&["encryption", "key_commitment"])?;
     let ciphertext_b64 = str_at(&["ciphertext"])?;
     let aad_aad = body
         .get("domain_separation")
@@ -881,8 +882,8 @@ fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String
                 body.get("mixed_secret_storage").and_then(Value::as_bool) == Some(true),
             )?;
             // Spec §7.5: passphrase_kdf MUST carry a producer-generated
-            // `nonce_salt` (deterministic nonce transcript) and a top-level
-            // `key_commitment` (wrong-passphrase fail-fast).
+            // `nonce_salt` (deterministic nonce transcript) and
+            // `encryption.key_commitment` (wrong-passphrase fail-fast).
             let nonce_salt = aead
                 .get("nonce_salt")
                 .and_then(Value::as_str)
@@ -890,7 +891,7 @@ fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String
             if !is_base64url_token(nonce_salt) {
                 return Err("encryption.aead.nonce_salt must be base64url".to_owned());
             }
-            let key_commitment = required_str(body, "key_commitment")?;
+            let key_commitment = required_str(encryption, "key_commitment")?;
             if !is_sha_digest(key_commitment) {
                 return Err("key_commitment must be a sha digest".to_owned());
             }
@@ -1250,7 +1251,9 @@ mod tests {
         assert!(is_base64url_token(
             body["encryption"]["aead"]["nonce_salt"].as_str().unwrap()
         ));
-        assert!(is_sha_digest(body["key_commitment"].as_str().unwrap()));
+        assert!(is_sha_digest(
+            body["encryption"]["key_commitment"].as_str().unwrap()
+        ));
         assert_eq!(body["contents"][0]["item_type"], "recovery_secret");
         assert!(is_base64url_token(body["ciphertext"].as_str().unwrap()));
         assert_eq!(body["device_id"], DEVICE);
@@ -1272,7 +1275,7 @@ mod tests {
         sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, &vm, Some(7)).unwrap();
 
         assert_eq!(body["auth_data"]["verification_method"], vm);
-        assert_eq!(body["auth_data"]["signature_algorithm"], "EdDSA");
+        assert_eq!(body["auth_data"]["signature_algorithm"], "Ed25519");
         assert_eq!(body["auth_data"]["ssk_generation"], 7);
         // signed_fields must cover the mandatory set (+ series fields present).
         let signed: Vec<String> = body["auth_data"]["signed_fields"]
