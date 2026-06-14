@@ -117,6 +117,17 @@ pub(crate) fn recovery_setup_prompt_required_for_local_state(
     recovery_setup_prompt_required(account_recovery_configured) && !local_recovery_configured
 }
 
+pub(crate) fn recovery_setup_prompt_required_for_account_state(
+    account_recovery_configured: Option<bool>,
+    local_recovery_configured: bool,
+    account_has_other_active_devices: bool,
+) -> bool {
+    recovery_setup_prompt_required_for_local_state(
+        account_recovery_configured,
+        local_recovery_configured,
+    ) && !account_has_other_active_devices
+}
+
 pub(crate) fn recovery_auto_prompt_pending_local_only_fingerprint(
     store: &LocalStateStore,
     actor: &str,
@@ -199,29 +210,48 @@ pub(crate) fn current_device_authorization_from_account_viewer(
     }
 }
 
-fn device_authorization_from_record(device: &Value) -> Option<bool> {
-    if device
-        .get("revoked_at")
+pub(crate) fn account_has_other_active_devices_from_account_viewer(
+    viewer: &Value,
+    configured_device_id: &str,
+) -> bool {
+    let configured_device = configured_device_id.trim();
+    let current_device = viewer
+        .get("current_device_id")
         .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-        || device.get("revoked_at").is_some_and(|value| {
-            !value.is_null() && !value.as_str().map(str::trim).unwrap_or_default().is_empty()
+        .map(str::trim)
+        .filter(|device| !device.is_empty())
+        .unwrap_or(configured_device);
+    viewer
+        .get("devices")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|device| {
+            device
+                .get("device_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|device_id| !device_id.is_empty() && device_id != current_device)
+                && !device_revoked(device)
         })
-    {
+}
+
+fn device_authorization_from_record(device: &Value) -> Option<bool> {
+    if device_revoked(device) {
         return Some(false);
     }
 
-    for key in [
-        "verification_state",
-        "verification",
-        "trust_state",
-        "status",
-    ] {
+    for key in ["verification_state", "verification", "trust_state"] {
         if let Some(state) = device.get(key).and_then(Value::as_str)
             && let Some(authorized) = device_status_authorization(state)
         {
             return Some(authorized);
         }
+    }
+    if let Some(status) = device.get("status").and_then(Value::as_str)
+        && let Some(authorized) = device_status_field_authorization(status)
+    {
+        return Some(authorized);
     }
     if device
         .get("authorized_at")
@@ -231,6 +261,16 @@ fn device_authorization_from_record(device: &Value) -> Option<bool> {
         return Some(true);
     }
     Some(false)
+}
+
+fn device_revoked(device: &Value) -> bool {
+    device
+        .get("revoked_at")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+        || device.get("revoked_at").is_some_and(|value| {
+            !value.is_null() && !value.as_str().map(str::trim).unwrap_or_default().is_empty()
+        })
 }
 
 pub(crate) fn device_authorization_required_from_account_viewer(
@@ -259,6 +299,14 @@ fn device_status_authorization(status: &str) -> Option<bool> {
         | "inactive" => Some(false),
         _ => None,
     }
+}
+
+fn device_status_field_authorization(status: &str) -> Option<bool> {
+    let normalized = status.trim().to_ascii_lowercase();
+    if normalized == "active" {
+        return None;
+    }
+    device_status_authorization(status)
 }
 
 pub(crate) fn mls_recovery_setup_missing(

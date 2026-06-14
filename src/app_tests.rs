@@ -271,7 +271,7 @@ fn current_device_authorization_treats_missing_current_device_as_unauthorized() 
 }
 
 #[test]
-fn current_device_authorization_accepts_sdk_active_status() {
+fn current_device_authorization_rejects_active_status_without_trust_evidence() {
     let device = "ck:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
@@ -282,8 +282,104 @@ fn current_device_authorization_accepts_sdk_active_status() {
 
     assert_eq!(
         current_device_authorization_from_account_viewer(&viewer, device),
+        Some(false)
+    );
+}
+
+#[test]
+fn current_device_authorization_accepts_verified_status_even_when_sdk_status_is_active() {
+    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let viewer = serde_json::json!({
+        "devices": [{
+            "device_id": device,
+            "status": "active",
+            "verification_state": "verified"
+        }]
+    });
+
+    assert_eq!(
+        current_device_authorization_from_account_viewer(&viewer, device),
         Some(true)
     );
+}
+
+#[test]
+fn current_device_authorization_accepts_explicit_authorized_status() {
+    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let viewer = serde_json::json!({
+        "devices": [{
+            "device_id": device,
+            "status": "authorized"
+        }]
+    });
+
+    assert_eq!(
+        current_device_authorization_from_account_viewer(&viewer, device),
+        Some(true)
+    );
+}
+
+#[test]
+fn current_device_authorization_rejects_revoked_status() {
+    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let viewer = serde_json::json!({
+        "devices": [{
+            "device_id": device,
+            "status": "revoked"
+        }]
+    });
+
+    assert_eq!(
+        current_device_authorization_from_account_viewer(&viewer, device),
+        Some(false)
+    );
+}
+
+#[test]
+fn account_has_other_active_devices_detects_prior_device() {
+    let current = "ck:device:01964137-0000-7000-8000-000000000002";
+    let prior = "ck:device:01964137-0000-7000-8000-000000000001";
+    let viewer = serde_json::json!({
+        "current_device_id": current,
+        "devices": [
+            {
+                "device_id": prior,
+                "verification_state": "verified"
+            },
+            {
+                "device_id": current,
+                "verification_state": "unverified"
+            }
+        ]
+    });
+
+    assert!(account_has_other_active_devices_from_account_viewer(
+        &viewer, current
+    ));
+}
+
+#[test]
+fn account_has_other_active_devices_ignores_revoked_prior_device() {
+    let current = "ck:device:01964137-0000-7000-8000-000000000002";
+    let prior = "ck:device:01964137-0000-7000-8000-000000000001";
+    let viewer = serde_json::json!({
+        "current_device_id": current,
+        "devices": [
+            {
+                "device_id": prior,
+                "verification_state": "verified",
+                "revoked_at": "2026-06-14T00:00:00Z"
+            },
+            {
+                "device_id": current,
+                "verification_state": "verified"
+            }
+        ]
+    });
+
+    assert!(!account_has_other_active_devices_from_account_viewer(
+        &viewer, current
+    ));
 }
 
 #[test]
@@ -364,6 +460,16 @@ fn recovery_setup_prompt_waits_for_server_state() {
     ));
     assert!(!recovery_setup_prompt_required_for_local_state(
         Some(false),
+        true
+    ));
+    assert!(recovery_setup_prompt_required_for_account_state(
+        Some(false),
+        false,
+        false
+    ));
+    assert!(!recovery_setup_prompt_required_for_account_state(
+        Some(false),
+        false,
         true
     ));
 }

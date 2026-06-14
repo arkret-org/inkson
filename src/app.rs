@@ -988,6 +988,7 @@ pub fn RouterView() -> Element {
     let needs_mls_recovery_setup = use_signal(|| false);
     let needs_device_authorization = use_signal(|| false);
     let device_authorization_check_complete = use_signal(|| false);
+    let account_has_other_devices = use_signal(|| false);
     let mut recovery_key_setup_prompt = use_signal(|| false);
     // In-memory "already auto-prompted recovery setup this session" guard. The
     // persisted localStorage flag handles across-session suppression, but a
@@ -1179,6 +1180,7 @@ pub fn RouterView() -> Element {
         let mut invalidator_needs_device_authorization = needs_device_authorization;
         let mut invalidator_device_authorization_check_complete =
             device_authorization_check_complete;
+        let mut invalidator_account_has_other_devices = account_has_other_devices;
         let mut invalidator_sync_generation = sync_generation;
         let mut invalidator_session_generation = session_generation;
         let invalidator_navigator = navigator;
@@ -1206,6 +1208,7 @@ pub fn RouterView() -> Element {
                 invalidator_last_error.set(Some(reason));
                 invalidator_needs_device_authorization.set(false);
                 invalidator_device_authorization_check_complete.set(false);
+                invalidator_account_has_other_devices.set(false);
                 invalidator_sync_generation.set(invalidator_sync_generation() + 1);
                 invalidator_session_boot_state.set(SessionBootState::Unauthenticated);
                 let _ = invalidator_navigator.push(Route::Login);
@@ -1341,6 +1344,7 @@ pub fn RouterView() -> Element {
                     sync_generation,
                     needs_device_authorization,
                     device_authorization_check_complete,
+                    account_has_other_devices,
                     sync_bootstrap_complete,
                     session_boot_state,
                     navigator,
@@ -1653,9 +1657,10 @@ pub fn RouterView() -> Element {
                         crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
                             &store, &actor,
                         ),
-                    recovery_unconfigured: recovery_setup_prompt_required_for_local_state(
+                    recovery_unconfigured: recovery_setup_prompt_required_for_account_state(
                         account_recovery_configured,
                         local_recovery_configured,
+                        account_has_other_devices(),
                     ),
                 };
                 let already = recovery_auto_prompt_already_prompted(
@@ -2399,9 +2404,10 @@ pub fn RouterView() -> Element {
                 crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
                     &store, &actor,
                 ),
-            recovery_unconfigured: recovery_setup_prompt_required_for_local_state(
+            recovery_unconfigured: recovery_setup_prompt_required_for_account_state(
                 account_recovery_configured(),
                 local_recovery_configured,
+                account_has_other_devices(),
             ),
         }
         .resolve()
@@ -2730,6 +2736,7 @@ pub fn RouterView() -> Element {
                                     sync_generation,
                                     needs_device_authorization,
                                     device_authorization_check_complete,
+                                    account_has_other_devices,
                                     sync_bootstrap_complete,
                                     session_boot_state,
                                     navigator,
@@ -2908,6 +2915,7 @@ pub fn RouterView() -> Element {
                                                         sync_generation,
                                                         needs_device_authorization,
                                                         device_authorization_check_complete,
+                                                        account_has_other_devices,
                                                         sync_bootstrap_complete,
                                                         session_boot_state,
                                                         navigator,
@@ -6565,6 +6573,7 @@ struct ConnectContext {
     sync_generation: Signal<u64>,
     needs_device_authorization: Signal<bool>,
     device_authorization_check_complete: Signal<bool>,
+    account_has_other_devices: Signal<bool>,
     /// Set when the explicit bootstrap/manual connect attempt has completed.
     /// The background SyncEngine waits for this so it does not race the
     /// first full account-subscribe snapshot on the same render.
@@ -6617,9 +6626,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut session_boot_state = ctx.session_boot_state;
         let mut needs_device_authorization = ctx.needs_device_authorization;
         let mut device_authorization_check_complete = ctx.device_authorization_check_complete;
+        let mut account_has_other_devices = ctx.account_has_other_devices;
 
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(false);
+        account_has_other_devices.set(false);
         session_boot_state.set(if token().trim().is_empty() {
             SessionBootState::Restoring
         } else {
@@ -6636,7 +6647,10 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 // grant key is persisted or it fails to parse.
                 let api = match state_store.read().session_grant() {
                     Some(grant) if !grant.session_private_key_pem.is_empty() => {
-                        match api.clone().with_session_signing_key(&grant.session_private_key_pem) {
+                        match api
+                            .clone()
+                            .with_session_signing_key(&grant.session_private_key_pem)
+                        {
                             Ok(signed) => signed,
                             Err(_) => api,
                         }
@@ -6915,6 +6929,9 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
                 match authed.list_devices().await {
                     Ok(viewer) => {
+                        account_has_other_devices.set(
+                            account_has_other_active_devices_from_account_viewer(&viewer, &device),
+                        );
                         needs_device_authorization.set(
                             device_authorization_required_from_account_viewer(&viewer, &device),
                         );
@@ -6926,6 +6943,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             authed = api.clone().with_bearer(session_token.clone());
                             match authed.list_devices().await {
                                 Ok(viewer) => {
+                                    account_has_other_devices.set(
+                                        account_has_other_active_devices_from_account_viewer(
+                                            &viewer, &device,
+                                        ),
+                                    );
                                     needs_device_authorization.set(
                                         device_authorization_required_from_account_viewer(
                                             &viewer, &device,

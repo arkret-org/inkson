@@ -853,7 +853,8 @@ impl CokretApi {
         mut self,
         session_private_key_pem: &str,
     ) -> anyhow::Result<Self> {
-        let signing_key = crate::coauth::session_grant_signing_key_from_pem(session_private_key_pem)?;
+        let signing_key =
+            crate::coauth::session_grant_signing_key_from_pem(session_private_key_pem)?;
         self.session_key_id = Some(session_key_thumbprint(&signing_key.verifying_key()));
         self.session_signing_key = Some(signing_key);
         Ok(self)
@@ -1171,7 +1172,11 @@ impl CokretApi {
             .map(<[u8]>::to_vec)
             .unwrap_or_default();
 
-        let mut covered = vec![Component::Method, Component::TargetUri, Component::Authority];
+        let mut covered = vec![
+            Component::Method,
+            Component::TargetUri,
+            Component::Authority,
+        ];
         let mut component_names = vec!["\"@method\"", "\"@target-uri\"", "\"@authority\""];
         let digest = if body_bytes.is_empty() {
             None
@@ -1211,7 +1216,10 @@ impl CokretApi {
 
         let headers = request.headers_mut();
         if let Some(ref wire) = digest {
-            headers.insert("content-digest", reqwest::header::HeaderValue::from_str(wire)?);
+            headers.insert(
+                "content-digest",
+                reqwest::header::HeaderValue::from_str(wire)?,
+            );
         }
         headers.insert(
             "signature-input",
@@ -2117,7 +2125,9 @@ mod tests {
             url.as_str(),
             &authority,
             url.path(),
-            headers.iter().map(|(name, value)| (name.as_str(), value.as_str())),
+            headers
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
             &body,
             &signing.verifying_key(),
             &cokret_sdk::http_signature::SignatureVerificationPolicy::service_ingest()
