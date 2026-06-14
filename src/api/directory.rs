@@ -163,11 +163,11 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::model::DirectoryRealmSearchOutcome> {
+    ) -> anyhow::Result<cokret_sdk::models::DirectoryRealmSearchOutcome> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
-        let body = cokret_sdk::model::DirectorySearchRealmsRequestBody {
+        let body = cokret_sdk::models::DirectorySearchRealmsRequestBody {
             query: Some(query.to_owned()),
             organization_did: None,
             source_realm_id: None,
@@ -187,7 +187,7 @@ impl CokretApi {
     pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveRealmOutcome> {
         let realm = cokret_sdk::RealmId::new(realm_id)
             .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
-        let body = cokret_sdk::model::DirectoryResolveRealmRequestBody {
+        let body = cokret_sdk::models::DirectoryResolveRealmRequestBody {
             realm_id: Some(realm),
             alias: None,
             invite_token: None,
@@ -204,10 +204,10 @@ impl CokretApi {
     /// (`POST /_cokret/find/directory/resolve-target`).
     ///
     /// `address` is the canonical `web+cokret:` (or HTTPS-fragment) string
-    /// derived from [`cokret_sdk::model::parse_address`]; `token` is present
+    /// derived from [`cokret_sdk::models::parse_address`]; `token` is present
     /// iff the address carried `lt=invite` or `lt=preview`. The server binds
     /// an invite or preview token to the resolved object via the SDK's
-    /// [`cokret_sdk::model::verify_token_target`]; the client only forwards
+    /// [`cokret_sdk::models::verify_token_target`]; the client only forwards
     /// the opaque token here.
     ///
     /// Wraps the SDK's typed request/response bodies so the wire shape stays
@@ -219,8 +219,8 @@ impl CokretApi {
         &self,
         address: &str,
         token: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::model::DirectoryTargetResolutionOutcome> {
-        let body = cokret_sdk::model::DirectoryResolveTargetRequestBody {
+    ) -> anyhow::Result<cokret_sdk::models::DirectoryTargetResolutionOutcome> {
+        let body = cokret_sdk::models::DirectoryResolveTargetRequestBody {
             address: address.to_owned(),
             requester: None,
             proofs: Vec::new(),
@@ -266,7 +266,7 @@ impl CokretApi {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
-        let body = cokret_sdk::model::DirectorySearchOrganizationsRequestBody {
+        let body = cokret_sdk::models::DirectorySearchOrganizationsRequestBody {
             query: Some(query.to_owned()),
             claims: Value::Null,
             cursor: next_cursor.map(ToOwned::to_owned),
@@ -284,7 +284,7 @@ impl CokretApi {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
-        let body = cokret_sdk::model::DirectorySearchActorsRequestBody {
+        let body = cokret_sdk::models::DirectorySearchActorsRequestBody {
             query: Some(query.to_owned()),
             realm_id: None,
             organization_did: None,
@@ -334,18 +334,18 @@ impl CokretApi {
         agent_slug: &str,
         realm_id: &str,
         requester: &str,
-    ) -> anyhow::Result<cokret_sdk::model::DirectoryAgentSelectorResolutionOutcome> {
+    ) -> anyhow::Result<cokret_sdk::models::DirectoryAgentSelectorResolutionOutcome> {
         let controller_handle =
-            cokret_sdk::model::Handle::parse(controller_handle).map_err(|err| {
+            cokret_sdk::models::Handle::parse(controller_handle).map_err(|err| {
                 anyhow::anyhow!("invalid controller handle `{controller_handle}`: {err}")
             })?;
-        cokret_sdk::model::validate_agent_slug(agent_slug)
+        cokret_sdk::models::validate_agent_slug(agent_slug)
             .map_err(|err| anyhow::anyhow!("invalid agent_slug `{agent_slug}`: {err}"))?;
         let requester = cokret_sdk::Did::new(requester.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid requester DID `{requester}`: {err}"))?;
         let realm_id = cokret_sdk::RealmId::new(realm_id.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
-        let body = cokret_sdk::model::DirectoryResolveAgentSelectorRequestBody {
+        let body = cokret_sdk::models::DirectoryResolveAgentSelectorRequestBody {
             controller_handle,
             agent_slug: agent_slug.to_owned(),
             expected_agent_did: None,
@@ -355,7 +355,7 @@ impl CokretApi {
             requester,
             proofs: Vec::new(),
         };
-        let outcome: cokret_sdk::model::DirectoryAgentSelectorResolutionOutcome = self
+        let outcome: cokret_sdk::models::DirectoryAgentSelectorResolutionOutcome = self
             .post_json("_cokret/find/directory/resolve-agent-selector", &body)
             .await?;
         outcome
@@ -479,7 +479,7 @@ impl CokretApi {
     /// handle?" panel (YG-DIR-1/2) and the own-handles list (YG-HC-2).
     ///
     /// The response is validated with
-    /// [`cokret_sdk::model::DirectorySubjectHandleList::validate`]
+    /// [`cokret_sdk::models::DirectorySubjectHandleList::validate`]
     /// which fails closed unless every `claims[].subject` byte-equals the
     /// response `subject`.
     ///
@@ -491,8 +491,8 @@ impl CokretApi {
         subject: &str,
         realm_id: Option<&str>,
         intent: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::model::DirectorySubjectHandleList> {
-        use cokret_sdk::model::DirectoryListHandlesForSubjectRequestBody;
+    ) -> anyhow::Result<cokret_sdk::models::DirectorySubjectHandleList> {
+        use cokret_sdk::models::DirectoryListHandlesForSubjectRequestBody;
 
         let subject_did = cokret_sdk::Did::new(subject.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
@@ -517,7 +517,7 @@ impl CokretApi {
             cursor: None,
             limit: None,
         };
-        let res: cokret_sdk::model::DirectorySubjectHandleList = self
+        let res: cokret_sdk::models::DirectorySubjectHandleList = self
             .post_json("_cokret/find/directory/list-handles-for-subject", &body)
             .await?;
         // §0.2 fail-closed: drop the whole response if any claim's subject

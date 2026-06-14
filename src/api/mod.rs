@@ -686,7 +686,7 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
 fn resolve_handle_request_body(
     handle: &str,
     context: ResolveHandleContext<'_>,
-) -> anyhow::Result<cokret_sdk::model::DirectoryResolveHandleRequestBody> {
+) -> anyhow::Result<cokret_sdk::models::DirectoryResolveHandleRequestBody> {
     let non_empty = |value: Option<&str>| {
         value
             .map(str::trim)
@@ -714,7 +714,7 @@ fn resolve_handle_request_body(
         ),
         None => None,
     };
-    Ok(cokret_sdk::model::DirectoryResolveHandleRequestBody {
+    Ok(cokret_sdk::models::DirectoryResolveHandleRequestBody {
         handle: handle.to_owned(),
         expected_did,
         proof_challenge: non_empty(context.proof_challenge),
@@ -1975,7 +1975,7 @@ pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmOutcome> 
 
 fn select_join_candidate<'a>(
     resolved: &'a ResolveRealmOutcome,
-    join_method: cokret_sdk::model::RealmJoinMethod,
+    join_method: cokret_sdk::models::RealmJoinMethod,
 ) -> anyhow::Result<&'a RealmJoinCandidate> {
     let realm_id = trim_realm_id(resolved.realm_preview.realm_id.as_str());
     resolved

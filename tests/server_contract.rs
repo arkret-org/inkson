@@ -315,7 +315,7 @@ fn yougen_accepts_server_contract_payloads() {
         "obligations": []
     }))
     .unwrap();
-    assert_eq!(authz.decision, cokret_sdk::model::AuthzDecision::Allow);
+    assert_eq!(authz.decision, cokret_sdk::models::AuthzDecision::Allow);
 
     // `GrantList` is the SDK authoritative wire type (soland serialises it
     // verbatim), so rows must be full `ck.schema.capability_grant.v1`
@@ -712,8 +712,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     );
     assert_no_secret("log", &log_entry, secret);
 
-    let directory = cokret_sdk::model::DirectoryRealmSearchOutcome {
-        realms: vec![cokret_sdk::model::RealmPreview {
+    let directory = cokret_sdk::models::DirectoryRealmSearchOutcome {
+        realms: vec![cokret_sdk::models::RealmPreview {
             realm_id: cokret_sdk::RealmId::new(
                 "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             )
@@ -723,8 +723,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             avatar_blob_ref: None,
             organization_did: None,
             join_rule: Some("public".to_owned()),
-            member_count_bucket: Some(cokret_sdk::model::RealmMemberCountBucket::Bucket(
-                cokret_sdk::model::RealmMemberCountBucketLabel::OneToTen,
+            member_count_bucket: Some(cokret_sdk::models::RealmMemberCountBucket::Bucket(
+                cokret_sdk::models::RealmMemberCountBucketLabel::OneToTen,
             )),
             summary: Some("Public description".to_owned()),
             owning_organizations: Vec::new(),

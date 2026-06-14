@@ -200,7 +200,7 @@ fn direct_conversation_binding_state_wire(
 /// every round-trip. We now use the SDK authoritative type, which carries
 /// the required `schema`/`subject_id`, typed enums, and the trust lists, so
 /// a GET→edit→SET cycle preserves fields the U4 form does not touch.
-pub use cokret_sdk::model::{
+pub use cokret_sdk::models::{
     DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy, INVITE_RECEIVE_POLICY_SCHEMA,
     InviteReceiveAction, InviteReceivePolicy, UnknownInviteAction,
 };
@@ -387,7 +387,7 @@ impl ServerDescriptionExt for ServerDescription {
 // newtype around it. We re-export the inner struct under the yougen-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
-pub use cokret_sdk::model::{
+pub use cokret_sdk::models::{
     IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
@@ -407,16 +407,16 @@ pub struct SyncDescribeView {
 }
 
 /// Wire-shape sync response — re-exports the SDK's canonical
-/// [`cokret_sdk::model::SyncOutcome`] so client + server can never
+/// [`cokret_sdk::models::SyncOutcome`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
 /// at `cokret-spec/spec/v1/zh/sync/client-sync.md §2`. Yougen used to
 /// own a custom `ClientSyncOutcome` with a bucketed-`spaces`
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
-pub use cokret_sdk::model::SyncOutcome as ClientSyncOutcome;
+pub use cokret_sdk::models::SyncOutcome as ClientSyncOutcome;
 
 /// soland's directory `describe` wire body. Named distinctly from the SDK
-/// core `cokret_sdk::model::DirectoryDescribeOutcome` (which wraps a typed
+/// core `cokret_sdk::models::DirectoryDescribeOutcome` (which wraps a typed
 /// `DirectoryDescription`) because this soland surface has a different,
 /// flat shape; sharing the SDK name would mislead readers into expecting
 /// the same wire contract.
@@ -434,7 +434,7 @@ pub struct SolandDirectoryDescribeResBody {
 // `public`/`title` on the preview node, a non-optional `join_rule`) and broke
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
-pub use cokret_sdk::model::{
+pub use cokret_sdk::models::{
     DirectoryRealmResolutionOutcome as ResolveRealmOutcome, RealmJoinCandidate,
 };
 
@@ -826,12 +826,12 @@ pub struct BackfillView {
 // `signature`) MUST NOT appear on current wire. See
 // `api::CokretApi::snapshot_head`.
 
-pub use cokret_sdk::model::AuthzCheckOutcome;
+pub use cokret_sdk::models::AuthzCheckOutcome;
 /// `ck.self.authz.grants.query.effective` response. soland serialises the SDK
 /// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
 /// decodes the same authoritative wire contract instead of a weakly-typed
 /// local mirror.
-pub use cokret_sdk::model::GrantList;
+pub use cokret_sdk::models::GrantList;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InvitesView {
@@ -852,8 +852,8 @@ pub struct PushRegisterView {
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
 /// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
-pub use cokret_sdk::model::ModerationReportOutcome;
-pub use cokret_sdk::model::{
+pub use cokret_sdk::models::ModerationReportOutcome;
+pub use cokret_sdk::models::{
     BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesAckOutcome,
     DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
     KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
@@ -861,8 +861,8 @@ pub use cokret_sdk::model::{
 
 // ── Directory ───────────────────────────────────────────────────
 
-pub type SearchOrganizationsView = cokret_sdk::model::DirectoryOrganizationSearchOutcome;
-pub type SearchActorsView = cokret_sdk::model::DirectoryActorSearchOutcome;
+pub type SearchOrganizationsView = cokret_sdk::models::DirectoryOrganizationSearchOutcome;
+pub type SearchActorsView = cokret_sdk::models::DirectoryActorSearchOutcome;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveHandleView {
@@ -953,7 +953,7 @@ impl ResolveHandleView {
 /// declaration order. Re-export the SDK type; `subject_id` (principal
 /// DID) remains the ONLY authoritative field — the `*_at_time` fields
 /// are compose-time audit metadata only.
-pub use cokret_sdk::model::Mention;
+pub use cokret_sdk::models::Mention;
 
 /// Per-Realm delivery binding surfaced to the member detail view.
 /// Mirrors `member_delivery_binding` from `event-payload.schema.json`.
@@ -1143,7 +1143,7 @@ pub struct EphemeralSubmitResult {
 // each `ice_servers` entry MUST be parsed through `cokret_sdk::IceServer`
 // and pass `IceServer::validate_credential_privacy()` (rejects TURN
 // usernames embedding cross-Realm stable DIDs, B-14).
-pub use cokret_sdk::model::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
+pub use cokret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 
 // WebRTC call signaling/recording no longer round-trips through bespoke
 // `/_cokret/self/webrtc/*` outcomes: signaling is a `ck.call.signal`

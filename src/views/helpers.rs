@@ -379,7 +379,7 @@ pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMent
             continue;
         };
         if controller_handle.is_empty()
-            || cokret_sdk::model::validate_agent_slug(agent_slug).is_err()
+            || cokret_sdk::models::validate_agent_slug(agent_slug).is_err()
         {
             continue;
         }
@@ -527,7 +527,7 @@ pub struct RenderedMention {
 /// → `display_name_at_time` → truncated DID.
 pub fn render_actor_mention(
     subject_id: &str,
-    claim_set_snapshot: &[cokret_sdk::model::HandleClaim],
+    claim_set_snapshot: &[cokret_sdk::models::HandleClaim],
     accepted_issuers: &[String],
     context: Option<&str>,
     cached_handle: Option<&cokret_sdk::Handle>,
@@ -600,7 +600,7 @@ pub struct HandleClaimRow {
 /// rows (YG-DIR-2). The primary handle (per §3.2.1, computed server-side
 /// and echoed in `primary_handle`) is flagged so the UI can mark it.
 pub fn handle_claim_rows(
-    res: &cokret_sdk::model::DirectorySubjectHandleList,
+    res: &cokret_sdk::models::DirectorySubjectHandleList,
 ) -> Vec<HandleClaimRow> {
     let primary = res
         .primary_handle
@@ -811,7 +811,7 @@ mod tests {
     #[test]
     fn render_actor_mention_runs_3_2_1_for_verified_handle() {
         use cokret_sdk::Handle;
-        use cokret_sdk::model::{HandleBindingState, HandleClaim};
+        use cokret_sdk::models::{HandleBindingState, HandleClaim};
         let now = chrono::Utc::now();
         let claim = HandleClaim {
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
@@ -871,7 +871,7 @@ mod tests {
     #[test]
     fn handle_claim_rows_flags_primary_and_projects_fields() {
         use cokret_sdk::Handle;
-        use cokret_sdk::model::{DirectorySubjectHandleList, HandleBindingState, HandleClaim};
+        use cokret_sdk::models::{DirectorySubjectHandleList, HandleBindingState, HandleClaim};
         let now = chrono::Utc::now();
         let subject =
             cokret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap();

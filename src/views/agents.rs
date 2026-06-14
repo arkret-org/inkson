@@ -28,7 +28,7 @@
 //!     surfaces the outcome via `agent-protocol-audit-verify-result`'s `data-state` attribute.
 
 use cokret_sdk::RealmId;
-use cokret_sdk::model::{
+use cokret_sdk::models::{
     AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentParticipation,
     AgentParticipationEntry, AgentParticipationScope, AgentParticipationSetRequestBody,
     AgentPauseRequestBody, AgentProvisionRequestBody, AgentResumeRequestBody,

@@ -3,7 +3,7 @@
 //!
 //! A user can share a Realm / Strand / Message as a link. This module is the
 //! yougen-side glue on top of the SDK's client-agnostic addressing grammar
-//! ([`cokret_sdk::model::parse_address`] / [`build_address`] /
+//! ([`cokret_sdk::models::parse_address`] / [`build_address`] /
 //! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
 //!
 //! * [`ShareTarget`] — a typed "thing I want to share" (realm / strand / message) plus routing hints.
@@ -21,7 +21,7 @@
 //!   collapses to a single friendly `object_link.error.unavailable` message (anti-enumeration).
 //! * Reference links carry no authorization. Invite and preview links bind the [`TargetDescriptor`]
 //!   digest so a token minted for object A cannot be replayed onto object B (scope-confusion
-//!   defence lives in the SDK's [`cokret_sdk::model::verify_token_target`]).
+//!   defence lives in the SDK's [`cokret_sdk::models::verify_token_target`]).
 //!
 //! ## Web protocol-handler registration — design choice
 //! yougen deliberately ships the **HTTPS-fragment-only** landing path and does
@@ -40,7 +40,7 @@
 //! Windows `HKCR\web+cokret` registry) is out of scope here.
 // TODO(R3.3.1): native OS deep-link registration for the `web+cokret:` scheme.
 
-use cokret_sdk::model::{
+use cokret_sdk::models::{
     AddressAction, LinkType, ParsedAddress, RealmRef, TargetDescriptor, TargetKind, build_address,
     build_https_landing, parse_address, target_digest,
 };

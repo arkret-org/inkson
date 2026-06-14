@@ -12,7 +12,7 @@ impl CokretApi {
             .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
         let reporter_did = cokret_sdk::Did::new(reporter.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid reporter `{reporter}`: {err}"))?;
-        let body = cokret_sdk::model::ModerationReportRequestBody {
+        let body = cokret_sdk::models::ModerationReportRequestBody {
             realm_id: realm,
             target_ref: target_ref.to_owned(),
             report_reason_code: report_reason_code.to_owned(),

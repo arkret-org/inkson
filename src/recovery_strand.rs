@@ -12,7 +12,7 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use cokret_sdk::model::{
+use cokret_sdk::models::{
     RecoveryPolicyRef, RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody,
 };

@@ -20,7 +20,7 @@
 //! detail view, error-code mapping, the composer banner, and the
 //! timeline accent rail wiring inside `views/chat.rs`. The local
 //! `DecryptedScope` enum has been replaced with a re-export of the
-//! SDK's [`cokret_sdk::model::events::EffectiveScope`]; pattern
+//! SDK's [`cokret_sdk::models::events::EffectiveScope`]; pattern
 //! matching against `effective_scope` now happens against the same
 //! enum the reducer produces.
 
@@ -79,7 +79,7 @@ impl CircleScope {
 
 /// Lightweight projection of a Circle for sidebar / picker / modal
 /// rendering. The full canonical struct is
-/// [`cokret_sdk::cokret_core::model::circle::Circle`].
+/// [`cokret_sdk::cokret_core::modelss::circle::Circle`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircleSummary {
     /// `ck:circle:…`
@@ -226,7 +226,7 @@ impl CircleErrorKind {
 /// pattern-match on the same enum the reducer produces. Earlier
 /// rounds shipped a local `DecryptedScope` mirror — that mirror has
 /// been deleted now that the SDK enum is available.
-pub use cokret_sdk::model::EffectiveScope;
+pub use cokret_sdk::models::EffectiveScope;
 
 /// Classify the relationship between an envelope's
 /// [`EffectiveScope`] and the payload-level `scope_circle_id`.

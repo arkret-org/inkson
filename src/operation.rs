@@ -601,7 +601,7 @@ pub mod ck_ops {
     fn invite_ref_payload_value(invite_id: &str, reason: Option<&str>) -> anyhow::Result<Value> {
         let invite_id_typed = cokret_sdk::InviteId::new(invite_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
-        let mut payload = cokret_sdk::model::InviteRefPayload::new(invite_id_typed);
+        let mut payload = cokret_sdk::models::InviteRefPayload::new(invite_id_typed);
         if let Some(reason) = reason {
             payload = payload.with_reason(reason);
         }
@@ -1455,7 +1455,7 @@ pub mod ck_ops {
             .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
         let digest = cokret_sdk::Hash::new(introduction_evidence_digest.to_owned())
             .map_err(|err| anyhow::anyhow!("introduction_evidence_digest invalid: {err}"))?;
-        let mut payload = cokret_sdk::model::InviteCreatePayload::new(
+        let mut payload = cokret_sdk::models::InviteCreatePayload::new(
             invite_id_typed,
             invitee_did,
             invite_delivery_target,

@@ -1,4 +1,4 @@
-use cokret_sdk::model::{
+use cokret_sdk::models::{
     AppletInstallOutcome, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
     AppletRevokeOutcome, AppletRevokeRequestBody,
 };

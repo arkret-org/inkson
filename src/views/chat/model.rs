@@ -992,7 +992,7 @@ fn agent_endpoint_slug(payload: &Value) -> Option<String> {
             &["agent_slug"],
         ],
     )
-    .filter(|slug| cokret_sdk::model::validate_agent_slug(slug).is_ok())
+    .filter(|slug| cokret_sdk::models::validate_agent_slug(slug).is_ok())
 }
 
 fn agent_endpoint_display_name(payload: &Value, agent_id: &str) -> Option<String> {
@@ -1090,7 +1090,7 @@ pub(super) fn agent_metadata_from_mentions(
         {
             continue;
         }
-        if cokret_sdk::model::validate_agent_slug(&mention.agent_slug_at_time).is_err() {
+        if cokret_sdk::models::validate_agent_slug(&mention.agent_slug_at_time).is_err() {
             continue;
         }
         let next = AgentParticipantMetadata {

@@ -219,7 +219,7 @@ impl CokretApi {
         action: &str,
         realm_id: &str,
     ) -> anyhow::Result<AuthzCheckOutcome> {
-        let body = cokret_sdk::model::AuthzCheckRequestBody {
+        let body = cokret_sdk::models::AuthzCheckRequestBody {
             actor_id: cokret_sdk::Did::new(actor.trim().to_owned())?,
             action: action.trim().to_owned(),
             resource: Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
@@ -403,7 +403,7 @@ impl CokretApi {
             crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?.build("yougen");
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
-            select_join_candidate(&resolved, cokret_sdk::model::RealmJoinMethod::InviteAccept)?;
+            select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
         self.submit_event_envelope_via_join_candidate(candidate, &envelope)
             .await
     }
@@ -420,7 +420,7 @@ impl CokretApi {
         let envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
-            select_join_candidate(&resolved, cokret_sdk::model::RealmJoinMethod::InviteAccept)?;
+            select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
         self.submit_event_envelope_via_join_candidate(candidate, &envelope)
             .await
     }
@@ -714,7 +714,7 @@ impl CokretApi {
         &self,
         view_id: &str,
     ) -> anyhow::Result<super::CollectionProjectionView> {
-        let body = cokret_sdk::model::ViewProjectionRequestBody::default();
+        let body = cokret_sdk::models::ViewProjectionRequestBody::default();
         self.post_json(&format!("_cokret/self/views/{view_id}/projection"), &body)
             .await
     }

@@ -29,27 +29,27 @@ struct PaginationState {
     loading_more: bool,
 }
 
-fn realm_member_count_bucket_text(bucket: &cokret_sdk::model::RealmMemberCountBucket) -> String {
+fn realm_member_count_bucket_text(bucket: &cokret_sdk::models::RealmMemberCountBucket) -> String {
     match bucket {
-        cokret_sdk::model::RealmMemberCountBucket::Bucket(label) => match label {
-            cokret_sdk::model::RealmMemberCountBucketLabel::OneToTen => "1-10".to_owned(),
-            cokret_sdk::model::RealmMemberCountBucketLabel::ElevenToFifty => "11-50".to_owned(),
-            cokret_sdk::model::RealmMemberCountBucketLabel::FiftyOneToOneHundred => {
+        cokret_sdk::models::RealmMemberCountBucket::Bucket(label) => match label {
+            cokret_sdk::models::RealmMemberCountBucketLabel::OneToTen => "1-10".to_owned(),
+            cokret_sdk::models::RealmMemberCountBucketLabel::ElevenToFifty => "11-50".to_owned(),
+            cokret_sdk::models::RealmMemberCountBucketLabel::FiftyOneToOneHundred => {
                 "51-100".to_owned()
             }
-            cokret_sdk::model::RealmMemberCountBucketLabel::OneHundredOneToFiveHundred => {
+            cokret_sdk::models::RealmMemberCountBucketLabel::OneHundredOneToFiveHundred => {
                 "101-500".to_owned()
             }
-            cokret_sdk::model::RealmMemberCountBucketLabel::FiveHundredOneToTwoThousand => {
+            cokret_sdk::models::RealmMemberCountBucketLabel::FiveHundredOneToTwoThousand => {
                 "501-2000".to_owned()
             }
-            cokret_sdk::model::RealmMemberCountBucketLabel::TwoThousandPlus => "2000+".to_owned(),
+            cokret_sdk::models::RealmMemberCountBucketLabel::TwoThousandPlus => "2000+".to_owned(),
         },
-        cokret_sdk::model::RealmMemberCountBucket::Exact(count) => count.to_string(),
+        cokret_sdk::models::RealmMemberCountBucket::Exact(count) => count.to_string(),
     }
 }
 
-fn realm_tree_node_from_preview(preview: cokret_sdk::model::RealmPreview) -> RealmTreeNode {
+fn realm_tree_node_from_preview(preview: cokret_sdk::models::RealmPreview) -> RealmTreeNode {
     let id = preview.realm_id.as_str().to_owned();
     let title = preview
         .title

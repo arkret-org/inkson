@@ -12,7 +12,7 @@
 //! - `authz/capabilities.md` §3.3 — revoke + cascade.
 //! - `authz/capabilities.md` §3.4 — audit trail.
 
-use cokret_sdk::model::{Capability, CapabilitySubject};
+use cokret_sdk::models::{Capability, CapabilitySubject};
 use dioxus::prelude::*;
 
 use crate::api::CokretApi;

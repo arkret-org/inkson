@@ -114,8 +114,8 @@ impl CokretApi {
         _handle: &str,
         display_name: Option<&str>,
         device_id: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::model::AccountRegisterOutcome> {
-        let body = cokret_sdk::model::AccountRegisterRequestBody {
+    ) -> anyhow::Result<cokret_sdk::models::AccountRegisterOutcome> {
+        let body = cokret_sdk::models::AccountRegisterRequestBody {
             principal_id: did_for_request_field("principal_id", did)?,
             display_name: display_name
                 .map(str::trim)
@@ -131,7 +131,7 @@ impl CokretApi {
         self.post_json("_cokret/gate/account/register", &body).await
     }
 
-    pub async fn account_viewer(&self) -> anyhow::Result<cokret_sdk::model::AccountView> {
+    pub async fn account_viewer(&self) -> anyhow::Result<cokret_sdk::models::AccountView> {
         self.get_json("_cokret/self/account/viewer").await
     }
 
@@ -151,7 +151,7 @@ impl CokretApi {
         display_name: Option<&str>,
         bio: Option<&str>,
         avatar_blob_ref: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::model::AccountUpdateProfileOutcome> {
+    ) -> anyhow::Result<cokret_sdk::models::AccountUpdateProfileOutcome> {
         let mut patch = cokret_sdk::Patch::new();
         if let Some(display_name) = display_name {
             let display_name = display_name.trim();
@@ -186,7 +186,7 @@ impl CokretApi {
         patch
             .validate()
             .map_err(|err| anyhow::anyhow!("invalid profile patch: {err}"))?;
-        let body = cokret_sdk::model::AccountUpdateProfileRequestBody {
+        let body = cokret_sdk::models::AccountUpdateProfileRequestBody {
             patch: serde_json::to_value(&patch)?,
         };
         self.post_json("_cokret/self/account/profile", &body).await
@@ -392,8 +392,8 @@ impl CokretApi {
             .await
     }
 
-    pub async fn logout(&self) -> anyhow::Result<cokret_sdk::model::SessionRevokeOutcome> {
-        let body = cokret_sdk::model::SessionRevokeRequestBody {
+    pub async fn logout(&self) -> anyhow::Result<cokret_sdk::models::SessionRevokeOutcome> {
+        let body = cokret_sdk::models::SessionRevokeRequestBody {
             target_grant_id: None,
             target_device_id: None,
             all_sessions: None,
@@ -483,7 +483,7 @@ impl CokretApi {
     pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveOutcome> {
         let subject = cokret_sdk::Did::new(did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid did `{did}`: {err}"))?;
-        let body = cokret_sdk::model::IdentityResolveRequestBody {
+        let body = cokret_sdk::models::IdentityResolveRequestBody {
             did: subject,
             requested_evidence_kinds: Vec::new(),
         };
@@ -645,7 +645,7 @@ fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
         })
 }
 
-fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> CurrentAccount {
+fn current_account_from_viewer(viewer: cokret_sdk::models::AccountView) -> CurrentAccount {
     let display_name = viewer.profile.as_ref().and_then(|profile| {
         let value = profile.display_name.trim();
         (!value.is_empty()).then(|| value.to_owned())
@@ -667,7 +667,7 @@ fn current_account_from_viewer(viewer: cokret_sdk::model::AccountView) -> Curren
     }
 }
 
-fn primary_handle_from_viewer(viewer: &cokret_sdk::model::AccountView) -> String {
+fn primary_handle_from_viewer(viewer: &cokret_sdk::models::AccountView) -> String {
     viewer
         .primary_handle_claim
         .as_ref()
@@ -685,7 +685,7 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_uses_signed_handle_claim() {
-        let viewer: cokret_sdk::model::AccountView = serde_json::from_value(json!({
+        let viewer: cokret_sdk::models::AccountView = serde_json::from_value(json!({
             "principal_id": "did:web:alice.example",
             "state": "active",
             "devices": [],
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_does_not_invent_handle() {
-        let viewer: cokret_sdk::model::AccountView = serde_json::from_value(json!({
+        let viewer: cokret_sdk::models::AccountView = serde_json::from_value(json!({
             "principal_id": "did:web:alice.example",
             "state": "active",
             "devices": []

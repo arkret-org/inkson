@@ -1,4 +1,4 @@
-use cokret_sdk::model::{AgentParticipationOutcome, AgentParticipationSetRequestBody};
+use cokret_sdk::models::{AgentParticipationOutcome, AgentParticipationSetRequestBody};
 
 use super::*;
 

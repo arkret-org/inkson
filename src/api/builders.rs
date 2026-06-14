@@ -910,7 +910,7 @@ fn build_member_state_transition_event_with_binding(
     reason: &str,
     delivery_binding: Option<Value>,
 ) -> anyhow::Result<EventEnvelope> {
-    use cokret_sdk::model::{DeliveryStatus, MembershipPayload, MembershipPayloadState};
+    use cokret_sdk::models::{DeliveryStatus, MembershipPayload, MembershipPayloadState};
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let membership = match to_state {
@@ -1041,7 +1041,7 @@ pub fn build_device_message_envelope(
     kind: &str,
     expires_at: &str,
     content: serde_json::Value,
-) -> anyhow::Result<cokret_sdk::model::DeviceMessagesSendRequestBody> {
+) -> anyhow::Result<cokret_sdk::models::DeviceMessagesSendRequestBody> {
     let target_actor = cokret_sdk::Did::new(target_actor.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid device-message target actor: {err}"))?;
     let target_device_id = cokret_sdk::DeviceId::new(target_device_id.to_owned())
@@ -1050,7 +1050,7 @@ pub fn build_device_message_envelope(
         .map_err(|err| anyhow::anyhow!("invalid device-message expires_at: {err}"))?
         .with_timezone(&chrono::Utc);
 
-    let target = cokret_sdk::model::DeviceMessageTarget {
+    let target = cokret_sdk::models::DeviceMessageTarget {
         kind: kind.to_owned(),
         content,
         expires_at,
@@ -1059,7 +1059,7 @@ pub fn build_device_message_envelope(
     by_device.insert(target_device_id, target);
     let mut messages = BTreeMap::new();
     messages.insert(target_actor, by_device);
-    Ok(cokret_sdk::model::DeviceMessagesSendRequestBody { messages })
+    Ok(cokret_sdk::models::DeviceMessagesSendRequestBody { messages })
 }
 
 pub fn build_signed_device_verification_proof(

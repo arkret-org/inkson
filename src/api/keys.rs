@@ -12,7 +12,7 @@ impl CokretApi {
                 "key": "yougen-one-time"
             }),
         );
-        let body = cokret_sdk::model::KeysUploadRequestBody {
+        let body = cokret_sdk::models::KeysUploadRequestBody {
             device_id: cokret_sdk::DeviceId::new(device_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?,
             one_time_keys,
@@ -43,7 +43,7 @@ impl CokretApi {
         device_map.insert(device_id, algorithm.to_owned());
         let mut one_time_keys = BTreeMap::new();
         one_time_keys.insert(actor, device_map);
-        let body = cokret_sdk::model::KeysClaimRequestBody { one_time_keys };
+        let body = cokret_sdk::models::KeysClaimRequestBody { one_time_keys };
         self.post_json("_cokret/self/keys/claim", &body).await
     }
 
@@ -58,7 +58,7 @@ impl CokretApi {
             .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;
         let mut device_keys = BTreeMap::new();
         device_keys.insert(actor, vec![device_id]);
-        let body = cokret_sdk::model::KeysQueryRequestBody {
+        let body = cokret_sdk::models::KeysQueryRequestBody {
             device_keys,
             timeout_ms: None,
         };
@@ -207,7 +207,7 @@ impl CokretApi {
     /// optional `expected_recovery_policy_ref`). Returns the session JSON.
     pub async fn create_recovery_session(
         &self,
-        body: &cokret_sdk::model::RecoverySessionCreateRequestBody,
+        body: &cokret_sdk::models::RecoverySessionCreateRequestBody,
     ) -> anyhow::Result<serde_json::Value> {
         self.post_json("_cokret/root/identity/recovery-sessions", body)
             .await
@@ -219,7 +219,7 @@ impl CokretApi {
     pub async fn submit_recovery_proof(
         &self,
         recovery_session_id: &str,
-        body: &cokret_sdk::model::RecoverySessionProofSubmitRequestBody,
+        body: &cokret_sdk::models::RecoverySessionProofSubmitRequestBody,
     ) -> anyhow::Result<serde_json::Value> {
         self.post_json(
             &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
@@ -233,7 +233,7 @@ impl CokretApi {
     pub async fn complete_recovery_session(
         &self,
         recovery_session_id: &str,
-        body: &cokret_sdk::model::RecoverySessionCompleteRequestBody,
+        body: &cokret_sdk::models::RecoverySessionCompleteRequestBody,
     ) -> anyhow::Result<serde_json::Value> {
         self.post_json(
             &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/complete"),

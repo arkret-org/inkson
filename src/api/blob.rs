@@ -32,7 +32,7 @@ impl CokretApi {
                 })
             })
             .transpose()?;
-        let body = cokret_sdk::model::BlobPresignRequestBody {
+        let body = cokret_sdk::models::BlobPresignRequestBody {
             blob_ref: canonical_blob_ref(blob_ref).to_owned(),
             realm_id: realm,
             max_age_seconds: None,
