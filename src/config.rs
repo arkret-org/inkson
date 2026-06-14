@@ -361,11 +361,9 @@ fn persist_session_token_secret(account_did: &str, session_token: &str) -> bool 
     let store = config_secure_store();
     let key = session_token_secret_key(account_did);
     if session_token.is_empty() {
-        // Logout / token clear — drop the secure-store copy too.
-        let _ = store.delete_secret(&key);
-        if let Ok(mut cache) = session_token_cache().lock() {
-            cache.insert(account_did.to_owned(), None);
-        }
+        // Empty config writes also happen during first-paint restore and
+        // profile/bootstrap churn. Do not treat them as logout; explicit
+        // session invalidation calls `clear_session_token_secret`.
         return true;
     }
     match store.store_secret(&key, session_token) {
@@ -385,9 +383,23 @@ fn persist_session_token_secret(account_did: &str, session_token: &str) -> bool 
     }
 }
 
+pub(crate) fn clear_session_token_secret(account_did: &str) {
+    if account_did.is_empty() {
+        return;
+    }
+    let store = config_secure_store();
+    let _ = store.delete_secret(&session_token_secret_key(account_did));
+    if let Ok(mut cache) = session_token_cache().lock() {
+        cache.insert(account_did.to_owned(), None);
+    }
+}
+
 /// Companion read: the session bearer for `account_did`, from the
 /// in-process cache first, then the SecureKeyStore.
-fn restore_session_token_secret(account_did: &str) -> Option<String> {
+fn restore_session_token_secret_from_store(
+    account_did: &str,
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Option<String> {
     if account_did.is_empty() {
         return None;
     }
@@ -396,7 +408,6 @@ fn restore_session_token_secret(account_did: &str) -> Option<String> {
     {
         return entry.clone();
     }
-    let store = config_secure_store();
     let result = match store.get_secret(&session_token_secret_key(account_did)) {
         Ok(value) => value,
         Err(error) => {
@@ -412,6 +423,11 @@ fn restore_session_token_secret(account_did: &str) -> Option<String> {
         cache.insert(account_did.to_owned(), result.clone());
     }
     result
+}
+
+fn restore_session_token_secret(account_did: &str) -> Option<String> {
+    let store = config_secure_store();
+    restore_session_token_secret_from_store(account_did, store.as_ref())
 }
 
 /// Build the copy of `config` that is allowed to touch the plaintext
@@ -536,6 +552,24 @@ impl LocalConfigStore {
             .normalized()
     }
 
+    /// Load the active config while forcing session bearer rehydration
+    /// through an already-initialised secure-store backend. On wasm this lets
+    /// the boot path use IndexedDB after async upgrade, without relaxing the
+    /// synchronous localStorage fallback that rejects bearer keys.
+    pub fn load_with_secure_store(
+        &self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> ClientConfig {
+        self.cached
+            .clone()
+            .or_else(|| {
+                self.read_persisted_config()
+                    .map(|config| self.rehydrate_config_with_secure_store(config, secure_store))
+            })
+            .unwrap_or_default()
+            .normalized()
+    }
+
     /// Reattach the session bearer to a config freshly read from the
     /// plaintext persistence layer. A legacy blob that still carries
     /// the token in plaintext gets read-repaired: the token is moved
@@ -550,6 +584,28 @@ impl LocalConfigStore {
             }
         } else {
             // Legacy plaintext config — migrate the bearer off disk.
+            let _ = self.write_persisted_config(&config);
+        }
+        config
+    }
+
+    fn rehydrate_config_with_secure_store(
+        &self,
+        mut config: ClientConfig,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> ClientConfig {
+        if config.account_did.is_empty() {
+            return config;
+        }
+        if config.session_token.is_empty() {
+            if let Some(token) =
+                restore_session_token_secret_from_store(&config.account_did, secure_store)
+            {
+                config.session_token = token;
+            }
+        } else {
+            // Legacy plaintext config — migrate the bearer off disk through
+            // the standard persistence path.
             let _ = self.write_persisted_config(&config);
         }
         config
@@ -1026,6 +1082,36 @@ mod tests {
         // A fresh store instance reattaches it from the secure store.
         let reader = LocalConfigStore::with_path(path);
         assert_eq!(reader.load().session_token, "sx_secret_bearer");
+    }
+
+    #[test]
+    fn load_with_secure_store_rehydrates_redacted_config_from_supplied_store() {
+        let path = temp_config_path("explicit-secure-store");
+        let account_did = "did:web:explicit-secure-store.example";
+        let redacted = ClientConfig::from_fields(
+            "https://explicit-secure-store.example",
+            account_did,
+            "ck:device:01964137-0000-7000-8000-0000000000aa",
+            "",
+        );
+        let writer = LocalConfigStore::with_path(path.clone());
+        writer
+            .write_config_blob(&redacted)
+            .expect("seed redacted config");
+
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::new();
+        crate::secure_key_store::SecureKeyStore::store_secret(
+            &secure_store,
+            &session_token_secret_key(account_did),
+            "sx_from_supplied_store",
+        )
+        .expect("seed secure token");
+
+        let reader = LocalConfigStore::with_path(path);
+        assert_eq!(
+            reader.load_with_secure_store(&secure_store).session_token,
+            "sx_from_supplied_store"
+        );
     }
 
     #[test]

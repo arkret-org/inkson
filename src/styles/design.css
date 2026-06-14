@@ -2724,6 +2724,23 @@ label.avatar-upload-button:active,
   gap: 8px;
   flex-wrap: wrap;
 }
+.modal-overlay.recovery-key-setup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--layer-modal) + 20);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: auto;
+  background: rgba(20, 22, 30, 0.55);
+  backdrop-filter: blur(2px);
+}
+.recovery-key-setup-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  overflow: auto;
+}
 .mls-recovery-modal .mls-unlock-row input {
   flex: 1 1 260px;
   min-width: min(100%, 220px);

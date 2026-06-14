@@ -193,6 +193,13 @@ impl YougenEventSigner {
         &self.verification_method
     }
 
+    /// Local seed-backed signer's Ed25519 public key in multibase form.
+    pub fn public_key_multibase(&self) -> Option<String> {
+        self.raw_signing_key
+            .as_ref()
+            .map(|key| crate::did_key::encode_ed25519_did_key_multibase(&key.verifying_key()))
+    }
+
     /// JWS algorithm name (e.g. `"EdDSA"`).
     pub fn algorithm(&self) -> &str {
         self.inner.algorithm()
@@ -381,9 +388,23 @@ impl YougenEventSigner {
 /// will reference. The verification-method id becomes
 /// `<signer_did>#device`.
 pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> YougenEventSigner {
-    use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
     let signer_did = signer_did.into();
     let verification_method = format!("{signer_did}#device");
+    build_ed25519_signer_with_verification_method(seed, signer_did, verification_method)
+}
+
+/// Build an Ed25519 signer with an explicit verification-method id.
+///
+/// This is used by control-plane proofs whose verification method is scoped
+/// by the principal DID rather than by the local did:key identity.
+pub fn build_ed25519_signer_with_verification_method(
+    seed: [u8; 32],
+    signer_did: impl Into<String>,
+    verification_method: impl Into<String>,
+) -> YougenEventSigner {
+    use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
+    let signer_did = signer_did.into();
+    let verification_method = verification_method.into();
     let raw_signing_key = SigningKey::from_bytes(&seed);
     let sdk_signer = Ed25519DetachedJwsSigner::from_seed(seed, verification_method.clone());
     YougenEventSigner {
@@ -577,6 +598,23 @@ mod tests {
         assert_eq!(signer.algorithm(), "EdDSA");
         assert_eq!(signer.mode_tag(), "ed25519");
         assert!(signer.last_signed_at_snapshot().is_none());
+    }
+
+    #[test]
+    fn build_ed25519_signer_with_verification_method_overrides_default_fragment() {
+        let _g = reset();
+        let signer = build_ed25519_signer_with_verification_method(
+            [7u8; 32],
+            "did:web:alice.example",
+            "did:web:alice.example#did-key-1",
+        );
+        assert_eq!(signer.signer_did(), "did:web:alice.example");
+        assert_eq!(
+            signer.verification_method(),
+            "did:web:alice.example#did-key-1"
+        );
+        assert_eq!(signer.algorithm(), "EdDSA");
+        assert_eq!(signer.mode_tag(), "ed25519");
     }
 
     #[test]

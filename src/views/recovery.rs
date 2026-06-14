@@ -522,6 +522,7 @@ pub(crate) fn upload_recovery_key_account_backup(
     state_store: Signal<LocalStateStore>,
     recovery_key: String,
     mut status: Signal<String>,
+    on_server_configured: Option<EventHandler<()>>,
 ) {
     let Some(recovery_secret) = crate::recovery_crypto::normalize_recovery_key_input(&recovery_key)
     else {
@@ -616,6 +617,9 @@ pub(crate) fn upload_recovery_key_account_backup(
                     } else {
                         "Recovery Key generated and DID recovery backup is on the server. Encrypted content will be backed up to it automatically the first time you use encryption.".to_owned()
                     };
+                }
+                if let Some(handler) = on_server_configured {
+                    handler.call(());
                 }
             }
             Err(err) => {
@@ -859,6 +863,7 @@ pub fn RecoveryPanel(
                                             state_store,
                                             key,
                                             recovery_key_status,
+                                            None,
                                         );
                                     }
                                     Err(err) => {

@@ -1024,6 +1024,19 @@ impl LocalStorageSecureKeyStore {
     fn entry_key(&self, key: &str) -> String {
         format!("yougen.secret.{}.{key}", self.service_name)
     }
+
+    /// Store a transient AEAD-wrapped mirror used only by the
+    /// IndexedDB backend to survive page-unload races before its async
+    /// write commits. Public LocalStorage reads/writes still reject
+    /// sensitive keys; boot migrates these mirrors into IndexedDB before
+    /// dropping the wrapping seed.
+    fn store_unload_race_mirror(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        let wrapped = wrap_secret(value, &self.wrapping_key)?;
+        storage
+            .set_item(&self.entry_key(key), &wrapped)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage set: {err:?}")))
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1768,7 +1781,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
             // guaranteed to exist in localStorage at mirror time (the H6
             // migration prunes the seed after each boot sweep).
             match LocalStorageSecureKeyStore::new(&self.service_name)
-                .and_then(|fallback| fallback.store_secret(key, value))
+                .and_then(|fallback| fallback.store_unload_race_mirror(key, value))
             {
                 Ok(()) => true,
                 Err(err) => {

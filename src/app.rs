@@ -815,11 +815,29 @@ pub fn RouterView() -> Element {
     let secure_store_bootstrap_ready = use_signal(move || initial_secure_store_bootstrap_ready);
     #[cfg(target_arch = "wasm32")]
     {
+        let config_store_for_secure_upgrade = config_store;
+        let base_url_for_secure_upgrade = base_url;
+        let account_did_for_secure_upgrade = account_did;
+        let device_id_for_secure_upgrade = device_id;
         let mut state_store_for_secure_upgrade = state_store;
         let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
+        let mut token_for_secure_upgrade = token;
         use_future(move || async move {
             match crate::secure_key_store::upgrade_wasm_secure_key_store_async("yougen").await {
                 Ok(Some(secure_store)) => {
+                    let loaded_config = config_store_for_secure_upgrade
+                        .read()
+                        .load_with_secure_store(secure_store.as_ref());
+                    if token_for_secure_upgrade.peek().trim().is_empty()
+                        && let Some(rehydrated) = rehydrated_session_token_for_active_config(
+                            &loaded_config,
+                            &base_url_for_secure_upgrade(),
+                            &account_did_for_secure_upgrade(),
+                            &device_id_for_secure_upgrade(),
+                        )
+                    {
+                        token_for_secure_upgrade.set(rehydrated);
+                    }
                     let dpop_record = {
                         let store = state_store_for_secure_upgrade.read();
                         store.load_dpop_device_key_with_secure_store(secure_store.as_ref())
@@ -977,7 +995,7 @@ pub fn RouterView() -> Element {
     // dismissing the modal and against sync re-flushing local state, so the
     // proactive nudge can never re-pop within a session.
     let recovery_auto_prompt_fired = use_signal(|| false);
-    let account_recovery_configured = use_signal(|| Option::<bool>::None);
+    let mut account_recovery_configured = use_signal(|| Option::<bool>::None);
     let account_recovery_detection_key_seen = use_signal(|| Option::<String>::None);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
@@ -1169,6 +1187,7 @@ pub fn RouterView() -> Element {
                 invalidator_session_generation.set(invalidator_session_generation() + 1);
                 invalidator_state_store.write().set_session_grant(None);
                 invalidator_token.set(String::new());
+                crate::config::clear_session_token_secret(&invalidator_account_did());
                 persist_config(
                     invalidator_config_store,
                     invalidator_base_url(),
@@ -1613,6 +1632,8 @@ pub fn RouterView() -> Element {
             let (inputs, already_prompted, local_only_fingerprint) = {
                 let store = state_store.read();
                 let account_recovery_configured = account_recovery_configured();
+                let local_recovery_configured =
+                    crate::views::recovery::recovery_options_configured(&store, &actor);
                 let local_only_fingerprint = recovery_auto_prompt_pending_local_only_fingerprint(
                     &store,
                     &actor,
@@ -1632,7 +1653,10 @@ pub fn RouterView() -> Element {
                         crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
                             &store, &actor,
                         ),
-                    recovery_unconfigured: recovery_setup_prompt_required(account_recovery_configured),
+                    recovery_unconfigured: recovery_setup_prompt_required_for_local_state(
+                        account_recovery_configured,
+                        local_recovery_configured,
+                    ),
                 };
                 let already = recovery_auto_prompt_already_prompted(
                     &store,
@@ -2357,6 +2381,8 @@ pub fn RouterView() -> Element {
     let active_prompt = {
         let store = state_store.read();
         let actor = account_did();
+        let local_recovery_configured =
+            crate::views::recovery::recovery_options_configured(&store, &actor);
         crate::account_health::AccountHealthInputs {
             has_session,
             sync_bootstrap_complete: sync_bootstrap_complete(),
@@ -2373,12 +2399,16 @@ pub fn RouterView() -> Element {
                 crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
                     &store, &actor,
                 ),
-            recovery_unconfigured: recovery_setup_prompt_required(account_recovery_configured()),
+            recovery_unconfigured: recovery_setup_prompt_required_for_local_state(
+                account_recovery_configured(),
+                local_recovery_configured,
+            ),
         }
         .resolve()
     };
     use crate::account_health::AccountHealthPrompt;
-    let show_recovery_setup_prompt = active_prompt == AccountHealthPrompt::RecoverySetupReminder;
+    let show_recovery_setup_prompt =
+        active_prompt == AccountHealthPrompt::RecoverySetupReminder && !recovery_key_setup_prompt();
 
     rsx! {
         style { "{DXC_THEME}" }
@@ -2517,6 +2547,7 @@ pub fn RouterView() -> Element {
                 state_store,
                 open: recovery_key_setup_prompt,
                 personal_handles,
+                on_server_configured: move |_| account_recovery_configured.set(Some(true)),
             }
             if show_recovery_setup_prompt {
                 div {
@@ -4297,6 +4328,7 @@ pub fn RouterView() -> Element {
                                                 personal_handles_lookup_key.set(String::new());
                                                 last_error.set(None);
                                                 token.set(String::new());
+                                                crate::config::clear_session_token_secret(&actor);
                                                 persist_config(
                                                     config_store,
                                                     base.clone(),

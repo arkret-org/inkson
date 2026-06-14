@@ -110,6 +110,13 @@ pub(crate) fn recovery_setup_prompt_required(account_recovery_configured: Option
     matches!(account_recovery_configured, Some(false))
 }
 
+pub(crate) fn recovery_setup_prompt_required_for_local_state(
+    account_recovery_configured: Option<bool>,
+    local_recovery_configured: bool,
+) -> bool {
+    recovery_setup_prompt_required(account_recovery_configured) && !local_recovery_configured
+}
+
 pub(crate) fn recovery_auto_prompt_pending_local_only_fingerprint(
     store: &LocalStateStore,
     actor: &str,

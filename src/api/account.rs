@@ -85,6 +85,8 @@ impl CokretApi {
             grant_jwt: grant_jwt.to_owned(),
             principal_id: did_for_request_field("principal_id", principal_id)?,
             device_id: device_id_for_request_field("device_id", device_id)?,
+            device_public_key: crate::event_signer::active_signer()
+                .and_then(|signer| signer.public_key_multibase()),
             display_name: Some(crate::device_name::default_device_display_name()),
             introspection_proof: introspection_proof.cloned(),
         };

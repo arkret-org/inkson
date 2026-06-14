@@ -154,9 +154,63 @@ pub fn build_signed_genesis_recovery_policy(
     principal_id: &str,
     trust_domain: &str,
 ) -> anyhow::Result<Value> {
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active signer is required for recovery policy"))?;
+    if let Some(signer) = crate::event_signer::active_signer() {
+        if principal_scoped_recovery_policy_verification_method(principal_id, &signer).is_ok() {
+            return build_signed_genesis_recovery_policy_with_signer(
+                principal_id,
+                trust_domain,
+                &signer,
+            );
+        }
+    }
+
+    anyhow::bail!(
+        "active signer verification_method is not scoped to principal_id `{principal_id}`; \
+         pass the current session device_id for genesis device signing"
+    )
+}
+
+pub fn build_signed_genesis_recovery_policy_for_session_device(
+    principal_id: &str,
+    trust_domain: &str,
+    device_id: &str,
+) -> anyhow::Result<Value> {
+    if let Some(signer) = crate::event_signer::active_signer() {
+        if principal_scoped_recovery_policy_verification_method(principal_id, &signer).is_ok() {
+            return build_signed_genesis_recovery_policy_with_signer(
+                principal_id,
+                trust_domain,
+                &signer,
+            );
+        }
+    }
+
+    let signer = default_principal_scoped_recovery_policy_signer(principal_id, device_id)?;
     build_signed_genesis_recovery_policy_with_signer(principal_id, trust_domain, &signer)
+}
+
+fn default_principal_scoped_recovery_policy_signer(
+    principal_id: &str,
+    device_id: &str,
+) -> anyhow::Result<crate::event_signer::YougenEventSigner> {
+    let principal_id = principal_id.trim();
+    if principal_id.is_empty() {
+        anyhow::bail!("principal_id is required");
+    }
+    let device_id = device_id.trim();
+    if device_id.is_empty() {
+        anyhow::bail!("device_id is required");
+    }
+    let store = crate::secure_key_store::default_secure_key_store("yougen");
+    let material = crate::secure_key_store::ensure_signing_seed(store.as_ref())
+        .map_err(|err| anyhow::anyhow!("ensure recovery policy signing seed failed: {err}"))?;
+    Ok(
+        crate::event_signer::build_ed25519_signer_with_verification_method(
+            material.seed,
+            principal_id,
+            format!("{principal_id}#{device_id}"),
+        ),
+    )
 }
 
 fn build_signed_genesis_recovery_policy_with_signer(
@@ -217,7 +271,7 @@ fn principal_scoped_recovery_policy_verification_method<'a>(
         "active signer verification_method `{}` is not scoped to principal_id `{}`; recovery policy requires a principal signing key such as `{}`",
         verification_method,
         principal_id,
-        format_args!("{principal_id}#did-key-1"),
+        format_args!("{principal_id}#<device_id>"),
     )
 }
 
@@ -239,14 +293,18 @@ fn recovery_policy_signature_transcript(payload: &Value, signed_fields: &[&str])
 pub async fn ensure_active_recovery_policy(
     api: &CokretApi,
     principal_id: &str,
+    device_id: &str,
 ) -> anyhow::Result<ActiveRecoveryPolicy> {
     if let Some(policy) = fetch_active_recovery_policy(api).await? {
         return Ok(policy);
     }
 
     let description = api.describe().await?;
-    let body =
-        build_signed_genesis_recovery_policy(principal_id, description.trust_domain.as_str())?;
+    let body = build_signed_genesis_recovery_policy_for_session_device(
+        principal_id,
+        description.trust_domain.as_str(),
+        device_id,
+    )?;
     api.put_recovery_policy(body).await?;
 
     fetch_active_recovery_policy(api)
@@ -260,7 +318,7 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     device_id: &str,
     recovery_key: &str,
 ) -> anyhow::Result<String> {
-    let policy = ensure_active_recovery_policy(api, principal_id).await?;
+    let policy = ensure_active_recovery_policy(api, principal_id, device_id).await?;
     let list = api
         .list_key_backups_by_series(None, Some("did_recovery"))
         .await?;
@@ -549,6 +607,32 @@ mod tests {
         assert_eq!(
             policy["auth_data"]["verification_method"],
             "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f#device"
+        );
+        assert!(
+            policy["auth_data"]["signature"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+    }
+
+    #[test]
+    fn genesis_recovery_policy_accepts_explicit_principal_signing_method() {
+        let principal_id = "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f";
+        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+            [8u8; 32],
+            principal_id,
+            format!("{principal_id}#did-key-1"),
+        );
+        let policy = build_signed_genesis_recovery_policy_with_signer(
+            principal_id,
+            "ck:trust_domain:local.host",
+            &signer,
+        )
+        .expect("principal signing key should build policy");
+
+        assert_eq!(
+            policy["auth_data"]["verification_method"],
+            format!("{principal_id}#did-key-1")
         );
         assert!(
             policy["auth_data"]["signature"]

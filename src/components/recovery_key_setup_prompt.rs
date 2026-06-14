@@ -9,7 +9,6 @@ use dioxus::prelude::*;
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::generate_recovery_key;
 use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 
@@ -22,6 +21,7 @@ fn begin_recovery_key_setup(
     mut generated_recovery_key: Signal<String>,
     mut status: Signal<String>,
     mut copied: Signal<bool>,
+    on_server_configured: Option<EventHandler<()>>,
 ) {
     let recovery_key = match generate_recovery_key() {
         Ok(key) => key,
@@ -56,6 +56,7 @@ fn begin_recovery_key_setup(
         state_store,
         recovery_key,
         status,
+        on_server_configured,
     );
 }
 
@@ -68,6 +69,7 @@ pub fn RecoveryKeySetupPrompt(
     state_store: Signal<LocalStateStore>,
     open: Signal<bool>,
     personal_handles: Signal<Vec<String>>,
+    #[props(default)] on_server_configured: Option<EventHandler<()>>,
 ) -> Element {
     let mut generated_recovery_key = use_signal(String::new);
     let mut status = use_signal(String::new);
@@ -99,6 +101,7 @@ pub fn RecoveryKeySetupPrompt(
             generated_recovery_key,
             status,
             copied,
+            on_server_configured,
         );
     });
 
@@ -112,19 +115,44 @@ pub fn RecoveryKeySetupPrompt(
         && (current_status.contains("failed") || current_status.contains("could not be saved"));
 
     rsx! {
-        Dialog {
-            open: true,
-            on_open_change: move |is_open: bool| {
-                if !is_open {
+        div {
+            class: "modal-overlay recovery-key-setup-overlay",
+            "data-testid": "recovery-key-setup-modal",
+            role: "presentation",
+            onclick: move |_| {
+                if generated_recovery_key().trim().is_empty() {
                     open.set(false);
+                } else {
+                    status.set(
+                        "Store these 24 words first, then use the saved confirmation button."
+                            .to_owned(),
+                    );
                 }
             },
-            "data-testid": "recovery-key-setup-modal",
-            "aria-labelledby": "recovery-key-setup-title",
-            "aria-label": "Set up 24-word Recovery Key",
             div {
-                class: "modal event mls-recovery-modal mls-backup-banner",
+                class: "modal event mls-recovery-modal mls-backup-banner recovery-key-setup-dialog",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-labelledby": "recovery-key-setup-title",
+                "aria-label": "Set up 24-word Recovery Key",
                 "data-testid": "recovery-key-setup-banner",
+                onclick: move |event: dioxus::events::MouseEvent| {
+                    event.stop_propagation();
+                },
+                onkeydown: move |event: dioxus::events::KeyboardEvent| {
+                    if event.key().to_string() == "Escape" {
+                        event.prevent_default();
+                        event.stop_propagation();
+                        if generated_recovery_key().trim().is_empty() {
+                            open.set(false);
+                        } else {
+                            status.set(
+                                "Store these 24 words first, then use the saved confirmation button."
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                },
                 div { class: "modal-head event-head",
                     h3 { id: "recovery-key-setup-title", "Set up your 24-word Recovery Key" }
                     span { class: "muted", "required before encryption" }
@@ -210,6 +238,7 @@ pub fn RecoveryKeySetupPrompt(
                                         generated_recovery_key,
                                         status,
                                         copied,
+                                        on_server_configured,
                                     );
                                 },
                                 "Try again"
@@ -232,9 +261,32 @@ pub fn RecoveryKeySetupPrompt(
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "recovery-key-setup-saved",
-                            onclick: move |_| {
-                                generated_recovery_key.set(String::new());
-                                open.set(false);
+                            onclick: {
+                                let saved_recovery_key = generated_now.clone();
+                                move |_| {
+                                    let actor = account_did();
+                                    if !actor.trim().is_empty()
+                                        && !saved_recovery_key.trim().is_empty()
+                                    {
+                                        let fingerprint =
+                                            crate::recovery_crypto::fingerprint_recovery_key(
+                                                &saved_recovery_key,
+                                            );
+                                        let mut store = state_store.write();
+                                        store.save_private_data(
+                                            &actor,
+                                            crate::app::RECOVERY_AUTO_PROMPT_SHOWN_KEY,
+                                            "1".to_owned(),
+                                        );
+                                        store.save_private_data(
+                                            &actor,
+                                            crate::app::RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
+                                            fingerprint,
+                                        );
+                                    }
+                                    generated_recovery_key.set(String::new());
+                                    open.set(false);
+                                }
                             },
                             "I saved these 24 words"
                         }
