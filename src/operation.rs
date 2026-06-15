@@ -295,6 +295,7 @@ impl EventProofAudience {
 /// and before `build()`; `build()` produces an unsigned envelope and the
 /// `submit_event_envelope` path requires an active signer to attach the
 /// detached JWS proof before going on the wire.
+#[derive(Debug)]
 pub struct OperationBuilder {
     realm_id: String,
     actor: String,
