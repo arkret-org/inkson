@@ -28,7 +28,7 @@
 
 use cokret_sdk::models::{
     AppletApprovalRequest, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
-    AppletRevokeMode, AppletRevokeRequestBody,
+    AppletRevokeMode, AppletRevokeRequestBody, EffectiveScope,
 };
 use dioxus::prelude::*;
 use serde_json::{Value, json};
@@ -55,8 +55,11 @@ pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<Value> {
 
 /// The effective-scope object an install/revoke targets: the admin's currently
 /// selected Realm. soland gates the write on `ck.realm.admin` over this scope.
-pub fn applet_effective_scope(realm_id: &str) -> Value {
-    json!({ "realm_id": crate::operation::trim_realm_id(realm_id) })
+pub fn applet_effective_scope(realm_id: &str) -> Result<EffectiveScope, String> {
+    let realm_id = crate::operation::trim_realm_id(realm_id);
+    cokret_sdk::RealmId::new(realm_id.clone())
+        .map(|realm_id| EffectiveScope::Realm { realm_id })
+        .map_err(|err| format!("invalid Realm id {realm_id:?}: {err:?}"))
 }
 
 /// A conservative default approval request: no ghost / delegated-native actors,
@@ -520,9 +523,16 @@ pub fn AppletsPanel(
                                         let api_token = token();
                                         install_status.set("previewing install plan…".to_owned());
                                         spawn(async move {
+                                            let effective_scope = match applet_effective_scope(&realm) {
+                                                Ok(scope) => scope,
+                                                Err(err) => {
+                                                    install_status.set(err);
+                                                    return;
+                                                }
+                                            };
                                             let body = AppletInstallPreviewRequestBody {
                                                 applet_package: package,
-                                                effective_scope: applet_effective_scope(&realm),
+                                                effective_scope,
                                                 approval_request: default_approval_request(),
                                             };
                                             let result = with_authed_api(&base, api_token, |api| async move {
@@ -591,14 +601,21 @@ pub fn AppletsPanel(
                                                     return;
                                                 }
                                             };
+                                            let effective_scope = match applet_effective_scope(&realm) {
+                                                Ok(scope) => scope,
+                                                Err(err) => {
+                                                    install_status.set(err);
+                                                    return;
+                                                }
+                                            };
                                             let body = AppletInstallRequestBody {
                                                 plan_digest: digest_typed,
                                                 applet_package: package,
-                                                effective_scope: applet_effective_scope(&realm),
+                                                effective_scope,
                                                 approved_scopes: Vec::new(),
-                                                actor_policy: Value::Null,
-                                                e2ee_policy: Value::Null,
-                                                widget_policy: Value::Null,
+                                                actor_policy: None,
+                                                e2ee_policy: None,
+                                                widget_policy: None,
                                             };
                                             let idem = crate::operation::uuid_v7();
                                             let result = with_authed_api(&base, api_token, |api| async move {
@@ -678,8 +695,15 @@ pub fn AppletsPanel(
                                                     let api_token = token();
                                                     install_status.set("revoking applet…".to_owned());
                                                     spawn(async move {
+                                                        let effective_scope = match applet_effective_scope(&realm) {
+                                                            Ok(scope) => scope,
+                                                            Err(err) => {
+                                                                install_status.set(err);
+                                                                return;
+                                                            }
+                                                        };
                                                         let body = AppletRevokeRequestBody {
-                                                            effective_scope: applet_effective_scope(&realm),
+                                                            effective_scope,
                                                             reason_code: "admin_uninstall".to_owned(),
                                                             revoke_mode: AppletRevokeMode::RevokeAll,
                                                         };
