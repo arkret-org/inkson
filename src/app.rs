@@ -6247,9 +6247,9 @@ async fn rotate_session_grant_via_device_proof(
     let session_private_key_pem = device_handle
         .session_signing_key_pkcs8_pem()
         .map_err(|error| anyhow::anyhow!("export device session key: {error}"))?;
-    let grant_expires_at = chrono::DateTime::parse_from_rfc3339(outcome.expires_at.trim())
-        .ok()
-        .map(|timestamp| timestamp.with_timezone(&chrono::Utc));
+    // SDK `SessionGrantRefreshOutcome.expires_at` is already a typed
+    // `DateTime<Utc>` (no string parsing needed).
+    let grant_expires_at = Some(outcome.expires_at);
     Ok(crate::local_state::PersistedSessionGrant {
         grant_jwt: outcome.grant_jwt,
         session_private_key_pem,

@@ -352,7 +352,7 @@ pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
 /// `/login`) but keep the device DPoP key in place per the G3.Y0
 /// soft/hard split.
 ///
-/// Returns the [`crate::coauth::RefreshSessionGrantOutcome`] body so
+/// Returns the SDK [`cokret_sdk::SessionGrantRefreshOutcome`] body so
 /// the caller can persist the new grant id + `cnf.jkt` for the next
 /// rotation. The `htu` argument is the absolute URL of coauth's
 /// refresh endpoint — the cotest harness pins it; production callers
@@ -362,7 +362,7 @@ pub async fn refresh_via_dpop(
     grant_jwt: &str,
     audience: Option<&str>,
     dpop_proof: &str,
-) -> anyhow::Result<crate::coauth::RefreshSessionGrantOutcome> {
+) -> anyhow::Result<cokret_sdk::SessionGrantRefreshOutcome> {
     let coauth = crate::coauth::CoauthApi::new(auth_server_url)?;
     coauth
         .refresh_session_grant(grant_jwt, audience, dpop_proof)
