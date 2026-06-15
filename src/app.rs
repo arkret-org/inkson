@@ -899,6 +899,41 @@ pub fn RouterView() -> Element {
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
     // detection effect (X11). See `maybe_flag_mls_backup_after_encrypted_write`.
     use_context_provider(|| crate::components::MlsBackupSignal(needs_mls_backup));
+    // Call-signaling hub — the receive side of `ck.call.signal`. Provided
+    // once at the app root; the sync apply paths route inbound envelopes into
+    // it and `CallPanel` drains it to drive the transport / call FSM. See
+    // `crate::views::call_signals`.
+    let call_signal_hub = use_context_provider(crate::views::call_signals::CallSignalHub::new);
+    // When an inbound `invite` lands on the hub (set by the sync apply path),
+    // navigate to the incoming-ring surface so the user can accept/decline.
+    // Tracks the last call_id navigated for so a re-render with the same
+    // pending invite does not re-push the route.
+    {
+        let navigator = navigator;
+        let mut last_incoming_nav = use_signal(|| Option::<String>::None);
+        use_effect(move || {
+            let pending = call_signal_hub.incoming_call.read().clone();
+            match pending {
+                Some(info) => {
+                    if last_incoming_nav.read().as_deref() != Some(info.call_id.as_str()) {
+                        last_incoming_nav.set(Some(info.call_id.clone()));
+                        navigator.push(Route::Call {
+                            call_id: info.call_id.clone(),
+                            peer: info.peer_actor.clone(),
+                            realm_id: info.realm_id.clone(),
+                            video: if info.video { "1" } else { "0" }.to_owned(),
+                            incoming: "1".to_owned(),
+                        });
+                    }
+                }
+                None => {
+                    if last_incoming_nav.read().is_some() {
+                        last_incoming_nav.set(None);
+                    }
+                }
+            }
+        });
+    }
     let mls_restore_payload_cache = use_signal(|| Option::<Value>::None);
     let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 
@@ -1253,6 +1288,7 @@ pub fn RouterView() -> Element {
                     sync_bootstrap_complete,
                     session_boot_state,
                     navigator,
+                    call_signal_hub,
                 },
             );
         } else if !base.trim().is_empty() {
@@ -1305,6 +1341,10 @@ pub fn RouterView() -> Element {
             // Y1/Y2 —— 把上面 provide 的会话级缓存句柄交给同步引擎,
             // 供 Y2 失效钩子在摄入投影时 invalidate/clear。
             did_cache,
+            // Receive side of `ck.call.signal`: the engine routes inbound
+            // call-signal envelopes from every incremental sync body into
+            // this hub (the same hub `CallPanel` drains).
+            call_signal_hub,
         };
         let mut active_generation = sync_engine_active_generation;
         spawn(async move {
@@ -2646,6 +2686,7 @@ pub fn RouterView() -> Element {
                                     sync_bootstrap_complete,
                                     session_boot_state,
                                     navigator,
+                                    call_signal_hub,
                                 },
                             )
                         },
@@ -2825,6 +2866,7 @@ pub fn RouterView() -> Element {
                                                         sync_bootstrap_complete,
                                                         session_boot_state,
                                                         navigator,
+                                                        call_signal_hub,
                                                     },
                                                 );
                                             }
@@ -6350,7 +6392,9 @@ async fn remint_principal_bearer(
                 .session_grant()
                 .filter(crate::session_refresh::grant_due_for_rotation)
         };
-        let Some(grant) = due_grant else { break 'rotate };
+        let Some(grant) = due_grant else {
+            break 'rotate;
+        };
         let device_handle = {
             let mut store = state_store.write();
             crate::auth_dpop::ensure_device_key(&mut store)
@@ -6487,6 +6531,10 @@ struct ConnectContext {
     sync_bootstrap_complete: Signal<bool>,
     session_boot_state: Signal<SessionBootState>,
     navigator: Navigator,
+    /// Receive-side call-signaling hub. The full boot sync routes inbound
+    /// `ck.call.signal` envelopes into it (dedup → incoming ring / per-call
+    /// inbox); `CallPanel` drains it. See `crate::views::call_signals`.
+    call_signal_hub: crate::views::call_signals::CallSignalHub,
 }
 
 fn redirect_to_login(navigator: Navigator) {
@@ -7147,6 +7195,22 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             // saved instead of silently diverging from disk.
                             if let Some(message) = store.persist_error() {
                                 last_error.set(Some(format!("local state not saved: {message}")));
+                            }
+                        }
+                        // Receive side of `ck.call.signal`: route every realm
+                        // body's inbound call-signal envelopes into the hub
+                        // (dedup → incoming ring / per-call inbox). Done after
+                        // the `store` write guard above is dropped so the hub
+                        // Signal writes don't nest inside the store borrow.
+                        {
+                            let mut hub = ctx.call_signal_hub;
+                            for (id, body) in &sync.realms {
+                                crate::views::call_signals::route_realm_call_signals(
+                                    &mut hub,
+                                    id,
+                                    body,
+                                    &canonical_actor,
+                                );
                             }
                         }
                         let synced_timeline = {

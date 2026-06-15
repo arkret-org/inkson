@@ -124,6 +124,11 @@ pub struct SyncEngineContext {
     /// 到达时对相关 actor DID 调 `invalidate`,在 logout / trust-bundle
     /// reset 时调 `clear`。`Signal<T>` 是 `Copy`,放进这里零成本。
     pub did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    /// Receive side of `ck.call.signal`. The engine routes inbound
+    /// call-signal envelopes from each incremental sync body into this hub
+    /// (dedup → incoming ring / per-call inbox). `Copy`, zero-cost to hold.
+    /// See `crate::views::call_signals`.
+    pub call_signal_hub: crate::views::call_signals::CallSignalHub,
 }
 
 /// Outcome of one sync iteration — used by the loop to decide whether to
@@ -708,6 +713,17 @@ pub fn apply_response(
             store.save_presence_projection(response.presence.clone());
             store.ingest_to_device_messages(&response.to_device);
         }); // store.batch — single coalesced flush happens here
+    }
+
+    // Receive side of `ck.call.signal`: route inbound call-signal envelopes
+    // from each realm body into the hub (dedup → incoming ring / per-call
+    // inbox). Done after the `store` write guard is dropped so the hub Signal
+    // writes don't nest inside the store borrow.
+    {
+        let mut hub = ctx.call_signal_hub;
+        for (id, body) in &response.realms {
+            crate::views::call_signals::route_realm_call_signals(&mut hub, id, body, &account_did);
+        }
     }
 
     // The `realm_tree_nodes` Signal is derived from `state_store.realm_tree_projections`

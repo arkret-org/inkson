@@ -39,6 +39,7 @@ pub mod agents;
 pub mod applets;
 pub mod audit;
 pub mod call;
+pub mod call_signals;
 pub mod chat;
 /// CKP-0007 P3B.2.5 — Circle detail panel (member list + leave /
 /// archive / scope-rotate controls). Rendered at `/circles/:circle_id`
