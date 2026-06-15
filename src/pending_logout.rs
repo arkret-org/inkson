@@ -19,9 +19,12 @@
 //! unreachable, the grant could outlive the "logout" — a real hole: the
 //! UI says signed-out while the rotation chain is still alive server-side.
 //!
-//! This module closes that hole by journalling the logout intent to
-//! `localStorage` **before** the local wipe, retrying it in the
-//! background, and on the next app boot. The record is cleared only once
+//! This module closes that hole by journalling the logout intent to the
+//! [`SecureKeyStore`](crate::secure_key_store) **before** the local wipe,
+//! retrying it in the background, and on the next app boot. The record
+//! embeds the device holder seed, so it is classified seed-grade
+//! (`PENDING_LOGOUT_SECRET_KEY`): IndexedDB-only on wasm with no localStorage
+//! unload-race mirror, OS keyring on native. The record is cleared only once
 //! the coauth revoke has definitively succeeded (or the grant is already
 //! gone). A wall-clock TTL bounds the record so a permanently-unreachable
 //! coauth can't leave a poison entry forever — and crucially the grant's
@@ -216,10 +219,11 @@ async fn soland_courtesy_logout(record: &PendingLogout) {
 /// Journal a logout intent to the secure key store. Call this **before**
 /// wiping local credentials so the retry can still mint a holder proof.
 ///
-/// The journal holds the device holder seed, so it goes through the same
-/// [`SecureKeyStore`](crate::secure_key_store::SecureKeyStore) tier as every
-/// other secret (OS keyring on native, IndexedDB/localStorage on wasm) rather
-/// than a plaintext file — keeping it cross-platform AND out of plaintext.
+/// The journal holds the device holder seed, so it goes through the
+/// [`SecureKeyStore`](crate::secure_key_store::SecureKeyStore) (OS keyring on
+/// native) rather than a plaintext file. Its key is classified seed-grade, so
+/// on wasm it is IndexedDB-only with NO localStorage unload-race mirror — the
+/// holder seed never touches the weak localStorage tier.
 pub fn persist_pending_logout(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,

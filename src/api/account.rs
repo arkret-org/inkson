@@ -399,13 +399,13 @@ impl CokretApi {
     /// only revokes a session token and preserves the device session). Returns
     /// whether a live session was revoked.
     pub async fn logout(&self) -> anyhow::Result<bool> {
-        #[derive(serde::Deserialize)]
-        struct LogoutOutcome {
-            #[serde(default)]
-            revoked: bool,
-        }
-        let outcome: LogoutOutcome = self
-            .post_json("_cokret/gate/account/logout", &serde_json::json!({}))
+        // Spec strong types for the POST body + response, so the wire shape
+        // stays in lockstep with the OpenAPI/DTO contract.
+        let outcome: cokret_sdk::AccountLogoutOutcome = self
+            .post_json(
+                "_cokret/gate/account/logout",
+                &cokret_sdk::AccountLogoutRequestBody::default(),
+            )
             .await?;
         Ok(outcome.revoked)
     }

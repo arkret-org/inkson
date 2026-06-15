@@ -222,29 +222,6 @@ pub struct CoauthOidcBrowserBridgeSession {
 /// [`CoauthApi::exchange_pkce_code_for_tokens`] and
 /// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
 /// Wire shape of coauth's private session-grant refresh response.
-/// Mirrors `coauth::handlers::cokret::RefreshSessionGrantOutcome`. We
-/// keep the fields as `String` so the cotest harness can assert
-/// equality against the JSON body verbatim.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RefreshSessionGrantOutcome {
-    pub grant_id: String,
-    pub grant_jwt: String,
-    /// The rotated grant binds its `session_public_key` to the SAME holder key
-    /// the proof proved possession of — i.e. the device's durable DPoP key
-    /// (the grant's `cnf.jkt`). The server therefore does NOT mint or return a
-    /// fresh session private key here; the client already holds the matching
-    /// private key (its device key) and signs the subsequent principal-server
-    /// exchange proof with it. (Contrast with first login, where the grant's
-    /// session keypair is server-generated and its private key is handed back.)
-    pub session_public_key: String,
-    pub expires_at: String,
-    pub audience: String,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-    pub dpop_jkt: String,
-    pub previous_grant_id: String,
-}
-
 /// OpenID Connect Core §3.1.3.3 - extra provider-specific fields
 /// strand through `extras` so tokens minted by Auth0 / Keycloak / etc.
 /// don't fail to deserialize on a one-off `provider_session_id` claim.
@@ -783,11 +760,15 @@ impl CoauthApi {
         grant_jwt: &str,
         audience: Option<&str>,
         dpop_proof: &str,
-    ) -> anyhow::Result<RefreshSessionGrantOutcome> {
-        let mut body = json!({ "grant_jwt": grant_jwt });
-        if let Some(audience) = audience.filter(|value| !value.trim().is_empty()) {
-            body["audience"] = json!(audience);
-        }
+    ) -> anyhow::Result<cokret_sdk::SessionGrantRefreshOutcome> {
+        // Build the POST body from the spec's strong type so the `oneOf` /
+        // required-field contract is enforced at compile time, not by hand.
+        let body = serde_json::to_value(cokret_sdk::SessionGrantRefreshRequestBody {
+            grant_jwt: grant_jwt.to_owned(),
+            audience: audience
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned),
+        })?;
         self.post_json_with_dpop(
             "_cokret/gate/account/session-grants/refresh",
             body,
@@ -819,11 +800,14 @@ impl CoauthApi {
         dpop_proof: &str,
     ) -> anyhow::Result<SessionGrantRevokeOutcome> {
         let endpoint = self.endpoint("_cokret/gate/account/session-grants/logout")?;
+        let body = cokret_sdk::SessionGrantLogoutRequestBody {
+            grant_jwt: grant_jwt.to_owned(),
+        };
         let response = self
             .http
             .post(endpoint)
             .header("DPoP", dpop_proof)
-            .json(&json!({ "grant_jwt": grant_jwt }))
+            .json(&body)
             .send()
             .await?;
 
