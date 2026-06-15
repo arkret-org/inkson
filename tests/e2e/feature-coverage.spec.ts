@@ -348,6 +348,51 @@ test.describe("feature coverage placeholders", () => {
     await expect(recoveryPanel.getByTestId("recovery-key-section")).toBeVisible();
   });
 
+  test("recovery: backup history emphasizes the latest backup time", async ({ page }) => {
+    await dismissBlockingDialog(page);
+    await page.route("**/_cokret/self/keys/backups", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          backups: [
+            {
+              backup_id: "ck:backup:019eca5c-2fcb-7592-9000-000000000001",
+              backup_class: "did_recovery",
+              created_at: "2026-06-15T08:00:00Z",
+            },
+            {
+              backup_id: "ck:backup:019eca5c-2fcb-7592-9000-000000000002",
+              backup_class: "secret_storage",
+              created_at: "2026-06-14T06:30:00Z",
+            },
+            {
+              backup_id: "ck:backup:019eca5c-2fcb-7592-9000-000000000003",
+              backup_class: "mls_history",
+              created_at: "2026-06-10T22:15:00Z",
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/settings/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await dismissBlockingDialog(page);
+    const recoveryPanel = latestTestId(page, "recovery-panel");
+    await expect(recoveryPanel).toBeVisible({ timeout: 60_000 });
+
+    await recoveryPanel.getByTestId("restore-list-button").click();
+    await expect(recoveryPanel.getByTestId("restore-latest-backup")).toBeVisible();
+    await expect(recoveryPanel.getByTestId("restore-latest-backup-time")).toContainText(
+      "2026-06-15 08:00 UTC",
+    );
+    await expect(recoveryPanel.getByTestId("restore-backup-time")).toHaveCount(3);
+    await expect(recoveryPanel.getByTestId("restore-select-button")).toHaveCount(0);
+    await expect(recoveryPanel.getByTestId("restore-delete-button")).toHaveCount(0);
+    await expect(recoveryPanel).not.toContainText("ck:backup:");
+    await expect(recoveryPanel).not.toContainText("did_recovery");
+  });
+
   // ---- Discoverability ≠ Join Rule ≠ History ----
   // UI surface: directory
   // spec: discovery/discovery-directory.md §2

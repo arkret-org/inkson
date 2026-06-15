@@ -63,10 +63,10 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
         },
         ClientWorkflow {
             id: "recovery.key_backup_restore",
-            name: "Restore from encrypted backup",
+            name: "Encrypted backup history",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Recovery panel: list + decrypt (24-word Recovery Key) + delete the server-side ciphertext",
-            server_dependency: "GET /_cokret/self/keys/backups, GET /_cokret/self/keys/backups/{id}, DELETE /_cokret/self/keys/backups/{id}",
+            client_surface: "Recovery panel: backup history timestamp summary and latest-backup status",
+            server_dependency: "GET /_cokret/self/keys/backups",
         },
         ClientWorkflow {
             id: "identity.cross_signing_setup",

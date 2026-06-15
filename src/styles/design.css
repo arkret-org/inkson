@@ -2548,8 +2548,127 @@ label.avatar-upload-button:active,
   overflow-wrap: anywhere;
 }
 .recovery-key-meta .muted { font-size: 11px; }
+
+.restore-backup-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(120px, 0.7fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+.restore-latest-backup,
+.restore-backup-count {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.restore-latest-backup {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.restore-latest-backup .lbl,
+.restore-backup-count .lbl {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.restore-latest-backup strong,
+.restore-backup-count strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.restore-latest-backup strong {
+  font-size: 22px;
+  line-height: 1.15;
+}
+.restore-backup-count strong {
+  font-size: 24px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.restore-time-list {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.restore-time-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-faint);
+  font-size: 12px;
+  font-weight: 700;
+}
+.restore-time-items {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.restore-time-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-faint);
+}
+.restore-time-item:first-child { border-top: 0; }
+.restore-time-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-3);
+}
+.restore-time-item.latest .restore-time-dot { background: var(--success); }
+.restore-time-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.restore-time-primary {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+.restore-time-secondary {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.restore-time-badge {
+  justify-self: end;
+  white-space: nowrap;
+}
+.restore-time-more {
+  padding: 9px 12px 11px;
+  border-top: 1px solid var(--border-faint);
+  font-size: 12px;
+}
 @media (max-width: 640px) {
   .recovery-key-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .restore-backup-overview { grid-template-columns: 1fr; }
+  .restore-time-item {
+    grid-template-columns: 10px minmax(0, 1fr);
+    align-items: start;
+  }
+  .restore-time-badge {
+    grid-column: 2;
+    justify-self: start;
+  }
 }
 
 /* Progress bar / sync indicator */

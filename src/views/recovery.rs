@@ -9,9 +9,9 @@
 //!   plaintext only lives in memory between Generate and the user's Copy interaction; only a
 //!   SHA-256 fingerprint plus rotation timestamp are persisted via
 //!   `LocalStateStore::save_private_data` — the words themselves are never uploaded.
-//! - **Restore from backup**: lists the server-side `ck.schema.key_backup.v1` ciphertext envelopes
-//!   and decrypts them on-device with the 24-word Recovery Key. Envelopes sealed by the removed
-//!   vault-passphrase strands can still be listed and deleted, but no longer decrypted.
+//! - **Backup history**: summarizes the server-side `ck.schema.key_backup.v1` ciphertext envelopes
+//!   by creation time, emphasizing the latest encrypted backup without exposing per-backup
+//!   controls.
 //! - **Social Recovery** (advanced, local bookkeeping only): guardian list + Shamir threshold +
 //!   last-rehearsal timestamp persisted as JSON under the same private_data store.
 //!
@@ -37,6 +37,7 @@ use crate::ui::label::Label;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
+const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
 
 // SyncBadge / SyncBadgeState are shared in `crate::components::sync_badge`.
 // The Recovery view renders the Recovery Key backup state through the shared
@@ -77,26 +78,14 @@ struct PasskeyRecoveryWrap {
     created_at: String,
 }
 
-/// One row in the "List existing backups" table — server-side metadata
-/// only. The server returns the full `ck.schema.key_backup.v1` envelope
-/// (encryption block + ciphertext) and we decode just the fields the
-/// restore UI actually needs: identification, KDF salt, AEAD nonce.
+/// One row in the backup history summary. The server returns the full
+/// `ck.schema.key_backup.v1` envelope; the user-facing panel keeps only the
+/// fields needed for aggregate status and timestamp display.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BackupSummaryRow {
     backup_id: String,
     backup_class: String,
-    recipient_method: String,
-    backup_version: String,
     created_at: String,
-    ciphertext_digest: String,
-    salt_b64: String,
-    nonce_b64: String,
-    ciphertext_b64: String,
-    /// Full server-returned envelope, retained so the recovery path can
-    /// re-drive `restore_mls_history_backup_with_device_snapshot` and unwrap the
-    /// account MLS secret (which both need the complete body, not just the
-    /// summary fields). The list endpoint already returns full bodies.
-    body: serde_json::Value,
 }
 
 fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
@@ -106,52 +95,15 @@ fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
         .and_then(|c| c.as_str())
         .unwrap_or("")
         .to_owned();
-    let recipient_method = v
-        .pointer("/encryption/recipient_method")
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let backup_version = v
-        .get("backup_version")
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_owned();
     let created_at = v
         .get("created_at")
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let ciphertext_digest = v
-        .get("ciphertext_digest")
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let salt_b64 = v
-        .pointer("/encryption/kdf/salt")
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let nonce_b64 = v
-        .pointer("/encryption/aead/nonce")
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let ciphertext_b64 = v
-        .get("ciphertext")
         .and_then(|c| c.as_str())
         .unwrap_or("")
         .to_owned();
     Some(BackupSummaryRow {
         backup_id,
         backup_class,
-        recipient_method,
-        backup_version,
         created_at,
-        ciphertext_digest,
-        salt_b64,
-        nonce_b64,
-        ciphertext_b64,
-        body: v.clone(),
     })
 }
 
@@ -186,21 +138,53 @@ fn backup_class_counts(rows: &[BackupSummaryRow]) -> BackupClassCounts {
     counts
 }
 
+fn backup_created_epoch_ms(row: &BackupSummaryRow) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(&row.created_at)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
+}
+
+fn compare_backup_recency_desc(a: &BackupSummaryRow, b: &BackupSummaryRow) -> std::cmp::Ordering {
+    match (backup_created_epoch_ms(a), backup_created_epoch_ms(b)) {
+        (Some(a_ms), Some(b_ms)) => b_ms.cmp(&a_ms),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.backup_id.cmp(&b.backup_id),
+    }
+}
+
+fn sorted_backups_latest_first(rows: &[BackupSummaryRow]) -> Vec<BackupSummaryRow> {
+    let mut sorted = rows.to_vec();
+    sorted.sort_by(compare_backup_recency_desc);
+    sorted
+}
+
+fn fmt_backup_timestamp(iso: &str) -> String {
+    if iso.is_empty() {
+        return "Unknown time".to_owned();
+    }
+    chrono::DateTime::parse_from_rfc3339(iso)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Utc)
+                .format("%Y-%m-%d %H:%M UTC")
+                .to_string()
+        })
+        .unwrap_or_else(|_| iso.to_owned())
+}
+
 fn backup_inventory_status(rows: &[BackupSummaryRow]) -> String {
     let counts = backup_class_counts(rows);
     if rows.is_empty() {
-        return "Loaded 0 backups from the server. Recovery is incomplete: no did_recovery backup is available.".to_owned();
+        return "Loaded 0 backup timestamps from the server. Recovery is incomplete: no did_recovery backup is available.".to_owned();
     }
+    let latest = sorted_backups_latest_first(rows)
+        .first()
+        .map(|row| fmt_backup_timestamp(&row.created_at))
+        .unwrap_or_else(|| "Unknown time".to_owned());
     let mut message = format!(
-        "Loaded {} backup(s): did_recovery {}, secret_storage {}, mls_history {}",
-        rows.len(),
-        counts.did_recovery,
-        counts.secret_storage,
-        counts.mls_history
+        "Loaded {} backup timestamp(s). Last backup: {latest}",
+        rows.len()
     );
-    if counts.other > 0 {
-        message.push_str(&format!(", other {}", counts.other));
-    }
     if counts.did_recovery == 0 {
         message.push_str(
             ". Recovery is incomplete for fresh devices until a did_recovery backup exists.",
@@ -216,7 +200,7 @@ mod restore_parse_tests {
     use super::*;
 
     #[test]
-    fn parse_backup_summary_extracts_kdf_and_aead_fields() {
+    fn parse_backup_summary_extracts_visible_metadata() {
         let row = parse_backup_summary(&json!({
             "backup_id": "ck:backup:01964137-0000-7000-8000-000000000000",
             "backup_class": "secret_storage",
@@ -236,12 +220,7 @@ mod restore_parse_tests {
             "ck:backup:01964137-0000-7000-8000-000000000000"
         );
         assert_eq!(row.backup_class, "secret_storage");
-        assert_eq!(row.recipient_method, "passphrase_kdf");
-        assert_eq!(row.backup_version, "kb_1");
         assert_eq!(row.created_at, "2026-05-15T00:00:00Z");
-        assert_eq!(row.salt_b64, "U0FMVA");
-        assert_eq!(row.nonce_b64, "Tk9OQ0U");
-        assert_eq!(row.ciphertext_b64, "Q1Q");
     }
 
     #[test]
@@ -287,6 +266,24 @@ mod restore_parse_tests {
         assert_eq!(counts.secret_storage, 1);
         assert_eq!(counts.mls_history, 1);
         assert!(!backup_inventory_status(&rows).contains("incomplete"));
+    }
+
+    #[test]
+    fn sorted_backups_latest_first_orders_by_created_at() {
+        let rows = parse_backup_list(&json!({
+            "backups": [
+                {
+                    "backup_id": "ck:backup:older",
+                    "created_at": "2026-05-15T00:00:00Z"
+                },
+                {
+                    "backup_id": "ck:backup:newer",
+                    "created_at": "2026-05-16T00:00:00Z"
+                }
+            ]
+        }));
+        let sorted = sorted_backups_latest_first(&rows);
+        assert_eq!(sorted.first().unwrap().backup_id, "ck:backup:newer");
     }
 
     #[test]
@@ -663,17 +660,12 @@ pub fn RecoveryPanel(
     let mut last_rehearsed = use_signal(|| initial.last_rehearsed_at.clone());
     let mut social_status = use_signal(String::new);
 
-    // Restore-from-backup state — drives the "List + decrypt + delete"
-    // panel further down. The decrypted payload (recovery credentials)
-    // lives only in `restore_plaintext` until the user clears it.
+    // Backup history state — the panel shows server-side ciphertext inventory
+    // only by time, without exposing raw backup IDs or destructive row actions.
     let mut restore_status = use_signal(String::new);
     let mut restore_loading = use_signal(|| false);
     let mut restore_loaded_once = use_signal(|| false);
     let mut backup_rows = use_signal(Vec::<BackupSummaryRow>::new);
-    let mut restore_pass = use_signal(String::new);
-    let mut restore_target = use_signal(|| Option::<String>::None);
-    let mut restore_plaintext = use_signal(String::new);
-    let mut pending_delete_backup = use_signal(|| Option::<String>::None);
 
     // Server-side Recovery-Key backup marker (written by the upload paths via
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
@@ -1352,20 +1344,16 @@ pub fn RecoveryPanel(
                 }
             }
 
-            // Restore from backup — devices-and-auth §4.1 + key-management.md §7.3
+            // Backup history — devices-and-auth §4.1 + key-management.md §7.3
             //
-            // Lists every backup the server still holds for this principal,
-            // lets the user decrypt one locally with the 24-word Recovery
-            // Key (XChaCha20-Poly1305 AEAD authenticates the tag before any
-            // plaintext is returned), and offers a confirmed destructive
-            // Delete that goes through the typed delete endpoint. Envelopes
-            // sealed by the removed vault-passphrase strand are listable and
-            // deletable, but no longer decryptable.
+            // Lists only backup creation times. Detailed envelope identifiers,
+            // per-backup decrypt controls, and destructive delete controls stay
+            // out of this user-facing panel.
             div { class: "event", "data-testid": "restore-section",
                 div { class: "event-head",
-                    span { "Restore from backup" }
+                    span { "Backup history" }
                     span { class: "muted", "server-side ciphertext only" }
-                    HelpTip { text: "List every encrypted backup the server still holds for your principal. Decryption happens on-device with your Recovery Key (24 words); the server never sees plaintext. Backups sealed by the removed vault-passphrase strand cannot be decrypted any more — treat them as leftovers to delete." }
+                    HelpTip { text: "Shows when encrypted backups were created on the server. Backup contents stay encrypted and are not shown here." }
                 }
                 div { class: "actions",
                     Button {
@@ -1375,7 +1363,7 @@ pub fn RecoveryPanel(
                         onclick: {
                             let base = base_url.clone();
                             move |_| {
-                                restore_status.set("Fetching backup list…".to_owned());
+                                restore_status.set("Fetching backup times…".to_owned());
                                 restore_loading.set(true);
                                 let base = base.clone();
                                 let api_token = token();
@@ -1390,31 +1378,26 @@ pub fn RecoveryPanel(
                                             let status = backup_inventory_status(&rows);
                                             backup_rows.set(rows);
                                             restore_loaded_once.set(true);
-                                            pending_delete_backup.set(None);
                                             restore_status.set(status);
                                         }
                                         Err(err) => restore_status
-                                            .set(format!("List: {}", err.display())),
+                                            .set(format!("Backup times: {}", err.display())),
                                     }
                                     restore_loading.set(false);
                                 });
                             }
                         },
-                        if restore_loading() { "Loading…" } else { "List my backups" }
+                        if restore_loading() { "Loading…" } else { "Refresh backup times" }
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "restore-clear-button",
-                        title: "Only clears this local restore panel. It does not delete server backups.",
-                        disabled: backup_rows().is_empty() && restore_plaintext().is_empty(),
+                        title: "Only clears this local panel. It does not delete server backups.",
+                        disabled: backup_rows().is_empty(),
                         onclick: move |_| {
                             backup_rows.set(Vec::new());
                             restore_loaded_once.set(false);
-                            restore_target.set(None);
-                            restore_pass.set(String::new());
-                            restore_plaintext.set(String::new());
-                            pending_delete_backup.set(None);
-                            restore_status.set("Cleared local restore panel state. Server backups were not deleted.".to_owned());
+                            restore_status.set("Cleared local backup history state. Server backups were not deleted.".to_owned());
                         },
                         "Clear panel"
                     }
@@ -1427,333 +1410,89 @@ pub fn RecoveryPanel(
                         if restore_loaded_once() {
                             "No server backups found. Recovery is incomplete until an active policy and did_recovery backup exist."
                         } else {
-                            "No backups listed yet. Click \"List my backups\" to fetch from the server."
+                            "No backup times loaded yet."
                         }
                     }
                 } else {
-                    div { class: "metric-grid", "data-testid": "restore-rows",
-                        for row in backup_rows() {
-                            div { class: "metric", "data-testid": "restore-row",
-                                strong { "{row.backup_class}" }
-                                {
-                                    let backup_id_label = short_protocol_id(&row.backup_id);
-                                    rsx! { div { class: "mono", title: "{row.backup_id}", "{backup_id_label}" } }
-                                }
-                                div { class: "muted",
-                                    "version {row.backup_version} · created {fmt_relative(&row.created_at)}"
-                                }
-                                div { class: "muted", "method {row.recipient_method}" }
-                                div { class: "muted", style: "word-break: break-all;",
-                                    {
-                                        let digest = row.ciphertext_digest.clone();
-                                        let suffix = digest.split(':').nth(1).unwrap_or("");
-                                        if suffix.len() > 16 {
-                                            format!("digest sha256:{}…", &suffix[..16])
-                                        } else {
-                                            format!("digest {digest}")
-                                        }
-                                    }
-                                }
-                                div { class: "actions",
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "restore-select-button",
-                                        onclick: {
-                                            let bid = row.backup_id.clone();
-                                            move |_| {
-                                                restore_target.set(Some(bid.clone()));
-                                                restore_plaintext.set(String::new());
-                                                pending_delete_backup.set(None);
-                                                restore_status.set(format!(
-                                                    "Selected {}. Enter your Recovery Key (24 words) below.",
-                                                    short_protocol_id(&bid)
-                                                ));
-                                            }
-                                        },
-                                        if restore_target() == Some(row.backup_id.clone()) { "Selected" } else { "Decrypt" }
-                                    }
-                                    {
-                                        let confirm_delete = pending_delete_backup() == Some(row.backup_id.clone());
-                                        let delete_title = if confirm_delete {
-                                            "Click again to permanently delete this server-side ciphertext."
-                                        } else {
-                                            "Delete the server-side ciphertext. Requires confirmation."
-                                        };
-                                        rsx! {
-                                            Button {
-                                                variant: if confirm_delete { ButtonVariant::Destructive } else { ButtonVariant::Secondary },
-                                                "data-testid": "restore-delete-button",
-                                                title: "{delete_title}",
-                                                disabled: restore_loading(),
-                                                onclick: {
-                                                    let base = base_url.clone();
-                                                    let bid = row.backup_id.clone();
-                                                    let actor = account_did();
-                                                    move |_| {
-                                                        let bid_label = short_protocol_id(&bid);
-                                                        if pending_delete_backup() != Some(bid.clone()) {
-                                                            pending_delete_backup.set(Some(bid.clone()));
-                                                            restore_status.set(format!(
-                                                                "Confirm delete {bid_label}. This permanently removes the server-side ciphertext and cannot be restored from this backup."
-                                                            ));
-                                                            return;
-                                                        }
+                    {
+                        let rows = sorted_backups_latest_first(&backup_rows());
+                        let total_backups = rows.len();
+                        let latest = rows.first().cloned();
+                        let latest_id = latest
+                            .as_ref()
+                            .map(|row| row.backup_id.clone())
+                            .unwrap_or_default();
+                        let latest_created_at = latest
+                            .as_ref()
+                            .map(|row| row.created_at.clone())
+                            .unwrap_or_default();
+                        let latest_relative = fmt_relative(&latest_created_at);
+                        let latest_timestamp = fmt_backup_timestamp(&latest_created_at);
+                        let visible_rows: Vec<BackupSummaryRow> = rows
+                            .iter()
+                            .take(RESTORE_BACKUP_TIME_LIMIT)
+                            .cloned()
+                            .collect();
+                        let older_count = total_backups.saturating_sub(visible_rows.len());
 
-                                                        let base = base.clone();
-                                                        let api_token = token();
-                                                        let bid = bid.clone();
-                                                        let actor = actor.clone();
-                                                        pending_delete_backup.set(None);
-                                                        restore_loading.set(true);
-                                                        restore_status.set(format!("Deleting {bid_label}…"));
-                                                        spawn(async move {
-                                                            let bid_label = short_protocol_id(&bid);
-                                                            let bid_clone = bid.clone();
-                                                            let result = with_authed_api(&base, api_token, |api| async move {
-                                                                api.delete_key_backup(&bid_clone, &actor).await
-                                                            })
-                                                            .await
-                                                            .map_err(|err| anyhow::anyhow!("{}", err.display()));
-                                                            match result {
-                                                                Ok(_) => {
-                                                                    restore_status.set(format!("Deleted {bid_label}"));
-                                                                    let mut rows = backup_rows();
-                                                                    rows.retain(|r| r.backup_id != bid);
-                                                                    backup_rows.set(rows);
-                                                                    if restore_target() == Some(bid.clone()) {
-                                                                        restore_target.set(None);
-                                                                        restore_plaintext.set(String::new());
-                                                                    }
-                                                                }
-                                                                Err(err) => restore_status
-                                                                    .set(format!("Delete {bid_label} failed: {err}")),
-                                                            }
-                                                            restore_loading.set(false);
-                                                        });
+                        rsx! {
+                            div { class: "restore-backup-overview", "data-testid": "restore-summary",
+                                div { class: "restore-latest-backup", "data-testid": "restore-latest-backup",
+                                    span { class: "lbl", "Last backup" }
+                                    strong { "data-testid": "restore-latest-backup-relative", "{latest_relative}" }
+                                    span { class: "muted", "data-testid": "restore-latest-backup-time", "{latest_timestamp}" }
+                                }
+                                div { class: "restore-backup-count", "data-testid": "restore-backup-count",
+                                    span { class: "lbl", "Backups found" }
+                                    strong { "{total_backups}" }
+                                    span { class: "muted", "encrypted snapshots" }
+                                }
+                            }
+                            div { class: "restore-time-list", "data-testid": "restore-backup-times",
+                                div { class: "restore-time-list-head",
+                                    span { "Backup times" }
+                                    span { class: "muted", "{total_backups} total" }
+                                }
+                                ul { class: "restore-time-items",
+                                    for row in visible_rows {
+                                        {
+                                            let is_latest = row.backup_id == latest_id;
+                                            let relative = fmt_relative(&row.created_at);
+                                            let timestamp = fmt_backup_timestamp(&row.created_at);
+                                            rsx! {
+                                                li {
+                                                    class: if is_latest { "restore-time-item latest" } else { "restore-time-item" },
+                                                    "data-testid": "restore-backup-time",
+                                                    span { class: "restore-time-dot" }
+                                                    div { class: "restore-time-copy",
+                                                        span { class: "restore-time-primary", "{relative}" }
+                                                        span { class: "restore-time-secondary", "{timestamp}" }
                                                     }
-                                                },
-                                                if confirm_delete { "Confirm delete" } else { "Delete" }
-                                            }
-                                            if confirm_delete {
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "restore-delete-cancel-button",
-                                                    title: "Cancel server backup deletion.",
-                                                    disabled: restore_loading(),
-                                                    onclick: {
-                                                        let bid = row.backup_id.clone();
-                                                        move |_| {
-                                                            if pending_delete_backup() == Some(bid.clone()) {
-                                                                pending_delete_backup.set(None);
-                                                                restore_status.set("Delete cancelled.".to_owned());
-                                                            }
-                                                        }
-                                                    },
-                                                    "Cancel"
+                                                    if is_latest {
+                                                        span { class: "badge green restore-time-badge", "latest" }
+                                                    }
                                                 }
                                             }
                                         }
+                                    }
+                                }
+                                if older_count > 0 {
+                                    div { class: "restore-time-more muted", "data-testid": "restore-backup-older-count",
+                                        "{older_count} older backup time(s) hidden"
                                     }
                                 }
                             }
                         }
                     }
                 }
-                if let Some(target_row) = restore_target()
-                    .and_then(|id| backup_rows().into_iter().find(|r| r.backup_id == id))
-                {
-                    div { class: "workflow-form", "data-testid": "restore-decrypt-form",
-                            {
-                                let target_backup_id_label = short_protocol_id(&target_row.backup_id);
-                                rsx! {
-                                    div { class: "muted", title: "{target_row.backup_id}", "Decrypt {target_backup_id_label}" }
-                                }
-                            }
-                            Label { html_for: "restore-recovery-key", "Recovery Key (24 words)" }
-                            Input {
-                                id: "restore-recovery-key",
-                                "data-testid": "restore-recovery-key",
-                                r#type: "password",
-                                value: "{restore_pass}",
-                                autocomplete: "off",
-                                placeholder: "Enter the 24-word Recovery Key from your original device",
-                                oninput: move |event: FormEvent| restore_pass.set(event.value()),
-                            }
-                            div { class: "actions",
-                                Button {
-                                    variant: ButtonVariant::Primary,
-                                    "data-testid": "restore-decrypt-button",
-                                    disabled: restore_pass().is_empty(),
-                                    onclick: {
-                                        let target_row = target_row.clone();
-                                        let actor_key = actor_key.clone();
-                                        let mut store = state_store;
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            // The 24-word Recovery Key is the only accepted
-                                            // decryption credential; normalize before deriving.
-                                            let Some(recovery_secret) =
-                                                normalize_recovery_key_input(&restore_pass())
-                                            else {
-                                                restore_status.set(
-                                                    "Enter the full 24-word Recovery Key (words separated by spaces).".to_owned(),
-                                                );
-                                                return;
-                                            };
-                                            let pass_bytes = recovery_secret.into_bytes();
-                                            let metadata = target_row.body.clone();
-                                            let bid = target_row.backup_id.clone();
-                                            // Captured for the Option A account-MLS recovery below.
-                                            let all_rows = backup_rows();
-                                            let actor_key = actor_key.clone();
-                                            let device = device_id();
-                                            let base = base.clone();
-                                            let api_token = token();
-                                            restore_status.set("Stretching Recovery Key with Argon2id…".to_owned());
-                                            restore_loading.set(true);
-                                            spawn(async move {
-                                                let bid_label = short_protocol_id(&bid);
-                                                let fetch_actor = actor_key.clone();
-                                                let fetch_device = device.clone();
-                                                let fetch_metadata = metadata.clone();
-                                                let body = match with_authed_api(&base, api_token, |api| async move {
-                                                    crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-                                                        &api,
-                                                        &fetch_metadata,
-                                                        &fetch_actor,
-                                                        &fetch_device,
-                                                    )
-                                                    .await
-                                                })
-                                                .await
-                                                {
-                                                    Ok(body) => body,
-                                                    Err(err) => {
-                                                        restore_status.set(format!(
-                                                            "Fetch {bid_label} failed: {}",
-                                                            err.display()
-                                                        ));
-                                                        restore_loading.set(false);
-                                                        return;
-                                                    }
-                                                };
-                                                // Spec §7.5: decrypt from the full envelope (verifies
-                                                // key_commitment + recomputes the deterministic nonce +
-                                                // binds the AEAD AAD), not from loose salt/nonce/ct.
-                                                match crate::key_backup::open_passphrase_kdf_backup_body(&pass_bytes, &body) {
-                                                    Ok(plain) => {
-                                                        let text = String::from_utf8_lossy(&plain).into_owned();
-                                                        restore_plaintext.set(text);
-                                                        restore_status.set(format!("Decrypted {bid_label}. The plaintext below stays in memory only — clear it when done."));
-
-                                                        // Option A — recover the ACCOUNT-scoped MLS
-                                                        // snapshot secret so this fresh browser can
-                                                        // decrypt realm/kanban history. The same
-                                                        // normalized 24-word Recovery Key also
-                                                        // unwraps the `mls_account_secret`
-                                                        // backup; once stored, replay each
-                                                        // `mls_history` backup so history is
-                                                        // immediately decryptable.
-                                                        let secure = crate::secure_key_store::default_secure_key_store("yougen");
-                                                        let mls_secret_body = all_rows.iter().map(|r| &r.body).find(|b| {
-                                                            crate::mls::account_recovery::is_mls_account_secret_backup(b)
-                                                        });
-                                                        if let Some(mls_secret_body) = mls_secret_body {
-                                                            match crate::mls::account_recovery::decrypt_mls_account_secret_backup(
-                                                                &pass_bytes,
-                                                                mls_secret_body,
-                                                            ) {
-                                                                Ok(secret_bytes) => {
-                                                                    let secret = String::from_utf8_lossy(&secret_bytes).into_owned();
-                                                                    let secret_version = crate::mls::account_recovery::mls_account_secret_backup_version(
-                                                                        mls_secret_body,
-                                                                    );
-                                                                    if let Err(err) = crate::mls::runtime::store_account_mls_secret_version(
-                                                                        secure.as_ref(),
-                                                                        &actor_key,
-                                                                        secret_version,
-                                                                        &secret,
-                                                                    ) {
-                                                                        restore_status.set(format!(
-                                                                            "Decrypted {bid_label}; storing account MLS secret failed: {err}"
-                                                                        ));
-                                                                    } else {
-                                                                        let mut restored = 0usize;
-                                                                        let mut failed = 0usize;
-                                                                        for r in all_rows.iter().filter(|r| r.backup_class == "mls_history") {
-                                                                            let mut guard = store.write();
-                                                                            let result = crate::mls::runtime::restore_mls_history_backup_with_device_snapshot(
-                                                                                &mut guard,
-                                                                                secure.as_ref(),
-                                                                                &actor_key,
-                                                                                &device,
-                                                                                &r.body,
-                                                                            );
-                                                                            drop(guard);
-                                                                            match result {
-                                                                                Ok(_) => restored += 1,
-                                                                                Err(_) => failed += 1,
-                                                                            }
-                                                                        }
-                                                                        restore_status.set(format!(
-                                                                            "Decrypted {bid_label}. Account MLS secret recovered; restored {restored} history backup(s), {failed} failed."
-                                                                        ));
-                                                                    }
-                                                                }
-                                                                Err(err) => restore_status.set(format!(
-                                                                    "Decrypted {bid_label}; account MLS secret unwrap failed: {err}"
-                                                                )),
-                                                            }
-                                                        }
-                                                        restore_pass.set(String::new());
-                                                    }
-                                                    Err(err) => {
-                                                        restore_plaintext.set(String::new());
-                                                        restore_status.set(format!("Decrypt failed: {err}"));
-                                                    }
-                                                }
-                                                restore_loading.set(false);
-                                            });
-                                        }
-                                    },
-                                    "Decrypt with Recovery Key"
-                                }
-                            }
-                            if !restore_plaintext().is_empty() {
-                                div { class: "event", "data-testid": "restore-plaintext-display",
-                                    div { class: "event-head",
-                                        span { "Decrypted payload" }
-                                        span { class: "badge green", "in-memory" }
-                                    }
-                                    pre {
-                                        class: "mono",
-                                        "data-testid": "restore-plaintext",
-                                        style: "white-space: pre-wrap; word-break: break-all;",
-                                        "{restore_plaintext}"
-                                    }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "restore-clear-plaintext-button",
-                                            onclick: move |_| {
-                                                restore_plaintext.set(String::new());
-                                                restore_status.set("Cleared decrypted plaintext from memory.".to_owned());
-                                            },
-                                            "Clear plaintext"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            }
 
             // Recovery write path
             div { class: "event", "data-testid": "recovery-writeback-explainer",
                 div { class: "event-head",
                     span { "What happens when recovery succeeds" }
                     span { "method-specific evidence" }
-                    HelpTip { text: "A complete recovery session should make the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. This panel currently handles backup unlock; policy proof and device authorization are separate follow-up strands." }
+                    HelpTip { text: "A complete recovery session should make the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. This panel now keeps backup history visible while policy proof and device authorization remain separate follow-up strands." }
                 }
             }
         }
