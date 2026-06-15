@@ -1098,7 +1098,7 @@ pub(super) fn agent_metadata_from_mentions(
             controller_handle: mention
                 .controller_handle_at_time
                 .as_ref()
-                .and_then(|handle| crate::identity_handle::parse_user_handle(handle.as_str()))
+                .and_then(|handle| crate::identity_handle::parse_user_handle(handle.canonical()))
                 .map(|parsed| parsed.handle)
                 .unwrap_or_default(),
             agent_slug: agent_slug.trim().to_owned(),

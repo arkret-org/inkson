@@ -24,8 +24,7 @@ use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
     MentionNode, active_sync_token, authed_api_with_sync, parse_agent_selector_mention_tokens,
-    parse_mention_nodes, short_protocol_id,
-    with_authed_api_with_sync,
+    parse_mention_nodes, short_protocol_id, with_authed_api_with_sync,
 };
 
 mod model;
@@ -48,7 +47,7 @@ async fn resolve_agent_selector_mentions(
     body: &str,
     realm_id: &str,
     requester: &str,
-) -> Vec<StructuredMention> {
+) -> Vec<MentionNode> {
     let tokens = parse_agent_selector_mention_tokens(body);
     if tokens.is_empty() {
         return Vec::new();
@@ -88,7 +87,7 @@ async fn resolve_agent_selector_mentions(
 fn render_message_text_block(
     key: String,
     text: String,
-    mentions: Vec<StructuredMention>,
+    mentions: Vec<MentionNode>,
     base_url: String,
 ) -> Element {
     let parts = mention_inline_parts(&text, &mentions, &base_url);
@@ -126,7 +125,7 @@ fn render_message_text_block(
     }
 }
 
-fn render_message_body(body: &str, mentions: &[StructuredMention], base_url: &str) -> Element {
+fn render_message_body(body: &str, mentions: &[MentionNode], base_url: &str) -> Element {
     let blocks = crate::content::parse_message_body(body);
     if mentions.is_empty() {
         return crate::content::render_blocks(&blocks);
@@ -1785,7 +1784,7 @@ pub fn ChatPanel(
                                                             return;
                                                         }
                                                     };
-                                                    let mention_values_for_store = mentions_to_json(&mentions);
+                                                    let mention_values_for_store = mention_nodes_to_values(&mentions);
                                                     let realm_for_record = realm.clone();
                                                     let actor_for_retry = actor.clone();
                                                     spawn(async move {
@@ -3505,7 +3504,7 @@ pub fn ChatPanel(
                                 if body.is_empty() {
                                     return;
                                 }
-                                let mut mentions = parse_structured_mentions(&body);
+                                let mut mentions = parse_mention_nodes(&body);
                                 // G3.Y2 — merge mention picker chips
                                 // into the structured mentions list so
                                 // the @mention picker counts as a
@@ -3514,7 +3513,14 @@ pub fn ChatPanel(
                                 {
                                     let picker = mention_picker_state.read().inserted.clone();
                                     for chip in picker {
-                                        if !mentions.iter().any(|m| m.target == chip.did) {
+                                        if !mentions.iter().any(|m| {
+                                            m.as_mention().is_some_and(|mention| {
+                                                mention.subject_id.as_str() == chip.did
+                                            })
+                                        }) {
+                                            let Ok(subject_id) = cokret_sdk::Did::new(chip.did.clone()) else {
+                                                continue;
+                                            };
                                             let insert_label = chip.insert_label().to_owned();
                                             let parsed_handle =
                                                 (!chip.is_agent).then(|| {
@@ -3522,26 +3528,28 @@ pub fn ChatPanel(
                                                         &insert_label,
                                                     )
                                                 }).flatten();
-                                            // R3.2: `target` is the authoritative
-                                            // subject_id (principal DID). The handle /
-                                            // display strings are compose-time audit
-                                            // metadata only.
-                                            mentions.push(crate::views::helpers::StructuredMention {
-                                                kind: "actor".to_owned(),
-                                                target: chip.did.clone(),
-                                                token: format!("@{insert_label}"),
-                                                display_name_at_time: chip.display_name.clone(),
-                                                handle_at_time: parsed_handle
-                                                    .map(|h| h.handle)
-                                                    .unwrap_or_default(),
-                                                controller_subject_id: chip.controller_subject_id.clone(),
-                                                controller_handle_at_time: chip
-                                                    .controller_handle_at_time
-                                                    .clone(),
-                                                agent_slug_at_time: chip.agent_slug_at_time.clone(),
-                                                mention_text_original: format!("@{insert_label}"),
-                                                resolved_at: String::new(),
-                                            });
+                                            let mut mention = cokret_sdk::Mention::new(subject_id)
+                                                .with_mention_text_original(format!("@{insert_label}"));
+                                            if !chip.display_name.trim().is_empty() {
+                                                mention = mention
+                                                    .with_display_name_at_time(chip.display_name.clone());
+                                            }
+                                            if let Some(handle) = parsed_handle
+                                                .and_then(|parsed| cokret_sdk::Handle::parse(&parsed.handle).ok())
+                                            {
+                                                mention = mention.with_handle_at_time(handle);
+                                            }
+                                            if let (Ok(controller_subject_id), Ok(controller_handle)) = (
+                                                cokret_sdk::Did::new(chip.controller_subject_id.clone()),
+                                                cokret_sdk::Handle::parse(&chip.controller_handle_at_time),
+                                            ) && !chip.agent_slug_at_time.trim().is_empty() {
+                                                mention = mention.with_agent_selector_metadata(
+                                                    controller_subject_id,
+                                                    controller_handle,
+                                                    chip.agent_slug_at_time.clone(),
+                                                );
+                                            }
+                                            mentions.push(MentionNode::mention(mention));
                                         }
                                     }
                                 }
@@ -3620,7 +3628,7 @@ pub fn ChatPanel(
                                     )
                                     .await
                                     {
-                                        push_unique_structured_mention(&mut mentions, mention);
+                                        push_unique_mention_node(&mut mentions, mention);
                                     }
                                     if let Some(found) = messages
                                         .write()
@@ -3668,8 +3676,10 @@ pub fn ChatPanel(
                                     if !mentions.is_empty() {
                                         let mention_dids: Vec<String> = mentions
                                             .iter()
-                                            .filter(|m| m.kind == "actor")
-                                            .map(|m| m.target.clone())
+                                            .filter_map(|m| {
+                                                m.as_mention()
+                                                    .map(|mention| mention.subject_id.as_str().to_owned())
+                                            })
                                             .collect();
                                         let hashes =
                                             crate::messaging::mentions::mention_sidecar_hashes(
@@ -3692,7 +3702,7 @@ pub fn ChatPanel(
                                             );
                                         }
                                     }
-                                    let mention_values_for_store = mentions_to_json(&mentions);
+                                    let mention_values_for_store = mention_nodes_to_values(&mentions);
                                     match submit_chat_operation_with_auth_refresh(
                                         &base,
                                         &actor_for_retry,
@@ -4511,129 +4521,10 @@ pub fn ChatPanel(
     }
 }
 
-fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
+fn mention_nodes_to_values(mentions: &[MentionNode]) -> Vec<serde_json::Value> {
     mentions
         .iter()
-        .filter(|mention| mention.kind != "audience_mention")
-        .map(|mention| {
-            // R3.2 §3.8: emit `subject_id` (the authoritative principal
-            // DID) as the actor reference. `handle_at_time` /
-            // `display_name_at_time` / `mention_text_original` are
-            // compose-time audit metadata ONLY — verifier / reducer /
-            // policy MUST ignore them.
-            let mut obj = serde_json::Map::new();
-            obj.insert("kind".to_owned(), json!(mention.kind));
-            obj.insert("subject_id".to_owned(), json!(mention.target));
-            obj.insert("token".to_owned(), json!(mention.token));
-            if !mention.display_name_at_time.is_empty() {
-                obj.insert(
-                    "display_name_at_time".to_owned(),
-                    json!(mention.display_name_at_time),
-                );
-            }
-            if !mention.handle_at_time.is_empty() {
-                obj.insert("handle_at_time".to_owned(), json!(mention.handle_at_time));
-            }
-            if !mention.controller_subject_id.is_empty() {
-                obj.insert(
-                    "controller_subject_id".to_owned(),
-                    json!(mention.controller_subject_id),
-                );
-            }
-            if !mention.controller_handle_at_time.is_empty() {
-                obj.insert(
-                    "controller_handle_at_time".to_owned(),
-                    json!(mention.controller_handle_at_time),
-                );
-            }
-            if !mention.agent_slug_at_time.is_empty() {
-                obj.insert(
-                    "agent_slug_at_time".to_owned(),
-                    json!(mention.agent_slug_at_time),
-                );
-            }
-            if !mention.mention_text_original.is_empty() {
-                obj.insert(
-                    "mention_text_original".to_owned(),
-                    json!(mention.mention_text_original),
-                );
-            }
-            if !mention.resolved_at.is_empty() {
-                obj.insert("resolved_at".to_owned(), json!(mention.resolved_at));
-            }
-            Value::Object(obj)
-        })
-        .collect()
-}
-
-fn actor_mentions_to_content_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
-    mentions
-        .iter()
-        .filter(|mention| mention.kind == "actor")
-        .map(|mention| {
-            let mut obj = serde_json::Map::new();
-            obj.insert("kind".to_owned(), json!("mention"));
-            obj.insert("subject_id".to_owned(), json!(mention.target));
-            if !mention.display_name_at_time.is_empty() {
-                obj.insert(
-                    "display_name_at_time".to_owned(),
-                    json!(mention.display_name_at_time),
-                );
-            }
-            if !mention.handle_at_time.is_empty() {
-                obj.insert("handle_at_time".to_owned(), json!(mention.handle_at_time));
-            }
-            if !mention.controller_subject_id.is_empty() {
-                obj.insert(
-                    "controller_subject_id".to_owned(),
-                    json!(mention.controller_subject_id),
-                );
-            }
-            if !mention.controller_handle_at_time.is_empty() {
-                obj.insert(
-                    "controller_handle_at_time".to_owned(),
-                    json!(mention.controller_handle_at_time),
-                );
-            }
-            if !mention.agent_slug_at_time.is_empty() {
-                obj.insert(
-                    "agent_slug_at_time".to_owned(),
-                    json!(mention.agent_slug_at_time),
-                );
-            }
-            if !mention.mention_text_original.is_empty() {
-                obj.insert(
-                    "mention_text_original".to_owned(),
-                    json!(mention.mention_text_original),
-                );
-            }
-            if !mention.resolved_at.is_empty() {
-                obj.insert("resolved_at".to_owned(), json!(mention.resolved_at));
-            }
-            Value::Object(obj)
-        })
-        .collect()
-}
-
-fn audience_mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
-    mentions
-        .iter()
-        .filter(|mention| mention.kind == "audience_mention")
-        .map(|mention| {
-            let mut obj = serde_json::Map::new();
-            obj.insert("kind".to_owned(), json!("audience_mention"));
-            obj.insert("audience".to_owned(), json!(mention.target));
-            if !mention.mention_text_original.is_empty() {
-                obj.insert(
-                    "mention_text_original".to_owned(),
-                    json!(mention.mention_text_original),
-                );
-            }
-            if !mention.resolved_at.is_empty() {
-                obj.insert("resolved_at".to_owned(), json!(mention.resolved_at));
-            }
-            Value::Object(obj)
-        })
+        .filter_map(|mention| serde_json::to_value(mention).ok())
         .collect()
 }
 
@@ -4704,7 +4595,11 @@ mod tests {
                 "body": "restored from durable history",
                 "strand_id": "ck:strand:announce",
                 "message_id": "chat-msg-local",
-                "mentions": [{"kind": "actor", "target": "did:web:bob.example", "token": "@bob"}]
+                "mentions": [{
+                    "kind": "mention",
+                    "subject_id": "did:web:bob.example",
+                    "mention_text_original": "@bob"
+                }]
             }
         });
 
@@ -4715,7 +4610,7 @@ mod tests {
         assert_eq!(message.strand_id, "ck:strand:announce");
         assert_eq!(message.body, "restored from durable history");
         assert_eq!(message.sender, "did:web:alice.example");
-        assert_eq!(message.mentions[0].target, "did:web:bob.example");
+        assert_eq!(message.mentions[0].target_id(), "did:web:bob.example");
     }
 
     #[test]
@@ -4792,7 +4687,7 @@ mod tests {
 
     #[test]
     fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
-        let mentions = parse_structured_mentions("ping @here and @carol:example.com");
+        let mentions = parse_mention_nodes("ping @here and @carol:example.com");
         let op = chat_message_create_operation(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
@@ -4819,18 +4714,22 @@ mod tests {
 
     #[test]
     fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
-        let mentions = vec![StructuredMention {
-            kind: "actor".to_owned(),
-            target: "did:web:agent.example".to_owned(),
-            token: "@alice:example.com/summary".to_owned(),
-            display_name_at_time: String::new(),
-            handle_at_time: String::new(),
-            controller_subject_id: "did:web:example.com:users:alice".to_owned(),
-            controller_handle_at_time: "alice:example.com".to_owned(),
-            agent_slug_at_time: "summary".to_owned(),
-            mention_text_original: "@alice:example.com/summary".to_owned(),
-            resolved_at: "2026-06-11T00:00:00.000Z".to_owned(),
-        }];
+        let mentions = vec![MentionNode::mention(
+            cokret_sdk::Mention::new(
+                cokret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap(),
+            )
+            .with_agent_selector_metadata(
+                cokret_sdk::Did::new("did:web:example.com:users:alice".to_owned()).unwrap(),
+                cokret_sdk::Handle::parse("alice:example.com").unwrap(),
+                "summary",
+            )
+            .with_mention_text_original("@alice:example.com/summary")
+            .with_resolved_at(
+                chrono::DateTime::parse_from_rfc3339("2026-06-11T00:00:00.000Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+            ),
+        )];
         let op = chat_message_create_operation(
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:bob.example",
@@ -5260,18 +5159,14 @@ mod tests {
 
     #[test]
     fn mention_inline_parts_styles_only_full_handles() {
-        let mention = StructuredMention {
-            kind: "actor".to_owned(),
-            target: "did:web:local.host:users:alice".to_owned(),
-            token: "@alice:local.host".to_owned(),
-            display_name_at_time: "alice:local.host".to_owned(),
-            handle_at_time: "alice:local.host".to_owned(),
-            controller_subject_id: String::new(),
-            controller_handle_at_time: String::new(),
-            agent_slug_at_time: String::new(),
-            mention_text_original: "@alice:local.host".to_owned(),
-            resolved_at: String::new(),
-        };
+        let mention = MentionNode::mention(
+            cokret_sdk::Mention::new(
+                cokret_sdk::Did::new("did:web:local.host:users:alice".to_owned()).unwrap(),
+            )
+            .with_display_name_at_time("alice:local.host")
+            .with_handle_at_time(cokret_sdk::Handle::parse("alice:local.host").unwrap())
+            .with_mention_text_original("@alice:local.host"),
+        );
 
         let parts = mention_inline_parts(
             "@alice Hello @alice:local.host.",
@@ -5290,18 +5185,14 @@ mod tests {
 
     #[test]
     fn mention_inline_parts_marks_external_handles_remote() {
-        let mention = StructuredMention {
-            kind: "actor".to_owned(),
-            target: "did:web:example.com:users:bob".to_owned(),
-            token: "@bob:example.com".to_owned(),
-            display_name_at_time: "bob:example.com".to_owned(),
-            handle_at_time: "bob:example.com".to_owned(),
-            controller_subject_id: String::new(),
-            controller_handle_at_time: String::new(),
-            agent_slug_at_time: String::new(),
-            mention_text_original: "@bob:example.com".to_owned(),
-            resolved_at: String::new(),
-        };
+        let mention = MentionNode::mention(
+            cokret_sdk::Mention::new(
+                cokret_sdk::Did::new("did:web:example.com:users:bob".to_owned()).unwrap(),
+            )
+            .with_display_name_at_time("bob:example.com")
+            .with_handle_at_time(cokret_sdk::Handle::parse("bob:example.com").unwrap())
+            .with_mention_text_original("@bob:example.com"),
+        );
 
         let parts = mention_inline_parts("@bob:example.com", &[mention], "https://local.host");
         let mention_part = parts
@@ -5463,18 +5354,23 @@ mod tests {
             pending: false,
             failed: false,
             error: None,
-            mentions: vec![StructuredMention {
-                kind: "actor".to_owned(),
-                target: "did:web:agents.example:summary".to_owned(),
-                token: "@alice:example.com/summary".to_owned(),
-                display_name_at_time: "Summary Assistant".to_owned(),
-                handle_at_time: String::new(),
-                controller_subject_id: "did:web:example.com:users:alice".to_owned(),
-                controller_handle_at_time: "alice:example.com".to_owned(),
-                agent_slug_at_time: "summary".to_owned(),
-                mention_text_original: "@alice:example.com/summary".to_owned(),
-                resolved_at: "2026-06-12T00:00:00.000Z".to_owned(),
-            }],
+            mentions: vec![MentionNode::mention(
+                cokret_sdk::Mention::new(
+                    cokret_sdk::Did::new("did:web:agents.example:summary".to_owned()).unwrap(),
+                )
+                .with_display_name_at_time("Summary Assistant")
+                .with_agent_selector_metadata(
+                    cokret_sdk::Did::new("did:web:example.com:users:alice".to_owned()).unwrap(),
+                    cokret_sdk::Handle::parse("alice:example.com").unwrap(),
+                    "summary",
+                )
+                .with_mention_text_original("@alice:example.com/summary")
+                .with_resolved_at(
+                    chrono::DateTime::parse_from_rfc3339("2026-06-12T00:00:00.000Z")
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                ),
+            )],
             crypto_state: MessageCryptoState::Plaintext,
         }];
 

@@ -1,3 +1,4 @@
+pub use cokret_sdk::MentionNode;
 use dioxus::prelude::*;
 
 use crate::api::{
@@ -6,8 +7,6 @@ use crate::api::{
 };
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::ui::button::{Button, ButtonVariant};
-
-pub use cokret_sdk::MentionNode;
 
 /// Create an authenticated API client from a base URL and optional access token.
 pub fn authed_api(base_url: &str, access_token: String) -> anyhow::Result<CokretApi> {
@@ -367,9 +366,10 @@ pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
     }
 
     mentions.sort_by(|left, right| {
-        left.target_id()
-            .cmp(right.target_id())
-            .then(left.mention_text_original().cmp(&right.mention_text_original()))
+        left.target_id().cmp(right.target_id()).then(
+            left.mention_text_original()
+                .cmp(&right.mention_text_original()),
+        )
     });
     mentions.dedup_by(|left, right| {
         left.as_mention().is_some() == right.as_mention().is_some()

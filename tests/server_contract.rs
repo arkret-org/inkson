@@ -669,9 +669,9 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     .body(json!({
         "body": "hello",
         "mentions": [{
-            "kind": "actor",
-            "target": contact_remark.actor_id,
-            "token": "@alice"
+            "kind": "mention",
+            "subject_id": contact_remark.actor_id,
+            "mention_text_original": "@alice"
         }]
     }))
     .build("contract-test");
