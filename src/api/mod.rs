@@ -2200,6 +2200,71 @@ mod tests {
         assert!(envelope.payload["object"]["metadata_encryption_floor"].is_null());
     }
 
+    /// Regression: every genesis bootstrap envelope must produce the SAME
+    /// canonical digest whether hashed by yougen's local builder or after a
+    /// round-trip through the authoritative `cokret_sdk::Event` wire model.
+    ///
+    /// The bug this guards: genesis preconditions assert `head_eq null` (an
+    /// empty cell) and member transitions move `from: null → join`, both of
+    /// which carry an EXPLICIT wire `null`. An earlier `Option<Value>` field on
+    /// the SDK `Predicate` / `LatticeOp` collapsed that `null` to `None` on
+    /// deserialize and dropped it on re-serialize, so the SDK digest no longer
+    /// matched the locally-signed one — `submit_event_envelope` failed closed
+    /// with "event digest drift between yougen builder and SDK Event" and the
+    /// Realm could never be created.
+    #[test]
+    fn bootstrap_envelopes_have_no_sdk_digest_drift() {
+        let events = build_realm_bootstrap_events(
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "Engineering",
+            None,
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ck:trust_domain:server.example",
+            // an invitee exercises the `ck.member.state` `from: null → invite`
+            // transition (LatticeOp.from carries an explicit null).
+            &["bob:example.com".to_owned()],
+            &["did:web:server.example".to_owned()],
+        )
+        .unwrap();
+
+        for mut envelope in events {
+            let kind = envelope.kind.clone();
+            // EventWire requires a non-empty proofs vec to deserialize; attach a
+            // dummy proof so to_sdk_event() succeeds. proofs are stripped before
+            // the digest, so the dummy does not affect the comparison.
+            envelope.proofs.push(crate::operation::EventProof {
+                kind: "detached_jws".to_owned(),
+                alg: "EdDSA".to_owned(),
+                verification_method: "did:web:alice.example#k".to_owned(),
+                event_digest:
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_owned(),
+                created_at: envelope.created_at.clone(),
+                domain: None,
+                audience: None,
+                jws: "a.b.c".to_owned(),
+            });
+
+            let local = envelope
+                .canonical_digest()
+                .unwrap_or_else(|err| panic!("{kind}: local canonical_digest: {err}"));
+            let sdk = envelope
+                .to_sdk_event()
+                .unwrap_or_else(|err| panic!("{kind}: to_sdk_event: {err}"))
+                .event_digest()
+                .unwrap_or_else(|err| panic!("{kind}: SDK event_digest: {err}"));
+            assert_eq!(local, sdk, "{kind}: yougen/SDK digest drift");
+        }
+    }
+
     #[test]
     fn realm_bootstrap_handle_seed_materializes_user_and_principal_server_dids() {
         let events = build_realm_bootstrap_events(
