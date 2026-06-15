@@ -13,8 +13,8 @@
 //!   `ck.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
 //! - `discovery/profiles-presence.md` — `ck.presence` carries `{actor_id, status, last_seen?}` with
 //!   status ∈ {`online`, `away`, `dnd`, `offline`}.
-//! - `strand-and-message.md §10` — `ck.typing` is short-TTL signaling carrying `{actor_id, strand_id,
-//!   started_at}`.
+//! - `strand-and-message.md §10` — `ck.typing` is short-TTL signaling carrying `{actor_id,
+//!   strand_id, started_at}`.
 //!
 //! The parsers are deliberately permissive at the field level — they
 //! collapse missing optional fields rather than rejecting the whole

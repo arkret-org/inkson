@@ -400,13 +400,13 @@ mod tests {
     #[test]
     fn result_actor_id_ignores_deprecated_sender_field() {
         let row = json!({
-            "sender": "did:web:legacy.example",
+            "sender": "did:web:removed.example",
             "actor_id": "did:web:alice.example"
         });
         assert_eq!(result_actor_id(&row), "did:web:alice.example");
 
-        let legacy_only = json!({"sender": "did:web:legacy.example"});
-        assert!(result_actor_id(&legacy_only).is_empty());
+        let removed_only = json!({"sender": "did:web:removed.example"});
+        assert!(result_actor_id(&removed_only).is_empty());
     }
 
     #[test]

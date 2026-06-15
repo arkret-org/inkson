@@ -125,11 +125,7 @@ pub struct MlsSnapshotEnvelope {
     /// sends), this advances ONLY when the epoch number changes, so it is a
     /// faithful epoch-age clock for the `minimal_metadata_realm` 1h cap.
     /// Not bound into the AEAD AAD: it is a local scheduling hint, never a
-    /// confidentiality boundary. Legacy envelopes without the field
-    /// deserialize to the Unix epoch, which reads as "indefinitely old" and
-    /// therefore forces a commit on the next minimal-metadata send — the
-    /// fail-safe direction (more commits, never fewer).
-    #[serde(default = "epoch_started_at_default")]
+    /// confidentiality boundary.
     pub epoch_started_at: DateTime<Utc>,
     /// YOU-02-004 (`encryption-and-audit.md` §5.6) — number of MLS
     /// application messages observed (sent OR successfully decrypted) on
@@ -139,21 +135,11 @@ pub struct MlsSnapshotEnvelope {
     /// the epoch advances; carried forward (and bumped) by epoch-preserving
     /// re-snapshots. Like [`Self::epoch_started_at`] it is a local
     /// scheduling hint, not a confidentiality boundary, so it is not bound
-    /// into the AEAD AAD. Legacy envelopes deserialize to 0, which simply
-    /// restarts the count (the 7-day age trigger still covers old epochs).
-    #[serde(default)]
+    /// into the AEAD AAD.
     pub app_messages_observed: u64,
     /// AEAD scheme tag. New envelopes always serialize with
     /// [`AEAD_VERSION_CHACHA20_POLY1305`].
     pub aead_version: u8,
-}
-
-/// Legacy-envelope default for [`MlsSnapshotEnvelope::epoch_started_at`]: the
-/// Unix epoch. A `minimal_metadata_realm` send treats this as overdue and
-/// forces a fresh commit (fail-safe), so a pre-SEC-08 persisted snapshot can
-/// never silently keep an unbounded epoch alive.
-fn epoch_started_at_default() -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH
 }
 
 /// Errors produced while encrypting / decrypting / verifying an MLS
@@ -371,9 +357,7 @@ impl MlsSnapshotEnvelope {
                 // Spec key-management.md §7.5.3 / device-lifecycle.md §12:
                 // mls_history is wrapped under a `secret_storage` key
                 // (`mls_group_secrets_backup_key`), recovered after the account
-                // secret is unlocked. The legacy `device_snapshot_secret` wire
-                // value is not in the `ck.schema.key_backup.v1` enum and has
-                // been removed.
+                // secret is unlocked.
                 "recipient_method": "secret_storage_key",
                 "recipient_key_ref": "mls_group_secrets_backup_key",
                 "aead": {
@@ -727,17 +711,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_envelope_without_epoch_started_at_reads_as_unix_epoch() {
-        // SEC-08 — a pre-field persisted envelope deserializes with
-        // epoch_started_at = Unix epoch (fail-safe "indefinitely old" ⇒ forces
-        // a commit on the next minimal-metadata send).
-        let mut value =
-            serde_json::to_value(encrypt_state("s", "g", 1, b"x", "p", &fixed_salt())).unwrap();
-        value.as_object_mut().unwrap().remove("epoch_started_at");
-        let parsed: MlsSnapshotEnvelope = serde_json::from_value(value).unwrap();
-        assert_eq!(parsed.epoch_started_at, DateTime::<Utc>::UNIX_EPOCH);
-    }
-
     #[test]
     fn encrypt_with_distinct_salts_produces_distinct_ciphertext() {
         // Sanity: salt randomisation defeats rainbow-table lookups

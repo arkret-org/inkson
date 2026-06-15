@@ -87,7 +87,7 @@ pub(super) struct ChatMessage {
     pub(super) pending: bool,
     pub(super) failed: bool,
     pub(super) error: Option<String>,
-    pub(super) mentions: Vec<StructuredMention>,
+    pub(super) mentions: Vec<MentionNode>,
     /// T7.4: E2EE decrypt status for this message. Defaults to
     /// `Plaintext`; messages with `content.encrypted_content` start at
     /// `Decrypting` until the audit-emitter future resolves them.
@@ -654,24 +654,20 @@ pub(super) struct MentionInlinePart {
 /// empty snapshot, so the renderer steps down to the cached/name/DID
 /// fallback ladder (each visually degraded) instead of inventing a
 /// handle.
-pub(super) fn mention_label_from_structured(mention: &StructuredMention) -> Option<String> {
-    if mention.kind == "audience_mention" {
-        return mention
-            .token
-            .strip_prefix('@')
+pub(super) fn mention_label_from_node(mention: &MentionNode) -> Option<String> {
+    if let Some(audience_mention) = mention.as_audience_mention() {
+        return audience_mention
+            .mention_text_original
+            .as_deref()
+            .and_then(|token| token.strip_prefix('@'))
             .filter(|label| !label.is_empty())
-            .map(ToOwned::to_owned);
+            .map(ToOwned::to_owned)
+            .or_else(|| Some(audience_mention.audience.as_wire().to_owned()));
     }
-    if mention.kind != "actor" {
-        return mention
-            .token
-            .strip_prefix('@')
-            .and_then(mention_handle_label_from_value);
-    }
-    let display_name =
-        (!mention.display_name_at_time.is_empty()).then_some(mention.display_name_at_time.as_str());
+    let mention = mention.as_mention()?;
+    let display_name = mention.display_name_at_time.as_deref();
     let rendered = crate::views::helpers::render_actor_mention(
-        &mention.target,
+        mention.subject_id.as_str(),
         &[],  // claim_set_snapshot — TODO(R3.2.1) roster handle-claim evidence
         &[],  // accepted_issuers — TODO(R3.2.1) Realm policy
         None, // context (target Realm id)
@@ -779,12 +775,12 @@ pub(super) fn split_preserving_whitespace(text: &str) -> Vec<String> {
 
 pub(super) fn mention_inline_parts(
     text: &str,
-    mentions: &[StructuredMention],
+    mentions: &[MentionNode],
     base_url: &str,
 ) -> Vec<MentionInlinePart> {
     let labels: std::collections::BTreeSet<String> = mentions
         .iter()
-        .filter_map(mention_label_from_structured)
+        .filter_map(mention_label_from_node)
         .collect();
     if labels.is_empty() {
         return vec![MentionInlinePart {
@@ -1082,32 +1078,37 @@ pub(super) fn agent_metadata_from_mentions(
     messages: &[ChatMessage],
 ) -> std::collections::BTreeMap<String, AgentParticipantMetadata> {
     let mut out = std::collections::BTreeMap::new();
-    for mention in messages.iter().flat_map(|message| message.mentions.iter()) {
-        if mention.kind != "actor"
-            || mention.target.trim().is_empty()
-            || mention.controller_subject_id.trim().is_empty()
-            || mention.agent_slug_at_time.trim().is_empty()
+    for mention in messages
+        .iter()
+        .flat_map(|message| message.mentions.iter())
+        .filter_map(MentionNode::as_mention)
+    {
+        let agent_slug = mention.agent_slug_at_time.as_deref().unwrap_or_default();
+        let Some(controller_subject_id) = mention.controller_subject_id.as_ref() else {
+            continue;
+        };
+        if agent_slug.is_empty()
+            || controller_subject_id.as_str().trim().is_empty()
+            || cokret_sdk::models::validate_agent_slug(agent_slug).is_err()
         {
             continue;
         }
-        if cokret_sdk::models::validate_agent_slug(&mention.agent_slug_at_time).is_err() {
-            continue;
-        }
         let next = AgentParticipantMetadata {
-            controller_did: mention.controller_subject_id.trim().to_owned(),
-            controller_handle: crate::identity_handle::parse_user_handle(
-                &mention.controller_handle_at_time,
-            )
-            .map(|parsed| parsed.handle)
-            .unwrap_or_default(),
-            agent_slug: mention.agent_slug_at_time.trim().to_owned(),
+            controller_did: controller_subject_id.as_str().trim().to_owned(),
+            controller_handle: mention
+                .controller_handle_at_time
+                .as_ref()
+                .and_then(|handle| crate::identity_handle::parse_user_handle(handle.as_str()))
+                .map(|parsed| parsed.handle)
+                .unwrap_or_default(),
+            agent_slug: agent_slug.trim().to_owned(),
             display_name: clean_participant_display_name(
-                &mention.display_name_at_time,
-                Some(&mention.target),
+                mention.display_name_at_time.as_deref().unwrap_or_default(),
+                Some(mention.subject_id.as_str()),
             )
             .unwrap_or_default(),
         };
-        out.entry(mention.target.trim().to_owned())
+        out.entry(mention.subject_id.as_str().trim().to_owned())
             .and_modify(|existing| merge_agent_metadata(existing, next.clone()))
             .or_insert(next);
     }
@@ -1717,21 +1718,30 @@ pub(super) fn chat_message_create_operation(
     _channel_kind: &str,
     message_id: &str,
     body: &str,
-    mentions: &[StructuredMention],
+    mentions: &[MentionNode],
     reply_to: Option<&str>,
 ) -> anyhow::Result<crate::operation::EventEnvelope> {
-    let audience_mention_values = audience_mentions_to_json(mentions);
-    let mention_values = actor_mentions_to_content_json(mentions);
+    let actor_mentions = mentions
+        .iter()
+        .filter_map(|mention| mention.as_mention().cloned())
+        .collect::<Vec<_>>();
+    let audience_mentions = mentions
+        .iter()
+        .filter_map(|mention| mention.as_audience_mention().cloned())
+        .collect::<Vec<_>>();
     let mut content = cokret_sdk::ContentBlock::text(body);
-    if !mention_values.is_empty() {
-        content = content.with_field("mentions", Value::Array(mention_values));
+    if !actor_mentions.is_empty() {
+        content = content
+            .with_mentions(actor_mentions)
+            .map_err(|err| anyhow::anyhow!("chat message mentions serialize: {err}"))?;
     }
-    if !audience_mention_values.is_empty() {
-        content = content.with_field("audience_mentions", Value::Array(audience_mention_values));
+    if !audience_mentions.is_empty() {
+        content = content
+            .with_audience_mentions(audience_mentions)
+            .map_err(|err| anyhow::anyhow!("chat message audience_mentions serialize: {err}"))?;
     }
-    // T2.3: the legacy `branch` top-level field is forbidden on the wire
-    // (artifacts/registry/forbidden-wire-fields.json, hard_reject). v1 uses
-    // `track_name` — a display-only timeline segment identifier — instead.
+    // T2.3: v1 wire uses `track_name` — a display-only timeline segment
+    // identifier — instead of the removed `branch` top-level field.
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
@@ -1846,11 +1856,7 @@ pub(super) fn first_string_in_candidates<'a>(
 }
 
 pub(super) fn message_actor_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a str> {
-    first_string_in_candidates(candidates, &["actor_id", "sender_actor_id"]).or_else(|| {
-        // Compatibility for local raw-operation records persisted before
-        // yougen switched its client-side cache to the canonical actor_id key.
-        first_string_in_candidates(candidates, &["actor"])
-    })
+    first_string_in_candidates(candidates, &["actor_id", "sender_actor_id"])
 }
 
 pub(super) fn message_kind_is_create(value: &Value) -> bool {
@@ -1892,84 +1898,19 @@ pub(super) fn short_message_time(value: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-pub(super) fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
+pub(super) fn mentions_from_value(value: &Value) -> Vec<MentionNode> {
     value
         .as_array()
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| {
-                    // R3.2 §3.8: the authoritative reference is
-                    // `subject_id` (principal DID). Accept the pre-R3.2
-                    // `subject` and yougen-legacy `target` as fallbacks
-                    // for not-yet-migrated payloads.
-                    let kind = item.get("kind").and_then(Value::as_str).unwrap_or("ref");
-                    let target = if kind == "audience_mention" {
-                        item.get("audience")
-                            .and_then(Value::as_str)
-                            .or_else(|| item.get("target").and_then(Value::as_str))?
-                    } else {
-                        item.get("subject_id")
-                            .and_then(Value::as_str)
-                            .or_else(|| item.get("subject").and_then(Value::as_str))
-                            .or_else(|| item.get("target").and_then(Value::as_str))?
-                    };
-                    Some(StructuredMention {
-                        kind: kind.to_owned(),
-                        target: target.to_owned(),
-                        token: item
-                            .get("token")
-                            .and_then(Value::as_str)
-                            .or_else(|| item.get("mention_text_original").and_then(Value::as_str))
-                            .unwrap_or(target)
-                            .to_owned(),
-                        // R3.2 audit metadata: R3.2 field names only (no
-                        // pre-R3.2 compat). These NEVER drive the current
-                        // display value — the renderer runs §3.2.1 off
-                        // `target` instead.
-                        display_name_at_time: item
-                            .get("display_name_at_time")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                        handle_at_time: item
-                            .get("handle_at_time")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                        controller_subject_id: item
-                            .get("controller_subject_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                        controller_handle_at_time: item
-                            .get("controller_handle_at_time")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                        agent_slug_at_time: item
-                            .get("agent_slug_at_time")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                        mention_text_original: item
-                            .get("mention_text_original")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                        resolved_at: item
-                            .get("resolved_at")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                    })
-                })
+                .filter_map(|item| serde_json::from_value::<MentionNode>(item.clone()).ok())
                 .collect()
         })
         .unwrap_or_default()
 }
 
-pub(super) fn mentions_from_candidates(candidates: &[&Value]) -> Vec<StructuredMention> {
+pub(super) fn mentions_from_candidates(candidates: &[&Value]) -> Vec<MentionNode> {
     for candidate in candidates {
         let mut mentions = Vec::new();
         for key in ["mentions", "audience_mentions"] {
@@ -2009,16 +1950,14 @@ pub(super) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<C
 /// P0 decrypt-on-read: turn a remote member's canonical `encrypted_content`
 /// envelope into a plaintext chat body.
 ///
-/// Prefers the canonical `ck.schema.encrypted_envelope.v1` shape — parse the
-/// envelope and unwrap it to the typed [`cokret_sdk::EncryptedPayload`] before
-/// handing it to the shared MLS decrypt core — and falls back to a raw
-/// `EncryptedPayload` for legacy messages written before the envelope wrap. The
-/// decrypted bytes are the canonical Content Block JSON (see the secure send
-/// path), so we parse them and extract the display text, falling back to raw
-/// UTF-8 for any legacy raw-body ciphertext. Returns `None` on any soft failure
-/// (no local MLS snapshot, wrong/absent device secret, payload that doesn't
-/// decrypt) so the caller leaves the message in the `Decrypting`/`KeyMissing`
-/// state instead of presenting an undecrypted body.
+/// Parses the canonical `ck.schema.encrypted_envelope.v1` shape, unwraps it
+/// to the typed [`cokret_sdk::EncryptedPayload`], and hands it to the shared
+/// MLS decrypt core. The decrypted bytes are the canonical Content Block JSON
+/// (see the secure send path), so we parse them and extract the display text.
+/// Returns `None` on any soft failure (no local MLS snapshot, wrong/absent
+/// device secret, payload that doesn't decrypt) so the caller leaves the
+/// message in the `Decrypting`/`KeyMissing` state instead of presenting an
+/// undecrypted body.
 pub(super) fn decrypt_chat_encrypted_content(
     state_store: &LocalStateStore,
     realm_id: &str,
@@ -2026,12 +1965,10 @@ pub(super) fn decrypt_chat_encrypted_content(
     device_id: &str,
     encrypted_content: &Value,
 ) -> Option<String> {
-    let payload_value = match serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(
-        encrypted_content.clone(),
-    ) {
-        Ok(envelope) => serde_json::to_value(envelope.to_payload().ok()?).ok()?,
-        Err(_) => encrypted_content.clone(),
-    };
+    let envelope =
+        serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
+            .ok()?;
+    let payload_value = serde_json::to_value(envelope.to_payload().ok()?).ok()?;
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         state_store,
         realm_id,
@@ -2039,13 +1976,8 @@ pub(super) fn decrypt_chat_encrypted_content(
         device_id,
         &payload_value,
     )?;
-    let as_utf8 = String::from_utf8(plaintext.clone()).ok();
-    match serde_json::from_slice::<Value>(&plaintext) {
-        Ok(content_value) => text_body_from_value(&content_value)
-            .map(ToOwned::to_owned)
-            .or(as_utf8),
-        Err(_) => as_utf8,
-    }
+    let content_value = serde_json::from_slice::<Value>(&plaintext).ok()?;
+    text_body_from_value(&content_value).map(ToOwned::to_owned)
 }
 
 /// X9 — build a `ChatMessage` from a synced/projected event, preferring the
@@ -2738,12 +2670,9 @@ pub(super) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
     }
     if !strand_create_has_discussion_track(&candidates)
         && !candidates.iter().any(|candidate| {
-            // T2.3: the v1 wire uses `track_name`; legacy `branch` is a
-            // hard_reject field per forbidden-wire-fields.json, so writers
-            // MUST NOT emit it. Readers fall back to `category` only for
-            // payloads that pre-date the track concept entirely.
+            // T2.3: the v1 wire uses `track_name`; writers MUST NOT emit the
+            // removed `branch` field.
             value_string_at(candidate, &["track_name"]) == Some("discussion")
-                || value_string_at(candidate, &["category"]) == Some("discussion")
         })
     {
         return None;

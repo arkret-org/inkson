@@ -1586,7 +1586,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_legacy_pending_pairing_requests_removed() {
+    fn parse_removed_pending_pairing_requests_shape() {
         let rows = parse_pairing_requests_from_inbox(&[json!({
             "requests": [
             {

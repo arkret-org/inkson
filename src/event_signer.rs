@@ -24,7 +24,7 @@
 //! ## Canonical bytes alignment
 //!
 //! The SDK's `EventProofBuilder` operates over an opaque `T: Serialize`.
-//! Yougen's [`crate::operation::EventEnvelope`] is still a legacy builder
+//! Yougen's [`crate::operation::EventEnvelope`] is still a local builder
 //! wrapper, but the HTTP submit boundary decodes it through
 //! `cokret_sdk::Event` before serialising the request. To keep the SDK as the
 //! single canonical-bytes source, this module re-serializes the envelope into

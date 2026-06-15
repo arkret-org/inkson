@@ -79,7 +79,7 @@ pub enum RefreshOutcome {
     /// route to the login view.
     LoginRequired { reason: String },
     /// Refresh attempt failed without proving the active bearer is dead
-    /// (network down, 5xx, or a consumed legacy grant). Caller should
+    /// (network down, 5xx, or a consumed grant). Caller should
     /// leave the current bearer alone.
     Transient { reason: String },
 }

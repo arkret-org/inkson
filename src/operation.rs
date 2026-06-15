@@ -450,7 +450,7 @@ impl OperationBuilder {
 }
 
 impl EventEnvelope {
-    /// Decode this legacy builder envelope through the SDK's canonical Event
+    /// Decode this local builder envelope through the SDK's canonical Event
     /// model before it is allowed onto the HTTP wire.
     ///
     /// Yougen still builds envelopes with the local `OperationBuilder`, but
@@ -789,7 +789,7 @@ pub mod ck_ops {
 
     /// Build the canonical `relation_create_payload` body (flat
     /// `{kind, from_ref, to_ref}` form) via the SDK strong type. The
-    /// schema is `additionalProperties:false`, so any legacy
+    /// schema is `additionalProperties:false`, so unsupported
     /// `relation_id` / `scope_circle_id` / `fields` keys are dropped:
     /// the relation id is routed via the operation `target_ref`, and the
     /// extra annotation fields were never spec-legal (they tripped
@@ -1336,10 +1336,8 @@ pub mod ck_ops {
 
     /// Build a `ck.message.revise` patch operation. Spec: revise is
     /// supposed to carry `payload.patch` like the other `*.update`
-    /// events. Soland today accepts both the legacy full-content
-    /// shape and the new patch shape (additive). New clients SHOULD
-    /// emit patches; legacy clients sending `{content: <full body>}`
-    /// keep working.
+    /// events. New clients emit patches; full-content revise payloads are
+    /// outside the client write contract.
     pub fn message_revise_patch(
         realm_id: &str,
         actor: &str,
@@ -1501,7 +1499,7 @@ pub mod ck_ops {
     /// Build a `ck.space.archive` operation against a container Space. The
     /// Space transitions from `Active` to `Archived`; reversible via
     /// [`space_restore`]. Spec: `models/realm-and-space.md` §4.4. The wire
-    /// payload uses canonical `space_id` (no legacy alias).
+    /// payload uses canonical `space_id`.
     pub fn realm_archive(
         realm_id: &str,
         actor: &str,
@@ -1879,12 +1877,8 @@ pub mod ck_ops {
             .body(object_patch_payload_value(realm_id, patch)?))
     }
 
-    /// Legacy strand position update (kanban card position).
-    ///
-    /// Current protocol writes new position changes through
-    /// `ck.strand.move` / `ck.strand.reorder`; this helper remains for old
-    /// local drafts that still carry a generic `position` object, but it
-    /// still emits the canonical `object_patch_payload` shape.
+    /// Strand position update (kanban card position) via the canonical
+    /// `object_patch_payload` shape.
     pub fn strand_position_update(
         realm_id: &str,
         actor: &str,
@@ -1901,11 +1895,10 @@ pub mod ck_ops {
         )
     }
 
-    /// Strand position CAS update — same cell as
-    /// [`strand_position_update`] but carries an `expected_position`
-    /// the server reducer compares to the cell's current value; on
-    /// mismatch the response is `cas_conflict` and the client should
-    /// rebase against the new head.
+    /// Strand position CAS update. The server reducer compares
+    /// `expected_position` to the cell's current value; on mismatch the
+    /// response is `cas_conflict` and the client should rebase against the
+    /// new head.
     pub fn strand_position_cas_update(
         realm_id: &str,
         actor: &str,
@@ -1931,22 +1924,10 @@ pub mod ck_ops {
         let effect_rank = position_field(&effect_position, "rank");
 
         let Some(effect_space) = effect_space else {
-            let payload = strand_object_patch_payload_value(
-                strand_id,
-                patch_set("position", effect_position)?,
-            )?;
-            return Ok(OperationBuilder::new(realm_id, actor, "ck.strand.update")
-                .target_ref(strand_id)
-                .body(payload));
+            anyhow::bail!("strand position CAS update requires effect_position.space_id");
         };
         let Some(effect_rank) = effect_rank else {
-            let payload = strand_object_patch_payload_value(
-                strand_id,
-                patch_set("position", effect_position)?,
-            )?;
-            return Ok(OperationBuilder::new(realm_id, actor, "ck.strand.update")
-                .target_ref(strand_id)
-                .body(payload));
+            anyhow::bail!("strand position CAS update requires effect_position.rank");
         };
 
         // Strong types: strand_reorder_payload / strand_move_payload
@@ -1969,7 +1950,7 @@ pub mod ck_ops {
             }
             _ => {
                 // expected_position is only emitted when BOTH a prior
-                // space_id and rank are known (matches the legacy guard).
+                // space_id and rank are known.
                 let expected = match (expected_space.as_deref(), expected_rank.as_deref()) {
                     (Some(space), Some(rank)) => Some((Some(space), Some(rank))),
                     _ => None,

@@ -1427,10 +1427,10 @@ pub(super) fn private_strand_field_locked(
 /// 1. **Local plaintext sidecar** (`save_private_plaintext`) — the author's own content, the ONLY
 ///    source the author can ever see for their own encrypted fields (OpenMLS refuses to decrypt the
 ///    author's own ciphertext). Stored as the JSON-serialized patch value, so we parse it back and
-///    run it through `strand_body_display_text` exactly as the decrypt tier would, keeping write+read
-///    symmetric.
-/// 2. **Decrypt** (`private_strand_display_text`) — for ciphertext written by *other* members / other
-///    leaves synced in, which we *can* decrypt.
+///    run it through `strand_body_display_text` exactly as the decrypt tier would, keeping
+///    write+read symmetric.
+/// 2. **Decrypt** (`private_strand_display_text`) — for ciphertext written by *other* members /
+///    other leaves synced in, which we *can* decrypt.
 /// 3. **Blank** — encrypted-but-unreadable; never leaks the raw envelope.
 ///
 /// `field_path` MUST match the token the writer stored under (the patch
@@ -1714,9 +1714,8 @@ pub(super) fn raw_operation_from_event(
     let operation_id = json_path_string(Some(event), &["operation_id"])
         .or_else(|| json_path_string(Some(event), &["event_id"]))
         .unwrap_or_else(|| format!("remote-{expected_kind}"));
-    // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
-    // sender → sender_actor_id,hard_reject)。只读 actor_id /
-    // sender_actor_id;legacy `sender` 不再容忍。
+    // Canonical envelopes expose `actor_id` / `sender_actor_id` only;
+    // forbidden `sender` fields are not accepted.
     let actor_id = json_path_string(Some(event), &["actor_id"])
         .or_else(|| json_path_string(Some(event), &["sender_actor_id"]))
         .or_else(|| json_path_string(Some(&body), &["actor_id"]))

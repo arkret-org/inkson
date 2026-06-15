@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 /// CKP-0007 P3B.4 — multi-account avatar dropdown switcher.
 /// Lists every profile in [`crate::config::MultiProfileConfig`] and
-/// fires `on_switch` / `on_add_account` handlers.
+/// fires typed `on_switch` plus `on_add_account` handlers.
 pub mod account_switcher;
 pub mod avatar_uploader;
 /// CKP-0007 P3B.2 — Circle error toast surfaced from the app shell.

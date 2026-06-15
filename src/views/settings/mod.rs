@@ -841,8 +841,8 @@ fn RealmOverrideRow(
             )
         }
     });
-    // Muted rows keep the legacy testid so existing notification e2e strands
-    // (mute from drawer → confirm here) keep resolving.
+    // Muted rows expose a stable test id used by notification e2e flows
+    // (mute from drawer -> confirm here).
     let row_testid = if level == WatchLevel::Muted {
         "settings-muted-realm-row"
     } else {

@@ -109,7 +109,7 @@ impl GovernanceBindingPayload {
         crate::canonical::canonical_sha256(self)
     }
 
-    /// Render the binding as the legacy/internal Move tuple JSON shape.
+    /// Render the binding as the internal Move tuple JSON shape.
     ///
     /// Do not use this as a `ck.mls.commit` event payload. That wire surface
     /// is sealed by `cokret_sdk::MlsCommitPayload`.

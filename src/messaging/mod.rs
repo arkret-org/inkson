@@ -11,7 +11,8 @@
 //! Submodules:
 //! * [`polls`] — poll draft + result-tally state used by the composer and the timeline poll card.
 //! * [`mentions`] — @mention picker state + sidecar hash helper for E2EE-aware mention routing.
-//! * [`discussion_promote`] — "promote this Strand's discussion into a Circle-scoped Strand" UI state.
+//! * [`discussion_promote`] — "promote this Strand's discussion into a Circle-scoped Strand" UI
+//!   state.
 
 pub mod discussion_promote;
 pub mod mentions;

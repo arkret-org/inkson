@@ -327,7 +327,7 @@ fn build_request(
     if let Some(circle) = active_circle {
         // Subscribing to a Circle implicitly opts the device out of
         // Realm-wide duplicate wakeups for the same Circle by adding
-        // it to the muted set on the legacy delivery path.
+        // it to the muted set.
         muted_circle_ids.insert(circle.to_owned());
     }
     let prefs = PushPreferences {

@@ -588,8 +588,7 @@ pub fn SetupPanel(
     let new_space_created_id_label = short_protocol_id(&new_space_created_id_value);
     // Every persisted projection is either a Realm or a Space; the
     // tag is recorded under `__kind` ("realm" | "space") when we
-    // save it. Legacy projections without the tag are treated as
-    // Realms (the only thing yougen used to create).
+    // save it.
     let projections_snapshot: Vec<(String, Value)> = state_store
         .read()
         .load()

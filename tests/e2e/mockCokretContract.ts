@@ -144,7 +144,7 @@ export function mockCokretContract(req) {
 
 // Short-form aliases for callers that pass a path without the `/_cokret/`
 // prefix. Each alias MUST resolve to a path with a matching branch above;
-// `/realm/create` and `/realms/create` were dropped together with the legacy
+// `/realm/create` and `/realms/create` were dropped together with the
 // realm/space creation surface forbidden by yougen/tests/server_contract.rs.
 // `/account/viewer` is the short alias for the spec account viewer. Profile
 // update remains distinct and MUST NOT collapse onto this read path.

@@ -146,7 +146,7 @@ fn parse_invite_locator_url(target: &str) -> anyhow::Result<Option<(String, Stri
     Ok(Some((locator_url_origin(&url)?, token)))
 }
 
-fn reject_legacy_invite_target(target: &str) -> anyhow::Result<()> {
+fn reject_removed_invite_target(target: &str) -> anyhow::Result<()> {
     if cokret_sdk::Did::new(target.to_owned()).is_ok() {
         anyhow::bail!("raw DID is not an invite target; paste an invite locator URL");
     }
@@ -467,7 +467,7 @@ impl CokretApi {
             return invitee_from_principal_locator(locator);
         }
 
-        reject_legacy_invite_target(target)?;
+        reject_removed_invite_target(target)?;
         anyhow::bail!("invite target must be an invite locator URL or principal locator JSON")
     }
 
@@ -600,11 +600,11 @@ mod invite_addressing_tests {
 
     #[test]
     fn invite_target_rejects_raw_did_and_handle() {
-        let did_err = reject_legacy_invite_target("did:web:bob.example")
+        let did_err = reject_removed_invite_target("did:web:bob.example")
             .expect_err("raw DID is no longer an invite target");
         assert!(did_err.to_string().contains("raw DID"));
 
-        let handle_err = reject_legacy_invite_target("bob:example.com")
+        let handle_err = reject_removed_invite_target("bob:example.com")
             .expect_err("handle must not drive invite delivery");
         assert!(handle_err.to_string().contains("handle lookup"));
     }

@@ -813,12 +813,11 @@ pub fn idle_self_update_jitter_passed(
 /// `self_update_commit` build but is GATED by the §5.6 SHOULD conditions so a
 /// background driver can drive it for every persisted Realm without a send:
 ///
-/// 1. [`should_force_epoch_advance`] — epoch over the §5.6 floor (≥1000 msgs
-///    OR ≥7 days for a normal Realm; the §2.9 ≤1h MUST for minimal-metadata),
-///    with the normative pending-commit suppression already folded in;
-/// 2. [`idle_self_update_jitter_passed`] — this member's deterministic
-///    member-order jitter slot has opened (skipped for minimal-metadata, whose
-///    1h MUST leaves no room for staggered delay).
+/// 1. [`should_force_epoch_advance`] — epoch over the §5.6 floor (≥1000 msgs OR ≥7 days for a
+///    normal Realm; the §2.9 ≤1h MUST for minimal-metadata), with the normative pending-commit
+///    suppression already folded in;
+/// 2. [`idle_self_update_jitter_passed`] — this member's deterministic member-order jitter slot has
+///    opened (skipped for minimal-metadata, whose 1h MUST leaves no room for staggered delay).
 ///
 /// Returns `Ok(None)` when not yet due (the common case — most idle passes do
 /// nothing), or `Ok(Some((commit, snapshot)))` when the caller SHOULD submit

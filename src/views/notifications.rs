@@ -1437,9 +1437,9 @@ mod tests {
             "notification_id": "n1",
             "event_kind": "ck.message.create",
             "notification_type": "mention",
-            "sender": "did:web:legacy.example",
-            "sender_did": "did:web:legacy-did.example",
-            "sender_actor_id": "did:web:legacy-actor.example"
+            "sender": "did:web:removed.example",
+            "sender_did": "did:web:removed-did.example",
+            "sender_actor_id": "did:web:removed-actor.example"
         }));
 
         assert_eq!(ctx.sender, None);

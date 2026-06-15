@@ -361,17 +361,6 @@ fn default_gateway_binding() -> GatewayBinding {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn configured_push_gateway() -> String {
-    // P4 hygiene: `CHASK_PUSH_GATEWAY` was the historical operator
-    // override; the canonical name is now `YOUGEN_FLORIA_URL`. We
-    // honour the legacy var when set so existing deployments keep
-    // working; otherwise `floria_gateway_url` does the right thing
-    // (dev → localhost, prod-without-env → empty no-op).
-    if let Ok(value) = std::env::var("CHASK_PUSH_GATEWAY") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_owned();
-        }
-    }
     floria_gateway_url()
 }
 

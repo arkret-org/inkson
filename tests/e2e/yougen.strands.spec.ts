@@ -903,7 +903,7 @@ test("topbar theme toggle takes effect on the first click from system dark", asy
   await expect(toggle).toHaveAttribute("title", "Switch to night theme");
 });
 
-test("kanban card detail embeds discussion without legacy boundary copy", async ({ page }) => {
+test("kanban card detail embeds discussion without boundary copy", async ({ page }) => {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
   const detailPopup = page.getByTestId("card-detail-modal");
@@ -1458,7 +1458,7 @@ test("setup, onboarding, and space timeline strand works", async ({ page }) => {
   await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:");
 });
 
-test("card detail embeds discussion directly without legacy discussion chrome", async ({ page }) => {
+test("card detail embeds discussion directly without discussion chrome", async ({ page }) => {
   await refreshServer(page);
   await openDiscussion(page);
   await expect(page.getByTestId("discussion-main-panel")).toBeVisible();

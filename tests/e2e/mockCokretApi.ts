@@ -929,7 +929,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     // not advertise `ck.self.snapshot.query.manifest_head`, so the client falls back to
     // event replay before issuing the request. The current wire shape is the
     // full signed `ck.schema.snapshot.v1` manifest (self-id field `id`); the
-    // legacy `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
+    // removed `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
     // reintroduced here.
     if (url.pathname === "/_cokret/root/identity/describe") {
       return json(route, {

@@ -74,16 +74,9 @@ pub enum Route {
     SettingsDevicesPair,
 
     /// Recovery settings. Hosts the broader recovery-options aggregator
-    /// under the Settings shell; `/recovery` remains a compatibility
-    /// route that redirects here.
+    /// under the Settings shell.
     #[route("/settings/recovery", crate::app::RouterView)]
     SettingsRecovery,
-
-    /// Legacy key-backup URL. The Settings shell maps it to the unified
-    /// Recovery section so older links still land on account recovery and the
-    /// backup list.
-    #[route("/settings/security", crate::app::RouterView)]
-    SettingsSecurity,
 
     #[route("/settings/:section", SettingsSectionPage)]
     SettingsSection { section: String },
@@ -298,7 +291,6 @@ impl Route {
             | Route::SettingsDevices
             | Route::SettingsDevicesPair
             | Route::SettingsRecovery
-            | Route::SettingsSecurity
             | Route::Recovery
             | Route::Audit
             | Route::Developer => View::Settings,
@@ -359,7 +351,7 @@ impl Route {
             Route::SettingsSection { section } => Some(section.as_str()),
             Route::NotificationsSettings => Some("notifications"),
             Route::SettingsDevices | Route::SettingsDevicesPair => Some("devices"),
-            Route::SettingsRecovery | Route::SettingsSecurity | Route::Recovery => Some("recovery"),
+            Route::SettingsRecovery | Route::Recovery => Some("recovery"),
             Route::Audit => Some("audit"),
             Route::Developer => Some("developer"),
             _ => None,
@@ -392,7 +384,6 @@ impl From<View> for Route {
             View::Settings => Route::Settings,
             View::SettingsDevices => Route::SettingsDevices,
             View::SettingsRecovery => Route::SettingsRecovery,
-            View::SettingsSecurity => Route::SettingsRecovery,
             View::VerifyDevice => Route::VerifyDevice,
             View::RealmAdmin => Route::RealmAdmin {
                 realm_id: String::new(),
@@ -460,7 +451,6 @@ mod tests {
             Route::SettingsDevices,
             Route::SettingsDevicesPair,
             Route::SettingsRecovery,
-            Route::SettingsSecurity,
         ];
 
         for route in routes {
@@ -527,7 +517,7 @@ mod tests {
             Some("encryption")
         );
         assert_eq!(Route::SettingsDevices.settings_section(), Some("devices"));
-        assert_eq!(Route::SettingsSecurity.settings_section(), Some("recovery"));
+        assert_eq!(Route::SettingsRecovery.settings_section(), Some("recovery"));
         assert_eq!(Route::Audit.settings_section(), Some("audit"));
         assert_eq!(Route::Developer.settings_section(), Some("developer"));
         assert_eq!(Route::Settings.settings_section(), None);

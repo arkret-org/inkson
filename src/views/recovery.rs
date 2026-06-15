@@ -11,8 +11,7 @@
 //!   `LocalStateStore::save_private_data` — the words themselves are never uploaded.
 //! - **Restore from backup**: lists the server-side `ck.schema.key_backup.v1` ciphertext envelopes
 //!   and decrypts them on-device with the 24-word Recovery Key. Envelopes sealed by the removed
-//!   vault-passphrase strands are legacy garbage: they can still be listed and deleted, but no longer
-//!   decrypted.
+//!   vault-passphrase strands can still be listed and deleted, but no longer decrypted.
 //! - **Social Recovery** (advanced, local bookkeeping only): guardian list + Shamir threshold +
 //!   last-rehearsal timestamp persisted as JSON under the same private_data store.
 //!
@@ -1360,8 +1359,8 @@ pub fn RecoveryPanel(
             // Key (XChaCha20-Poly1305 AEAD authenticates the tag before any
             // plaintext is returned), and offers a confirmed destructive
             // Delete that goes through the typed delete endpoint. Envelopes
-            // sealed by the removed vault-passphrase strand are legacy garbage:
-            // listable and deletable, but no longer decryptable.
+            // sealed by the removed vault-passphrase strand are listable and
+            // deletable, but no longer decryptable.
             div { class: "event", "data-testid": "restore-section",
                 div { class: "event-head",
                     span { "Restore from backup" }

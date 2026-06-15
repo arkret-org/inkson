@@ -462,9 +462,8 @@ fn context_field<'a>(ctx: &'a NotificationEvalContext, field: &str) -> Option<&'
         "kind" | "event_kind" => Some(ctx.event_kind.as_str()),
         "notification_type" => Some(ctx.notification_type.as_str()),
         "strand_id" => ctx.strand_id.as_deref(),
-        // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
-        // sender → sender_actor_id,hard_reject)。规则引擎只暴露
-        // `actor_id` / `sender_actor_id`;legacy `sender` 不再接受。
+        // Canonical envelopes expose `actor_id` / `sender_actor_id` only;
+        // forbidden `sender` fields are not surfaced to the rule engine.
         "actor_id" | "sender_actor_id" => ctx.sender.as_deref(),
         "strand_track" | "track_name" => ctx.strand_track.as_deref(),
         "priority" | "notification_priority" => ctx.priority.as_deref(),

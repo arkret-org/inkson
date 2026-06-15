@@ -351,8 +351,7 @@ impl ServerDescriptionExt for ServerDescription {
     }
 
     fn missing_v1_principal_server_requirements(&self) -> Vec<&'static str> {
-        // `service_did` is now a `Did` validated on construction, so the
-        // legacy `starts_with("did:")` check is redundant — failure to
+        // `service_did` is a `Did` validated on construction; failure to
         // start with "did:" makes the whole response un-deserialisable.
         let mut missing = Vec::new();
         if self.service_type != "principal_server" {
@@ -639,13 +638,13 @@ mod tests {
     }
 
     #[test]
-    fn submit_event_outcome_rejects_legacy_flat_wire() {
-        // renames.json rejection policy: the legacy flat `{event_id,
+    fn submit_event_outcome_rejects_removed_flat_wire() {
+        // renames.json rejection policy: the removed flat `{event_id,
         // sync_token, …}` shape MUST NOT decode — canonical-only parser.
         let value = serde_json::json!({
-            "event_id": "ck:event:legacy",
+            "event_id": "ck:event:removed",
             "status": "accepted",
-            "sync_token": "sx:legacy",
+            "sync_token": "sx:removed",
         });
         assert!(serde_json::from_value::<super::SubmitEventResult>(value).is_err());
     }
@@ -803,10 +802,8 @@ mod tests {
 pub struct BackfillView {
     // `events` stays untyped: yougen's chat/kanban/poll parsers walk each event
     // tree tolerantly (recursive `collect_message_candidates` over
-    // `payload`/`content`/… with multi-key field lookup), so the same view
-    // deserializes both the legacy projection-row shape and the canonical
-    // `EventsQueryOutcome` full-Event-envelope shape (SOL-05-003: soland's
-    // realm-scoped `ck.self.events.query` now returns full envelopes).
+    // `payload`/`content`/… with multi-key field lookup) while the server
+    // returns canonical `EventsQueryOutcome` full Event envelopes.
     #[serde(default)]
     pub events: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -818,13 +815,8 @@ pub struct BackfillView {
     pub has_more: bool,
 }
 
-// The yougen-local `SnapshotHeadState` mirror was deleted with the
-// 2026-06-11 spec resolution (`renames.json` migration group
-// `snapshot_head_returns_manifest`, hard_reject): `ck.self.snapshot.query.manifest_head`
-// now returns the full signed `ck.schema.snapshot.v1` manifest, and the
-// old head-pointer DTO (`snapshot_ref` / `state_digest` / `frontier` /
-// `signature`) MUST NOT appear on current wire. See
-// `api::CokretApi::snapshot_head`.
+// `ck.self.snapshot.query.manifest_head` returns the full signed
+// `ck.schema.snapshot.v1` manifest. See `api::CokretApi::snapshot_head`.
 
 pub use cokret_sdk::models::AuthzCheckOutcome;
 /// `ck.self.authz.grants.query.effective` response. soland serialises the SDK
@@ -1030,7 +1022,7 @@ pub struct VerifyDeviceResult {
 ///   * `cursor`   ← `cursor` (read-your-writes barrier)
 ///   * `status`   ← the `accepted` / `duplicate` / `partial` discriminant
 ///
-/// Per renames.json rejection policy, the legacy flat
+/// Per renames.json rejection policy, the removed flat
 /// `{event_id, sync_token, …}` shape is NOT tolerated — mocks must emit
 /// the canonical shape. Ids stay plain `String`s so synthetic fixture ids
 /// do not trip the strict `EventId` validator.

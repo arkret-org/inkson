@@ -30,7 +30,7 @@ pub use cokret_sdk::cursor::{
 pub fn strand_position_label(position: &RealmPosition, last_read_at: Option<&str>) -> String {
     // HLC format is `<rfc3339>-<seq>`. We strip the trailing `-<seq>`
     // chunk so the label fits in a chip; if there's no hyphen at all
-    // (legacy / future format) we fall back to the full value.
+    // we fall back to the full value.
     let short = position
         .order
         .rsplit_once('-')

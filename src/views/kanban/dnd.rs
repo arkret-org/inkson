@@ -155,8 +155,8 @@ pub(super) fn submit_column_order_updates(
 
 /// Build + submit a Kanban event and record it in the board write queue.
 /// Card creates emit real `ck.strand.create` envelopes with an initial
-/// `ck.component.strand.position.v1` component; legacy metadata writes still
-/// go through the compatibility `ck.strand.update` patch helper.
+/// `ck.component.strand.position.v1` component; metadata writes go through
+/// the canonical `ck.strand.update` patch helper.
 pub(super) fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
@@ -351,8 +351,9 @@ pub(super) struct ColumnNeighbours {
 ///
 /// - Cross-column drop ⇒ `ck.strand.move` Event kind.
 /// - Same-column drop ⇒ `ck.strand.reorder`.
-/// - Both compile to the same `ck:cell:ck.component.strand.position.v1:<board>:<strand>` cas-register
-///   cell; the difference is whether `effect.list_space_id` equals `expected.list_space_id`.
+/// - Both compile to the same `ck:cell:ck.component.strand.position.v1:<board>:<strand>`
+///   cas-register cell; the difference is whether `effect.list_space_id` equals
+///   `expected.list_space_id`.
 pub(super) fn dispatch_strand_position_move(
     base_url: String,
     token: Signal<String>,

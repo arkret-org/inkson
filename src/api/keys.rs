@@ -244,8 +244,8 @@ impl CokretApi {
 
     /// CKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
     /// recovery strand uses to rebuild a backup series by sequence. When
-    /// `series_id` is `None` and `backup_class` is `None`, this falls
-    /// back to the legacy plain `GET /_cokret/self/keys/backups` shape.
+    /// `series_id` is `None` and `backup_class` is `None`, this lists all
+    /// key backups.
     ///
     /// Soland P2 (aa76b91) added the `?series_id=` + `?backup_class=`
     /// query parameters; the chain reconstruction MUST decrypt only

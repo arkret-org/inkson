@@ -47,8 +47,8 @@ fn CardMarkdownEditor(
     on_change: EventHandler<String>,
     /// Optional id suffix so multiple editor instances on the same card
     /// detail (e.g. Summary + Description) don't share a DOM id and
-    /// confuse the toast bootstrap script. Defaults to the legacy
-    /// `"description"` slot for back-compat with existing data-testids.
+    /// confuse the toast bootstrap script. Defaults to the stable
+    /// `"description"` slot used by existing data-testids.
     slot: Option<String>,
 ) -> Element {
     let slot = slot.unwrap_or_else(|| "description".to_owned());
@@ -4690,7 +4690,7 @@ fn route_card_strand_id(route: &Route) -> Option<String> {
 
 /// Extract the board Space-container id carried by the board-aware
 /// kanban routes. `None` for the board-less routes (plain `/kanban`,
-/// `/kanban/<realm>`, and the legacy `/kanban/<realm>/task/<strand>`
+/// `/kanban/<realm>`, and `/kanban/<realm>/task/<strand>`
 /// share-link form) where the board must be resolved from projection.
 fn route_board_id(route: &Route) -> Option<String> {
     match route {
@@ -4770,7 +4770,7 @@ fn find_card_by_strand_id(columns: &[KanbanColumn], strand_id: &str) -> Option<K
 /// evidence fields per the R3.2 roster dependentRequired rule).
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct RealmMemberRow {
-    /// Actor DID. Carried as both `actor_id` and (legacy) `did`.
+    /// Actor DID.
     pub actor_id: String,
     pub membership: Option<String>,
     pub identity_event_ids: Vec<String>,
@@ -4917,8 +4917,7 @@ struct CardAuthorDisplayContext<'a> {
 /// handle_claims?, handle_claims_limited?}`. The four handle-claim /
 /// identity-event evidence fields are disclosure-gated on `subject_id`;
 /// when the server omits `subject_id` it omits them all (we just treat
-/// them as `None`). Falls back to bare DID strings or legacy `{did}`
-/// objects for projections that haven't been migrated yet.
+/// them as `None`).
 fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
     let Some(root) = projection else {
         return Vec::new();
@@ -4945,30 +4944,15 @@ fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
 fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMemberRow>) {
     let Some(value) = value else { return };
     match value {
-        Value::String(s) => {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                out.entry(trimmed.to_owned())
-                    .or_insert_with(|| RealmMemberRow {
-                        actor_id: trimmed.to_owned(),
-                        membership: None,
-                        identity_event_ids: Vec::new(),
-                        member_display_state_digest: None,
-                        subject_id: None,
-                        handle_claims: Vec::new(),
-                        handle_claims_limited: false,
-                    });
-            }
-        }
         Value::Array(items) => {
             for item in items {
                 collect_member_rows(Some(item), out);
             }
         }
         Value::Object(map) => {
-            let did = ["actor_id", "did", "principal_id", "id"]
-                .into_iter()
-                .find_map(|key| map.get(key).and_then(|child| child.as_str()))
+            let actor_id = map
+                .get("actor_id")
+                .and_then(|child| child.as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
@@ -5015,9 +4999,9 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                 .get("handle_claims_limited")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            if let Some(did) = did {
+            if let Some(actor_id) = actor_id {
                 let candidate = RealmMemberRow {
-                    actor_id: did.clone(),
+                    actor_id: actor_id.clone(),
                     membership: membership.clone(),
                     identity_event_ids: identity_event_ids.clone(),
                     member_display_state_digest: member_display_state_digest.clone(),
@@ -5025,7 +5009,7 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                     handle_claims: handle_claims.clone(),
                     handle_claims_limited,
                 };
-                match out.entry(did) {
+                match out.entry(actor_id) {
                     std::collections::btree_map::Entry::Vacant(entry) => {
                         entry.insert(candidate);
                     }
@@ -5108,8 +5092,8 @@ fn strand_participant_dids(raw_operations: &[RawOperationRecord], strand_id: &st
             continue;
         }
         for path in [
-            // 只读 canonical `actor_id` / `sender_actor_id`;legacy
-            // `sender` / `author` / `created_by` 为 hard_reject,不再容忍。
+            // Read canonical `actor_id` / `sender_actor_id` only; forbidden
+            // `sender` / `author` / `created_by` keys are not accepted.
             &["body", "actor_id"][..],
             &["body", "sender_actor_id"][..],
             &["payload", "actor_id"][..],

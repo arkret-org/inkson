@@ -634,7 +634,6 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
                             "backup_frontier_stale",
                             "backup_post_reset_stale",
                             "recovery_policy_mismatch",
-                            "legacy_secret_storage_wire_form",
                         ] {
                             if display.contains(code) {
                                 last_error_code.set(code.to_owned());

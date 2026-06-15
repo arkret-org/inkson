@@ -6,8 +6,8 @@
 //! ([`cokret_sdk::models::parse_address`] / [`build_address`] /
 //! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
 //!
-//! * [`ShareTarget`] — a typed "thing I want to share" (realm / strand / message) plus routing hints.
-//!   [`ShareTarget::build_links`] produces both output forms.
+//! * [`ShareTarget`] — a typed "thing I want to share" (realm / strand / message) plus routing
+//!   hints. [`ShareTarget::build_links`] produces both output forms.
 //! * [`ShareLinks`] — the HTTPS landing form (default copy-paste) and the `web+cokret:` "open in
 //!   app" form.
 //! * [`OpenedLink`] — the result of parsing + resolving a pasted link, routed to a local
@@ -353,7 +353,7 @@ pub fn register_web_protocol_handler(landing: &str) -> Result<(), String> {
     let window = web_sys::window().ok_or_else(|| "no window".to_owned())?;
     let navigator = window.navigator();
     let template = web_protocol_handler_template(landing);
-    // This web-sys pin exposes the legacy 3-arg signature
+    // This web-sys pin exposes the older 3-arg signature
     // `registerProtocolHandler(scheme, url, title)`; the `title` arg was
     // dropped from the living standard but is still required by the binding.
     navigator

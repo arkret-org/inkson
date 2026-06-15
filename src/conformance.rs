@@ -938,7 +938,7 @@ mod tests {
         let kinds = known_event_kinds();
         // current-model §3 — unified track update (spec dc01ad7)
         assert!(kinds.contains(&"ck.strand.tracks.update"));
-        // Legacy split events removed in the dc01ad7 unification.
+        // Split track events were removed in the dc01ad7 unification.
         assert!(!kinds.contains(&"ck.strand.track.enable"));
         assert!(!kinds.contains(&"ck.strand.track.disable"));
         assert!(!kinds.contains(&"ck.strand.track.update"));

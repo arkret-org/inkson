@@ -129,29 +129,27 @@ fn realm_member_roster_reads_r32_digest_only() {
 }
 
 #[test]
-fn realm_member_roster_ignores_legacy_digest_key() {
+fn realm_member_roster_ignores_removed_digest_key() {
     // The pre-R3.2 `identity_state_digest` key is NOT honoured.
-    let legacy = json!({
+    let projection = json!({
         "members": [{
-            "actor_id": "did:web:acme.example:users:legacy",
+            "actor_id": "did:web:acme.example:users:removed",
             "membership": "join",
             "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
         }]
     });
-    let rows = realm_member_roster(Some(&legacy));
+    let rows = realm_member_roster(Some(&projection));
     assert_eq!(rows.len(), 1);
     assert!(rows[0].member_display_state_digest.is_none());
 }
 
 #[test]
-fn realm_member_roster_falls_back_to_bare_did_strings() {
+fn realm_member_roster_ignores_bare_did_strings() {
     let projection = json!({
         "members": ["did:web:bob.example", "did:web:carol.example"]
     });
     let rows = realm_member_roster(Some(&projection));
-    assert_eq!(rows.len(), 2);
-    assert!(rows.iter().all(|row| row.membership.is_none()));
-    assert!(rows.iter().all(|row| row.identity_event_ids.is_empty()));
+    assert!(rows.is_empty());
 }
 
 #[test]
@@ -290,8 +288,8 @@ fn member_roster_realm_context_prefers_projection_realm_id() {
         "ck:realm:projection"
     );
     assert_eq!(
-        member_roster_realm_context("ck:realm:board", "ck:realm:legacy", None),
-        "ck:realm:legacy"
+        member_roster_realm_context("ck:realm:board", "ck:realm:projection-fallback", None),
+        "ck:realm:projection-fallback"
     );
     assert_eq!(
         member_roster_realm_context("ck:realm:selected", "", None),
@@ -2500,8 +2498,8 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
                 "kind": "ck.message.create",
                 "body": {
                     "target_ref": "ck:strand:target",
-                    // canonical actor key only — the legacy `sender`
-                    // fallback was removed (hard_reject).
+                    // Canonical actor key only; forbidden `sender`
+                    // fields are hard-rejected.
                     "actor_id": "did:web:bob.example",
                 },
             }),

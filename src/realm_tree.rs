@@ -62,9 +62,8 @@ pub(crate) struct SpaceProjectionInput {
 /// projection lands.
 ///
 /// Internally tagged on `__kind` (the yougen-local Realm/Space marker read
-/// by [`projection_tree_node_kind`]; legacy bodies without it default to
-/// "realm"). Each variant flattens its own typed body, so a Realm can never
-/// carry Space-only fields and a Space can never carry Realm-only fields —
+/// by [`projection_tree_node_kind`]). Each variant flattens its own typed body, so a Realm can
+/// never carry Space-only fields and a Space can never carry Realm-only fields —
 /// the discriminant and the field set can't disagree. The tag lives at
 /// `__kind` rather than `kind` because `kind` is already the Space's own
 /// space-kind field.
@@ -1206,7 +1205,7 @@ mod tests {
             "encryption_profile": "none"
         })));
         assert!(!realm_projection_is_encrypted(&json!({
-            "summary": {"title": "Legacy projection without encryption metadata"}
+            "summary": {"title": "Projection without encryption metadata"}
         })));
     }
 

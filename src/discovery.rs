@@ -143,8 +143,7 @@ pub struct OrgProof {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DisplayMetadata {
     /// Actor DID. Wire field `actor_id` per the v1 naming rule (single
-    /// protocol subject uses `_id` even when the value is a DID; see
-    /// `forbidden-wire-fields.json` entry `actor_id`). `alias` keeps
+    /// protocol subject uses `_id` even when the value is a DID). `alias` keeps
     /// already-stored `actor_id` payloads readable.
     #[serde(alias = "actor_id")]
     pub actor_id: String,
@@ -189,8 +188,7 @@ impl DisplayMetadata {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PresencePolicy {
     /// Actor DID. Wire field `actor_id` per the v1 naming rule (single
-    /// protocol subject uses `_id` even when the value is a DID; see
-    /// `forbidden-wire-fields.json` entry `actor_id`). `alias` keeps
+    /// protocol subject uses `_id` even when the value is a DID). `alias` keeps
     /// already-stored `actor_id` payloads readable.
     #[serde(alias = "actor_id")]
     pub actor_id: String,

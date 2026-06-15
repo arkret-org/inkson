@@ -77,7 +77,7 @@ pub struct MimiProviderDirectorySummary {
     pub features: Vec<String>,
 }
 
-/// Parsed legacy/draft `identifier_query` diagnostic response.
+/// Parsed draft `identifier_query` diagnostic response.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MimiIdentifierQuerySummary {
     pub query: String,

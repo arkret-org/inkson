@@ -1,5 +1,4 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
 
 use crate::api::{
     CokretApi, is_auth_expired_error, is_terminal_session_grant_error,
@@ -8,68 +7,7 @@ use crate::api::{
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::ui::button::{Button, ButtonVariant};
 
-/// R3.2 (cokret-spec @ b56cab1) — composer/render-side mention node.
-///
-/// `target` carries the authoritative reference: for `kind == "actor"`
-/// it is the principal DID (`subject_id` in spec terms — the ONLY field
-/// used for actor attribution / resolution / render lookup); for entity
-/// references it is the `ck:...` id. The remaining fields are compose-time
-/// audit metadata ONLY and MUST NOT drive the current display value:
-/// the render path runs §3.2.1 / the SDK `render_mention()` helper off
-/// `target` instead. See [`crate::views::helpers::render_actor_mention`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StructuredMention {
-    pub kind: String,
-    /// Authoritative reference. For actor mentions this is the principal
-    /// DID (`subject_id`); for entities the `ck:` id; for audience
-    /// mentions the canonical audience token.
-    #[serde(alias = "subject_id")]
-    pub target: String,
-    pub token: String,
-    /// R3.2 audit-only: subject display name captured at compose time
-    /// (`display_name_at_time`). Renamed from the pre-R3.2
-    /// `display_snapshot`. NEVER the current display value. Empty when
-    /// no snapshot was captured.
-    #[serde(default)]
-    pub display_name_at_time: String,
-    /// R3.2 audit-only: canonical handle `<localpart>:<domain>` at compose
-    /// time (`handle_at_time`). Renamed from the pre-R3.2 `handle`. NEVER
-    /// the current display value — resolution runs §3.2.1 live. Empty when
-    /// only a DID was supplied.
-    #[serde(default)]
-    pub handle_at_time: String,
-    /// Audit-only controller principal DID captured when this actor mention
-    /// was composed from `@<controller-handle>/<agent_slug>`.
-    #[serde(default)]
-    pub controller_subject_id: String,
-    /// Audit-only canonical controller handle captured from the selector
-    /// token left-hand side.
-    #[serde(default)]
-    pub controller_handle_at_time: String,
-    /// Audit-only selector slug captured from the selector token right-hand
-    /// side.
-    #[serde(default)]
-    pub agent_slug_at_time: String,
-    /// R3.2 audit-only: the original string the user typed
-    /// (`mention_text_original`, e.g. `@alice:acme.com`).
-    #[serde(default)]
-    pub mention_text_original: String,
-    /// Audit-only ISO-8601 timestamp the mention was resolved at compose
-    /// time. Empty when the resolver didn't supply it.
-    #[serde(default)]
-    pub resolved_at: String,
-}
-
-fn audience_mention_audience_from_token(token: &str) -> Option<&'static str> {
-    match token.trim().to_ascii_lowercase().as_str() {
-        "@all" => Some("effective_scope_members"),
-        "@participants" => Some("strand_participants"),
-        "@watchers" => Some("strand_watchers"),
-        "@here" => Some("strand_engaged"),
-        "@assigned" | "@assignees" => Some("assigned_actors"),
-        _ => None,
-    }
-}
+pub use cokret_sdk::MentionNode;
 
 /// Create an authenticated API client from a base URL and optional access token.
 pub fn authed_api(base_url: &str, access_token: String) -> anyhow::Result<CokretApi> {
@@ -404,84 +342,39 @@ pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMent
     tokens
 }
 
-pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
+pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
     let mut mentions = Vec::new();
     for token in input.split_whitespace() {
         let normalized = normalize_inline_token(token);
         if let Some(handle) = normalized.strip_prefix('@') {
-            if let Some(audience) = audience_mention_audience_from_token(normalized) {
-                mentions.push(StructuredMention {
-                    kind: "audience_mention".to_owned(),
-                    target: audience.to_owned(),
-                    token: normalized.to_owned(),
-                    display_name_at_time: String::new(),
-                    handle_at_time: String::new(),
-                    controller_subject_id: String::new(),
-                    controller_handle_at_time: String::new(),
-                    agent_slug_at_time: String::new(),
-                    mention_text_original: normalized.to_owned(),
-                    resolved_at: String::new(),
-                });
+            if let Some(audience) = cokret_sdk::AudienceMention::from_ui_token(normalized) {
+                mentions.push(MentionNode::audience_mention(audience));
                 continue;
             }
             if !handle.is_empty()
                 && let Some(parsed) = crate::identity_handle::parse_user_handle(handle)
+                && let Ok(subject_id) = cokret_sdk::Did::new(parsed.subject_did)
             {
-                mentions.push(StructuredMention {
-                    kind: "actor".to_owned(),
-                    // Authoritative subject_id (principal DID).
-                    target: parsed.subject_did,
-                    token: normalized.to_owned(),
-                    display_name_at_time: parsed.display,
-                    handle_at_time: parsed.handle,
-                    controller_subject_id: String::new(),
-                    controller_handle_at_time: String::new(),
-                    agent_slug_at_time: String::new(),
-                    mention_text_original: normalized.to_owned(),
-                    resolved_at: String::new(),
-                });
+                let mut mention = cokret_sdk::Mention::new(subject_id)
+                    .with_display_name_at_time(parsed.display)
+                    .with_mention_text_original(normalized.to_owned());
+                if let Ok(handle) = cokret_sdk::Handle::parse(&parsed.handle) {
+                    mention = mention.with_handle_at_time(handle);
+                }
+                mentions.push(MentionNode::mention(mention));
             }
-            continue;
-        }
-        if let Some(entity) = normalized.strip_prefix("#ck:") {
-            mentions.push(StructuredMention {
-                kind: "entity".to_owned(),
-                target: format!("ck:{entity}"),
-                token: normalized.to_owned(),
-                display_name_at_time: String::new(),
-                handle_at_time: String::new(),
-                controller_subject_id: String::new(),
-                controller_handle_at_time: String::new(),
-                agent_slug_at_time: String::new(),
-                mention_text_original: normalized.to_owned(),
-                resolved_at: String::new(),
-            });
-            continue;
-        }
-        if let Some(entity) = normalized.strip_prefix('#')
-            && !entity.is_empty()
-        {
-            mentions.push(StructuredMention {
-                kind: "entity".to_owned(),
-                target: entity.to_owned(),
-                token: normalized.to_owned(),
-                display_name_at_time: String::new(),
-                handle_at_time: String::new(),
-                controller_subject_id: String::new(),
-                controller_handle_at_time: String::new(),
-                agent_slug_at_time: String::new(),
-                mention_text_original: normalized.to_owned(),
-                resolved_at: String::new(),
-            });
         }
     }
 
     mentions.sort_by(|left, right| {
-        left.target
-            .cmp(&right.target)
-            .then(left.token.cmp(&right.token))
+        left.target_id()
+            .cmp(right.target_id())
+            .then(left.mention_text_original().cmp(&right.mention_text_original()))
     });
-    mentions.dedup_by(|left, right| left.kind == right.kind && left.target == right.target);
+    mentions.dedup_by(|left, right| {
+        left.as_mention().is_some() == right.as_mention().is_some()
+            && left.target_id() == right.target_id()
+    });
     mentions
 }
 
@@ -750,46 +643,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_actor_and_entity_mentions() {
-        let mentions = parse_structured_mentions(
+    fn parses_actor_mentions_without_entity_references() {
+        let mentions = parse_mention_nodes(
             "ping @did:web:bob.example and @Alice and @carol:example.com about #ck:task:123 and #topic-demo",
         );
 
-        assert_eq!(mentions.len(), 3);
-        assert!(!mentions.iter().any(|mention| mention.token == "@Alice"));
+        assert_eq!(mentions.len(), 1);
         assert!(
             !mentions
                 .iter()
-                .any(|mention| mention.token == "@did:web:bob.example")
+                .any(|mention| mention.mention_text_original() == Some("@Alice"))
+        );
+        assert!(
+            !mentions
+                .iter()
+                .any(|mention| mention.mention_text_original() == Some("@did:web:bob.example"))
         );
         assert!(
             mentions
                 .iter()
-                .any(|mention| mention.target == "did:web:example.com:users:carol")
-        );
-        assert!(
-            mentions
-                .iter()
-                .any(|mention| mention.target == "ck:task:123")
-        );
-        assert!(
-            mentions
-                .iter()
-                .any(|mention| mention.target == "topic-demo")
+                .any(|mention| mention.target_id() == "did:web:example.com:users:carol")
         );
     }
 
     #[test]
     fn parses_audience_mentions_without_presence_online() {
-        let mentions = parse_structured_mentions("notify @here and @all but never @online");
+        let mentions = parse_mention_nodes("notify @here and @all but never @online");
 
         assert!(mentions.iter().any(|mention| {
-            mention.kind == "audience_mention" && mention.target == "strand_engaged"
+            mention.as_audience_mention().is_some_and(|mention| {
+                mention.audience == cokret_sdk::AudienceMentionAudience::StrandEngaged
+            })
         }));
         assert!(mentions.iter().any(|mention| {
-            mention.kind == "audience_mention" && mention.target == "effective_scope_members"
+            mention.as_audience_mention().is_some_and(|mention| {
+                mention.audience == cokret_sdk::AudienceMentionAudience::EffectiveScopeMembers
+            })
         }));
-        assert!(!mentions.iter().any(|mention| mention.token == "@online"));
+        assert!(
+            !mentions
+                .iter()
+                .any(|mention| mention.mention_text_original() == Some("@online"))
+        );
     }
 
     #[test]
@@ -804,7 +699,7 @@ mod tests {
         assert_eq!(tokens[0].controller_handle, "alice:example.com");
         assert_eq!(tokens[0].agent_slug, "summary");
 
-        let mentions = parse_structured_mentions("ask @alice:example.com/summary");
+        let mentions = parse_mention_nodes("ask @alice:example.com/summary");
         assert!(mentions.is_empty());
     }
 

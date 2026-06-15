@@ -23,8 +23,8 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
-    StructuredMention, active_sync_token, authed_api_with_sync,
-    parse_agent_selector_mention_tokens, parse_structured_mentions, short_protocol_id,
+    MentionNode, active_sync_token, authed_api_with_sync, parse_agent_selector_mention_tokens,
+    parse_mention_nodes, short_protocol_id,
     with_authed_api_with_sync,
 };
 
@@ -32,14 +32,11 @@ mod model;
 
 use model::*;
 
-fn push_unique_structured_mention(
-    mentions: &mut Vec<StructuredMention>,
-    mention: StructuredMention,
-) {
-    if !mentions
-        .iter()
-        .any(|existing| existing.kind == mention.kind && existing.target == mention.target)
-    {
+fn push_unique_mention_node(mentions: &mut Vec<MentionNode>, mention: MentionNode) {
+    if !mentions.iter().any(|existing| {
+        existing.as_mention().is_some() == mention.as_mention().is_some()
+            && existing.target_id() == mention.target_id()
+    }) {
         mentions.push(mention);
     }
 }
@@ -72,18 +69,18 @@ async fn resolve_agent_selector_mentions(
         else {
             continue;
         };
-        mentions.push(StructuredMention {
-            kind: "actor".to_owned(),
-            target: outcome.subject.as_str().to_owned(),
-            token: token.mention_text_original.clone(),
-            display_name_at_time: String::new(),
-            handle_at_time: String::new(),
-            controller_subject_id: outcome.controller_subject.as_str().to_owned(),
-            controller_handle_at_time: token.controller_handle,
-            agent_slug_at_time: outcome.agent_slug,
-            mention_text_original: token.mention_text_original,
-            resolved_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        });
+        let Ok(controller_handle) = cokret_sdk::Handle::parse(&token.controller_handle) else {
+            continue;
+        };
+        let mention = cokret_sdk::Mention::new(outcome.subject)
+            .with_agent_selector_metadata(
+                outcome.controller_subject,
+                controller_handle,
+                outcome.agent_slug,
+            )
+            .with_mention_text_original(token.mention_text_original)
+            .with_resolved_at(chrono::Utc::now());
+        mentions.push(MentionNode::mention(mention));
     }
     mentions
 }
@@ -4523,12 +4520,10 @@ fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
             // DID) as the actor reference. `handle_at_time` /
             // `display_name_at_time` / `mention_text_original` are
             // compose-time audit metadata ONLY — verifier / reducer /
-            // policy MUST ignore them. We still carry yougen-legacy
-            // `target` for our own local-op round-trip.
+            // policy MUST ignore them.
             let mut obj = serde_json::Map::new();
             obj.insert("kind".to_owned(), json!(mention.kind));
             obj.insert("subject_id".to_owned(), json!(mention.target));
-            obj.insert("target".to_owned(), json!(mention.target));
             obj.insert("token".to_owned(), json!(mention.token));
             if !mention.display_name_at_time.is_empty() {
                 obj.insert(

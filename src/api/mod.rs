@@ -1576,9 +1576,9 @@ mod tests {
         let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
         assert!(api.endpoint("_cokret/self/events").is_ok());
         let private_prefix = concat!("_so", "land");
-        let legacy_consent =
+        let private_consent =
             [private_prefix, "self", "consent", "cells", "alice", "grant"].join("/");
-        assert!(api.endpoint(&legacy_consent).is_err());
+        assert!(api.endpoint(&private_consent).is_err());
         let retired_account_me = [private_prefix, "self", "account", "me"].join("/");
         assert!(api.endpoint(&retired_account_me).is_err());
         let unlisted = format!("{private_prefix}/self/spaces/ck:space:1");
@@ -1650,8 +1650,7 @@ mod tests {
 
     #[test]
     fn endpoint_absent_only_triggers_on_404() {
-        // 404 unrecognized_endpoint → the canonical bridge path is missing,
-        // so `auth_bridge_describe` should fall back to the legacy vendor path.
+        // 404 unrecognized_endpoint means the canonical endpoint is absent.
         let not_found: anyhow::Error = CokretApiError {
             status: StatusCode::NOT_FOUND,
             error: decode_cokret_error(StatusCode::NOT_FOUND, b"{}"),

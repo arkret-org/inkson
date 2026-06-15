@@ -547,7 +547,7 @@ fn boot_session_token_uses_fresh_oidc_access_token() {
         "https://local.host",
         "did:web:alice.example",
         "ck:device:01964137-0000-7000-8000-000000000001",
-        "legacy-token",
+        "config-token",
     );
 
     assert_eq!(
@@ -567,7 +567,7 @@ fn boot_session_token_ignores_expired_oidc_access_token() {
         "https://local.host",
         "did:web:alice.example",
         "ck:device:01964137-0000-7000-8000-000000000001",
-        "legacy-token",
+        "config-token",
     );
 
     assert_eq!(initial_session_token_from_state(&state, &config, now), "");
@@ -587,26 +587,23 @@ fn boot_session_token_ignores_nearly_expired_oidc_access_token() {
         "https://local.host",
         "did:web:alice.example",
         "ck:device:01964137-0000-7000-8000-000000000001",
-        "legacy-token",
+        "config-token",
     );
 
     assert_eq!(initial_session_token_from_state(&state, &config, now), "");
 }
 
 #[test]
-fn boot_session_token_falls_back_to_legacy_config_without_oidc_bundle() {
+fn boot_session_token_ignores_config_token_without_boot_material() {
     let state = ClientLocalState::default();
     let config = ClientConfig::from_fields(
         "https://local.host",
         "did:web:alice.example",
         "ck:device:01964137-0000-7000-8000-000000000001",
-        "legacy-token",
+        "config-token",
     );
 
-    assert_eq!(
-        initial_session_token_from_state(&state, &config, 1_000),
-        "legacy-token"
-    );
+    assert_eq!(initial_session_token_from_state(&state, &config, 1_000), "");
 }
 
 #[test]

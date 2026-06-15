@@ -11,10 +11,10 @@
 //!   * [`crate::api::CokretApi::moderation_lift`] — lift a standing decision.
 //!   * [`crate::api::CokretApi::appeal_review`] — take an appeal under review.
 //!   * [`crate::api::CokretApi::appeal_decide`] — `uphold` (no side events).
-//!   * [`crate::api::CokretApi::appeal_overturn_atomic`] — `overturn` +
-//!     matching lift in one batch (§5.5.1.1 atomicity MUST).
-//!   * [`crate::api::CokretApi::appeal_modify_atomic`] — `modify` + replacement
-//!     decision in one batch (§5.5.1.1 atomicity MUST).
+//!   * [`crate::api::CokretApi::appeal_overturn_atomic`] — `overturn` + matching lift in one batch
+//!     (§5.5.1.1 atomicity MUST).
+//!   * [`crate::api::CokretApi::appeal_modify_atomic`] — `modify` + replacement decision in one
+//!     batch (§5.5.1.1 atomicity MUST).
 //!   * [`crate::api::CokretApi::appeal_close`] — terminal close.
 //!
 //! The work queues (standing decisions + open appeals) are projected from the
@@ -80,11 +80,11 @@ fn payload_kind(payload: &Value) -> Option<&str> {
 /// queues. Pure (no Dioxus / IO) so the lifecycle folding is unit-tested.
 ///
 /// Folding rules (latest-wins by log order, which is receive order):
-///   * `ck.moderation.decision` adds a standing decision;
-///     `ck.moderation.decision.lift` removes the one it targets.
-///   * `ck.moderation.appeal.submit` opens an appeal (`submitted`);
-///     `…appeal.review` moves it to `under_review`; `…appeal.decision` and
-///     `…appeal.close` are terminal and remove it from the open queue.
+///   * `ck.moderation.decision` adds a standing decision; `ck.moderation.decision.lift` removes the
+///     one it targets.
+///   * `ck.moderation.appeal.submit` opens an appeal (`submitted`); `…appeal.review` moves it to
+///     `under_review`; `…appeal.decision` and `…appeal.close` are terminal and remove it from the
+///     open queue.
 pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, Vec<OpenAppeal>) {
     use std::collections::BTreeMap;
     let mut decisions: BTreeMap<String, StandingDecision> = BTreeMap::new();

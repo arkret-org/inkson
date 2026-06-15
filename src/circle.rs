@@ -5,9 +5,9 @@
 //! spec is in `cokret-rust-sdk/crates/core/src/model/circle.rs`; this
 //! module is the *client* surface that the rest of yougen consumes:
 //!
-//! - [`CircleScope`] is the active scope a composer / new-Strand form is writing into. `Realm` is the
-//!   default; `Circle { … }` flags a Circle-scoped write that must end up with `scope_circle_id`
-//!   set on the canonical envelope.
+//! - [`CircleScope`] is the active scope a composer / new-Strand form is writing into. `Realm` is
+//!   the default; `Circle { … }` flags a Circle-scoped write that must end up with
+//!   `scope_circle_id` set on the canonical envelope.
 //! - [`CircleSummary`] is the lightweight projection rendered by the Space-sidebar Circle list and
 //!   scope picker.
 //! - [`CircleErrorKind`] is the typed mapping from the CKP-0007 reason codes that surface in
@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 /// The scope a composer / Strand-create form is actively writing into.
 ///
-/// Realm scope is the legacy default; Circle scope flags a CKP-0007
+/// Realm scope is the default; Circle scope flags a CKP-0007
 /// write that MUST end up with `scope_circle_id` populated on the
 /// envelope object.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -2,11 +2,11 @@
 //! comment threads.
 //!
 //! Spec sources:
-//! - `strand-and-message.md §4.3` / `§9` — a kanban card's discussion is a `discussion` track on the
-//!   card's Strand; comments are `ck.message.create` events carrying the card's `strand_id` and
+//! - `strand-and-message.md §4.3` / `§9` — a kanban card's discussion is a `discussion` track on
+//!   the card's Strand; comments are `ck.message.create` events carrying the card's `strand_id` and
 //!   `track_name = "discussion"`.
-//! - `realm-and-space.md §4` — kanban cards ARE Strand objects, so reusing the message-create reducer
-//!   is the natural binding.
+//! - `realm-and-space.md §4` — kanban cards ARE Strand objects, so reusing the message-create
+//!   reducer is the natural binding.
 //!
 //! This module ships the typed representation + the payload builder
 //! that constructs the canonical `ck.message.create` op via the SDK's

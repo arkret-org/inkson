@@ -1201,8 +1201,8 @@ pub fn RealmAdminPanel(
     // Structured constraint inputs for the capability grant.
     // `cap_constraint_kind` chooses the family (`temporal` / `quota` /
     // `scope_limitation` / `none`); the temporal MVP exposes `not_before`
-    // / `expires_at` RFC 3339 timestamps (`not_after` is a forbidden wire
-    // field name). Quota / scope_limitation are surfaced in the dropdown
+    // / `expires_at` RFC 3339 timestamps (`not_after` is not a canonical
+    // schema field name). Quota / scope_limitation are surfaced in the dropdown
     // but show a "coming soon" hint until matching widgets land.
     let mut cap_constraint_kind = use_signal(|| "none".to_owned());
     let cap_constraint_kind_selected = use_memo(move || Some(cap_constraint_kind()));
@@ -2302,8 +2302,8 @@ pub fn RealmAdminPanel(
                                                 );
                                             }
                                             if !ea_trim.is_empty() {
-                                                // Validity upper bound is `expires_at`
-                                                // (not_after is a forbidden wire field).
+                                                // Validity upper bound is `expires_at`;
+                                                // `not_after` is not canonical.
                                                 window.insert(
                                                     "expires_at".into(),
                                                     serde_json::Value::String(ea_trim.to_owned()),

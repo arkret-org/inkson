@@ -140,12 +140,9 @@ pub enum View {
     /// Rendered for both `/settings/devices` and `/settings/devices/pair`
     /// because the pair strand is a single panel mounted on a sub-route.
     SettingsDevices,
-    /// G3.Y1 compatibility variant. `/settings/recovery` now renders
-    /// through `View::Settings` so the Settings sidebar remains visible.
+    /// `/settings/recovery` renders through `View::Settings` so the Settings
+    /// sidebar remains visible.
     SettingsRecovery,
-    /// Compatibility view for the legacy `/settings/security` URL; renders the
-    /// unified Recovery settings section.
-    SettingsSecurity,
     /// CKP-0007 P3B.2.5 — Circle detail panel at `/circles/:circle_id`.
     Circle,
 }

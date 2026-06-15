@@ -30,9 +30,9 @@ pub fn strand_position_cell_id(board_space_id: &str, strand_id: &str) -> String 
 /// §9.1](../../cokret-spec/spec/v1/zh/sync/operations-sync.md).
 ///
 /// - `Initial` ⇒ `head_eq null` — the Strand is not yet on this Board.
-/// - `At { list_space_id, rank }` ⇒ `head_eq { list_space_id, rank }` — the write expects the Strand
-///   to currently sit in `list_space_id` at `rank`; any drift triggers `failed_precondition` and
-///   the caller must rebase against the latest projection.
+/// - `At { list_space_id, rank }` ⇒ `head_eq { list_space_id, rank }` — the write expects the
+///   Strand to currently sit in `list_space_id` at `rank`; any drift triggers `failed_precondition`
+///   and the caller must rebase against the latest projection.
 ///
 /// Omitting `expected_position` (passing `None` when the cell is
 /// non-initial) is a spec violation — soland's reducer rejects "blind

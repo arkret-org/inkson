@@ -258,7 +258,6 @@ flowchart TD
 | S6 创建前检查 | ✅ 本轮新增 | `setup.rs` 创建按钮新增 recovery soft-gate：加密 Realm + 未配置 recovery → 弹门，"设置 Recovery Key"（转 `SettingsRecovery`）或 "Create without recovery"（personal_node override，置 `recovery_gate_acknowledged`） |
 | PCR floor 协议固定 | ✅ 本轮（spec） | `realm.schema.json` PCR 守卫钉死双 floor；`EncryptionFloorPrompt` 对正确实现的 PCR 不再误弹 |
 | `recovery_options_configured` | ✅ 本轮修正 | 以服务端 `active_policy` + `did_recovery` series 为真相；本地 `recovery_key_fingerprint` 只做本设备缓存/显示,不得单独判账号 configured |
-| Legacy `passphrase_kdf` | ✅ fallback | 新写入以 `recipient_method="recovery_public_key"` 为主；旧 `passphrase_kdf` envelope 只在 restore 时兼容读取,成功后应写入 `recovery_public_key` successor |
 
 图例：✅ 已落地 ／ ◑ 既存框架但有缺口 ／ ❌ 缺失。
 

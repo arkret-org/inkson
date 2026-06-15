@@ -463,7 +463,7 @@ pub struct ContactRemark {
     pub version: u32,
     /// Subject actor DID. Wire field `actor_id` per the v1 protocol naming
     /// rule: a single protocol responsibility subject uses the `_id` suffix
-    /// even when the value is a DID (see `forbidden-wire-fields.json`).
+    /// even when the value is a DID.
     pub actor_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub local_name: String,
@@ -922,9 +922,8 @@ fn blocklist_entry_from_account_data_value(value: &Value) -> Option<BlocklistEnt
             if !matches!(mode, "block" | "mute" | "hide") {
                 return None;
             }
-            let (target_kind, target_value) = object
-                .get("target")
-                .and_then(blocklist_target_kind_value)?;
+            let (target_kind, target_value) =
+                object.get("target").and_then(blocklist_target_kind_value)?;
             let reason = object
                 .get("reason_code")
                 .and_then(Value::as_str)

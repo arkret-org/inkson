@@ -2147,9 +2147,8 @@ pub fn TimelinePanel(
 
 /// Read the sender identity from a timeline event envelope.
 ///
-/// canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
-/// `sender → sender_actor_id`,hard_reject)。只读 `actor_id` /
-/// `sender_actor_id`;legacy `sender` 不再容忍。
+/// Canonical envelopes expose `actor_id` / `sender_actor_id` only;
+/// forbidden `sender` fields are not accepted.
 fn timeline_actor_id(event: &Value) -> Option<&str> {
     ["actor_id", "sender_actor_id"]
         .into_iter()
@@ -2222,8 +2221,8 @@ pub fn timeline_events_from_sync_realms(
             events.push(TimelineEvent {
                 realm_id: Some(realm_id.clone()),
                 id: event_id.clone(),
-                // canonical envelope 主体是 `actor_id`(spec
-                // forbidden-wire-fields.json: sender → sender_actor_id)。优先
+                // canonical envelope 主体是 `actor_id`；sender display fields use
+                // the role-explicit `sender_actor_*` schema names. 优先
                 // actor_id / sender_actor_id;`sender` 已废弃,仅作向后兼容。
                 sender: timeline_actor_id(event)
                     .unwrap_or("did:web:unknown")

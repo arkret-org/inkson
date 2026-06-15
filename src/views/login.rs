@@ -28,9 +28,6 @@ struct CompletedLogin {
     actor: String,
     device_id: String,
     access_token: String,
-    /// Legacy coauth session_grant fallback. This is only retained when
-    /// the active bearer is still a principal-server bridge token.
-    grant: Option<PersistedSessionGrant>,
     /// OAuth bearer bundle accepted directly by the principal server.
     /// When present, this is the durable refresh path.
     oidc_tokens: Option<OidcTokenBundle>,
@@ -106,7 +103,6 @@ pub fn LoginPanel(
                 persist_completed_login_state(
                     state_store_write,
                     &completed.actor,
-                    completed.grant,
                     completed.oidc_tokens,
                 );
                 status.set("Online".to_owned());
@@ -307,7 +303,6 @@ pub fn LoginPanel(
 fn persist_completed_login_state(
     mut state_store: Signal<LocalStateStore>,
     actor_id: &str,
-    grant: Option<PersistedSessionGrant>,
     oidc_tokens: Option<OidcTokenBundle>,
 ) {
     let mut store = state_store.write();
@@ -318,7 +313,7 @@ fn persist_completed_login_state(
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
         store.set_oidc_tokens_with_secure_store(None, actor_id, secure_store.as_ref());
     }
-    store.set_session_grant(grant);
+    store.set_session_grant(None);
 }
 
 /// Compute the value of the `session-status` testid. The four states
@@ -580,7 +575,6 @@ async fn finish_oidc_callback(
             session.device_id.as_str().to_owned()
         },
         access_token: session.access_token,
-        grant: None,
         oidc_tokens: None,
     })
 }

@@ -21,8 +21,8 @@
 //!   fresh engine spawn picks up the next generation.
 //! * **Backoff**: transient network errors double the sleep (capped at `MAX_BACKOFF_SECS`); a
 //!   successful response resets it. Auth-expired errors stop the engine and let the refresh poller
-//!   + login strand take over. Cursor-invalid errors clear the cursor and immediately retry as a full
-//!     sync.
+//!   + login strand take over. Cursor-invalid errors clear the cursor and immediately retry as a
+//!     full sync.
 //!
 //! The engine deliberately does NOT trigger session refresh inline —
 //! that's owned by [`crate::session_refresh`] which runs in parallel.
@@ -928,11 +928,10 @@ fn ingest_member_identity_events_from_projection(
 /// - 每个 member roster 条目的内联 `identity_events[]`;
 /// - 投影顶层的 `state.events[]` / `events[]` 事件日志。
 ///
-/// actor DID 取自事件自身的 `actor_id` / `did`,取不到再回落到该
-/// roster 条目的 `actor_id` / `did`(legacy `actor` / `sender` 键为
-/// forbidden-wire-fields hard_reject,不再容忍)。取到的字符串经
-/// `Did::new` 校验,非法的(不是合法 DID 语法)直接跳过 ——
-/// 失效钩子是 best-effort,宁可漏失效也不 panic。
+/// Actor DID is read from the event `actor_id` / `did`, falling back to the
+/// roster entry `actor_id` / `did`. Forbidden `actor` / `sender` fields are
+/// ignored. The value is validated via `Did::new`; invalid DID syntax is
+/// skipped because this best-effort invalidation hook must not panic.
 ///
 /// TRUST-CACHE 边界说明:这里只清缓存(让下次解析重新走 authority 链),
 /// 并不替代任何 authority 校验本身。
@@ -1300,8 +1299,8 @@ mod tests {
 
     #[test]
     fn device_revoke_event_in_state_events_invalidates_actor() {
-        // 事件在顶层 state.events[],actor 字段用现行 `actor_id`(legacy
-        // `actor`/`sender` 为 forbidden-wire-fields hard_reject,见模块注释)。
+        // Top-level state.events[] use canonical `actor_id`; forbidden
+        // `actor` / `sender` fields are ignored by the scanner.
         let (mut cache, did) = seed_cache("did:web:bob.example");
         let body = json!({
             "state": { "events": [
@@ -1313,10 +1312,9 @@ mod tests {
     }
 
     #[test]
-    fn device_revoke_event_with_legacy_actor_key_is_ignored() {
-        // 负向用例:撤销事件仅携带 spec 已禁用的 legacy `actor`/`sender` 键
-        // (forbidden-wire-fields hard_reject,replacement=actor_id/sender_actor_id)
-        // 时,`actor_id_str` 不应解析出 actor,失效钩子不触发,缓存保留。
+    fn device_revoke_event_with_removed_actor_key_is_ignored() {
+        // Negative case: revoke events carrying only forbidden `actor` /
+        // `sender` keys must not drive cache invalidation.
         let (mut cache, did) = seed_cache("did:web:dave.example");
         let body = json!({
             "state": { "events": [
@@ -1327,7 +1325,7 @@ mod tests {
         invalidate_cache_for_revocation_events(&mut cache, &body);
         assert!(
             cache.get(&did, chrono::Utc::now()).is_some(),
-            "legacy actor/sender keys must not drive cache invalidation"
+            "forbidden actor/sender keys must not drive cache invalidation"
         );
     }
 

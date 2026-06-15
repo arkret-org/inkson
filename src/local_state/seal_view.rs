@@ -237,7 +237,6 @@ impl LocalSealView {
         let mut view = Self::default();
         let Some(seal) = seal else {
             view.ingest_structured_bottoms(body);
-            view.ingest_legacy_bottom_cells(body);
             return view;
         };
         if let Some(arr) = seal.get("frontier").and_then(|v| v.as_array()) {
@@ -333,7 +332,6 @@ impl LocalSealView {
             }
         }
         view.ingest_structured_bottoms(body);
-        view.ingest_legacy_bottom_cells(body);
         view
     }
 
@@ -397,54 +395,6 @@ impl LocalSealView {
                     move_id,
                     value: Value::Null,
                 }));
-            }
-            self.bottom_cells.insert(
-                cell_ref.to_owned(),
-                BottomCellInfo {
-                    status: status.to_owned(),
-                    heads,
-                },
-            );
-        }
-    }
-
-    fn ingest_legacy_bottom_cells(&mut self, body: &Value) {
-        let Some(entries) = body.get("bottom_cells").and_then(|v| v.as_array()) else {
-            return;
-        };
-        for entry in entries {
-            let Some(cell_ref) = entry.get("cell_id").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            if self.bottom_cells.contains_key(cell_ref) {
-                continue;
-            }
-            let Some(bottom) = entry.get("bottom") else {
-                continue;
-            };
-            let status = match bottom.get("kind").and_then(|v| v.as_str()) {
-                Some("Conflict") | Some("conflict") => "expose",
-                _ => "reject",
-            };
-            if status != "expose" {
-                continue;
-            }
-            let mut heads = Vec::new();
-            if let Some(arr) = bottom.get("heads").and_then(|v| v.as_array()) {
-                for h in arr {
-                    let move_id = h
-                        .get("move_id")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_owned)
-                        .unwrap_or_default();
-                    if move_id.is_empty() {
-                        continue;
-                    }
-                    heads.push(BottomCellHead {
-                        move_id,
-                        value: h.get("value").cloned().unwrap_or(Value::Null),
-                    });
-                }
             }
             self.bottom_cells.insert(
                 cell_ref.to_owned(),

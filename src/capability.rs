@@ -648,7 +648,7 @@ mod tests {
         // fully-qualified `ck.<noun>.<verb>` form everywhere; the local
         // ActionGroup table mirrors that exactly. A bare-name lookup
         // (`strand.create`) is now an explicit miss so we catch any
-        // regression that re-introduces the legacy short form.
+        // regression that re-introduces the removed short form.
         // Realm security-boundary actions live in ck.realm.*; Space
         // container actions live in ck.space.*.
         assert!(ActionGroup::Common.contains("ck.realm.read"));

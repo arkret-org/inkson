@@ -159,7 +159,7 @@ fn event_envelope_rejects_unknown_top_level_fields() {
     value
         .as_object_mut()
         .unwrap()
-        .insert("sender".to_owned(), json!("did:web:legacy.example"));
+        .insert("sender".to_owned(), json!("did:web:removed.example"));
 
     assert!(
         serde_json::from_value::<EventEnvelope>(value).is_err(),
@@ -463,20 +463,6 @@ fn strand_update_builders_match_registered_object_patch_schema() {
         )
         .expect("builds")
         .build("node"),
-        // Null effect_position triggers the legacy ck.strand.update fallback
-        // inside strand_position_cas_update. It still must satisfy
-        // object_patch_payload instead of leaking top-level `position`.
-        ck_ops::strand_position_cas_update(
-            realm_id,
-            actor,
-            "ck.strand.move",
-            board_space_id,
-            strand_id,
-            json!({"list_space_id": list_space_id, "rank": "U"}),
-            Value::Null,
-        )
-        .expect("builds")
-        .build("node"),
     ];
 
     for event in &events {
@@ -490,6 +476,30 @@ fn strand_update_builders_match_registered_object_patch_schema() {
         assert!(event.payload.get("expected_position").is_none());
         assert_registered_payload_valid(event);
     }
+}
+
+#[test]
+fn strand_position_cas_update_rejects_incomplete_effect_position() {
+    let error = ck_ops::strand_position_cas_update(
+        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "did:web:alice",
+        "ck.strand.move",
+        "ck:space:0196419b-0000-7000-8000-000000000010",
+        "ck:strand:0196419b-0000-7000-8000-000000000020",
+        json!({
+            "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
+            "rank": "a1"
+        }),
+        Value::Null,
+    )
+    .expect_err("missing effect position fields are rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("requires effect_position.space_id"),
+        "{error:#}"
+    );
 }
 
 #[test]

@@ -237,7 +237,6 @@ impl MultiProfileConfig {
             next_profile: target,
         })
     }
-
 }
 
 /// Typed payload published when the active profile rotates.

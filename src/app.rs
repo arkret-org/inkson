@@ -593,10 +593,7 @@ fn initial_session_token_from_state(
             String::new()
         };
     }
-    if local_state.oidc_tokens.is_some() {
-        return String::new();
-    }
-    config.session_token.clone()
+    String::new()
 }
 
 #[component]
@@ -677,22 +674,6 @@ pub fn RouterView() -> Element {
 
     let navigator = use_navigator();
     let route = use_route::<Route>();
-    {
-        let legacy_members_route = match &route {
-            Route::RealmAdminSection { realm_id, section } if section == "members" => {
-                Some(Route::RealmMembers {
-                    realm_id: realm_id.clone(),
-                })
-            }
-            _ => None,
-        };
-        let redirect_navigator = navigator.clone();
-        use_effect(move || {
-            if let Some(route) = legacy_members_route.clone() {
-                let _ = redirect_navigator.replace(route);
-            }
-        });
-    }
     let mut view = use_signal(|| route.to_view());
     let mut status = use_signal(|| ConnectionState::Offline.label().to_owned());
     let initial_sync_cursor = initial_local_state
@@ -4573,7 +4554,6 @@ pub fn RouterView() -> Element {
                     | Route::SettingsDevices
                     | Route::SettingsDevicesPair
                     | Route::SettingsRecovery
-                    | Route::SettingsSecurity
                     | Route::Recovery
                     | Route::Audit
                     | Route::Developer => rsx! {
@@ -5850,7 +5830,6 @@ fn route_label(route: &Route) -> &'static str {
         Route::SettingsDevices => "Devices",
         Route::SettingsDevicesPair => "Pair new device",
         Route::SettingsRecovery => "Recovery",
-        Route::SettingsSecurity => "Recovery",
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",
         Route::Applets => "Applets",

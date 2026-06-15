@@ -4,13 +4,9 @@
 //! [`crate::config::MultiProfileConfig`] and lets the user switch
 //! active profile or jump into onboarding for a new one.
 //!
-//! Switching the active profile fires the `on_switch` handler with the
-//! target `profile_id`; the parent (`app.rs`) is responsible for
-//! persisting the new active id and notifying `sync_engine`.
-//!
 //! Profile rotation runs through [`crate::config::ProfileSwitchEvent`]
-//! — the switcher emits the typed event through `on_switch_event`, and
-//! the parent shell forwards it to the sync engine + push
+//! — the switcher emits the typed event through `on_switch`, and the
+//! parent shell forwards it to the sync engine + push
 //! registration + coauth grant layers. Subsystems no longer peek
 //! directly into `ClientConfig`; they react to the signal published
 //! by the shell.
@@ -23,16 +19,9 @@ use crate::ui::button::{Button, ButtonVariant};
 #[component]
 pub fn AccountSwitcher(
     profiles: MultiProfileConfig,
-    /// Fires with the legacy `profile_id` string. Retained for
-    /// existing call sites; new callers should prefer
-    /// `on_switch_event` which receives the typed
-    /// [`ProfileSwitchEvent`].
-    on_switch: EventHandler<String>,
     /// Fires with the typed [`ProfileSwitchEvent`] every time the
-    /// active profile rotates. Defaults to a no-op so existing call
-    /// sites can adopt it incrementally without breaking compile.
-    #[props(default)]
-    on_switch_event: Option<EventHandler<ProfileSwitchEvent>>,
+    /// active profile rotates.
+    on_switch: EventHandler<ProfileSwitchEvent>,
     on_add_account: EventHandler<()>,
     on_remove: EventHandler<String>,
 ) -> Element {
@@ -88,20 +77,16 @@ pub fn AccountSwitcher(
                                             role: "menuitem",
                                             disabled: is_active,
                                             onclick: move |_| {
-                                                // CKP-0007 P3B.4.3 — emit the typed
-                                                // event when a handler is wired,
-                                                // then fall through to the legacy
-                                                // string handler so existing
-                                                // listeners keep working.
-                                                if let Some(handler) = on_switch_event.as_ref()
-                                                    && let Some(event) =
-                                                        profiles_for_row.build_switch_event(
-                                                            pid_for_switch.as_str(),
-                                                        )
+                                                // CKP-0007 P3B.4.3 — emit the
+                                                // typed switch event published
+                                                // by the shell.
+                                                if let Some(event) =
+                                                    profiles_for_row.build_switch_event(
+                                                        pid_for_switch.as_str(),
+                                                    )
                                                 {
-                                                    handler.call(event);
+                                                    on_switch.call(event);
                                                 }
-                                                on_switch.call(pid_for_switch.clone());
                                                 open.set(false);
                                             },
                                             span { class: "account-row-label", "{label}" }
