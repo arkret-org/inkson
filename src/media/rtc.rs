@@ -1,53 +1,45 @@
-//! RTC client integration scaffolding (CKP-0010, spec head b47ff6ec).
+//! Real RTC media wiring (CKP-0010, `media-service-binding.md`).
 //!
-//! This module captures the client-side wire contract for the new media
-//! binding profile that landed in cokret-spec round R3:
+//! This module is the single source of truth for joining a call's media
+//! plane. The flow is:
 //!
-//! - **CALL-1** — `ck.self.call.media.exchange.issue_token`: obtain a backend token and
-//!   `participant_binding` from soland's `POST /rtc/token` endpoint via the SDK helper
-//!   [`cokret_sdk::media::call_media_token_exchange`].
-//! - **CALL-2** — render `focus_unavailable_for_client` as a hard failure with retry / leave
-//!   options. No silent fallback to a different focus.
-//! - **MEDIA-1** — SFrame key provider derives keys from the MLS Exporter with label
-//!   `ck-rtc-frame-key/v1` (length=19, Context="", KDF.Nh=32). Any backend-supplied key is rejected
-//!   with `e2ee_key_source_unauthorised`.
-//! - **MEDIA-2** — `ParticipantConnected` (LiveKit / SFU signal) must be cross-checked against
-//!   `ck.call.state.participants[]`. A mismatch fails closed with
-//!   `participant_identity_unrecognised`.
-//! - **MEDIA-3** — recording artifact pipeline rejects Egress destinations that bypass the Cokret
-//!   authenticated blob upload (`recording_artifact_pipeline_bypassed`).
+//! 1. **CALL-1** — `media_token_exchange` POSTs `ck.self.call.media.exchange.issue_token` to
+//!    soland's `/_cokret/self/rtc/token`, then anchors + verifies the response via
+//!    [`cokret_sdk::verify_call_media_token_outcome`] (issuer anchoring, ≤600s TTL, six-tuple
+//!    binding).
+//! 2. **ICE** — `ice_config` POSTs to `/_cokret/self/rtc/ice-config` and runs
+//!    [`cokret_sdk::verify_ice_config_outcome`] (issuer anchoring, TURN credential privacy,
+//!    refresh-lead invariants).
+//! 3. **MEDIA-1** — the SFrame frame key is derived from the live MLS exporter via
+//!    [`cokret_sdk::derive_frame_key`]. Any non-MLS key source is unrepresentable: the helper only
+//!    accepts a [`cokret_sdk::MlsExporterSource`], so a backend KMS key can never be installed
+//!    (fail-closed → `e2ee_key_source_unauthorised`).
 //!
-//! The actual SFU integration (LiveKit / mediasoup / janus / cokret-native)
-//! lives in the platform renderer; yougen ships the typed wire contract,
-//! validation predicates, and error reasons so the renderer wires into a
-//! single source of truth.
-//!
-//! TODO(R3.1): the live transport-backed paths (real HTTP POST against
-//! `/rtc/token`, real `MlsGroup::export_secret` invocation, real SFU
-//! `ParticipantConnected` callback wiring) are deferred; the predicates
-//! and error reasons here are the contract those integrations consume.
-
-use std::collections::BTreeSet;
+//! The platform RTC transport (`crate::rtc_transport`) consumes the
+//! verified [`JoinedMediaSession`] this module returns: connect URL,
+//! backend token, ICE servers, and the SFrame key bytes.
 
 /// Stable label registered on the `ck.profile.media_service_binding.v1`
 /// profile for the SFrame frame key derivation (`media-service-binding.md
-/// §8.1`). The MLS exporter MUST be invoked with exactly this
-/// label, length=19, and empty Context. KDF.Nh=32 is enforced by the
-/// MLS ciphersuite (HKDF-SHA256).
-pub const SFRAME_FRAME_KEY_LABEL: &str = "ck-rtc-frame-key/v1";
+/// §8.1`). Re-exported from the SDK so the renderer pins exactly one value.
+pub use cokret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
+use cokret_sdk::{
+    CallId, CallMediaDesiredMedia, CallMediaTokenExchangeOutcome,
+    CallMediaTokenExchangeRequestBody, DeviceId, Did, FrameKeyContext, IceConfig,
+    MediaIceConfigRequestBody, MediaIceMode, MediaServiceAnchors, MlsExporterSource, RealmId,
+    call_media_token_exchange, derive_frame_key, verify_call_media_token_outcome,
+    verify_ice_config_outcome,
+};
 
-/// Length parameter for the MLS exporter call (matches spec §11).
-pub const SFRAME_FRAME_KEY_LENGTH: u16 = 19;
+use crate::api::CokretApi;
 
-/// Empty context for the MLS exporter call (matches spec §11).
-pub const SFRAME_FRAME_KEY_CONTEXT: &[u8] = &[];
-
-/// Spec-mandated TTL ceiling for media tokens (`ck.self.call.media.exchange.issue_token`).
-/// Soland defaults to 300s; the ceiling is 600s.
-pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = 600;
+/// Spec-mandated TTL ceiling for media tokens
+/// (`ck.self.call.media.exchange.issue_token`). Soland defaults to 300s; the
+/// ceiling is 600s.
+pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = cokret_sdk::MEDIA_TOKEN_TTL_MAX_SECS;
 
 /// Error reasons surfaced by the RTC client integration. These map 1:1
-/// to the new error code enum landed in cokret-spec round R3 (§0.7).
+/// to the error code enum landed in cokret-spec round R3 (§0.7).
 ///
 /// Toast layer copy is keyed by `error.call.<wire>` (see `i18n.rs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +117,19 @@ impl RtcClientError {
             _ => return None,
         })
     }
+
+    /// Map a soland API error into the typed reason, classifying the
+    /// wire `code` carried by the error envelope. Unknown codes collapse
+    /// to [`Self::ParticipantBindingInvalid`] so the renderer still fails
+    /// closed instead of silently joining.
+    fn from_api_error(error: &anyhow::Error) -> Self {
+        if let Some(api_error) = error.downcast_ref::<crate::api::CokretApiError>()
+            && let Some(typed) = Self::from_wire(api_error.error.code())
+        {
+            return typed;
+        }
+        Self::ParticipantBindingInvalid
+    }
 }
 
 /// Canonical list of accepted media focus backend types
@@ -145,53 +150,209 @@ pub fn is_known_focus_type(focus_type: &str) -> bool {
     ALLOWED_FOCUS_TYPES.contains(&focus_type)
 }
 
-/// Source classification for a candidate SFrame frame key (MEDIA-1).
-///
-/// The only accepted source is [`Self::MlsExporter`] — any backend or
-/// out-of-band key delivery must be rejected with
-/// [`RtcClientError::E2eeKeySourceUnauthorised`].
+/// What media tracks the joining device intends to publish. Forwarded to
+/// soland in the token-exchange request so the focus can pre-allocate
+/// publisher slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FrameKeySource {
-    /// Derived from the MLS group's exporter secret with the canonical
-    /// label + length + (empty) context.
-    MlsExporter,
-    /// Key supplied by the SFU / media backend (e.g. LiveKit keyprovider
-    /// API). MUST be rejected — backend cloud is not in the trust path.
-    Backend,
-    /// Key supplied by an out-of-band channel (e.g. shared password).
-    /// Not part of the v1 trust model.
-    OutOfBand,
+pub struct DesiredMedia {
+    pub audio: bool,
+    pub video: bool,
+    pub screen: bool,
 }
 
-/// MEDIA-1 — validates the frame key source before SFrame keying is
-/// installed. Returns `Ok(())` only when the source is the MLS exporter.
-///
-/// TODO(R3.1): wire this predicate into the actual SFrame keyprovider
-/// callback when the renderer integrates `livekit-client` /
-/// `mediasoup-client`. For now the predicate is the contract the
-/// integration will consume.
-pub fn validate_frame_key_source(source: FrameKeySource) -> Result<(), RtcClientError> {
-    match source {
-        FrameKeySource::MlsExporter => Ok(()),
-        FrameKeySource::Backend | FrameKeySource::OutOfBand => {
-            Err(RtcClientError::E2eeKeySourceUnauthorised)
+impl DesiredMedia {
+    pub fn audio_video() -> Self {
+        Self {
+            audio: true,
+            video: true,
+            screen: false,
+        }
+    }
+
+    pub fn audio_only() -> Self {
+        Self {
+            audio: true,
+            video: false,
+            screen: false,
+        }
+    }
+
+    fn into_wire(self) -> CallMediaDesiredMedia {
+        CallMediaDesiredMedia {
+            audio: Some(self.audio),
+            video: Some(self.video),
+            screen: Some(self.screen),
         }
     }
 }
 
-/// MEDIA-2 — cross-checks an SFU-reported `ParticipantConnected`
-/// identity against the `ck.call.state.participants[]` projection.
-///
-/// `expected_identities` is the set of `participant_identity` values
-/// stamped onto the durable call state by the soland reducer. A
-/// mismatch is fail-closed; the renderer MUST drop the connection.
-///
-/// TODO(R3.1): wire this into the platform renderer's
-/// `ParticipantConnected` callback. For now the predicate is the
-/// contract the integration will consume.
+/// Parameters identifying the local participant joining a call's media
+/// plane. All ids are canonical protocol ids (`ck:realm:…`, `ck:call:…`,
+/// `did:…`, `ck:device:…`).
+#[derive(Clone, Debug)]
+pub struct MediaJoinRequest {
+    pub realm_id: String,
+    pub call_id: String,
+    pub actor_id: String,
+    pub device_id: String,
+    pub focus_id: String,
+    pub epoch_id: u64,
+    pub desired_media: DesiredMedia,
+    /// Media-service DIDs anchored by the realm's current
+    /// `ck.realm.media_service.service_id`. Token + ICE issuers MUST
+    /// resolve to one of these; an empty set fails closed.
+    pub media_service_dids: Vec<String>,
+}
+
+impl MediaJoinRequest {
+    fn typed_ids(&self) -> Result<TypedJoinIds, RtcClientError> {
+        let realm_id =
+            RealmId::new(self.realm_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
+        let call_id =
+            CallId::new(self.call_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
+        let actor_id =
+            Did::new(self.actor_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
+        let device_id =
+            DeviceId::new(self.device_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
+        Ok(TypedJoinIds {
+            realm_id,
+            call_id,
+            actor_id,
+            device_id,
+        })
+    }
+
+    fn anchors(&self) -> Result<MediaServiceAnchors, RtcClientError> {
+        let dids = self
+            .media_service_dids
+            .iter()
+            .map(|did| Did::new(did.clone()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+        let anchors = MediaServiceAnchors::new(dids);
+        if anchors.is_empty() {
+            // Fail closed: with no anchored media service we cannot trust
+            // any issuer kid.
+            return Err(RtcClientError::TokenIssuerUnauthorised);
+        }
+        Ok(anchors)
+    }
+}
+
+struct TypedJoinIds {
+    realm_id: RealmId,
+    call_id: CallId,
+    actor_id: Did,
+    device_id: DeviceId,
+}
+
+/// The verified, ready-to-connect media session. Everything here has
+/// passed issuer anchoring + TTL + tuple binding; the SFrame key is the
+/// MLS-exporter-derived secret the transport installs into its
+/// keyprovider.
+#[derive(Clone, Debug)]
+pub struct JoinedMediaSession {
+    /// SFU backend type (`livekit` / `mediasoup` / …) — already checked
+    /// against [`ALLOWED_FOCUS_TYPES`].
+    pub backend_type: String,
+    /// Backend WebSocket connect URL (e.g. LiveKit `wss://…`).
+    pub connect_url: String,
+    /// Opaque backend join token (LiveKit JWT, etc.).
+    pub backend_token: String,
+    /// SFU-local participant identity, cross-checked against
+    /// `ck.call.state.participants[]` on `ParticipantConnected`.
+    pub participant_identity: String,
+    /// Verified ICE configuration (STUN/TURN + force_turn + ttl).
+    pub ice_config: IceConfig,
+    /// 32-byte SFrame frame key derived from the MLS exporter
+    /// (`ck-rtc-frame-key/v1`). Installed as the E2EE keyprovider seed.
+    pub frame_key: Vec<u8>,
+    /// `desired_media` echoed for the transport's publisher setup.
+    pub desired_media: DesiredMedia,
+}
+
+/// Run the full media-plane join: token exchange → verify → ICE config →
+/// verify → MLS-exporter SFrame key. `mls_exporter` MUST be the live
+/// realm MLS group; passing a non-MLS source is impossible by the
+/// [`MlsExporterSource`] bound, which is what enforces MEDIA-1.
+pub async fn join_call_media(
+    api: &CokretApi,
+    request: &MediaJoinRequest,
+    mls_exporter: &impl MlsExporterSource,
+) -> Result<JoinedMediaSession, RtcClientError> {
+    let ids = request.typed_ids()?;
+    let anchors = request.anchors()?;
+
+    // CALL-1 — token exchange + anchored verification.
+    let mut token_request: CallMediaTokenExchangeRequestBody = call_media_token_exchange(
+        ids.realm_id.clone(),
+        ids.call_id.clone(),
+        ids.actor_id.clone(),
+        ids.device_id.clone(),
+        request.focus_id.clone(),
+    );
+    token_request.desired_media = Some(request.desired_media.into_wire());
+
+    let outcome: CallMediaTokenExchangeOutcome = api
+        .media_token_exchange(&token_request)
+        .await
+        .map_err(|err| RtcClientError::from_api_error(&err))?;
+
+    if !is_known_focus_type(&outcome.backend_type) {
+        return Err(RtcClientError::UnknownFocusType);
+    }
+
+    let now = chrono::Utc::now();
+    let verification = verify_call_media_token_outcome(&token_request, &outcome, &anchors, now)
+        .map_err(|err| classify_protocol_error(&err))?;
+
+    // ICE config — verified against the same anchors. A focus-bound call
+    // always relays through the SFU media plane.
+    let ice_request = MediaIceConfigRequestBody {
+        realm_id: ids.realm_id.clone(),
+        call_id: request.call_id.clone(),
+        actor_id: ids.actor_id.clone(),
+        device_id: ids.device_id.clone(),
+        mode: MediaIceMode::Sfu,
+    };
+    let ice_outcome = api
+        .ice_config(&ice_request)
+        .await
+        .map_err(|err| RtcClientError::from_api_error(&err))?;
+    let ice_config = verify_ice_config_outcome(&ice_outcome, &anchors)
+        .map_err(|err| classify_protocol_error(&err))?;
+
+    // MEDIA-1 — SFrame frame key from the live MLS exporter. The
+    // participant_identity is the verified SFU-local handle from the
+    // token binding, so the key is sender-bound per §8.1.
+    let frame_context = FrameKeyContext {
+        realm_id: ids.realm_id,
+        call_id: ids.call_id,
+        focus_id: request.focus_id.clone(),
+        epoch_id: request.epoch_id,
+        participant_identity: verification.participant_identity.clone(),
+        device_id: ids.device_id,
+    };
+    let frame_key = derive_frame_key(mls_exporter, &frame_context)
+        .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
+
+    Ok(JoinedMediaSession {
+        backend_type: outcome.backend_type,
+        connect_url: outcome.connect_url,
+        backend_token: outcome.backend_token,
+        participant_identity: verification.participant_identity,
+        ice_config,
+        frame_key,
+        desired_media: request.desired_media,
+    })
+}
+
+/// MEDIA-2 — cross-check an SFU-reported `ParticipantConnected` identity
+/// against the `ck.call.state.participants[]` projection. A mismatch is
+/// fail-closed; the transport MUST drop the connection.
 pub fn cross_check_participant_identity(
     reported_identity: &str,
-    expected_identities: &BTreeSet<String>,
+    expected_identities: &std::collections::BTreeSet<String>,
 ) -> Result<(), RtcClientError> {
     if expected_identities.contains(reported_identity) {
         Ok(())
@@ -200,86 +361,89 @@ pub fn cross_check_participant_identity(
     }
 }
 
-/// Egress destination classification for the recording pipeline (MEDIA-3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EgressDestination {
-    /// Cokret-authenticated blob upload (the only allowed sink).
-    CokretBlob,
-    /// Direct cloud-storage egress (S3 / GCS / Azure Blob). REJECTED.
-    DirectCloudStorage,
-    /// Custom webhook / RTMP / file. REJECTED.
-    Other,
+/// MLS exporter backing the SFrame frame-key derivation.
+///
+/// On native targets this wraps a live [`cokret_sdk::CokretMlsGroup`] keyed
+/// by the realm id — exactly the group the message E2EE path uses — so the
+/// exported secret is a real RFC 9420 §8 MLS-Exporter output, never a
+/// backend KMS key (MEDIA-1). On wasm the MLS stack is not linked, so the
+/// exporter is unavailable and key derivation fails closed with
+/// `e2ee_key_source_unauthorised`; the web call surface MUST therefore run
+/// the SFrame keyprovider through the host MLS bridge, not a self-minted
+/// key.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct RealmMlsExporter {
+    group: cokret_sdk::CokretMlsGroup,
 }
 
-/// MEDIA-3 — validates a recording artifact destination. Only the
-/// Cokret blob pipeline is accepted; any direct egress to S3/GCS/etc.
-/// is rejected with [`RtcClientError::RecordingArtifactPipelineBypassed`].
-///
-/// TODO(R3.1): wire this predicate into the renderer's Egress
-/// configuration before any `ck.call.recording.start` envelope is
-/// signed.
-pub fn validate_recording_destination(
-    destination: EgressDestination,
-) -> Result<(), RtcClientError> {
-    match destination {
-        EgressDestination::CokretBlob => Ok(()),
-        EgressDestination::DirectCloudStorage | EgressDestination::Other => {
-            Err(RtcClientError::RecordingArtifactPipelineBypassed)
-        }
+#[cfg(not(target_arch = "wasm32"))]
+impl RealmMlsExporter {
+    /// Build the exporter from the realm's MLS group seed (`realm_id`
+    /// bytes), mirroring `crate::crypto::compose_local_encrypted_message`.
+    pub fn for_realm(
+        actor_id: &str,
+        device_id: &str,
+        realm_id: &str,
+    ) -> Result<Self, RtcClientError> {
+        let identity = cokret_sdk::CokretMlsIdentity::new_basic(
+            Did::new(actor_id.to_owned()).map_err(|_| RtcClientError::FocusMismatch)?,
+            DeviceId::new(device_id.to_owned()).map_err(|_| RtcClientError::FocusMismatch)?,
+        )
+        .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
+        let group = identity
+            .create_group(realm_id.as_bytes())
+            .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
+        Ok(Self { group })
     }
 }
 
-/// CALL-1 — placeholder integration point for the SDK token-exchange
-/// helper. Builds the request the SDK exposes via
-/// [`cokret_sdk::media::call_media_token_exchange`] and documents the
-/// fail-closed contract the renderer will eventually enforce.
-///
-/// The actual HTTP POST + signature verification is deferred (the SDK
-/// helper currently returns the request body only; transport-backed
-/// `BaseClient::call_media_token_exchange` lands in R3.1 per the
-/// `media.rs` comment in the SDK).
-///
-/// TODO(R3.1): once the SDK exposes a transport-backed helper, replace
-/// this stub with a real `async fn token_exchange` that:
-///   1. POSTs the request to `/rtc/token`.
-///   2. Verifies `service_signature.kid` against the current `ck.realm.media_service.service_id`.
-///   3. Validates `participant_binding` (signature, TTL ≤ 600s, all tuple fields match the call
-///      state).
-///   4. Returns `Err(RtcClientError::FocusUnavailableForClient)` when soland replies with that
-///      error code — and the renderer surfaces the failure with retry + leave-call options, NEVER
-///      silently falling back to a different focus.
-pub fn token_exchange_request(
-    realm_id: &str,
-    call_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    focus_id: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "realm_id": realm_id,
-        "call_id": call_id,
-        "actor_id": actor_id,
-        "device_id": device_id,
-        "focus_id": focus_id,
-    })
+#[cfg(not(target_arch = "wasm32"))]
+impl MlsExporterSource for RealmMlsExporter {
+    fn export_secret(
+        &self,
+        label: &str,
+        context: &[u8],
+        length: usize,
+    ) -> cokret_sdk::Result<Vec<u8>> {
+        self.group.export_secret(label, context, length)
+    }
+}
+
+/// Map an SDK [`cokret_sdk::Error`]'s protocol message into the typed
+/// reason. The SDK helpers stamp the wire code into the message
+/// (`participant_binding_invalid: …` / `token_issuer_unauthorised: …` /
+/// `ice_config_denied: …`); scan for the first known code substring so a
+/// `Display` prefix from the `Error` enum does not shadow it.
+fn classify_protocol_error(err: &cokret_sdk::Error) -> RtcClientError {
+    let message = err.to_string();
+    const CODES: &[RtcClientError] = &[
+        RtcClientError::TokenIssuerUnauthorised,
+        RtcClientError::E2eeKeySourceUnauthorised,
+        RtcClientError::ParticipantIdentityUnrecognised,
+        RtcClientError::FocusUnavailableForClient,
+        RtcClientError::FocusMismatch,
+        RtcClientError::UnknownFocusType,
+        RtcClientError::RecordingArtifactPipelineBypassed,
+        RtcClientError::ParticipantBindingInvalid,
+    ];
+    for candidate in CODES {
+        if message.contains(candidate.as_wire()) {
+            return *candidate;
+        }
+    }
+    // `ice_config_denied` is the ICE-path issuer/ttl rejection; surface it
+    // as a focus-unavailable failure so the renderer offers retry/leave.
+    if message.contains("ice_config_denied") {
+        return RtcClientError::FocusUnavailableForClient;
+    }
+    RtcClientError::ParticipantBindingInvalid
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::BTreeSet;
 
-    #[test]
-    fn frame_key_source_only_accepts_mls_exporter() {
-        assert!(validate_frame_key_source(FrameKeySource::MlsExporter).is_ok());
-        assert_eq!(
-            validate_frame_key_source(FrameKeySource::Backend),
-            Err(RtcClientError::E2eeKeySourceUnauthorised)
-        );
-        assert_eq!(
-            validate_frame_key_source(FrameKeySource::OutOfBand),
-            Err(RtcClientError::E2eeKeySourceUnauthorised)
-        );
-    }
+    use super::*;
 
     #[test]
     fn focus_type_enum_matches_spec() {
@@ -310,19 +474,6 @@ mod tests {
     }
 
     #[test]
-    fn recording_destination_only_accepts_cokret_blob() {
-        assert!(validate_recording_destination(EgressDestination::CokretBlob).is_ok());
-        assert_eq!(
-            validate_recording_destination(EgressDestination::DirectCloudStorage),
-            Err(RtcClientError::RecordingArtifactPipelineBypassed)
-        );
-        assert_eq!(
-            validate_recording_destination(EgressDestination::Other),
-            Err(RtcClientError::RecordingArtifactPipelineBypassed)
-        );
-    }
-
-    #[test]
     fn rtc_error_wire_round_trip() {
         for err in [
             RtcClientError::FocusUnavailableForClient,
@@ -340,25 +491,44 @@ mod tests {
     }
 
     #[test]
-    fn token_exchange_request_carries_required_fields() {
-        let body = token_exchange_request(
-            "ck:realm:abc",
-            "ck:call:xyz",
-            "did:web:example:users:alice",
-            "ck:device:dev-1",
-            "ck:focus:foo",
+    fn empty_anchor_set_fails_closed() {
+        let request = MediaJoinRequest {
+            realm_id: "ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
+            call_id: "ck:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            actor_id: "did:web:alice.example".to_owned(),
+            device_id: "ck:device:01904100-0000-7000-8000-000000000005".to_owned(),
+            focus_id: "fra-1".to_owned(),
+            epoch_id: 7,
+            desired_media: DesiredMedia::audio_video(),
+            media_service_dids: Vec::new(),
+        };
+        assert_eq!(
+            request.anchors().unwrap_err(),
+            RtcClientError::TokenIssuerUnauthorised
         );
-        assert_eq!(body["realm_id"], "ck:realm:abc");
-        assert_eq!(body["call_id"], "ck:call:xyz");
-        assert_eq!(body["focus_id"], "ck:focus:foo");
+    }
+
+    #[test]
+    fn classify_protocol_error_reads_wire_prefix() {
+        let err = cokret_sdk::Error::Protocol(
+            "token_issuer_unauthorised: issuer not anchored".to_owned(),
+        );
+        assert_eq!(
+            classify_protocol_error(&err),
+            RtcClientError::TokenIssuerUnauthorised
+        );
+        let err = cokret_sdk::Error::Protocol(
+            "e2ee_key_source_unauthorised: frame key context missing".to_owned(),
+        );
+        assert_eq!(
+            classify_protocol_error(&err),
+            RtcClientError::E2eeKeySourceUnauthorised
+        );
     }
 
     #[test]
     fn frame_key_label_matches_spec() {
-        // Pinned per `media-service-binding.md §8.1`.
         assert_eq!(SFRAME_FRAME_KEY_LABEL, "ck-rtc-frame-key/v1");
-        assert_eq!(SFRAME_FRAME_KEY_LENGTH, 19);
-        assert!(SFRAME_FRAME_KEY_CONTEXT.is_empty());
         assert_eq!(MEDIA_TOKEN_TTL_MAX_SECS, 600);
     }
 }

@@ -821,6 +821,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.label.title", "Title");
     dict.set("chat.label.summary", "Summary");
     dict.set("common.remove", "Remove");
+    dict.set("chat.call.voice", "Start voice call");
+    dict.set("chat.call.video", "Start video call");
     // T7.2 watch level fast switcher.
     dict.set("chat.watch_level.prefix", "Watching");
     dict.set(
@@ -1307,6 +1309,8 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.action.reject", "Decline");
     dict.set("contacts.action.withdraw", "Withdraw");
     dict.set("contacts.action.message", "Message");
+    dict.set("contacts.action.call_voice", "Voice call");
+    dict.set("contacts.action.call_video", "Video call");
     dict.set("contacts.action.block", "Block");
     dict.set("contacts.action.accepting", "Accepting…");
     dict.set("contacts.action.rejecting", "Declining…");
@@ -2062,6 +2066,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.label.title", "标题");
     dict.set("chat.label.summary", "概述");
     dict.set("common.remove", "移除");
+    dict.set("chat.call.voice", "发起语音通话");
+    dict.set("chat.call.video", "发起视频通话");
     // T7.2 watch level 快捷切换
     dict.set("chat.watch_level.prefix", "关注");
     dict.set("chat.watch_level.tooltip", "选择此 Strand 的通知频率。");
@@ -2406,6 +2412,8 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.action.reject", "拒绝");
     dict.set("contacts.action.withdraw", "撤回");
     dict.set("contacts.action.message", "发消息");
+    dict.set("contacts.action.call_voice", "语音通话");
+    dict.set("contacts.action.call_video", "视频通话");
     dict.set("contacts.action.block", "拉黑");
     dict.set("contacts.action.accepting", "正在接受…");
     dict.set("contacts.action.rejecting", "正在拒绝…");

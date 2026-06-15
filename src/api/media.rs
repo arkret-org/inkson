@@ -100,4 +100,16 @@ impl CokretApi {
     ) -> anyhow::Result<MediaIceConfigOutcome> {
         self.post_json("_cokret/self/rtc/ice-config", request).await
     }
+
+    /// `POST /_cokret/self/rtc/token` — `ck.self.call.media.exchange.issue_token`.
+    /// Returns the raw outcome (backend connect URL + token + participant
+    /// binding). Callers MUST run the response through
+    /// `cokret_sdk::verify_call_media_token_outcome` against the realm
+    /// media-service anchors before trusting the backend token.
+    pub async fn media_token_exchange(
+        &self,
+        request: &cokret_sdk::CallMediaTokenExchangeRequestBody,
+    ) -> anyhow::Result<cokret_sdk::CallMediaTokenExchangeOutcome> {
+        self.post_json("_cokret/self/rtc/token", request).await
+    }
 }

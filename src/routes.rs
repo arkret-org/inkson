@@ -148,8 +148,19 @@ pub enum Route {
     #[route("/document/:realm_id", DocumentRealmPage)]
     DocumentRealm { realm_id: String },
 
-    #[route("/call", crate::app::RouterView)]
-    Call,
+    /// Live call surface. Optional query params deep-link an in-progress
+    /// or outgoing call: `call_id` (the `ck:call:…` id), `peer` (the 1:1
+    /// callee DID, empty for SFU group calls), `realm_id`, `video` (`1`
+    /// for a video call, else audio-only), and `incoming` (`1` when this
+    /// is an inbound ring being answered).
+    #[route("/call?:call_id&:peer&:realm_id&:video&:incoming", CallPage)]
+    Call {
+        call_id: String,
+        peer: String,
+        realm_id: String,
+        video: String,
+        incoming: String,
+    },
 
     #[route("/recovery", crate::app::RouterView)]
     Recovery,
@@ -270,6 +281,18 @@ fn NotificationsSettingsPage() -> Element {
     rsx! { crate::app::RouterView {} }
 }
 
+#[component]
+fn CallPage(
+    call_id: String,
+    peer: String,
+    realm_id: String,
+    video: String,
+    incoming: String,
+) -> Element {
+    let _ = (call_id, peer, realm_id, video, incoming);
+    rsx! { crate::app::RouterView {} }
+}
+
 impl Route {
     /// Convert a Route to the corresponding View enum variant.
     pub fn to_view(&self) -> View {
@@ -300,7 +323,7 @@ impl Route {
             | Route::RealmAdminSection { .. } => View::RealmAdmin,
             // Call / Applets routes still render their own panels but no
             // longer have dedicated `View` enum variants.
-            Route::Call | Route::Applets => View::Dashboard,
+            Route::Call { .. } | Route::Applets => View::Dashboard,
             Route::Kanban
             | Route::KanbanRealm { .. }
             | Route::KanbanBoard { .. }

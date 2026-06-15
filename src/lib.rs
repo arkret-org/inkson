@@ -108,6 +108,7 @@ pub mod recovery_crypto;
 pub mod recovery_proof;
 pub mod recovery_strand;
 pub mod routes;
+pub mod rtc_transport;
 pub mod secure_key_store;
 pub mod security_state;
 pub mod session;

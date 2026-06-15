@@ -885,7 +885,7 @@ mod tests {
             applet_effective_scope("ck:realm:01904100-0000-7000-8000-000000000010").unwrap();
         assert!(matches!(
             scope,
-            cokret_sdk::EffectiveScope::Realm { ref realm_id }
+            cokret_sdk::models::EffectiveScope::Realm { ref realm_id }
                 if realm_id.as_str() == "ck:realm:01904100-0000-7000-8000-000000000010"
         ));
     }

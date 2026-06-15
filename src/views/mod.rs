@@ -85,11 +85,6 @@ pub mod settings;
 pub mod setup;
 pub mod timeline;
 pub mod verify_device;
-/// G3.Y4 — real WebRTC call surface (1:1 + group + mute + screen
-/// share + recording controls). Renders next to `call::CallPanel`
-/// (the signaling-only landing page) at `/call` so the durable
-/// signal count + the live call FSM live on the same route.
-pub mod webrtc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum View {

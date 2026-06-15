@@ -4703,19 +4703,31 @@ pub fn RouterView() -> Element {
                             }
                         }
                     },
-                    Route::Call => rsx! {
-                        crate::views::call::CallPanel { state_store }
-                        if crate::views::webrtc::live_media_enabled() {
-                            crate::views::webrtc::WebrtcCallPanel {
+                    Route::Call {
+                        call_id,
+                        peer,
+                        realm_id,
+                        video,
+                        incoming,
+                    } => {
+                        let call_realm_id = if realm_id.trim().is_empty() {
+                            active_realm_id.clone()
+                        } else {
+                            realm_id.clone()
+                        };
+                        rsx! {
+                            crate::views::call::CallPanel {
                                 base_url: base_url(),
                                 token,
                                 state_store,
-                                selected_realm_id: active_realm_id.clone(),
+                                selected_realm_id: call_realm_id,
                                 account_did: account_did(),
                                 device_id: device_id(),
+                                call_id: call_id.clone(),
+                                peer: peer.clone(),
+                                want_video: video == "1",
+                                incoming: incoming == "1",
                             }
-                        } else {
-                            DeferredFeatureGate { feature: "experimental-webrtc" }
                         }
                     },
                     Route::Onboarding => rsx! {
@@ -5825,7 +5837,7 @@ fn route_label(route: &Route) -> &'static str {
         | Route::KanbanTask { .. } => "Board View",
         Route::Notifications => "Notifications",
         Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => "Document View",
-        Route::Call => "Call",
+        Route::Call { .. } => "Call",
         Route::Recovery => "Recovery",
         Route::SettingsDevices => "Devices",
         Route::SettingsDevicesPair => "Pair new device",

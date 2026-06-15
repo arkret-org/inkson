@@ -1127,6 +1127,49 @@ pub fn ChatPanel(
                     }
                     if !embedded {
                     div { class: "discussion-head-actions",
+                        // Start a realm-scoped call. `direct_mode` strands map
+                        // to a 1:1 call; group strands open an SFU conference.
+                        {
+                            let realm_for_call = selected_realm_id.clone();
+                            let realm_for_video = selected_realm_id.clone();
+                            let call_disabled = realm_for_call.trim().is_empty();
+                            rsx! {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    r#type: "button",
+                                    "data-testid": "chat-call-voice-button",
+                                    disabled: call_disabled,
+                                    title: crate::i18n::tr("chat.call.voice"),
+                                    onclick: move |_| {
+                                        navigator.push(Route::Call {
+                                            call_id: String::new(),
+                                            peer: String::new(),
+                                            realm_id: realm_for_call.clone(),
+                                            video: "0".to_owned(),
+                                            incoming: "0".to_owned(),
+                                        });
+                                    },
+                                    "\u{1f4de}"
+                                }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    r#type: "button",
+                                    "data-testid": "chat-call-video-button",
+                                    disabled: call_disabled,
+                                    title: crate::i18n::tr("chat.call.video"),
+                                    onclick: move |_| {
+                                        navigator.push(Route::Call {
+                                            call_id: String::new(),
+                                            peer: String::new(),
+                                            realm_id: realm_for_video.clone(),
+                                            video: "1".to_owned(),
+                                            incoming: "0".to_owned(),
+                                        });
+                                    },
+                                    "\u{1f4f9}"
+                                }
+                            }
+                        }
                         // T7.2: watch-level fast switcher. Issues a
                         // `ck.strand.watch.set` event on selection. We
                         // optimistically update the local signal first;

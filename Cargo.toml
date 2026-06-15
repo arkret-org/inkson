@@ -32,7 +32,6 @@ experimental-polls = []
 experimental-discussion-promote = []
 experimental-agents = []
 experimental-applets = []
-experimental-webrtc = []
 experimental-document-collaboration = []
 # Mobile host-bridge stubs. The `AndroidKeystoreSecureKeyStore` /
 # `IosKeychainSecureKeyStore` types are host-bridge wrappers around a
@@ -236,6 +235,23 @@ web-sys = {workspace = true,features = [
     "IdbVersionChangeEvent",
     "Event",
     "DomException",
+    # Live WebRTC media transport (`src/rtc_transport/web.rs`): browser
+    # RtcPeerConnection + getUserMedia capture + SDP offer/answer + ICE
+    # candidate relay for 1:1 P2P and SFU room join.
+    "MediaDevices",
+    "MediaStream",
+    "MediaStreamTrack",
+    "MediaStreamConstraints",
+    "RtcConfiguration",
+    "RtcPeerConnection",
+    "RtcPeerConnectionIceEvent",
+    "RtcIceCandidate",
+    "RtcIceCandidateInit",
+    "RtcSessionDescription",
+    "RtcSessionDescriptionInit",
+    "RtcSdpType",
+    "RtcRtpSender",
+    "RtcTrackEvent",
 ]}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
