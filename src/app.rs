@@ -4188,6 +4188,18 @@ pub fn RouterView() -> Element {
                                                 let actor = account_did();
                                                 let device = device_id();
                                                 let api_token = token();
+                                                // Capture the grant + device holder key BEFORE the
+                                                // local wipe below: hard logout MUST also terminate
+                                                // the Auth Server session (revoke grant + finish
+                                                // browser session) so the rotation chain can't be
+                                                // resumed (account-lifecycle §4.1), and that needs
+                                                // the grant JWT + a device holder proof.
+                                                let logout_grant =
+                                                    state_store.read().session_grant();
+                                                let logout_device_handle = {
+                                                    let mut store = state_store.write();
+                                                    crate::auth_dpop::ensure_device_key(&mut store).ok()
+                                                };
                                                 let logout_generation = session_generation() + 1;
                                                 account_session_state.set("Logging out".to_owned());
                                                 session_generation.set(logout_generation);
@@ -4250,6 +4262,27 @@ pub fn RouterView() -> Element {
                                                 account_menu_open.set(false);
                                                 redirect_to_login(navigator);
                                                 spawn(async move {
+                                                    // Terminate the Auth Server session first
+                                                    // (revoke grant + finish browser session) so the
+                                                    // device key can't resume the rotation chain.
+                                                    // Best-effort: local credentials are already
+                                                    // wiped, so a failure here cannot keep THIS
+                                                    // client signed in.
+                                                    if let (Some(grant), Some(handle)) =
+                                                        (logout_grant, logout_device_handle)
+                                                    {
+                                                        if let Err(error) =
+                                                            revoke_session_grant_at_coauth(
+                                                                &grant, &handle,
+                                                            )
+                                                            .await
+                                                        {
+                                                            tracing::warn!(
+                                                                ?error,
+                                                                "coauth session-grant revoke on logout failed"
+                                                            );
+                                                        }
+                                                    }
                                                     let api_result = CokretApi::new(&base)
                                                         .map(|api| api.with_bearer(api_token));
                                                     let logout_message = match api_result {
@@ -6151,6 +6184,30 @@ async fn rotate_session_grant_via_device_proof(
         session_expires_at: None,
         stored_at: chrono::Utc::now(),
     })
+}
+
+/// Hard-logout revocation at the Auth Server: revoke the session grant and
+/// finish its browser session so the rotation chain cannot be resumed (even by
+/// the device key). Best-effort — the caller wipes local credentials regardless;
+/// this terminates the server-side authentication context (account-lifecycle
+/// §4.1). Must run BEFORE the local device key / grant are wiped, since it needs
+/// the grant JWT + a device holder proof.
+async fn revoke_session_grant_at_coauth(
+    grant: &crate::local_state::PersistedSessionGrant,
+    device_handle: &crate::auth_dpop::DpopHandle,
+) -> anyhow::Result<()> {
+    let auth_server_url =
+        crate::coauth::resolve_principal_auth_server_url(&grant.principal_server_url)
+            .await
+            .map_err(|error| anyhow::anyhow!("resolve auth server: {error}"))?;
+    let coauth = crate::coauth::CoauthApi::new(&auth_server_url)?;
+    let htu = coauth.endpoint_url("_cokret/gate/account/session-grants/revoke")?;
+    let dpop_proof = device_handle
+        .mint_proof("POST", &htu, Some(&grant.grant_jwt))
+        .map_err(|error| anyhow::anyhow!("mint logout DPoP proof: {error}"))?;
+    coauth
+        .revoke_session_grant(&grant.grant_jwt, &dpop_proof)
+        .await
 }
 
 fn oidc_refresh_error_invalidates_grant(error: &anyhow::Error) -> bool {

@@ -773,6 +773,26 @@ impl CoauthApi {
         .await
     }
 
+    /// Hard-logout revocation at the Auth Server (account-lifecycle §4.1):
+    /// present the device holder proof bound into the grant's `cnf.jkt`, and the
+    /// server revokes the grant + finishes the underlying browser session so the
+    /// rotation chain cannot be resumed. Idempotent / best-effort from the
+    /// client's side — local credentials are wiped regardless.
+    pub async fn revoke_session_grant(
+        &self,
+        grant_jwt: &str,
+        dpop_proof: &str,
+    ) -> anyhow::Result<()> {
+        let _: serde_json::Value = self
+            .post_json_with_dpop(
+                "_cokret/gate/account/session-grants/revoke",
+                json!({ "grant_jwt": grant_jwt }),
+                Some(dpop_proof),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn start_oidc_browser_bridge(
         &self,
         session_path: &str,
