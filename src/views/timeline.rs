@@ -743,6 +743,8 @@ pub fn TimelinePanel(
         let base = base_url_sig();
         let api_token = token();
         let wait_for = active_sync_token(sync_cursor());
+        let decrypt_actor = account_did.clone();
+        let decrypt_device = device_id.clone();
         spawn(async move {
             if let Ok(sync) =
                 with_authed_api_with_sync(&base, api_token, wait_for, |api| async move {
@@ -750,7 +752,17 @@ pub fn TimelinePanel(
                 })
                 .await
             {
-                let events = timeline_events_from_sync_realms(&sync.realms);
+                // Merge encrypted bodies on read: author sidecar first, then
+                // remote decrypt-on-read, both via the local state store. The
+                // read guard outlives the parse call; `try_local_mls_decrypt_core`
+                // writes its receive chain back through interior mutability.
+                let store_guard = state_store.read();
+                let events = timeline_events_from_sync_realms(
+                    &sync.realms,
+                    Some(&store_guard),
+                    Some((&decrypt_actor, &decrypt_device)),
+                );
+                drop(store_guard);
                 if !events.is_empty() {
                     let current = timeline();
                     timeline.set(crate::app::merge_timeline_events(&current, events));
@@ -2337,6 +2349,23 @@ fn timeline_actor_id(event: &Value) -> Option<&str> {
         .find_map(|key| event.get(key).and_then(Value::as_str))
 }
 
+/// Extract the display text from a decrypted canonical Content Block JSON.
+///
+/// The secure send path encodes the body via `ContentBlock::text(..).to_value()`,
+/// whose canonical shape is `{ "text": .. }`; older / multi-block shapes carry it
+/// at `blocks[0].text`. Mirrors chat's `text_body_from_value` for the subset the
+/// timeline read path needs.
+fn timeline_text_from_content_value(value: &Value) -> Option<&str> {
+    value.get("text").and_then(Value::as_str).or_else(|| {
+        value
+            .get("blocks")
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.first())
+            .and_then(|block| block.get("text"))
+            .and_then(Value::as_str)
+    })
+}
+
 /// Project the `realms[*].timeline.events` of an account-subscribe response
 /// into [`TimelineEvent`]s. YOU-06-003 / YOU-01-013: this is the single
 /// owner of timeline wire parsing — the former Matrix-shaped `app.rs` copy
@@ -2346,6 +2375,8 @@ fn timeline_actor_id(event: &Value) -> Option<&str> {
 /// carries `encrypted_content` forward for local MLS decrypt.
 pub fn timeline_events_from_sync_realms(
     realms: &std::collections::BTreeMap<String, Value>,
+    store: Option<&crate::local_state::LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<TimelineEvent> {
     let mut events = Vec::new();
     for (realm_id, body) in realms {
@@ -2381,7 +2412,7 @@ pub fn timeline_events_from_sync_realms(
                 .unwrap_or("event:unknown")
                 .to_owned();
             let content = event.get("content").unwrap_or(&Value::Null);
-            let body = content
+            let mut body = content
                 .get("body")
                 .and_then(Value::as_str)
                 .or_else(|| event.get("body").and_then(Value::as_str))
@@ -2400,6 +2431,65 @@ pub fn timeline_events_from_sync_realms(
             // local MLS decrypt against it and fire `ck.audit.accessed`
             // on every successful decrypt.
             let encrypted_payload = content.get("encrypted_content").cloned();
+            // Parity with the chat read path: for encrypted messages the wire
+            // body is just `[message]`. Recover plaintext, preferring the
+            // author's own local sidecar (OpenMLS forbids an author from
+            // decrypting their OWN ciphertext) and otherwise a remote-member
+            // decrypt-on-read. Leave the `[message]` fallback untouched when
+            // neither store nor identity is available, or recovery soft-fails.
+            if let Some(encrypted_content) = encrypted_payload.as_ref() {
+                let message_realm = content
+                    .get("realm_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(realm_id);
+                let message_id = content.get("message_id").and_then(Value::as_str);
+                let strand_id = content
+                    .get("strand_id")
+                    .and_then(Value::as_str)
+                    .or_else(|| event.get("thread_id").and_then(Value::as_str));
+                // a. Author sidecar — the plaintext the author stored on send.
+                let sidecar_body = store.and_then(|store| {
+                    let message_id = message_id?;
+                    let strand_id = strand_id?;
+                    store.private_plaintext_for(
+                        message_realm,
+                        strand_id,
+                        &format!("message:{message_id}"),
+                    )
+                });
+                // b. Remote decrypt-on-read — envelope → payload → MLS core →
+                // canonical Content Block JSON → display text.
+                let decrypted_body = if sidecar_body.is_none() {
+                    if let (Some((actor_id, device_id)), Some(store)) = (decrypt_identity, store) {
+                        serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(
+                            encrypted_content.clone(),
+                        )
+                        .ok()
+                        .and_then(|env| env.to_payload().ok())
+                        .and_then(|payload| serde_json::to_value(payload).ok())
+                        .and_then(|payload_value| {
+                            try_local_mls_decrypt_core(
+                                store,
+                                message_realm,
+                                actor_id,
+                                device_id,
+                                &payload_value,
+                            )
+                        })
+                        .and_then(|plaintext| serde_json::from_slice::<Value>(&plaintext).ok())
+                        .and_then(|value| {
+                            timeline_text_from_content_value(&value).map(ToOwned::to_owned)
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some(plaintext) = sidecar_body.or(decrypted_body) {
+                    body = plaintext;
+                }
+            }
             events.push(TimelineEvent {
                 realm_id: Some(realm_id.clone()),
                 id: event_id.clone(),

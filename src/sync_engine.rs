@@ -741,8 +741,17 @@ pub fn apply_response(
         }
     }
 
-    let synced_timeline =
-        crate::views::timeline::timeline_events_from_sync_realms(&response.realms);
+    // Merge encrypted bodies on read (author sidecar → remote decrypt-on-read).
+    // The `store` write guard above is out of scope; take a fresh read guard.
+    let device_id = ctx.device_id.read().clone();
+    let synced_timeline = {
+        let store_guard = state_store.read();
+        crate::views::timeline::timeline_events_from_sync_realms(
+            &response.realms,
+            Some(&store_guard),
+            Some((&account_did, &device_id)),
+        )
+    };
     let next_timeline = if is_full_sync {
         synced_timeline
     } else {

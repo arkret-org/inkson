@@ -6987,8 +6987,18 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 last_error.set(Some(format!("local state not saved: {message}")));
                             }
                         }
-                        let synced_timeline =
-                            crate::views::timeline::timeline_events_from_sync_realms(&sync.realms);
+                        let synced_timeline = {
+                            // Merge encrypted bodies on read (author sidecar →
+                            // remote decrypt-on-read). The `store` write guard
+                            // above is out of scope here; take a fresh read
+                            // guard scoped to this call.
+                            let store_guard = state_store.read();
+                            crate::views::timeline::timeline_events_from_sync_realms(
+                                &sync.realms,
+                                Some(&store_guard),
+                                Some((&canonical_actor, &device)),
+                            )
+                        };
                         // `realm_tree_nodes` is derived from `state_store.realm_tree_projections`
                         // by a use_effect in `RouterView` — we don't set it
                         // here. Read a reconciled snapshot for status text
