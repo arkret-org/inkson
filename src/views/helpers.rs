@@ -186,6 +186,15 @@ impl ApiCallError {
         matches!(self, Self::AuthExpired(_))
     }
 
+    /// The underlying error, regardless of classification, so callers can run
+    /// wire-code predicates (e.g. [`crate::api::is_device_not_authorized_error`])
+    /// against it.
+    pub fn inner(&self) -> &anyhow::Error {
+        match self {
+            Self::Unavailable(err) | Self::AuthExpired(err) | Self::Failed(err) => err,
+        }
+    }
+
     /// Human-readable rendering suitable for `status` / `last_error`
     /// signals.
     pub fn display(&self) -> String {

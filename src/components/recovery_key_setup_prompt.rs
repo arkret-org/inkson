@@ -5,13 +5,28 @@
 //! directly in context, namely generating and saving the 24-word Recovery Key.
 
 use dioxus::prelude::*;
+use dioxus_router::hooks::use_navigator;
 
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::generate_recovery_key;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
+use crate::views::recovery::RecoveryKeyBackupOutcome;
 
+/// Fail-closed Recovery Key establishment.
+///
+/// Security invariant: a device may only establish (reveal + locally persist) a
+/// brand-new account Recovery Key root if the SERVER first confirms this device
+/// is an authorized, verified key-management device for the account. So we:
+///
+/// 1. generate the 24 words **in memory only** — nothing persisted, nothing shown;
+/// 2. attempt the server backup (`upload_recovery_key_account_backup`, which now
+///    persists local metadata ONLY on success);
+/// 3. reveal the words and mark recovery configured **only** on `Established`;
+/// 4. on `DeviceNotAuthorized` discard the key and route the user to authorize
+///    this device / restore with their existing Recovery Key — never leave a
+///    divergent root behind.
 fn begin_recovery_key_setup(
     base_url: Signal<String>,
     token: Signal<String>,
@@ -21,6 +36,7 @@ fn begin_recovery_key_setup(
     mut generated_recovery_key: Signal<String>,
     mut status: Signal<String>,
     mut copied: Signal<bool>,
+    mut device_unauthorized: Signal<bool>,
     on_server_configured: Option<EventHandler<()>>,
 ) {
     let recovery_key = match generate_recovery_key() {
@@ -30,24 +46,32 @@ fn begin_recovery_key_setup(
             return;
         }
     };
-    let actor = account_did();
-    let mut store = state_store;
-    if crate::views::recovery::save_generated_recovery_key_metadata(
-        &mut store,
-        &actor,
-        &recovery_key,
-    )
-    .is_none()
-    {
-        status.set("Recovery Key generated, but local metadata could not be saved.".to_owned());
+    if account_did().trim().is_empty() {
+        status.set("Recovery Key setup requires an active account.".to_owned());
         return;
     }
     copied.set(false);
-    generated_recovery_key.set(recovery_key.clone());
+    device_unauthorized.set(false);
+    generated_recovery_key.set(String::new());
     status.set(
-        "Recovery Key generated. Write down all 24 words now; they are shown only in this prompt."
-            .to_owned(),
+        "Authorizing this device and publishing the recovery backup…".to_owned(),
     );
+    // Reveal/persist gating happens entirely on the server outcome. Built within
+    // component scope (this fn is only ever called from a use_effect / onclick),
+    // so EventHandler::new is valid here.
+    let reveal_key = recovery_key.clone();
+    let on_outcome = EventHandler::new(move |outcome: RecoveryKeyBackupOutcome| match outcome {
+        RecoveryKeyBackupOutcome::Established => {
+            generated_recovery_key.set(reveal_key.clone());
+        }
+        RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
+            generated_recovery_key.set(String::new());
+            device_unauthorized.set(true);
+        }
+        RecoveryKeyBackupOutcome::Transient => {
+            generated_recovery_key.set(String::new());
+        }
+    });
     crate::views::recovery::upload_recovery_key_account_backup(
         base_url(),
         token,
@@ -57,6 +81,7 @@ fn begin_recovery_key_setup(
         recovery_key,
         status,
         on_server_configured,
+        Some(on_outcome),
     );
 }
 
@@ -75,6 +100,8 @@ pub fn RecoveryKeySetupPrompt(
     let mut status = use_signal(String::new);
     let mut copied = use_signal(|| false);
     let mut auto_generate_started = use_signal(|| false);
+    let mut device_unauthorized = use_signal(|| false);
+    let navigator = use_navigator();
 
     use_effect(move || {
         if !open() {
@@ -82,6 +109,7 @@ pub fn RecoveryKeySetupPrompt(
             generated_recovery_key.set(String::new());
             status.set(String::new());
             copied.set(false);
+            device_unauthorized.set(false);
             return;
         }
         if auto_generate_started()
@@ -101,6 +129,7 @@ pub fn RecoveryKeySetupPrompt(
             generated_recovery_key,
             status,
             copied,
+            device_unauthorized,
             on_server_configured,
         );
     });
@@ -111,7 +140,9 @@ pub fn RecoveryKeySetupPrompt(
 
     let generated_now = generated_recovery_key();
     let current_status = status();
-    let generation_failed = generated_now.trim().is_empty()
+    let is_device_unauthorized = device_unauthorized();
+    let generation_failed = !is_device_unauthorized
+        && generated_now.trim().is_empty()
         && (current_status.contains("failed") || current_status.contains("could not be saved"));
 
     rsx! {
@@ -158,8 +189,14 @@ pub fn RecoveryKeySetupPrompt(
                     span { class: "muted", "required before encryption" }
                 }
                 div { class: "modal-body mls-recovery-modal-body",
-                    div { class: "muted",
-                        "Generate the 24 words here, write them down offline, then continue with encrypted Realms. Cokret cannot recover these words for you."
+                    if is_device_unauthorized {
+                        div { class: "form-hint-warn", "data-testid": "recovery-key-setup-device-unauthorized",
+                            "This device isn't authorized to create the account Recovery Key. Authorize it from a device you already use, or restore with your existing 24-word Recovery Key. A new key is never created on an unverified device."
+                        }
+                    } else {
+                        div { class: "muted",
+                            "Generate the 24 words here, write them down offline, then continue with encrypted Realms. Cokret cannot recover these words for you."
+                        }
                     }
                     if !generated_now.trim().is_empty() {
                         div { class: "workflow-form",
@@ -221,7 +258,23 @@ pub fn RecoveryKeySetupPrompt(
                     }
                 }
                 div { class: "modal-foot mls-backup-row",
-                    if generated_now.trim().is_empty() {
+                    if is_device_unauthorized {
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "recovery-key-setup-restore",
+                            onclick: move |_| {
+                                open.set(false);
+                                navigator.push(crate::routes::Route::Recovery);
+                            },
+                            "Restore with existing Recovery Key"
+                        }
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "recovery-key-setup-dismiss",
+                            onclick: move |_| open.set(false),
+                            "Close"
+                        }
+                    } else if generated_now.trim().is_empty() {
                         if generation_failed {
                             Button {
                                 variant: ButtonVariant::Primary,
@@ -238,6 +291,7 @@ pub fn RecoveryKeySetupPrompt(
                                         generated_recovery_key,
                                         status,
                                         copied,
+                                        device_unauthorized,
                                         on_server_configured,
                                     );
                                 },

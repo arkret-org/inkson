@@ -522,6 +522,22 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
         })
 }
 
+/// True when the server rejected the request because the authenticated
+/// session device is not authorized for the operation (`device_not_authorized`)
+/// — e.g. an unverified / unpaired device attempting to write the account
+/// Recovery Key backup. This is the wire code emitted by soland's
+/// `ensure_key_backup_writer_device_authorized` gate.
+///
+/// Recovery setup MUST treat this as fail-closed: a device that cannot pass
+/// the server's verified-device gate must never establish (or locally persist)
+/// a brand-new account Recovery Key root — it has to be authorized from an
+/// existing device, or the user must restore with their existing Recovery Key.
+pub fn is_device_not_authorized_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<CokretApiError>()
+        .is_some_and(|api_error| api_error.error.code() == "device_not_authorized")
+}
+
 /// True when the error envelope says the persisted coauth session grant
 /// itself is terminal (revoked, expired, locked, suspended, or otherwise
 /// not active). Soland currently maps these through `capability_denied`
@@ -2596,6 +2612,36 @@ mod tests {
             decoded.request_id,
             "ck:request:01964137-0000-7000-8000-000000000011"
         );
+    }
+
+    #[test]
+    fn recognizes_device_not_authorized_errors() {
+        // The exact wire shape soland's key-backup gate emits for an
+        // unverified / unauthorized session device. Recovery setup keys its
+        // fail-closed routing on this, so the classifier must match it and
+        // nothing else.
+        let device_not_authorized: anyhow::Error = CokretApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_cokret_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"device_not_authorized","message":"key backup write requires the authenticated session device to be verified"}}"#,
+            ),
+        }
+        .into();
+        assert!(is_device_not_authorized_error(&device_not_authorized));
+
+        // A different denial (transient / unrelated capability) must NOT be
+        // read as "device not authorized" — otherwise a flaky deny would wrongly
+        // route the user away from generating their first Recovery Key.
+        let other_denial: anyhow::Error = CokretApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_cokret_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"not a member"}}"#,
+            ),
+        }
+        .into();
+        assert!(!is_device_not_authorized_error(&other_denial));
     }
 
     #[test]

@@ -510,6 +510,25 @@ fn copy_recovery_text_to_clipboard(text: &str) {
 /// behind the just generated 24-word Recovery Key when the account secret
 /// already exists. This keeps the server-side first-backup gate satisfied even
 /// before the user has sent encrypted content.
+/// Outcome of attempting to establish a freshly generated account Recovery Key
+/// on the server, reported back to the setup prompt so it can stay fail-closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecoveryKeyBackupOutcome {
+    /// Server accepted the recovery policy + DID-recovery (and, when present,
+    /// account-secret) backup. Only now may the device reveal the 24 words and
+    /// persist local recovery metadata.
+    Established,
+    /// The server refused because this session device is not an authorized,
+    /// verified key-management device (`device_not_authorized`). The generated
+    /// key MUST be discarded — never persisted, never shown — and the user
+    /// routed to device authorization / restore-with-existing-Recovery-Key.
+    DeviceNotAuthorized,
+    /// A transient failure (network / 5xx / not-yet-authenticated). Nothing was
+    /// established; the caller may retry without having leaked or persisted a
+    /// divergent key.
+    Transient,
+}
+
 pub(crate) fn upload_recovery_key_account_backup(
     base_url: String,
     token: Signal<String>,
@@ -519,6 +538,7 @@ pub(crate) fn upload_recovery_key_account_backup(
     recovery_key: String,
     mut status: Signal<String>,
     on_server_configured: Option<EventHandler<()>>,
+    on_outcome: Option<EventHandler<RecoveryKeyBackupOutcome>>,
 ) {
     let Some(recovery_secret) = crate::recovery_crypto::normalize_recovery_key_input(&recovery_key)
     else {
@@ -529,6 +549,9 @@ pub(crate) fn upload_recovery_key_account_backup(
     let actor = account_did();
     let device = device_id();
     if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+        if let Some(handler) = on_outcome {
+            handler.call(RecoveryKeyBackupOutcome::Transient);
+        }
         return;
     }
     let sidecar_json = if state_store.read().private_plaintext_is_empty() {
@@ -577,6 +600,19 @@ pub(crate) fn upload_recovery_key_account_backup(
         .await;
         match result {
             Ok((did_backup_id, account_backup_id)) => {
+                // Fail-closed ordering: the server accepted the backup, so this
+                // device is an authorized key-management device for the account.
+                // ONLY now do we persist local recovery metadata — never before
+                // the server confirms, so an unauthorized device can't leave a
+                // divergent Recovery Key root behind. `save_generated_recovery_
+                // key_metadata` manages its own signal borrow, so it must run
+                // outside any held `try_write` guard.
+                let mut state_store_signal = state_store;
+                let _ = save_generated_recovery_key_metadata(
+                    &mut state_store_signal,
+                    &actor_for_sidecar,
+                    &recovery_key,
+                );
                 if let Ok(mut store) = state_store.try_write() {
                     crate::components::mark_mls_recovery_backup_configured(
                         &mut store,
@@ -617,13 +653,33 @@ pub(crate) fn upload_recovery_key_account_backup(
                 if let Some(handler) = on_server_configured {
                     handler.call(());
                 }
+                if let Some(handler) = on_outcome {
+                    handler.call(RecoveryKeyBackupOutcome::Established);
+                }
             }
             Err(err) => {
+                // Fail-closed: nothing was persisted before this point, so a
+                // rejection leaves no divergent Recovery Key behind. Classify
+                // the failure so the prompt can route an unauthorized device to
+                // device-authorization / restore instead of pretending a fresh
+                // account recovery root was created.
+                let device_unauthorized = crate::api::is_device_not_authorized_error(err.inner());
                 if let Ok(mut slot) = status.try_write() {
-                    *slot = format!(
-                        "Recovery Key saved locally, but server recovery backup failed: {}",
-                        err.display()
-                    );
+                    *slot = if device_unauthorized {
+                        "This device isn't authorized to set up the account Recovery Key. Authorize it from a device you already use, or restore with your existing 24-word Recovery Key.".to_owned()
+                    } else {
+                        format!(
+                            "Couldn't reach the server to set up recovery (nothing was changed): {}. Try again.",
+                            err.display()
+                        )
+                    };
+                }
+                if let Some(handler) = on_outcome {
+                    handler.call(if device_unauthorized {
+                        RecoveryKeyBackupOutcome::DeviceNotAuthorized
+                    } else {
+                        RecoveryKeyBackupOutcome::Transient
+                    });
                 }
             }
         }
@@ -830,23 +886,23 @@ pub fn RecoveryPanel(
                             move |_| {
                                 match generate_recovery_key() {
                                     Ok(key) => {
-                                        let fp = fingerprint_recovery_key(&key);
-                                        let now = chrono::Utc::now().to_rfc3339();
+                                        let _ = &mut store;
+                                        let _ = &actor_key;
+                                        let _ = snapshot_state;
+                                        // Reveal the words in-context (a deliberate settings
+                                        // action), but do NOT persist a recovery fingerprint
+                                        // upfront. `upload_recovery_key_account_backup` is
+                                        // fail-closed: it persists local recovery metadata ONLY
+                                        // after the server accepts the backup (i.e. this device
+                                        // passed the verified-device gate). A device the server
+                                        // rejects with `device_not_authorized` therefore never
+                                        // leaves a divergent Recovery Key root behind, and the
+                                        // status line routes the user to authorize / restore.
                                         live_recovery_key.set(key.clone());
-                                        recovery_key_fp.set(fp);
-                                        recovery_key_rotated_at.set(now);
-                                        passkey_wraps.set(Vec::new());
-                                        recovery_key_status.set(
-                                            "New Recovery Key generated. Copy it now — it is only displayed once. Existing passkey quick-unlock wrappers were cleared.".to_owned()
-                                        );
                                         passkey_status.set(String::new());
-                                        let next = snapshot_state();
-                                        save_state(&mut store, &actor_key, &next);
-                                        // RK-as-authority: this 24-word key is the canonical
-                                        // cross-device recovery credential (the restore prompt
-                                        // only accepts a 24-word key), so wrap and upload the
-                                        // account MLS secret backup with it now. Generating the
-                                        // key is what makes a real cloud backup exist.
+                                        recovery_key_status.set(
+                                            "Recovery Key generated. Setting it up on the server — copy the words now; they are only displayed once.".to_owned()
+                                        );
                                         upload_recovery_key_account_backup(
                                             base_url.clone(),
                                             token,
@@ -855,6 +911,7 @@ pub fn RecoveryPanel(
                                             state_store,
                                             key,
                                             recovery_key_status,
+                                            None,
                                             None,
                                         );
                                     }
