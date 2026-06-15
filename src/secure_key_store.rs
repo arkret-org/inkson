@@ -45,6 +45,13 @@ pub(crate) const WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND: &str = "indexed_db_sub
 #[cfg(any(target_arch = "wasm32", test))]
 const WASM_LOCAL_IDENTITY_SEED_KEY: &str = "identity.local.primary.v1";
 
+/// Secure-store key for the durable hard-logout journal
+/// ([`crate::pending_logout`]). The record embeds the device DPoP holder
+/// seed, so it is classified as a seed-grade secret: IndexedDB-only on wasm
+/// (no localStorage tier) and excluded from the unload-race localStorage
+/// mirror, exactly like an Ed25519 signing seed.
+pub(crate) const PENDING_LOGOUT_SECRET_KEY: &str = "cokret.pending_logout.v1";
+
 #[cfg(target_arch = "wasm32")]
 const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds require IndexedDbSecureKeyStore with a non-extractable \
      SubtleCrypto AES-GCM wrapping key; portable WebCrypto Ed25519 signing is not used, so \
@@ -62,11 +69,23 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
     is_wasm_ed25519_seed_key(key)
+        || key == PENDING_LOGOUT_SECRET_KEY
         || key.starts_with("yougen.mls_snapshot.account_secret.")
         || key.starts_with("yougen_mls_account_secret")
         || key.starts_with("coauth.refresh_token.")
         || key.starts_with("coauth.access_token.")
         || key.starts_with("coauth.session_token.")
+}
+
+/// Keys that MUST NOT be mirrored to the transient localStorage unload-race
+/// copy (see the IndexedDB store's `store_secret`): raw signing-seed material
+/// that should live only in the strong IndexedDB tier. Unlike the broader
+/// [`is_wasm_indexeddb_required_secret_key`] set — whose account/MLS secrets
+/// are deliberately mirrored to close the YOU-02-009 unload race — these are
+/// kept out of localStorage entirely.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn is_wasm_no_localstorage_mirror_key(key: &str) -> bool {
+    is_wasm_ed25519_seed_key(key) || key == PENDING_LOGOUT_SECRET_KEY
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1773,8 +1792,10 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         // copy to localStorage first. The mirror is transient: it is
         // removed once the IndexedDB put succeeds, and the boot-time H6
         // migration sweeps any unload-race survivor back into IndexedDB.
-        // Ed25519 signing seeds stay IndexedDB-only (H6 fail-closed).
-        let mirrored = if is_wasm_ed25519_seed_key(key) {
+        // Ed25519 signing seeds — and the hard-logout journal, which embeds a
+        // holder seed — stay IndexedDB-only (H6 fail-closed): never mirrored to
+        // the localStorage unload-race copy.
+        let mirrored = if is_wasm_no_localstorage_mirror_key(key) {
             false
         } else {
             // Re-open the fallback per write so its wrapping seed is
@@ -2256,6 +2277,16 @@ mod tests {
         ));
         assert!(is_wasm_indexeddb_required_secret_key(
             "coauth.session_token.did:example:alice"
+        ));
+        // The hard-logout journal embeds a holder seed → seed-grade: both
+        // IndexedDB-required and excluded from the localStorage mirror.
+        assert!(is_wasm_indexeddb_required_secret_key(
+            PENDING_LOGOUT_SECRET_KEY
+        ));
+        assert!(is_wasm_no_localstorage_mirror_key(PENDING_LOGOUT_SECRET_KEY));
+        assert!(is_wasm_no_localstorage_mirror_key(SIGNING_SEED_KEY));
+        assert!(!is_wasm_no_localstorage_mirror_key(
+            "coauth.refresh_token.did:example:alice"
         ));
 
         assert!(!is_wasm_indexeddb_required_secret_key(

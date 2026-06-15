@@ -30,8 +30,10 @@
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Secure-key-store key for the journalled logout intent.
-const PENDING_LOGOUT_STORAGE_KEY: &str = "cokret.pending_logout.v1";
+/// Secure-key-store key for the journalled logout intent. Defined in
+/// `secure_key_store` so its seed-grade (IndexedDB-only, no localStorage
+/// mirror) classification stays in lockstep with the key string.
+use crate::secure_key_store::PENDING_LOGOUT_SECRET_KEY as PENDING_LOGOUT_STORAGE_KEY;
 
 /// How long a pending-logout record stays actionable. Past this we drop it
 /// without further retries: the session grant's own TTL (8h, see
