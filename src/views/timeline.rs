@@ -8,7 +8,6 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
-use crate::crypto::compose_local_encrypted_message;
 use crate::local_state::{LocalStateStore, ReadMarkerRecord};
 use crate::media::{hash_matches, media_type_preview_policy, sha256_hex};
 use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
@@ -344,6 +343,193 @@ pub(crate) fn message_create_operation(
 // YOU-05-009: the main-strand id derivation is a protocol mapping rule; the
 // single authoritative copy lives in `crate::local_state`.
 use crate::local_state::default_strand_id_for_realm;
+
+/// Inputs for an encrypted Timeline send. Bundled into a struct so the
+/// `onkeydown` / Send-button handlers can hand off to one shared entrypoint
+/// without a 13-argument call.
+struct TimelineEncryptedSend {
+    timeline: Signal<Vec<TimelineEvent>>,
+    state_store: Signal<LocalStateStore>,
+    write_status: Signal<String>,
+    frontier_state: Signal<String>,
+    base_url: String,
+    api_token: String,
+    wait_for: Option<String>,
+    realm: String,
+    actor: String,
+    device: String,
+    body: String,
+    reply_to: Option<String>,
+    thread_id: Option<String>,
+}
+
+/// Encrypted Timeline send: drives the shared MLS pipeline
+/// (`crate::views::secure_send`) the same way Chat's "Send Secure" does, then
+/// renders an optimistic `TimelineEvent` and reconciles pending→ack/fail.
+///
+/// Honest fail-closed: when the Realm has no synced MLS group / seal (so
+/// `build_secure_send` returns `Err`), this sets a clear `write_status` and
+/// returns `false` WITHOUT pushing any event — no fake "encrypted …" notice,
+/// no plaintext fallback. Returns `true` once the encrypted message is
+/// optimistically queued (the caller then clears the composer).
+fn send_timeline_encrypted_message(input: TimelineEncryptedSend) -> bool {
+    let TimelineEncryptedSend {
+        mut timeline,
+        state_store,
+        mut write_status,
+        mut frontier_state,
+        base_url,
+        api_token,
+        wait_for,
+        realm,
+        actor,
+        device,
+        body,
+        reply_to,
+        thread_id,
+    } = input;
+
+    // P1: encrypt the canonical Content Block JSON (`ck.content.text`), NOT the
+    // bare body bytes — matches Chat so strict receivers parse the decrypted
+    // payload as `application/vnd.cokret.message+json`.
+    let content_value = match sdk_payload_value(
+        cokret_sdk::ContentBlock::text(&body).to_value(),
+        "timeline encrypted content block serialize",
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            write_status.set(format!("encrypt failed: could not encode content: {err:#}"));
+            return false;
+        }
+    };
+    let content_bytes = match serde_json::to_vec(&content_value) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            write_status.set(format!("encrypt failed: could not encode content: {err}"));
+            return false;
+        }
+    };
+
+    let strand_id = default_strand_id_for_realm(&realm);
+    let message_id = format!("ck:message:{}", uuid_v7());
+    let seal_view = state_store.read().seal_view_for_realm(&realm);
+    let build = match crate::views::secure_send::build_secure_send(
+        state_store,
+        &seal_view,
+        &realm,
+        &actor,
+        &device,
+        &strand_id,
+        &message_id,
+        reply_to.as_deref(),
+        &content_bytes,
+    ) {
+        Ok(build) => build,
+        Err(_) => {
+            // Honest fail-closed: the Realm's MLS group / seal is not available
+            // on this device yet. Do not push a fake notice or fall back to
+            // plaintext — surface the boundary and keep the draft.
+            write_status.set(
+                "encrypted send unavailable: this Realm's MLS group has not synced yet — cannot encrypt"
+                    .to_owned(),
+            );
+            return false;
+        }
+    };
+
+    // Optimistic encrypted event: body is shown live this session; on reload
+    // the author-owned sidecar (saved on accept below) carries the plaintext.
+    let local_event_id = message_id.clone();
+    let optimistic = TimelineEvent {
+        realm_id: Some(realm.clone()),
+        id: local_event_id.clone(),
+        sender: actor.clone(),
+        sender_display: "you".to_owned(),
+        body: body.clone(),
+        timestamp: Utc::now().to_rfc3339(),
+        reply_to: reply_to.clone(),
+        thread_id: thread_id.clone(),
+        pending: true,
+        encrypted_payload: Some(build.encrypted_content.clone()),
+        ..TimelineEvent::default()
+    };
+    timeline.write().push(optimistic);
+    write_status.set("encrypting…".to_owned());
+
+    // Capture the message op id before the build moves into the submitter; the
+    // optimistic event's ack records it as its `operation_id` (fact summary).
+    let msg_op_id = build.message_envelope.local_operation_id().to_owned();
+
+    spawn(async move {
+        let Ok(api) = authed_api_with_sync(&base_url, api_token.clone(), wait_for) else {
+            if let Some(found) = timeline
+                .write()
+                .iter_mut()
+                .find(|candidate| candidate.id == local_event_id)
+            {
+                found.pending = false;
+                found.failed = true;
+                found.error = Some("encrypted send failed: could not start session".to_owned());
+            }
+            write_status.set("encrypted send failed: could not start session".to_owned());
+            return;
+        };
+        // Author-owned sidecar key (mirrors Chat): persist the plaintext so a
+        // reload / new device can render the author's own (otherwise
+        // undecryptable) encrypted message; this shares the
+        // `mls_private_plaintext` map the cross-device backup snapshots.
+        let sidecar_realm = realm.clone();
+        let sidecar_strand = strand_id.clone();
+        let sidecar_field = format!("message:{message_id}");
+        let sidecar_body = body.clone();
+        let mut store = state_store;
+        let outcome = crate::views::secure_send::submit_secure_send(
+            &api,
+            state_store,
+            build,
+            &realm,
+            &device,
+            base_url.clone(),
+            api_token.clone(),
+            actor.clone(),
+        )
+        .await;
+        match outcome {
+            crate::views::secure_send::SecureSendOutcome::Sent { event_id, .. } => {
+                store.write().save_private_plaintext(
+                    &sidecar_realm,
+                    &sidecar_strand,
+                    &sidecar_field,
+                    &sidecar_body,
+                );
+                if let Some(found) = timeline
+                    .write()
+                    .iter_mut()
+                    .find(|candidate| candidate.id == local_event_id)
+                {
+                    found.apply_send_ack(event_id.clone(), msg_op_id.clone());
+                }
+                frontier_state.set(event_id);
+                write_status.set("encrypted message sent".to_owned());
+            }
+            crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
+            | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
+                if let Some(found) = timeline
+                    .write()
+                    .iter_mut()
+                    .find(|candidate| candidate.id == local_event_id)
+                {
+                    found.pending = false;
+                    found.failed = true;
+                    found.error = Some(message.clone());
+                }
+                write_status.set(message);
+            }
+        }
+    });
+
+    true
+}
 
 fn message_revise_operation(
     realm_id: &str,
@@ -1635,33 +1821,33 @@ pub fn TimelinePanel(
                         let incident_priority_for_send =
                             timeline_incident_priority_for_keydown.clone();
                         if encrypt_toggle() {
-                            match compose_local_encrypted_message(
-                                &account_did_key,
-                                &device_id_key,
-                                &realm_for_encrypt,
-                                "ck:message:local-compose",
-                                &body,
-                            ) {
-                                Ok(message) => {
-                                    timeline.write().push(TimelineEvent::system_notice(
-                                        format!("local-encrypted-{}", uuid_v7()),
-                                        "local",
-                                        format!(
-                                            "encrypted {} epoch {} digest {}",
-                                            message.payload.scheme.as_str(),
-                                            message.payload.epoch,
-                                            message.payload.payload_digest
-                                        ),
-                                    ));
-                                }
-                                Err(error) => {
-                                    timeline.write().push(TimelineEvent::system_notice(
-                                        format!("encrypt-error-{}", uuid_v7()),
-                                        "local",
-                                        format!("encryption failed: {error}"),
-                                    ));
-                                }
+                            let queued = send_timeline_encrypted_message(
+                                TimelineEncryptedSend {
+                                    timeline,
+                                    state_store,
+                                    write_status,
+                                    frontier_state,
+                                    base_url: base_url_sig(),
+                                    api_token: token(),
+                                    wait_for: active_sync_token(sync_cursor()),
+                                    realm: realm_for_encrypt.clone(),
+                                    actor: account_did_key.clone(),
+                                    device: device_id_key.clone(),
+                                    body: body.clone(),
+                                    reply_to: reply_target.clone(),
+                                    thread_id: thread_id.clone(),
+                                },
+                            );
+                            // Honest fail-closed: only clear the composer when the
+                            // encrypted send was actually queued. On a fail-closed
+                            // abort (no MLS group / seal) we keep the draft so the
+                            // user can retry once the group syncs.
+                            if queued {
+                                draft.set(String::new());
+                                state_store.write().save_draft(realm_for_draft, String::new());
+                                reply_to_index.set(None);
                             }
+                            return;
                         } else {
                             let event_id = format!("ev:local:{}", uuid_v7());
                             timeline.write().push(TimelineEvent {
@@ -1921,34 +2107,30 @@ pub fn TimelinePanel(
                             let incident_priority_for_send =
                                 timeline_incident_priority_for_button.clone();
                             if encrypt_toggle() {
-                                match compose_local_encrypted_message(
-                                    &ac,
-                                    &dc,
-                                    &realm_for_encrypt,
-                                    "ck:message:local-compose",
-                                    &body,
-                                ) {
-                                    Ok(message) => {
-                                        timeline.write().push(TimelineEvent::system_notice(
-                                            format!("local-encrypted-{}", uuid_v7()),
-                                            "local",
-                                            format!(
-                                                "encrypted {} epoch {} digest {}",
-                                                message.payload.scheme.as_str(),
-                                                message.payload.epoch,
-                                                message.payload.payload_digest
-                                            ),
-                                        ));
-                                        crypto_state.set(format!(
-                                            "encrypted local payload for {}",
-                                            message.payload.group_id
-                                        ));
-                                        write_status.set("queued local encrypted fact".to_owned());
-                                        state_store.write().save_draft(realm_for_encrypt, "");
-                                        draft.set(String::new());
-                                        reply_to_index.set(None);
-                                    }
-                                    Err(error) => crypto_state.set(format!("encrypt failed: {error}")),
+                                let queued = send_timeline_encrypted_message(
+                                    TimelineEncryptedSend {
+                                        timeline,
+                                        state_store,
+                                        write_status,
+                                        frontier_state,
+                                        base_url: base_url_sig(),
+                                        api_token: token(),
+                                        wait_for: active_sync_token(sync_cursor()),
+                                        realm: realm_for_encrypt.clone(),
+                                        actor: ac.clone(),
+                                        device: dc.clone(),
+                                        body: body.clone(),
+                                        reply_to: reply_target.clone(),
+                                        thread_id: thread_id.clone(),
+                                    },
+                                );
+                                // Honest fail-closed: keep the draft when the
+                                // encrypted send could not be queued (no MLS
+                                // group / seal for this Realm yet).
+                                if queued {
+                                    state_store.write().save_draft(realm_for_draft, "");
+                                    draft.set(String::new());
+                                    reply_to_index.set(None);
                                 }
                             } else {
                                 let local_event_id = format!("local-event-{}", uuid_v7());

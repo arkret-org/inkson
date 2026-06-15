@@ -21,12 +21,11 @@ use crate::views::recovery::RecoveryKeyBackupOutcome;
 /// is an authorized, verified key-management device for the account. So we:
 ///
 /// 1. generate the 24 words **in memory only** — nothing persisted, nothing shown;
-/// 2. attempt the server backup (`upload_recovery_key_account_backup`, which now
-///    persists local metadata ONLY on success);
+/// 2. attempt the server backup (`upload_recovery_key_account_backup`, which now persists local
+///    metadata ONLY on success);
 /// 3. reveal the words and mark recovery configured **only** on `Established`;
-/// 4. on `DeviceNotAuthorized` discard the key and route the user to authorize
-///    this device / restore with their existing Recovery Key — never leave a
-///    divergent root behind.
+/// 4. on `DeviceNotAuthorized` discard the key and route the user to authorize this device /
+///    restore with their existing Recovery Key — never leave a divergent root behind.
 fn begin_recovery_key_setup(
     base_url: Signal<String>,
     token: Signal<String>,
@@ -53,9 +52,7 @@ fn begin_recovery_key_setup(
     copied.set(false);
     device_unauthorized.set(false);
     generated_recovery_key.set(String::new());
-    status.set(
-        "Authorizing this device and publishing the recovery backup…".to_owned(),
-    );
+    status.set("Authorizing this device and publishing the recovery backup…".to_owned());
     // Reveal/persist gating happens entirely on the server outcome. Built within
     // component scope (this fn is only ever called from a use_effect / onclick),
     // so EventHandler::new is valid here.

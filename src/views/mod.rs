@@ -78,6 +78,10 @@ pub mod onboarding;
 pub mod quarantine;
 pub mod realm_admin;
 pub mod recovery;
+/// Shared E2EE "Send Secure" pipeline (MLS encrypt → forced commit →
+/// encrypted `ck.message.create`), used by both `chat` and `timeline` so the
+/// MLS core + persist-on-accept ordering stay identical across views.
+pub mod secure_send;
 /// `views::settings` is a module directory. The aggregate entry lives in
 /// `settings/mod.rs`; per-card panels live in sibling files. See the
 /// settings/mod.rs head comment for the territory split (G3.Y1 vs G3.Y3).

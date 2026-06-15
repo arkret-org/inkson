@@ -2,13 +2,13 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use crate::api::CokretApi;
-use crate::coauth::CoauthSessionGrantInfo;
 use crate::coauth::{
-    CoauthApi, authorize_url_with_forced_reauthentication, capture_current_browser_callback_url,
-    clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
-    extract_error_description_from_callback, extract_error_from_callback,
-    extract_state_from_callback, oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url,
-    persist_oidc_scaffold, resolve_principal_auth_server, restore_oidc_scaffold,
+    CoauthApi, CoauthSessionGrantInfo, authorize_url_with_forced_reauthentication,
+    capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
+    extract_authorization_code_from_callback, extract_error_description_from_callback,
+    extract_error_from_callback, extract_state_from_callback,
+    oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url, persist_oidc_scaffold,
+    resolve_principal_auth_server, restore_oidc_scaffold,
 };
 use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant};

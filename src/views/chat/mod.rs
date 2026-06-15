@@ -12,7 +12,7 @@ use crate::api::{
 use crate::audit::build_audit_ryw_receipt;
 use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};
-use crate::local_state::{ClientLocalState, LocalSealView, LocalStateStore, MoveSubmissionState};
+use crate::local_state::{ClientLocalState, LocalStateStore};
 use crate::models::SubmitEventResult;
 use crate::operation::{EventEnvelope, OperationBuilder, ck_ops, trim_realm_id, uuid_v7};
 use crate::routes::Route;
@@ -3924,318 +3924,45 @@ pub fn ChatPanel(
                                 };
                                 let _hlc = Hlc::now("yougen").to_string();
                                 let seal_view = state_store.read().seal_view_for_realm(&realm);
-                                let seal_ref = seal_view.move_seal_ref();
-                                // 1) MLS commit event bumps the epoch +
-                                //    records covered_seals.
-                                // Real MLS encrypt path. The shared runtime
-                                // restores the local group from this device's
-                                // secure-store-backed snapshot secret, then
-                                // persists the post-encrypt state. B3d
-                                // (schedule_hash) and B6c (member DIDs) now
-                                // read from the same group instance.
-                                let (
-                                    local_schedule_hash,
-                                    local_member_dids,
-                                    encrypted_message,
-                                    real_commit_envelope,
-                                    new_mls_snapshot,
-                                ): LocalMlsEncryptResult = run_local_mls_encrypt(
+                                // Shared MLS core: encrypt → forced ck.mls.commit
+                                // envelope (governance / prev→post epoch /
+                                // policy_root / membership_frontier) → spec
+                                // `ck.schema.encrypted_envelope.v1` wrap →
+                                // ck.message.create payload. Identical to the
+                                // Timeline encrypted path (see
+                                // `crate::views::secure_send`).
+                                let secure_build = match crate::views::secure_send::build_secure_send(
                                     state_store,
+                                    &seal_view,
                                     &realm,
                                     &actor,
                                     &did,
+                                    &strand_id,
+                                    &message_id,
+                                    reply_to.as_deref(),
                                     &secure_content_bytes,
-                                );
-
-                                let Some((encrypted_payload, envelope_aad)) = encrypted_message else {
-                                    fail_optimistic_chat_send(
-                                        messages,
-                                        chat_draft,
-                                        status_msg,
-                                        &message_id,
-                                        &body,
-                                        "Send Secure could not produce an MLS encrypted payload".to_owned(),
-                                    );
-                                    return;
-                                };
-                                let Some(local_schedule_hash) = local_schedule_hash.clone() else {
-                                    fail_optimistic_chat_send(
-                                        messages,
-                                        chat_draft,
-                                        status_msg,
-                                        &message_id,
-                                        &body,
-                                        "Send Secure could not derive the MLS key schedule hash".to_owned(),
-                                    );
-                                    return;
-                                };
-                                if local_member_dids.is_empty() {
-                                    fail_optimistic_chat_send(
-                                        messages,
-                                        chat_draft,
-                                        status_msg,
-                                        &message_id,
-                                        &body,
-                                        "Send Secure could not resolve MLS group members".to_owned(),
-                                    );
-                                    return;
-                                }
-                                let base_group_state_ref =
-                                    chat_mls_base_epoch_ref(&seal_view, &realm);
-                                let (group_state_ref, commit_envelope) =
-                                    if let Some(real_commit_envelope) =
-                                        real_commit_envelope.as_ref()
-                                    {
-                                        let mls_commit_epoch = real_commit_envelope.epoch;
-                                        // base_epoch MUST be the SDK group's PRE-commit
-                                        // epoch so next_epoch == base_epoch + 1 holds by
-                                        // construction. `real_commit_envelope.epoch` is the
-                                        // POST-commit epoch (self_update_commit merges the
-                                        // pending commit).
-                                        let prev_epoch = mls_commit_epoch.saturating_sub(1);
-                                        let commit_event_id =
-                                            format!("ck:event:{}", uuid_v7());
-                                        let commit_event_id_typed =
-                                            match cokret_sdk::EventId::new(
-                                                commit_event_id.clone(),
-                                            ) {
-                                                Ok(value) => value,
-                                                Err(err) => {
-                                                    fail_optimistic_chat_send(
-                                                        messages,
-                                                        chat_draft,
-                                                        status_msg,
-                                                        &message_id,
-                                                        &body,
-                                                        format!(
-                                                            "MLS commit event id invalid: {err:?}"
-                                                        ),
-                                                    );
-                                                    return;
-                                                }
-                                            };
-                                        let realm_id =
-                                            match cokret_sdk::RealmId::new(trim_realm_id(&realm)) {
-                                                Ok(value) => value,
-                                                Err(err) => {
-                                                    fail_optimistic_chat_send(
-                                                        messages,
-                                                        chat_draft,
-                                                        status_msg,
-                                                        &message_id,
-                                                        &body,
-                                                        format!(
-                                                            "MLS commit Realm id invalid: {err:?}"
-                                                        ),
-                                                    );
-                                                    return;
-                                                }
-                                            };
-                                        let policy_root = match chat_mls_policy_root(
-                                            &seal_view,
-                                            &realm,
-                                            &local_schedule_hash,
-                                        ) {
-                                            Ok(value) => value,
-                                            Err(err) => {
-                                                fail_optimistic_chat_send(
-                                                    messages,
-                                                    chat_draft,
-                                                    status_msg,
-                                                    &message_id,
-                                                    &body,
-                                                    err,
-                                                );
-                                                return;
-                                            }
-                                        };
-                                        let governance_binding =
-                                            match cokret_sdk::MlsGovernanceBindingPayload::realm(
-                                                realm_id,
-                                                real_commit_envelope.group_id.clone(),
-                                                prev_epoch,
-                                                mls_commit_epoch,
-                                                chat_mls_membership_frontier(
-                                                    &seal_view,
-                                                    &commit_event_id_typed,
-                                                ),
-                                                policy_root,
-                                            ) {
-                                                Ok(value) => value,
-                                                Err(err) => {
-                                                    fail_optimistic_chat_send(
-                                                        messages,
-                                                        chat_draft,
-                                                        status_msg,
-                                                        &message_id,
-                                                        &body,
-                                                        format!(
-                                                            "MLS governance binding failed: {err}"
-                                                        ),
-                                                    );
-                                                    return;
-                                                }
-                                            };
-                                        let mls_commit_payload =
-                                            match cokret_sdk::MlsCommitPayload::new(
-                                                real_commit_envelope.group_id.clone(),
-                                                prev_epoch,
-                                                base_group_state_ref.clone(),
-                                                Vec::new(),
-                                                mls_commit_epoch,
-                                                real_commit_envelope.commit_digest.clone(),
-                                                governance_binding,
-                                            ) {
-                                                Ok(value) => value,
-                                                Err(err) => {
-                                                    fail_optimistic_chat_send(
-                                                        messages,
-                                                        chat_draft,
-                                                        status_msg,
-                                                        &message_id,
-                                                        &body,
-                                                        format!("MLS commit payload failed: {err}"),
-                                                    );
-                                                    return;
-                                                }
-                                            };
-                                        // Spec-canonical write path: ck.mls.commit event via ck.events.submit.
-                                        let commit_builder =
-                                            match crate::operation::ck_ops::mls_commit_with_governance(
-                                                &realm,
-                                                &actor,
-                                                &mls_commit_payload,
-                                            ) {
-                                                Ok(builder) => builder,
-                                                Err(err) => {
-                                                    fail_optimistic_chat_send(
-                                                        messages,
-                                                        chat_draft,
-                                                        status_msg,
-                                                        &message_id,
-                                                        &body,
-                                                        format!("MLS commit payload failed: {err}"),
-                                                    );
-                                                    return;
-                                                }
-                                            };
-                                        let mut commit_envelope =
-                                            commit_builder.build("yougen");
-                                        commit_envelope.event_id = commit_event_id.clone();
-                                        (commit_event_id, Some(commit_envelope))
-                                    } else {
-                                        (base_group_state_ref, None)
-                                    };
-                                // Wrap the MLS payload in the spec-canonical
-                                // `ck.schema.encrypted_envelope.v1` wire shape,
-                                // binding key_ref.group_state_ref to the current
-                                // MLS group state. Ordinary application messages
-                                // ride the current epoch; only forced epoch
-                                // advances produce a fresh ck.mls.commit event.
-                                let encrypted_envelope =
-                                    match cokret_sdk::EncryptedEnvelopeV1::from_payload(
-                                        &encrypted_payload,
-                                        envelope_aad,
-                                        cokret_sdk::AadVisibility::Hidden,
-                                        &group_state_ref,
-                                    ) {
-                                        Ok(value) => value,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!(
-                                                    "MLS encrypted envelope build failed: {err}"
-                                                ),
-                                            );
-                                            return;
-                                        }
-                                    };
-                                let encrypted_payload_json =
-                                    match serde_json::to_value(&encrypted_envelope) {
-                                        Ok(value) => value,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!(
-                                                    "MLS encrypted envelope encode failed: {err}"
-                                                ),
-                                            );
-                                            return;
-                                        }
-                                    };
-                                let typed_strand_id = match strand_id_value(&strand_id) {
-                                    Ok(value) => value,
-                                    Err(err) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            format!("Send Secure strand id invalid: {err:#}"),
-                                        );
-                                        return;
-                                    }
-                                };
-                                let mut message_payload =
-                                    cokret_sdk::MessageCreatePayload::with_encrypted_content(
-                                        typed_strand_id,
-                                        "discussion",
-                                        encrypted_payload_json,
-                                    )
-                                    .with_message_id(message_id.clone());
-                                // P2: carry the reply target as wire metadata so
-                                // reply threading / routing matches the plaintext
-                                // path (the readable body stays inside the
-                                // encrypted Content Block).
-                                if let Some(reply_to) = reply_to.as_deref() {
-                                    message_payload = message_payload.with_reply_to(reply_to);
-                                }
-                                let msg_payload_value = match sdk_payload_value(
-                                    message_payload.to_value(),
-                                    "chat encrypted ck.message.create payload serialize",
                                 ) {
-                                    Ok(value) => value,
-                                    Err(err) => {
+                                    Ok(build) => build,
+                                    Err(message) => {
                                         fail_optimistic_chat_send(
                                             messages,
                                             chat_draft,
                                             status_msg,
                                             &message_id,
                                             &body,
-                                            format!(
-                                                "Send Secure payload encode failed: {err:#}"
-                                            ),
+                                            message,
                                         );
                                         return;
                                     }
                                 };
-                                let msg_op = OperationBuilder::new(
-                                    &realm,
-                                    &actor,
-                                    "ck.message.create",
-                                )
-                                .body(msg_payload_value)
-                                .build("yougen");
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
-                                let seal_for_record = seal_ref.clone();
                                 let actor_for_audit = actor.clone();
-                                let audit_delivered: Vec<String> = local_member_dids
+                                let audit_delivered: Vec<String> = secure_build
+                                    .member_dids
                                     .iter()
                                     .map(|did| did.as_str().to_owned())
                                     .collect();
-                                let commit_op_id = commit_envelope
-                                    .as_ref()
-                                    .map(|commit| commit.local_operation_id().to_owned());
                                 let device_for_sidecar_backup = did.clone();
                                 // X9: capture identifiers needed by the
                                 // encrypted Ok(resp) arm to (A) clear the
@@ -4264,289 +3991,177 @@ pub fn ChatPanel(
                                 // losing it.
                                 let body_for_restore = body.clone();
                                 let message_id_for_failure = message_id.clone();
+                                // Capture the message op id BEFORE the build is
+                                // moved into the shared submitter — the encrypted
+                                // raw_operation record (X10.6 sidecar re-key) is
+                                // keyed on it.
+                                let msg_local_op_id =
+                                    secure_build.message_envelope.local_operation_id().to_owned();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                        if let Some(commit_envelope) = commit_envelope {
-                                            // Submit a forced MLS commit first; if it fails,
-                                            // abort message send (covered_seals won't bind).
-                                            match api.submit_event_envelope(&commit_envelope).await {
-                                                Ok(resp) => {
-                                                    // X14 — persist-on-accept: the
-                                                    // server accepted the commit, so
-                                                    // NOW advance the local snapshot
-                                                    // to the post-commit epoch. On a
-                                                    // commit reject we skip this and
-                                                    // the snapshot stays at the
-                                                    // pre-commit epoch, so the next
-                                                    // Send Secure retries at the
-                                                    // correct `expected_prev_epoch`
-                                                    // instead of skewing forever.
-                                                    if let Some(snapshot) = new_mls_snapshot {
-                                                        state_store
-                                                            .write()
-                                                            .save_mls_snapshot(
-                                                                realm_for_record.clone(),
-                                                                snapshot,
-                                                            );
-                                                        // §7.10 continuous backup: the
-                                                        // commit advanced the epoch, so
-                                                        // re-upload this Realm's
-                                                        // mls_history series tail
-                                                        // (debounced; no-op until the
-                                                        // 24-word Recovery Key exists).
-                                                        crate::components::schedule_mls_history_backup_after_commit(
-                                                            base.clone(),
-                                                            token_for_backup_trigger.clone(),
-                                                            actor_for_backup_trigger.clone(),
-                                                            device_for_sidecar_backup.clone(),
-                                                            realm_for_record.clone(),
-                                                            state_store,
-                                                        );
-                                                    }
-                                                    if let Some(commit_op_id) = commit_op_id {
-                                                        state_store.write().record_move_submission_with_event_id(
-                                                            commit_op_id,
-                                                            Some(resp.event_id.clone()),
-                                                            realm_for_record.clone(),
-                                                            "mls_commit".to_owned(),
-                                                            MoveSubmissionState::from_submit_state(
-                                                                "accepted", None,
-                                                            ),
-                                                            None,
-                                                            Some(seal_for_record.clone()),
-                                                        );
-                                                    }
-                                                }
-                                                Err(err) => {
-                                                    let message = format!(
-                                                        "MLS commit event submit failed: {err}"
-                                                    );
-                                                    // P2: reconcile the optimistic
-                                                    // bubble so it doesn't spin
-                                                    // forever, and keep the draft.
-                                                    if let Some(found) = messages
-                                                        .write()
-                                                        .iter_mut()
-                                                        .find(|candidate| {
-                                                            candidate.id == message_id_for_failure
-                                                        })
-                                                    {
-                                                        found.pending = false;
-                                                        found.failed = true;
-                                                        found.error = Some(message.clone());
-                                                    }
-                                                    if chat_draft().trim().is_empty() {
-                                                        chat_draft.set(body_for_restore.clone());
-                                                    }
-                                                    status_msg.set(message);
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                        match api.submit_event_envelope(&msg_op).await {
-                                            Ok(resp) => {
-                                                {
-                                                    let mut store = state_store.write();
-                                                    // X10.6: persist the message
-                                                    // identity (message_id + strand_id +
-                                                    // actor), NOT the plaintext body,
-                                                    // into the raw_operation record.
-                                                    // The encrypted send originally
-                                                    // stored only {event_id, kind,
-                                                    // status}, so the tab-switch / reload
-                                                    // rebuild — which re-derives the
-                                                    // discussion from raw_operations via
-                                                    // `chat_messages_from_local_state_with_sidecar`
-                                                    // — could NOT reconstruct the sidecar
-                                                    // key `message:{message_id}` under
-                                                    // `strand_id`. The sidecar lookup in
-                                                    // `chat_message_from_event_with_sidecar`
-                                                    // bails (`message_id`/`strand_id`
-                                                    // missing → `None`), then there is no
-                                                    // plaintext body → the author's own
-                                                    // (undecryptable) message is dropped
-                                                    // → the Discussion goes blank on the
-                                                    // next render. We deliberately keep
-                                                    // the body OUT of raw_operations (it
-                                                    // belongs only in the account-private
-                                                    // `mls_private_plaintext` sidecar
-                                                    // saved just below); persisting the
-                                                    // identity is enough for the rebuild
-                                                    // to re-key the sidecar and restore
-                                                    // the body. `encrypted_content` is a
-                                                    // marker so the reader still treats
-                                                    // it as E2EE when no sidecar exists
-                                                    // (e.g. another device/member).
-                                                    store.append_raw_operation(
-                                                        msg_op.local_operation_id().to_owned(),
-                                                        Some(realm_for_record.clone()),
-                                                        json!({
-                                                            "event_id": resp.event_id.clone(),
-                                                            "kind": "ck.message.create",
-                                                            "actor_id": actor_for_record.clone(),
-                                                            "strand_id": strand_id_for_record.clone(),
-                                                            "message_id": message_id_for_record.clone(),
-                                                            "encrypted_content": true,
-                                                            "status": resp.status.clone(),
-                                                        }),
-                                                    );
-                                                    // BUG B (X9): persist the message
-                                                    // plaintext into the author-owned
-                                                    // sidecar so reload / a new device can
-                                                    // render the author's own encrypted
-                                                    // messages (OpenMLS forbids an author
-                                                    // from decrypting their own ciphertext).
-                                                    // Keyed by `message:{message_id}` under
-                                                    // the discussion strand, sharing the
-                                                    // `mls_private_plaintext` map that the
-                                                    // X5.3 cross-device backup already
-                                                    // snapshots — no extra backup wiring.
-                                                    store.save_private_plaintext(
-                                                        &realm_for_record,
-                                                        &strand_id_for_sidecar,
-                                                        &format!("message:{message_id_for_sidecar}"),
-                                                        &body_for_sidecar,
-                                                    );
-                                                }
-                                                // BUG A (X9): clear the optimistic bubble's
-                                                // `pending` spinner now that the server
-                                                // accepted the encrypted message (mirrors
-                                                // the plaintext path). Reconcile the local
-                                                // id to the server event_id so the synced
-                                                // copy dedups against this echo.
-                                                if let Some(found) = messages
-                                                    .write()
-                                                    .iter_mut()
-                                                    .find(|candidate| candidate.id == message_id_for_lookup)
-                                                {
-                                                    found.id = resp.event_id.clone();
-                                                    found.pending = false;
-                                                    found.failed = false;
-                                                    found.error = None;
-                                                }
-                                                frontier_state.set(resp.event_id.clone());
-                                                status_msg.set("Encrypted message sent".to_owned());
-                                                crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
-                                                    base_for_backup_trigger.clone(),
-                                                    token_for_backup_trigger.clone(),
-                                                    actor_for_backup_trigger.clone(),
-                                                    device_for_sidecar_backup.clone(),
-                                                    state_store,
-                                                );
-
-                                            // X11.2 — first-write trigger.
-                                            // After this encrypted send landed,
-                                            // if the server holds no
-                                            // `mls_account_secret` backup yet,
-                                            // flip `needs_mls_backup` on
-                                            // directly so the prompt surfaces
-                                            // promptly (not gated on the boot
-                                            // detection effect). Best-effort +
-                                            // non-blocking.
-                                            if let Some(signal) = backup_trigger_signal {
-                                                crate::components::maybe_flag_mls_backup_after_encrypted_write(
-                                                    base_for_backup_trigger.clone(),
-                                                    token_for_backup_trigger.clone(),
-                                                    actor_for_backup_trigger.clone(),
-                                                    signal,
-                                                )
-                                                .await;
-                                            }
-
-                                            // Disclosed-audit hardening profile
-                                            // (`ck.profile.disclosed_audit.e2ee.v1`):
-                                            // emit a per-actor read-your-write
-                                            // receipt right after a successful
-                                            // E2EE commit. The receipt is
-                                            // actor-private (only the sender
-                                            // can audit their own writes), so
-                                            // this is fire-and-forget — if the
-                                            // server isn't running the
-                                            // disclosed-audit profile, it will
-                                            // store the event as a regular
-                                            // operation and the audit timeline
-                                            // can still surface it.
-                                            //
-                                            // B6b: at minimum surface the
-                                            // local device DID — that's the
-                                            // device we provably reached
-                                            // (it sent the commit). A real
-                                            // MLS commit yields the full
-                                            // post-commit member device set
-                                            // through `MlsAddMemberResult`
-                                            // / `MlsRemoveMemberResult`; the
-                                            // executor will replace this
-                                            // single-element fallback when
-                                            // the group state path lands.
-                                            let audit_op = build_audit_ryw_receipt(
-                                                &realm_for_record,
-                                                &actor_for_audit,
-                                                &resp.event_id,
-                                                audit_delivered.clone(),
-                                            )
-                                            .build("yougen");
-                                            // YOU-02-007: the receipt is
-                                            // best-effort for delivery, but a
-                                            // silent failure left a gap in the
-                                            // disclosed-audit chain with no
-                                            // trace. Log + surface it so the
-                                            // sender knows the audit row is
-                                            // missing (message itself sent).
-                                            if let Err(err) =
-                                                api.submit_event_envelope(&audit_op).await
-                                            {
-                                                tracing::warn!(
-                                                    "audit RYW receipt for {} failed: {err:#}",
-                                                    resp.event_id
-                                                );
-                                                status_msg.set(format!(
-                                                    "Message sent; audit receipt failed: {err}"
-                                                ));
-                                            }
-                                        }
-                                        Err(err) => {
-                                            let message =
-                                                format!("Message send failed: {err}");
-                                            // P2: mark the optimistic bubble
-                                            // failed (was left spinning) and
-                                            // keep the draft recoverable.
-                                            if let Some(found) = messages
-                                                .write()
-                                                .iter_mut()
-                                                .find(|candidate| {
-                                                    candidate.id == message_id_for_failure
-                                                })
-                                            {
-                                                found.pending = false;
-                                                found.failed = true;
-                                                found.error = Some(message.clone());
-                                            }
-                                            if chat_draft().trim().is_empty() {
-                                                chat_draft.set(body_for_restore.clone());
-                                            }
-                                            status_msg.set(message);
-                                        }
-                                    }
-                                    } else {
+                                    let Ok(api) = authed_api_with_sync(&base, api_token.clone(), wait_for) else {
                                         // P2: auth/API init failed — without this
                                         // arm the optimistic bubble spun forever
                                         // and no status was shown.
-                                        let message = "Send Secure failed: could not start an authenticated session".to_owned();
-                                        if let Some(found) = messages
-                                            .write()
-                                            .iter_mut()
-                                            .find(|candidate| {
-                                                candidate.id == message_id_for_failure
-                                            })
-                                        {
-                                            found.pending = false;
-                                            found.failed = true;
-                                            found.error = Some(message.clone());
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id_for_failure,
+                                            &body_for_restore,
+                                            "Send Secure failed: could not start an authenticated session".to_owned(),
+                                        );
+                                        return;
+                                    };
+                                    // Shared submit: forced ck.mls.commit first
+                                    // (persist-on-accept snapshot + §7.10 backup
+                                    // schedule + move record), then the encrypted
+                                    // ck.message.create. Identical to Timeline.
+                                    let outcome = crate::views::secure_send::submit_secure_send(
+                                        &api,
+                                        state_store,
+                                        secure_build,
+                                        &realm_for_record,
+                                        &device_for_sidecar_backup,
+                                        base.clone(),
+                                        token_for_backup_trigger.clone(),
+                                        actor_for_backup_trigger.clone(),
+                                    )
+                                    .await;
+                                    let resp = match outcome {
+                                        crate::views::secure_send::SecureSendOutcome::Sent {
+                                            event_id,
+                                            status,
+                                        } => (event_id, status),
+                                        crate::views::secure_send::SecureSendOutcome::CommitFailed {
+                                            message,
                                         }
-                                        if chat_draft().trim().is_empty() {
-                                            chat_draft.set(body_for_restore.clone());
+                                        | crate::views::secure_send::SecureSendOutcome::MessageFailed {
+                                            message,
+                                        } => {
+                                            // P2: reconcile the optimistic bubble so
+                                            // it doesn't spin forever, and keep the
+                                            // draft recoverable.
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id_for_failure,
+                                                &body_for_restore,
+                                                message,
+                                            );
+                                            return;
                                         }
-                                        status_msg.set(message);
+                                    };
+                                    let (resp_event_id, resp_status) = resp;
+                                    {
+                                        let mut store = state_store.write();
+                                        // X10.6: persist the message identity
+                                        // (message_id + strand_id + actor), NOT the
+                                        // plaintext body, into the raw_operation
+                                        // record so the tab-switch / reload rebuild
+                                        // can reconstruct the sidecar key
+                                        // `message:{message_id}` under `strand_id`.
+                                        // The body lives only in the account-private
+                                        // `mls_private_plaintext` sidecar saved just
+                                        // below. `encrypted_content` marks the row as
+                                        // E2EE for readers with no sidecar (another
+                                        // device / member).
+                                        store.append_raw_operation(
+                                            msg_local_op_id.clone(),
+                                            Some(realm_for_record.clone()),
+                                            json!({
+                                                "event_id": resp_event_id.clone(),
+                                                "kind": "ck.message.create",
+                                                "actor_id": actor_for_record.clone(),
+                                                "strand_id": strand_id_for_record.clone(),
+                                                "message_id": message_id_for_record.clone(),
+                                                "encrypted_content": true,
+                                                "status": resp_status.clone(),
+                                            }),
+                                        );
+                                        // BUG B (X9): persist the message plaintext
+                                        // into the author-owned sidecar so reload / a
+                                        // new device can render the author's own
+                                        // encrypted messages (OpenMLS forbids an
+                                        // author from decrypting their own
+                                        // ciphertext). Keyed by `message:{message_id}`
+                                        // under the discussion strand, sharing the
+                                        // `mls_private_plaintext` map that the X5.3
+                                        // cross-device backup already snapshots.
+                                        store.save_private_plaintext(
+                                            &realm_for_record,
+                                            &strand_id_for_sidecar,
+                                            &format!("message:{message_id_for_sidecar}"),
+                                            &body_for_sidecar,
+                                        );
+                                    }
+                                    // BUG A (X9): clear the optimistic bubble's
+                                    // `pending` spinner now that the server accepted
+                                    // the encrypted message (mirrors the plaintext
+                                    // path). Reconcile the local id to the server
+                                    // event_id so the synced copy dedups against this
+                                    // echo.
+                                    if let Some(found) = messages
+                                        .write()
+                                        .iter_mut()
+                                        .find(|candidate| candidate.id == message_id_for_lookup)
+                                    {
+                                        found.id = resp_event_id.clone();
+                                        found.pending = false;
+                                        found.failed = false;
+                                        found.error = None;
+                                    }
+                                    frontier_state.set(resp_event_id.clone());
+                                    status_msg.set("Encrypted message sent".to_owned());
+                                    crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
+                                        base_for_backup_trigger.clone(),
+                                        token_for_backup_trigger.clone(),
+                                        actor_for_backup_trigger.clone(),
+                                        device_for_sidecar_backup.clone(),
+                                        state_store,
+                                    );
+
+                                    // X11.2 — first-write trigger. After this
+                                    // encrypted send landed, if the server holds no
+                                    // `mls_account_secret` backup yet, flip
+                                    // `needs_mls_backup` on directly so the prompt
+                                    // surfaces promptly. Best-effort + non-blocking.
+                                    if let Some(signal) = backup_trigger_signal {
+                                        crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                                            base_for_backup_trigger.clone(),
+                                            token_for_backup_trigger.clone(),
+                                            actor_for_backup_trigger.clone(),
+                                            signal,
+                                        )
+                                        .await;
+                                    }
+
+                                    // Disclosed-audit hardening profile
+                                    // (`ck.profile.disclosed_audit.e2ee.v1`): emit a
+                                    // per-actor read-your-write receipt right after a
+                                    // successful E2EE commit. Actor-private +
+                                    // fire-and-forget; non-profile servers store it
+                                    // as a regular operation.
+                                    let audit_op = build_audit_ryw_receipt(
+                                        &realm_for_record,
+                                        &actor_for_audit,
+                                        &resp_event_id,
+                                        audit_delivered.clone(),
+                                    )
+                                    .build("yougen");
+                                    // YOU-02-007: surface a silent receipt failure so
+                                    // the sender knows the audit row is missing (the
+                                    // message itself sent).
+                                    if let Err(err) =
+                                        api.submit_event_envelope(&audit_op).await
+                                    {
+                                        tracing::warn!(
+                                            "audit RYW receipt for {} failed: {err:#}",
+                                            resp_event_id
+                                        );
+                                        status_msg.set(format!(
+                                            "Message sent; audit receipt failed: {err}"
+                                        ));
                                     }
                                 });
                                 });
