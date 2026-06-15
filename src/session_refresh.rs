@@ -347,7 +347,7 @@ pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
 ///
 /// On success the caller persists the rotated grant + access-token
 /// materials and bumps the in-memory token signal. On a 401 / 403 /
-/// `refresh_token_already_consumed`-style error the caller must fall
+/// `grant_already_consumed`-style error the caller must fall
 /// through to the soft-logout path (clear access token + bounce to
 /// `/login`) but keep the device DPoP key in place per the G3.Y0
 /// soft/hard split.
