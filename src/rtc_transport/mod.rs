@@ -25,6 +25,8 @@ use std::collections::BTreeSet;
 
 use crate::media::rtc::{JoinedMediaSession, RtcClientError};
 
+#[cfg(target_arch = "wasm32")]
+pub mod livekit_shim;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 #[cfg(target_arch = "wasm32")]
@@ -114,6 +116,15 @@ pub trait MediaTransport {
     /// transport's E2EE keyprovider. MUST reject any 0-length / non-32-byte
     /// key (the only valid source is [`crate::media::rtc::join_call_media`]).
     fn install_frame_key(&mut self, key: &[u8]) -> Result<(), RtcClientError>;
+
+    /// Seed the expected `ck.call.state.participants[]` SFU-local identity
+    /// set BEFORE [`Self::connect_sfu`], so the SFU's asynchronous
+    /// `ParticipantConnected` events (delivered by the LiveKit SDK on the web
+    /// backend) can be cross-checked fail-closed (MEDIA-2) against the durable
+    /// roster without a synchronous controller round-trip. Default is a no-op:
+    /// the native backend has no SFU path, and the 1:1 P2P path does not use
+    /// SFU participant events.
+    fn set_expected_participants(&mut self, _expected: &BTreeSet<String>) {}
 
     /// Connect to the SFU room described by the joined session (group
     /// calls). Drives state to [`TransportState::Connecting`].

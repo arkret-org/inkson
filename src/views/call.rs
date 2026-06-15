@@ -189,6 +189,10 @@ pub fn CallPanel(
             status.set("placing call".to_owned());
             last_error.set(String::new());
 
+            // MEDIA-2 expected roster (durable participant identities) used to
+            // cross-check the SFU's `ParticipantConnected` events fail-closed.
+            let expected = expected_participant_set(&peers, &actor);
+
             spawn(async move {
                 // 1) Invite signal opens the call (ephemeral `ck.call.signal`).
                 let invite_data = json!({ "participants": peers, "video": want_video });
@@ -245,6 +249,10 @@ pub fn CallPanel(
                         }
                         match mode {
                             CallMode::Sfu => {
+                                // MEDIA-2: seed the durable participant roster so
+                                // the LiveKit `ParticipantConnected` callback can
+                                // cross-check SFU identities fail-closed.
+                                shared.borrow_mut().set_expected_participants(&expected);
                                 if let Err(err) = shared.borrow_mut().connect_sfu(&session) {
                                     last_error.set(media_error_label(err));
                                     stage.set(CallStage::Ended);
@@ -424,6 +432,13 @@ pub fn CallPanel(
                                             )
                                         };
                                         let want_video = want_video_signal();
+                                        // MEDIA-2 expected roster from the durable
+                                        // participant projection, captured before
+                                        // the async move.
+                                        let expected: BTreeSet<String> = participants()
+                                            .iter()
+                                            .map(|p| p.actor_id.clone())
+                                            .collect();
                                         stage.set(CallStage::Connecting);
                                         status.set("answering".to_owned());
                                         spawn(async move {
@@ -456,6 +471,9 @@ pub fn CallPanel(
                                             .await
                                             {
                                                 Ok((session, shared)) => {
+                                                    shared
+                                                        .borrow_mut()
+                                                        .set_expected_participants(&expected);
                                                     let connected = install_and_capture(&shared, &session)
                                                         .and_then(|()| shared.borrow_mut().connect_sfu(&session));
                                                     match connected {
@@ -1208,6 +1226,18 @@ fn participant_list_from_input(input: &str) -> Vec<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .filter(|value| seen.insert((*value).to_owned()))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// Build the MEDIA-2 expected-participant identity set from the durable
+/// call roster (`actor` + invited `peers`). The SFU's asynchronous
+/// `ParticipantConnected` events are cross-checked fail-closed against this
+/// set before any remote stream is surfaced.
+fn expected_participant_set(peers: &[String], actor: &str) -> BTreeSet<String> {
+    std::iter::once(actor.trim())
+        .chain(peers.iter().map(|p| p.trim()))
+        .filter(|id| !id.is_empty())
         .map(ToOwned::to_owned)
         .collect()
 }
