@@ -229,8 +229,14 @@ pub struct CoauthOidcBrowserBridgeSession {
 pub struct RefreshSessionGrantOutcome {
     pub grant_id: String,
     pub grant_jwt: String,
+    /// The rotated grant binds its `session_public_key` to the SAME holder key
+    /// the proof proved possession of — i.e. the device's durable DPoP key
+    /// (the grant's `cnf.jkt`). The server therefore does NOT mint or return a
+    /// fresh session private key here; the client already holds the matching
+    /// private key (its device key) and signs the subsequent principal-server
+    /// exchange proof with it. (Contrast with first login, where the grant's
+    /// session keypair is server-generated and its private key is handed back.)
     pub session_public_key: String,
-    pub session_private_key_pem: String,
     pub expires_at: String,
     pub audience: String,
     #[serde(default)]
@@ -741,16 +747,30 @@ impl CoauthApi {
     /// The DPoP proof MUST be minted against `htu` = absolute URL of
     /// the refresh endpoint and `htm` = `"POST"`, signed by the same
     /// key whose thumbprint is bound to the prior grant's `cnf.jkt`.
+    /// Rotate a near-expiry, DPoP-bound session grant onto a fresh one without
+    /// re-running OIDC. This is the `/_cokret` protocol operation
+    /// (`gate/account/session-grants/refresh`, service-http-binding session-grants
+    /// surface): the caller presents a `DPoP` proof signed by the durable device
+    /// key bound into the grant's `cnf.jkt`, and gets back a new grant (same
+    /// subject/scope/audience, `cnf.jkt` constant, fresh expiry). The old grant
+    /// is single-use revoked server-side. This is what lets a device session
+    /// live for days while access bearers stay short.
     pub async fn refresh_session_grant(
         &self,
         grant_jwt: &str,
         audience: Option<&str>,
         dpop_proof: &str,
     ) -> anyhow::Result<RefreshSessionGrantOutcome> {
-        let _ = (grant_jwt, audience, dpop_proof);
-        anyhow::bail!(
-            "coauth session-grant refresh is not part of the Cokret spec; yougen must not call private coauth paths"
+        let mut body = json!({ "grant_jwt": grant_jwt });
+        if let Some(audience) = audience.filter(|value| !value.trim().is_empty()) {
+            body["audience"] = json!(audience);
+        }
+        self.post_json_with_dpop(
+            "_cokret/gate/account/session-grants/refresh",
+            body,
+            Some(dpop_proof),
         )
+        .await
     }
 
     pub async fn start_oidc_browser_bridge(

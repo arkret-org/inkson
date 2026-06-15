@@ -6106,6 +6106,53 @@ async fn refresh_oidc_bearer_for_server(
     ))
 }
 
+/// Rotate a near-expiry session grant onto a fresh one using the durable device
+/// key bound into the grant's `cnf.jkt` (the `/_cokret` session-grant refresh
+/// protocol op). Returns the persisted grant to store on success.
+///
+/// The rotated grant binds `session_public_key` to the device key, so the new
+/// grant's `session_private_key_pem` is the device key itself — the subsequent
+/// principal-server exchange proof is then signed with it by the existing
+/// re-exchange path, uniformly with first login.
+async fn rotate_session_grant_via_device_proof(
+    grant: &crate::local_state::PersistedSessionGrant,
+    device_handle: &crate::auth_dpop::DpopHandle,
+) -> anyhow::Result<crate::local_state::PersistedSessionGrant> {
+    let auth_server_url =
+        crate::coauth::resolve_principal_auth_server_url(&grant.principal_server_url)
+            .await
+            .map_err(|error| anyhow::anyhow!("resolve auth server: {error}"))?;
+    let coauth = crate::coauth::CoauthApi::new(&auth_server_url)?;
+    let htu = coauth.endpoint_url("_cokret/gate/account/session-grants/refresh")?;
+    let dpop_proof = device_handle
+        .mint_proof("POST", &htu, Some(&grant.grant_jwt))
+        .map_err(|error| anyhow::anyhow!("mint rotation DPoP proof: {error}"))?;
+    let outcome = coauth
+        .refresh_session_grant(&grant.grant_jwt, Some(&grant.audience), &dpop_proof)
+        .await?;
+    let session_private_key_pem = device_handle
+        .session_signing_key_pkcs8_pem()
+        .map_err(|error| anyhow::anyhow!("export device session key: {error}"))?;
+    let grant_expires_at = chrono::DateTime::parse_from_rfc3339(outcome.expires_at.trim())
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc));
+    Ok(crate::local_state::PersistedSessionGrant {
+        grant_jwt: outcome.grant_jwt,
+        session_private_key_pem,
+        grant_id: outcome.grant_id,
+        audience: outcome.audience,
+        principal_id: grant.principal_id.clone(),
+        device_id: grant.device_id.clone(),
+        principal_server_url: grant.principal_server_url.clone(),
+        session_grant_exchange_path: grant.session_grant_exchange_path.clone(),
+        grant_expires_at,
+        // Re-minted on the next exchange; leaving it None marks the bearer as
+        // due so the exchange runs promptly against the fresh grant.
+        session_expires_at: None,
+        stored_at: chrono::Utc::now(),
+    })
+}
+
 fn oidc_refresh_error_invalidates_grant(error: &anyhow::Error) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     message.contains("invalid_grant")
@@ -6212,6 +6259,49 @@ async fn remint_principal_bearer(
                     ?error,
                     actor = %actor,
                     "OIDC refresh attempt failed without invalidating the stored refresh_token",
+                );
+            }
+        }
+    }
+
+    // Multi-day sliding session: when the persisted grant itself is near
+    // expiry, rotate it (DPoP holder proof signed by the durable device key
+    // bound into the grant's `cnf.jkt`) onto a fresh grant BEFORE it dies, so
+    // the session lives for days while access bearers stay short. Best-effort:
+    // any failure falls through to the re-exchange path below (which re-exchanges
+    // a still-valid grant, or surfaces LoginRequired once the grant is truly
+    // dead).
+    'rotate: {
+        let due_grant = {
+            let store = state_store.read();
+            store
+                .session_grant()
+                .filter(crate::session_refresh::grant_due_for_rotation)
+        };
+        let Some(grant) = due_grant else { break 'rotate };
+        let device_handle = {
+            let mut store = state_store.write();
+            crate::auth_dpop::ensure_device_key(&mut store)
+        };
+        let device_handle = match device_handle {
+            Ok(handle) => handle,
+            Err(error) => {
+                tracing::warn!(?error, "grant rotation skipped: device key unavailable");
+                break 'rotate;
+            }
+        };
+        let rotated = rotate_session_grant_via_device_proof(&grant, &device_handle).await;
+        match rotated {
+            Ok(new_grant) => {
+                if !same_server_url(&base, &base_url()) || session_generation() != generation {
+                    return None;
+                }
+                state_store.write().set_session_grant(Some(new_grant));
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "session grant rotation failed; falling back to re-exchange"
                 );
             }
         }

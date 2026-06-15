@@ -92,6 +92,23 @@ impl DpopHandle {
         &self.jkt
     }
 
+    /// Export the device signing key as PKCS#8 PEM.
+    ///
+    /// Used after a DPoP-bound session-grant rotation: the rotated grant's
+    /// `session_public_key` is this device key (the grant binds to the same key
+    /// the rotation proof proved possession of), so the principal-server
+    /// exchange proof must be signed with this key. Persisting it as the
+    /// rotated grant's `session_private_key_pem` lets the existing exchange path
+    /// (`session_grant_signing_key_from_pem`) sign with the right key, uniformly
+    /// with the first-login flow.
+    pub fn session_signing_key_pkcs8_pem(&self) -> Result<String, AuthDpopError> {
+        use ed25519_dalek::pkcs8::EncodePrivateKey as _;
+        self.signing_key
+            .to_pkcs8_pem(ed25519_dalek::pkcs8::spki::der::pem::LineEnding::LF)
+            .map(|pem| pem.to_string())
+            .map_err(|err| AuthDpopError::SessionGrantProof(format!("device key pkcs8 pem: {err}")))
+    }
+
     /// Mint a fresh DPoP proof JWS for the given `(htm, htu)` pair.
     /// `ath` carries the raw access token when the proof accompanies a
     /// bearer token (refresh, grant-using calls); this helper hashes it

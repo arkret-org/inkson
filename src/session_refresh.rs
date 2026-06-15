@@ -84,6 +84,27 @@ pub enum RefreshOutcome {
     Transient { reason: String },
 }
 
+/// Rotate the session grant when it has less than this much runway left.
+/// The grant is the (minutes-to-hours) refresh credential; rotating it before
+/// it dies — onto a fresh grant via the DPoP holder proof — is what slides the
+/// device session into multi-day territory without re-login. 30 min gives many
+/// poll ticks (and bearer re-exchanges) to land a rotation before the grant
+/// expires.
+pub const GRANT_ROTATION_SKEW_SECS: i64 = 30 * 60;
+
+/// True when the persisted grant is within `GRANT_ROTATION_SKEW_SECS` of its own
+/// expiry and should be rotated (DPoP holder proof → fresh grant). `None` grant
+/// expiry is treated as "not due" — the re-exchange path handles unknown-expiry
+/// grants, and we must not rotate blindly without a deadline.
+pub fn grant_due_for_rotation(grant: &PersistedSessionGrant) -> bool {
+    match grant.grant_expires_at {
+        Some(expires_at) => {
+            expires_at.timestamp() - Utc::now().timestamp() <= GRANT_ROTATION_SKEW_SECS
+        }
+        None => false,
+    }
+}
+
 /// True when the persisted bearer is within `REFRESH_SKEW_SECS` of
 /// expiry. `None` for `session_expires_at` is treated as "due" — the
 /// safe choice since we don't know how much runway the token has.
@@ -512,6 +533,23 @@ mod tests {
 
         assert!(matches!(outcome, RefreshOutcome::Transient { .. }));
         assert!(store.session_grant().is_some());
+    }
+
+    #[test]
+    fn grant_due_for_rotation_fires_only_inside_skew() {
+        // Plenty of grant runway (2h) → not yet due to rotate.
+        let fresh = grant_with_session_expiry(30, 7200);
+        assert!(!grant_due_for_rotation(&fresh));
+
+        // Grant within the rotation skew (10 min left) → rotate now, before it
+        // dies, so the session slides into multi-day territory.
+        let near = grant_with_session_expiry(30, 600);
+        assert!(grant_due_for_rotation(&near));
+
+        // Unknown grant expiry → never blindly rotate (re-exchange handles it).
+        let mut unknown = grant_with_session_expiry(30, 7200);
+        unknown.grant_expires_at = None;
+        assert!(!grant_due_for_rotation(&unknown));
     }
 
     #[test]
