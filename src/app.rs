@@ -4239,9 +4239,14 @@ pub fn RouterView() -> Element {
                                                         account_did: actor.clone(),
                                                         created_at: chrono::Utc::now(),
                                                     };
+                                                let logout_secure_store =
+                                                    crate::secure_key_store::default_secure_key_store(
+                                                        "yougen",
+                                                    );
                                                 if let Err(error) =
                                                     crate::pending_logout::persist_pending_logout(
                                                         &pending_logout,
+                                                        logout_secure_store.as_ref(),
                                                     )
                                                 {
                                                     tracing::warn!(
@@ -4321,6 +4326,7 @@ pub fn RouterView() -> Element {
                                                     let outcome =
                                                         crate::pending_logout::execute_pending_logout(
                                                             &pending_logout,
+                                                            logout_secure_store.as_ref(),
                                                         )
                                                         .await;
                                                     let logout_message = match outcome {

@@ -30,9 +30,7 @@
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-/// localStorage key for the journalled logout intent. Referenced only by
-/// the wasm persistence helpers; the host build's stubs don't touch it.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+/// Secure-key-store key for the journalled logout intent.
 const PENDING_LOGOUT_STORAGE_KEY: &str = "cokret.pending_logout.v1";
 
 /// How long a pending-logout record stays actionable. Past this we drop it
@@ -97,24 +95,6 @@ impl PendingLogout {
     }
 }
 
-/// Classify a coauth revoke error as *terminal-benign*: the grant is
-/// already gone, so the security goal (no resumable rotation chain) is
-/// met and the record can be cleared rather than retried forever.
-///
-/// coauth's revoke is documented as idempotent; a second call against an
-/// already-revoked/expired grant surfaces one of these markers.
-fn coauth_revoke_already_terminated(error: &anyhow::Error) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    message.contains("already")
-        || message.contains("revoked")
-        || message.contains("invalid_grant")
-        || message.contains("not active")
-        || message.contains("expired")
-        || message.contains("not found")
-        || message.contains("returned 404")
-        || message.contains("returned 400")
-}
-
 /// Outcome of running a pending-logout record once.
 #[derive(Debug, PartialEq, Eq)]
 pub enum LogoutRunOutcome {
@@ -136,14 +116,18 @@ pub enum LogoutRunOutcome {
 /// keeps the record so a later boot retries it; the [`RECORD_TTL_HOURS`]
 /// bound (checked by [`run_pending_logout_if_any`]) prevents an immortal
 /// poison entry.
-pub async fn execute_pending_logout(record: &PendingLogout) -> LogoutRunOutcome {
+pub async fn execute_pending_logout(
+    record: &PendingLogout,
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> LogoutRunOutcome {
     let coauth_done = if record.has_coauth_revoke() {
         match revoke_grant_at_coauth(record).await {
-            Ok(()) => true,
-            Err(error) if coauth_revoke_already_terminated(&error) => {
-                tracing::info!(?error, "pending logout: coauth grant already terminated");
-                true
-            }
+            // `revoke_session_grant` already classified the HTTP result: a
+            // structured terminal outcome (revoked / already-gone) resolves to
+            // `Ok`, and any real failure (bad proof, 5xx, transport) to `Err`.
+            // So we no longer string-match the error here — an `Err` always
+            // means retain + retry.
+            Ok(crate::coauth::SessionGrantRevokeOutcome::Terminated) => true,
             Err(error) => {
                 tracing::warn!(?error, "pending logout: coauth revoke failed, will retry");
                 false
@@ -164,7 +148,7 @@ pub async fn execute_pending_logout(record: &PendingLogout) -> LogoutRunOutcome 
     // existing one expires harmlessly on its own.
     soland_courtesy_logout(record).await;
 
-    let _ = clear_pending_logout();
+    let _ = clear_pending_logout(store);
     LogoutRunOutcome::Completed
 }
 
@@ -172,7 +156,9 @@ pub async fn execute_pending_logout(record: &PendingLogout) -> LogoutRunOutcome 
 /// seed. Mirrors `app::revoke_session_grant_at_coauth`, but rebuilds the
 /// handle from the journalled seed (the live key is already wiped) and —
 /// critically — mints the DPoP proof against the **actual** revoke URL.
-async fn revoke_grant_at_coauth(record: &PendingLogout) -> anyhow::Result<()> {
+async fn revoke_grant_at_coauth(
+    record: &PendingLogout,
+) -> anyhow::Result<crate::coauth::SessionGrantRevokeOutcome> {
     let grant_jwt = record
         .grant_jwt
         .as_deref()
@@ -225,65 +211,45 @@ async fn soland_courtesy_logout(record: &PendingLogout) {
     }
 }
 
-/// Journal a logout intent to `localStorage`. Call this **before** wiping
-/// local credentials so the retry can still mint a holder proof.
-#[cfg(target_arch = "wasm32")]
-pub fn persist_pending_logout(record: &PendingLogout) -> anyhow::Result<()> {
-    let storage = local_storage()?;
-    storage
-        .set_item(
-            PENDING_LOGOUT_STORAGE_KEY,
-            &serde_json::to_string(record)?,
-        )
-        .map_err(|error| anyhow::anyhow!("failed to persist pending logout: {error:?}"))?;
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn persist_pending_logout(_record: &PendingLogout) -> anyhow::Result<()> {
+/// Journal a logout intent to the secure key store. Call this **before**
+/// wiping local credentials so the retry can still mint a holder proof.
+///
+/// The journal holds the device holder seed, so it goes through the same
+/// [`SecureKeyStore`](crate::secure_key_store::SecureKeyStore) tier as every
+/// other secret (OS keyring on native, IndexedDB/localStorage on wasm) rather
+/// than a plaintext file — keeping it cross-platform AND out of plaintext.
+pub fn persist_pending_logout(
+    record: &PendingLogout,
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<()> {
+    let json = serde_json::to_string(record)?;
+    store
+        .store_secret(PENDING_LOGOUT_STORAGE_KEY, &json)
+        .map_err(|error| anyhow::anyhow!("failed to persist pending logout: {error}"))?;
     Ok(())
 }
 
 /// Read the journalled logout intent, if any.
-#[cfg(target_arch = "wasm32")]
-pub fn restore_pending_logout() -> anyhow::Result<Option<PendingLogout>> {
-    let storage = local_storage()?;
-    let Some(payload) = storage
-        .get_item(PENDING_LOGOUT_STORAGE_KEY)
-        .map_err(|error| anyhow::anyhow!("failed to load pending logout: {error:?}"))?
+pub fn restore_pending_logout(
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<Option<PendingLogout>> {
+    let Some(json) = store
+        .get_secret(PENDING_LOGOUT_STORAGE_KEY)
+        .map_err(|error| anyhow::anyhow!("failed to load pending logout: {error}"))?
     else {
         return Ok(None);
     };
-    Ok(Some(serde_json::from_str(&payload)?))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn restore_pending_logout() -> anyhow::Result<Option<PendingLogout>> {
-    Ok(None)
+    Ok(Some(serde_json::from_str(&json)?))
 }
 
 /// Drop the journalled logout intent.
-#[cfg(target_arch = "wasm32")]
-pub fn clear_pending_logout() -> anyhow::Result<()> {
-    let storage = local_storage()?;
-    storage
-        .remove_item(PENDING_LOGOUT_STORAGE_KEY)
-        .map_err(|error| anyhow::anyhow!("failed to clear pending logout: {error:?}"))?;
+pub fn clear_pending_logout(
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<()> {
+    store
+        .delete_secret(PENDING_LOGOUT_STORAGE_KEY)
+        .map_err(|error| anyhow::anyhow!("failed to clear pending logout: {error}"))?;
     Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn clear_pending_logout() -> anyhow::Result<()> {
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn local_storage() -> anyhow::Result<web_sys::Storage> {
-    web_sys::window()
-        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?
-        .local_storage()
-        .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
-        .ok_or_else(|| anyhow::anyhow!("localStorage is not available"))
 }
 
 /// Boot / background entry point: if a logout intent is journalled, run it.
@@ -292,7 +258,16 @@ fn local_storage() -> anyhow::Result<web_sys::Storage> {
 /// by its own TTL). Live records are executed; the record is cleared on
 /// success and retained on transient failure for the next attempt.
 pub async fn run_pending_logout_if_any(now: DateTime<Utc>) {
-    let record = match restore_pending_logout() {
+    let store = crate::secure_key_store::default_secure_key_store("yougen");
+    run_pending_logout_with_store(now, store.as_ref()).await;
+}
+
+/// Store-injectable core of [`run_pending_logout_if_any`].
+pub async fn run_pending_logout_with_store(
+    now: DateTime<Utc>,
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) {
+    let record = match restore_pending_logout(store) {
         Ok(Some(record)) => record,
         Ok(None) => return,
         Err(error) => {
@@ -302,10 +277,10 @@ pub async fn run_pending_logout_if_any(now: DateTime<Utc>) {
     };
     if record.is_expired(now) {
         tracing::info!("pending logout: record past TTL, dropping (grant self-expired)");
-        let _ = clear_pending_logout();
+        let _ = clear_pending_logout(store);
         return;
     }
-    let _ = execute_pending_logout(&record).await;
+    let _ = execute_pending_logout(&record, store).await;
 }
 
 #[cfg(test)]
@@ -331,6 +306,18 @@ mod tests {
         let json = serde_json::to_string(&record).unwrap();
         let parsed: PendingLogout = serde_json::from_str(&json).unwrap();
         assert_eq!(record, parsed);
+    }
+
+    #[test]
+    fn record_round_trips_through_secure_store() {
+        use crate::secure_key_store::MemorySecureKeyStore;
+        let store = MemorySecureKeyStore::default();
+        let record = base_record(Utc::now());
+        assert!(restore_pending_logout(&store).unwrap().is_none());
+        persist_pending_logout(&record, &store).unwrap();
+        assert_eq!(restore_pending_logout(&store).unwrap(), Some(record));
+        clear_pending_logout(&store).unwrap();
+        assert!(restore_pending_logout(&store).unwrap().is_none());
     }
 
     #[test]
@@ -365,46 +352,19 @@ mod tests {
         assert!(!no_principal.has_coauth_revoke());
     }
 
-    #[test]
-    fn already_terminated_errors_are_classified_benign() {
-        for marker in [
-            "grant already consumed",
-            "session grant is not active: revoked",
-            "invalid_grant",
-            "refresh endpoint returned 400: expired",
-            "endpoint returned 404",
-            "grant not found",
-        ] {
-            assert!(
-                coauth_revoke_already_terminated(&anyhow::anyhow!("{marker}")),
-                "expected '{marker}' to be terminal-benign"
-            );
-        }
-    }
-
-    #[test]
-    fn transient_errors_are_not_benign() {
-        for marker in [
-            "connection refused",
-            "dns failure",
-            "timed out",
-            "503 service unavailable",
-        ] {
-            assert!(
-                !coauth_revoke_already_terminated(&anyhow::anyhow!("{marker}")),
-                "expected '{marker}' to be retryable"
-            );
-        }
-    }
-
     #[tokio::test]
     async fn execute_returns_completed_when_no_coauth_revoke_needed() {
+        use crate::secure_key_store::MemorySecureKeyStore;
         // A record with no grant material and an empty base URL has nothing
-        // to do over the network — it should clear immediately.
+        // to do over the network — it should clear immediately, including
+        // removing any journalled copy from the store.
+        let store = MemorySecureKeyStore::default();
         let mut record = base_record(Utc::now());
         record.grant_jwt = None;
         record.base_url = String::new();
-        let outcome = execute_pending_logout(&record).await;
+        persist_pending_logout(&record, &store).unwrap();
+        let outcome = execute_pending_logout(&record, &store).await;
         assert_eq!(outcome, LogoutRunOutcome::Completed);
+        assert!(restore_pending_logout(&store).unwrap().is_none());
     }
 }

@@ -405,6 +405,29 @@ pub struct PersistedOidcScaffold {
 #[cfg(target_arch = "wasm32")]
 const OIDC_SCAFFOLD_STORAGE_KEY: &str = "yougen.oidc_scaffold.v1";
 
+/// Result of a hard-logout session-grant revocation at the Auth Server.
+/// Distinguishes "the grant chain is provably gone" from "the call failed and
+/// must be retried" so durable logout never clears its journal on a real error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionGrantRevokeOutcome {
+    /// The grant was revoked (or was already gone): the rotation chain is dead.
+    Terminated,
+}
+
+/// Pull the top-level `error.code` out of a Cokret error envelope body
+/// (`{ "ok": false, "error": { "code": ..., "message": ... } }`). Returns
+/// `None` when the body is absent / not JSON / lacks the field, so callers
+/// treat an undecodable error as a (retryable) failure rather than a known
+/// terminal code.
+fn error_envelope_code(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    value
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(|code| code.as_str())
+        .map(str::to_owned)
+}
+
 impl CoauthApi {
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
         Ok(Self {
@@ -776,21 +799,67 @@ impl CoauthApi {
     /// Hard-logout revocation at the Auth Server (account-lifecycle §4.1):
     /// present the device holder proof bound into the grant's `cnf.jkt`, and the
     /// server revokes the grant + finishes the underlying browser session so the
-    /// rotation chain cannot be resumed. Idempotent / best-effort from the
-    /// client's side — local credentials are wiped regardless.
+    /// rotation chain cannot be resumed.
+    ///
+    /// Returns a structured [`SessionGrantRevokeOutcome`] so the durable-logout
+    /// retry can distinguish two cases that look alike at the HTTP layer:
+    ///
+    /// * **terminated** (2xx, or a 404 / `grant_already_consumed` /
+    ///   `session_logged_out` / `session_grant_not_found` envelope) — the grant
+    ///   chain is provably gone; the caller MAY clear its journal.
+    /// * **failure** (any other 4xx — `device_proof_required`, an invalid DPoP
+    ///   proof, a bad body, an `audience_mismatch` — or any 5xx / transport
+    ///   error) — the server did NOT terminate anything; the caller MUST keep
+    ///   the journal and retry. This is the key fix over string-matching the
+    ///   raw error: a 400 caused by a malformed proof is no longer mistaken for
+    ///   "already revoked".
     pub async fn revoke_session_grant(
         &self,
         grant_jwt: &str,
         dpop_proof: &str,
-    ) -> anyhow::Result<()> {
-        let _: serde_json::Value = self
-            .post_json_with_dpop(
-                "_cokret/gate/account/session-grants/logout",
-                json!({ "grant_jwt": grant_jwt }),
-                Some(dpop_proof),
-            )
+    ) -> anyhow::Result<SessionGrantRevokeOutcome> {
+        let endpoint = self.endpoint("_cokret/gate/account/session-grants/logout")?;
+        let response = self
+            .http
+            .post(endpoint)
+            .header("DPoP", dpop_proof)
+            .json(&json!({ "grant_jwt": grant_jwt }))
+            .send()
             .await?;
-        Ok(())
+
+        let status = response.status();
+        if status.is_success() {
+            return Ok(SessionGrantRevokeOutcome::Terminated);
+        }
+
+        // A missing grant means there is nothing left to revoke — terminal.
+        if status.as_u16() == 404 {
+            return Ok(SessionGrantRevokeOutcome::Terminated);
+        }
+
+        // Decode the structured error envelope (`{ error: { code } }`) and only
+        // treat *grant-already-gone* codes as terminal. Everything else (proof
+        // problems, audience mismatch, malformed body, server errors) keeps the
+        // journal so the logout is retried.
+        let body = response.text().await.unwrap_or_default();
+        let code = error_envelope_code(&body);
+        if let Some(code) = code.as_deref()
+            && matches!(
+                code,
+                "grant_already_consumed"
+                    | "session_logged_out"
+                    | "session_grant_not_found"
+                    | "authorized_grant_revoked"
+            )
+        {
+            return Ok(SessionGrantRevokeOutcome::Terminated);
+        }
+
+        Err(anyhow::anyhow!(
+            "coauth session-grant logout failed: status={} code={} body={body}",
+            status.as_u16(),
+            code.as_deref().unwrap_or("<none>"),
+        ))
     }
 
     pub async fn start_oidc_browser_bridge(
@@ -1792,6 +1861,25 @@ fn pkce_code_challenge_s256(code_verifier: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_envelope_code_extracts_nested_code() {
+        let body = r#"{"ok":false,"error":{"code":"grant_already_consumed","message":"gone"},"request_id":"r1"}"#;
+        assert_eq!(
+            error_envelope_code(body).as_deref(),
+            Some("grant_already_consumed")
+        );
+    }
+
+    #[test]
+    fn error_envelope_code_handles_missing_or_malformed() {
+        // Not JSON, empty, missing error.code — all yield None so the caller
+        // treats the failure as retryable rather than a known terminal code.
+        assert_eq!(error_envelope_code(""), None);
+        assert_eq!(error_envelope_code("not json"), None);
+        assert_eq!(error_envelope_code(r#"{"ok":false}"#), None);
+        assert_eq!(error_envelope_code(r#"{"error":{"message":"x"}}"#), None);
+    }
 
     /// PKCE verifier MUST be 43 chars for our 32-byte seed (RFC 7636 §4.1
     /// allows 43-128). Any drift from 32-byte seeds breaks the S256 fixed
