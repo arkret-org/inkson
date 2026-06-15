@@ -881,8 +881,13 @@ mod tests {
 
     #[test]
     fn effective_scope_trims_realm_prefix_consistently() {
-        let scope = applet_effective_scope("ck:realm:abc");
-        assert!(scope["realm_id"].is_string());
+        let scope =
+            applet_effective_scope("ck:realm:01904100-0000-7000-8000-000000000010").unwrap();
+        assert!(matches!(
+            scope,
+            EffectiveScope::Realm { ref realm_id }
+                if realm_id.as_str() == "ck:realm:01904100-0000-7000-8000-000000000010"
+        ));
     }
 
     #[test]
