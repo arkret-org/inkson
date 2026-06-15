@@ -1,9 +1,7 @@
-#[cfg(test)]
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use crate::api::CokretApi;
-#[cfg(test)]
 use crate::coauth::CoauthSessionGrantInfo;
 use crate::coauth::{
     CoauthApi, authorize_url_with_forced_reauthentication, capture_current_browser_callback_url,
@@ -31,6 +29,13 @@ struct CompletedLogin {
     /// OAuth bearer bundle accepted directly by the principal server.
     /// When present, this is the durable refresh path.
     oidc_tokens: Option<OidcTokenBundle>,
+    /// Persisted principal session grant (grant JWT + session signing key +
+    /// expiry). This is the refresh credential for the OIDC-bridge login: the
+    /// short access bearer is re-minted by re-exchanging this grant at the
+    /// principal server until the grant's own (minutes-to-hours) TTL elapses.
+    /// Without persisting it, the refresh machinery in `session_refresh` is
+    /// dead and the session dies the moment the first short bearer expires.
+    session_grant: Option<PersistedSessionGrant>,
 }
 
 #[component]
@@ -82,7 +87,9 @@ pub fn LoginPanel(
                     let wiped = store.adopt_account_scope(&completed.actor);
                     // Same actor but a different principal server: the cached
                     // projections/cursor are scoped to the old server and are
-                    // meaningless here, so reset them too.
+                    // meaningless here, so reset them too. The fresh grant for
+                    // THIS server is persisted by `persist_completed_login_state`
+                    // immediately below, so clearing here does not strand it.
                     if server_changed && !wiped {
                         store.clear_account_scoped();
                         store.set_session_grant(None);
@@ -104,6 +111,7 @@ pub fn LoginPanel(
                     state_store_write,
                     &completed.actor,
                     completed.oidc_tokens,
+                    completed.session_grant,
                 );
                 status.set("Online".to_owned());
                 auth_status.set("Signed in".to_owned());
@@ -304,16 +312,15 @@ fn persist_completed_login_state(
     mut state_store: Signal<LocalStateStore>,
     actor_id: &str,
     oidc_tokens: Option<OidcTokenBundle>,
+    session_grant: Option<PersistedSessionGrant>,
 ) {
     let mut store = state_store.write();
-    if let Some(bundle) = oidc_tokens {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        store.set_oidc_tokens_with_secure_store(Some(bundle), actor_id, secure_store.as_ref());
-    } else {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        store.set_oidc_tokens_with_secure_store(None, actor_id, secure_store.as_ref());
-    }
-    store.set_session_grant(None);
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    store.set_oidc_tokens_with_secure_store(oidc_tokens, actor_id, secure_store.as_ref());
+    // Persist the principal session grant as the refresh credential. Clearing
+    // it (the old behaviour) is what left `session_refresh` with nothing to
+    // re-exchange — the session then died at the first short-bearer expiry.
+    store.set_session_grant(session_grant);
 }
 
 /// Compute the value of the `session-status` testid. The four states
@@ -566,16 +573,33 @@ async fn finish_oidc_callback(
     };
     let _ = clear_persisted_oidc_scaffold();
 
+    let resolved_device = if session.device_id.as_str().trim().is_empty() {
+        device
+    } else {
+        session.device_id.as_str().to_owned()
+    };
+    // Persist the principal session grant so the (already-built) refresh path
+    // can silently re-mint the short access bearer until the grant's own TTL
+    // elapses — instead of bouncing the user to login the moment the first
+    // short bearer dies. The grant carries its session signing key, which the
+    // refresh path needs to mint the re-exchange introspection proof.
+    let persisted_session_grant = persisted_session_grant_from_parts(
+        &session_grant,
+        &principal_target,
+        &canonical_actor,
+        &resolved_device,
+        &bridge.cokret.session_grants_path,
+        Some(session.expires_at),
+    )
+    .ok();
+
     Ok(CompletedLogin {
         principal_server_url: principal_target,
         actor: canonical_actor,
-        device_id: if session.device_id.as_str().trim().is_empty() {
-            device
-        } else {
-            session.device_id.as_str().to_owned()
-        },
+        device_id: resolved_device,
         access_token: session.access_token,
         oidc_tokens: None,
+        session_grant: persisted_session_grant,
     })
 }
 
@@ -597,7 +621,6 @@ fn persisted_session_grant_from_login(
     )
 }
 
-#[cfg(test)]
 fn persisted_session_grant_from_parts(
     grant: &CoauthSessionGrantInfo,
     principal_server_url: &str,
@@ -631,7 +654,6 @@ fn persisted_session_grant_from_parts(
     })
 }
 
-#[cfg(test)]
 fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value.trim())
         .ok()
