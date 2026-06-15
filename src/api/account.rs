@@ -392,15 +392,22 @@ impl CokretApi {
             .await
     }
 
-    pub async fn logout(&self) -> anyhow::Result<cokret_sdk::models::SessionRevokeOutcome> {
-        let body = cokret_sdk::models::SessionRevokeRequestBody {
-            target_grant_id: None,
-            target_device_id: None,
-            all_sessions: None,
-            proof: None,
-        };
-        self.post_json("_cokret/gate/account/session-grants/revoke", &body)
-            .await
+    /// Hard logout at the Principal Server: revoke this session's bearer, mark
+    /// its local device session record revoked, and drop the device's queued
+    /// to-device messages (account-lifecycle §4.1). This is the device-logout
+    /// operation, distinct from `ck.gate.account.command.revoke_session` (which
+    /// only revokes a session token and preserves the device session). Returns
+    /// whether a live session was revoked.
+    pub async fn logout(&self) -> anyhow::Result<bool> {
+        #[derive(serde::Deserialize)]
+        struct LogoutOutcome {
+            #[serde(default)]
+            revoked: bool,
+        }
+        let outcome: LogoutOutcome = self
+            .post_json("_cokret/gate/account/logout", &serde_json::json!({}))
+            .await?;
+        Ok(outcome.revoked)
     }
 
     /// Submit a per-account `ck.account_data.set` event so settings UIs can

@@ -4287,10 +4287,13 @@ pub fn RouterView() -> Element {
                                                         .map(|api| api.with_bearer(api_token));
                                                     let logout_message = match api_result {
                                                         Ok(api) => match api.logout().await {
-                                                            Ok(response) => format!(
-                                                                "Logout ok: revoked {} session(s)",
-                                                                response.revoked_count
-                                                            ),
+                                                            Ok(revoked) => {
+                                                                if revoked {
+                                                                    "Logout ok: device session revoked".to_owned()
+                                                                } else {
+                                                                    "Logout ok: no live session to revoke".to_owned()
+                                                                }
+                                                            }
                                                             Err(error) => {
                                                                 format!("Logout failed: {error}")
                                                             }

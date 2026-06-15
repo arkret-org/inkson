@@ -785,7 +785,7 @@ impl CoauthApi {
     ) -> anyhow::Result<()> {
         let _: serde_json::Value = self
             .post_json_with_dpop(
-                "_cokret/gate/account/session-grants/revoke",
+                "_cokret/gate/account/session-grants/logout",
                 json!({ "grant_jwt": grant_jwt }),
                 Some(dpop_proof),
             )
