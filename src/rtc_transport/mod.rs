@@ -7,13 +7,15 @@
 //!   `RtcPeerConnection` / `getUserMedia` / `getDisplayMedia` via `web-sys`. This is the real media
 //!   path for the web build: it captures local tracks, performs SDP offer/answer, and exchanges ICE
 //!   candidates. SFU rooms connect to the verified `connect_url` with the backend token.
-//! - **native (`not(target_arch = "wasm32")`)** — [`native::NativeRtcTransport`] owns the same
-//!   lifecycle for the desktop build. Desktop ships without a bundled libwebrtc (webrtc-rs /
-//!   livekit-rust pull a C++ toolchain that is not part of this milestone), so the native transport
-//!   tracks the peer-connection / room state machine and surfaces the same events; the actual
-//!   packet I/O is delegated to the platform shell. Both backends consume the verified
-//!   [`crate::media::rtc::JoinedMediaSession`] (connect URL, backend token, ICE servers,
-//!   MLS-derived SFrame key) identically.
+//! - **native (`not(target_arch = "wasm32")`)** — [`native::NativeRtcTransport`] is honestly
+//!   not-ready. Desktop ships without a bundled libwebrtc (webrtc-rs / livekit-rust pull a C++
+//!   toolchain that is not part of this milestone), so there is no RTP path yet. The native
+//!   transport does NOT fake a session: every drive method fails closed with
+//!   [`crate::media::rtc::RtcClientError::DesktopMediaUnavailable`] and its state never reaches
+//!   [`TransportState::Connected`]. The call surface maps that error to the "desktop calling is not
+//!   ready yet" toast and keeps the FSM out of `Active`. The constructor still accepts the verified
+//!   [`crate::media::rtc::JoinedMediaSession`] for signature parity, but none of its fields are
+//!   used to mint media.
 //!
 //! The SFrame keyprovider seed is ALWAYS the MLS-exporter-derived key from
 //! [`crate::media::rtc::join_call_media`]; [`MediaTransport::install_frame_key`]
@@ -182,9 +184,13 @@ pub fn new_transport(session: &JoinedMediaSession) -> Box<dyn MediaTransport> {
     }
 }
 
-/// Shared guard reused by both backends: the SFrame key MUST be exactly
-/// the 32-byte MLS-exporter output. Anything else is rejected with
-/// `e2ee_key_source_unauthorised`.
+/// SFrame frame-key guard: the key MUST be exactly the 32-byte
+/// MLS-exporter output. Anything else is rejected with
+/// `e2ee_key_source_unauthorised`. Used by the wasm (web) backend, which is
+/// the only target with a real media transport this milestone; the native
+/// backend is honestly not-ready and never installs a key, so this is
+/// unused outside tests there.
+#[cfg_attr(all(not(target_arch = "wasm32"), not(test)), allow(dead_code))]
 pub(crate) fn ensure_valid_frame_key(key: &[u8]) -> Result<(), RtcClientError> {
     if key.len() == cokret_sdk::MEDIA_KEY_LEN {
         Ok(())

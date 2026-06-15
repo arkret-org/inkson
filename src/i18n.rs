@@ -1503,6 +1503,10 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "error.call.recording_artifact_pipeline_bypassed",
         "Recording destination is not a Cokret authenticated blob — refusing to record.",
     );
+    dict.set(
+        "error.call.desktop_media_unavailable",
+        "Desktop calling is not ready yet on this build — no media transport. Use a web client to place this call.",
+    );
 
     // Handle wire-level enforce.
     dict.set(
@@ -1595,6 +1599,10 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     dict.set(
         "error.call.recording_artifact_pipeline_bypassed",
         "录制目标不是 Cokret 认证 blob — 拒绝录制。",
+    );
+    dict.set(
+        "error.call.desktop_media_unavailable",
+        "桌面端通话尚未就绪(此版本无媒体传输)。请改用 Web 客户端发起本次通话。",
     );
 
     dict.set(

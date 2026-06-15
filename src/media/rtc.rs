@@ -68,6 +68,13 @@ pub enum RtcClientError {
     /// Egress destination is not a Cokret-authenticated blob upload.
     /// Recording is refused.
     RecordingArtifactPipelineBypassed,
+    /// Desktop (native) build has no real media transport: this milestone
+    /// ships without a bundled libwebrtc / LiveKit-Rust stack, so there is
+    /// no RTP path. The call surface MUST surface this as "desktop calling
+    /// is not ready yet" and keep the call FSM out of `Connected` — it never
+    /// pretends a media session connected. This is a client-only reason; it
+    /// never originates from a soland wire `code`.
+    DesktopMediaUnavailable,
 }
 
 impl RtcClientError {
@@ -82,6 +89,7 @@ impl RtcClientError {
             Self::ParticipantIdentityUnrecognised => "participant_identity_unrecognised",
             Self::E2eeKeySourceUnauthorised => "e2ee_key_source_unauthorised",
             Self::RecordingArtifactPipelineBypassed => "recording_artifact_pipeline_bypassed",
+            Self::DesktopMediaUnavailable => "desktop_media_unavailable",
         }
     }
 
@@ -98,6 +106,7 @@ impl RtcClientError {
             Self::RecordingArtifactPipelineBypassed => {
                 "error.call.recording_artifact_pipeline_bypassed"
             }
+            Self::DesktopMediaUnavailable => "error.call.desktop_media_unavailable",
         }
     }
 
@@ -114,6 +123,7 @@ impl RtcClientError {
             "participant_identity_unrecognised" => Self::ParticipantIdentityUnrecognised,
             "e2ee_key_source_unauthorised" => Self::E2eeKeySourceUnauthorised,
             "recording_artifact_pipeline_bypassed" => Self::RecordingArtifactPipelineBypassed,
+            "desktop_media_unavailable" => Self::DesktopMediaUnavailable,
             _ => return None,
         })
     }
@@ -363,14 +373,25 @@ pub fn cross_check_participant_identity(
 
 /// MLS exporter backing the SFrame frame-key derivation.
 ///
-/// On native targets this wraps a live [`cokret_sdk::CokretMlsGroup`] keyed
-/// by the realm id — exactly the group the message E2EE path uses — so the
-/// exported secret is a real RFC 9420 §8 MLS-Exporter output, never a
-/// backend KMS key (MEDIA-1). On wasm the MLS stack is not linked, so the
-/// exporter is unavailable and key derivation fails closed with
-/// `e2ee_key_source_unauthorised`; the web call surface MUST therefore run
-/// the SFrame keyprovider through the host MLS bridge, not a self-minted
-/// key.
+/// On native targets this wraps the live [`cokret_sdk::CokretMlsGroup`]
+/// restored from this device's persisted per-realm MLS snapshot — the same
+/// synchronised group (full membership, applied Welcomes/commits) the
+/// message E2EE send/receive path uses via `crate::mls::runtime`. The
+/// exported secret is therefore a real RFC 9420 §8 MLS-Exporter output that
+/// every member's device can reproduce, never a per-device value and never a
+/// backend KMS key (MEDIA-1).
+///
+/// If the realm has no synchronised MLS group on this device yet (no
+/// persisted snapshot, or the device snapshot secret is unavailable / cannot
+/// decrypt the snapshot), construction fails closed with
+/// `e2ee_key_source_unauthorised` rather than fabricating an isolated
+/// single-member group: an isolated group's exporter secret differs across
+/// devices, so the media could never be decrypted by peers.
+///
+/// On wasm the MLS stack is not linked, so the exporter is unavailable and
+/// key derivation fails closed with `e2ee_key_source_unauthorised`; the web
+/// call surface MUST therefore run the SFrame keyprovider through the host
+/// MLS bridge, not a self-minted key.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct RealmMlsExporter {
     group: cokret_sdk::CokretMlsGroup,
@@ -378,22 +399,44 @@ pub struct RealmMlsExporter {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl RealmMlsExporter {
-    /// Build the exporter from the realm's MLS group seed (`realm_id`
-    /// bytes), mirroring `crate::crypto::compose_local_encrypted_message`.
+    /// Restore the realm's live, synchronised MLS group from this device's
+    /// persisted snapshot so the SFrame exporter secret matches every other
+    /// member's. `snapshot` is the per-realm
+    /// [`crate::mls::persistence::MlsSnapshotEnvelope`] the caller reads from
+    /// `LocalStateStore::mls_snapshot_for` (passed by value so the caller can
+    /// drop the store read-guard before this synchronous KDF runs, never
+    /// holding it across an `.await`); `secure_store` provides the account
+    /// MLS snapshot secret that unwraps it. This is the exact restore path
+    /// `crate::mls::runtime::reaction_routing_tag_v1` (and the message
+    /// send/receive helpers) use to read the current epoch's exporter
+    /// secret — read-only, it neither commits nor advances the ratchet.
+    ///
+    /// Fails closed with [`RtcClientError::E2eeKeySourceUnauthorised`] when
+    /// the realm has no synchronised group on this device (`snapshot` is
+    /// `None`, the device snapshot secret is unavailable, or the snapshot
+    /// cannot be decrypted). The caller surfaces this as "this realm's MLS
+    /// group has not synced on this device yet, so no media key can be
+    /// derived".
     pub fn for_realm(
+        snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         actor_id: &str,
         device_id: &str,
-        realm_id: &str,
     ) -> Result<Self, RtcClientError> {
-        let identity = cokret_sdk::CokretMlsIdentity::new_basic(
-            Did::new(actor_id.to_owned()).map_err(|_| RtcClientError::FocusMismatch)?,
-            DeviceId::new(device_id.to_owned()).map_err(|_| RtcClientError::FocusMismatch)?,
-        )
-        .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
-        let group = identity
-            .create_group(realm_id.as_bytes())
+        let snapshot = snapshot.ok_or(RtcClientError::E2eeKeySourceUnauthorised)?;
+        let secret =
+            crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id)
+                .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
+        let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
             .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
         Ok(Self { group })
+    }
+
+    /// Current MLS epoch of the restored realm group. Bound into the
+    /// SFrame [`FrameKeyContext`] so the frame key rotates with the group
+    /// epoch instead of being pinned to a hard-coded `0`.
+    pub fn epoch(&self) -> u64 {
+        self.group.epoch()
     }
 }
 
@@ -484,6 +527,7 @@ mod tests {
             RtcClientError::ParticipantIdentityUnrecognised,
             RtcClientError::E2eeKeySourceUnauthorised,
             RtcClientError::RecordingArtifactPipelineBypassed,
+            RtcClientError::DesktopMediaUnavailable,
         ] {
             assert_eq!(RtcClientError::from_wire(err.as_wire()), Some(err));
             assert!(err.i18n_key().starts_with("error.call."));

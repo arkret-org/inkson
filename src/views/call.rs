@@ -161,7 +161,13 @@ pub fn CallPanel(
             let realm_id = active_realm();
             let api_token = token();
             let want_video = want_video_signal();
-            let media_dids = media_service_dids(&state_store.read().load(), &realm_id);
+            let (media_dids, realm_mls_snapshot) = {
+                let store = state_store.read();
+                (
+                    media_service_dids(&store.load(), &realm_id),
+                    store.mls_snapshot_for(&realm_id),
+                )
+            };
 
             let peers: Vec<String> = match mode {
                 CallMode::P2p => vec![peer_input().trim().to_owned()]
@@ -218,17 +224,41 @@ pub fn CallPanel(
                     },
                     media_service_dids: media_dids,
                 };
-                match join_and_build_transport(&base, &api_token, &join, &actor, &device).await {
+                match join_and_build_transport(
+                    &base,
+                    &api_token,
+                    &join,
+                    &actor,
+                    &device,
+                    realm_mls_snapshot,
+                )
+                .await
+                {
                     Ok((session, shared)) => {
-                        install_and_capture(&shared, &session);
+                        if let Err(err) = install_and_capture(&shared, &session) {
+                            // Transport could not accept the media key (desktop
+                            // is honestly not-ready). Surface it and stay out of
+                            // any "connected" state.
+                            last_error.set(media_error_label(err));
+                            stage.set(CallStage::Ended);
+                            return;
+                        }
                         match mode {
                             CallMode::Sfu => {
-                                let _ = shared.borrow_mut().connect_sfu(&session);
+                                if let Err(err) = shared.borrow_mut().connect_sfu(&session) {
+                                    last_error.set(media_error_label(err));
+                                    stage.set(CallStage::Ended);
+                                    return;
+                                }
                                 stage.set(CallStage::Active);
                                 status.set(format!("joined SFU room ({})", session.backend_type));
                             }
                             CallMode::P2p => {
-                                let _ = shared.borrow_mut().begin_offer();
+                                if let Err(err) = shared.borrow_mut().begin_offer() {
+                                    last_error.set(media_error_label(err));
+                                    stage.set(CallStage::Ended);
+                                    return;
+                                }
                                 relay_local_signals(
                                     &shared, &base, &api_token, &realm_id, &call, &actor, &device,
                                     call_seq,
@@ -386,7 +416,13 @@ pub fn CallPanel(
                                         let realm_id = active_realm();
                                         let call = active_call_id();
                                         let api_token = token();
-                                        let media_dids = media_service_dids(&state_store.read().load(), &realm_id);
+                                        let (media_dids, realm_mls_snapshot) = {
+                                            let store = state_store.read();
+                                            (
+                                                media_service_dids(&store.load(), &realm_id),
+                                                store.mls_snapshot_for(&realm_id),
+                                            )
+                                        };
                                         let want_video = want_video_signal();
                                         stage.set(CallStage::Connecting);
                                         status.set("answering".to_owned());
@@ -409,13 +445,32 @@ pub fn CallPanel(
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
                                                 media_service_dids: media_dids,
                                             };
-                                            match join_and_build_transport(&base, &api_token, &join, &actor, &device).await {
+                                            match join_and_build_transport(
+                                                &base,
+                                                &api_token,
+                                                &join,
+                                                &actor,
+                                                &device,
+                                                realm_mls_snapshot,
+                                            )
+                                            .await
+                                            {
                                                 Ok((session, shared)) => {
-                                                    install_and_capture(&shared, &session);
-                                                    let _ = shared.borrow_mut().connect_sfu(&session);
-                                                    transport_handle.set(Some(shared));
-                                                    stage.set(CallStage::Active);
-                                                    status.set("connected".to_owned());
+                                                    let connected = install_and_capture(&shared, &session)
+                                                        .and_then(|()| shared.borrow_mut().connect_sfu(&session));
+                                                    match connected {
+                                                        Ok(()) => {
+                                                            transport_handle.set(Some(shared));
+                                                            stage.set(CallStage::Active);
+                                                            status.set("connected".to_owned());
+                                                        }
+                                                        Err(err) => {
+                                                            // Honestly not-ready (desktop) — do not
+                                                            // pretend the call connected.
+                                                            last_error.set(media_error_label(err));
+                                                            stage.set(CallStage::Ended);
+                                                        }
+                                                    }
                                                 }
                                                 Err(err) => {
                                                     last_error.set(media_error_label(err));
@@ -833,21 +888,33 @@ fn ModeratorControls(
 // ── Controller helpers ──────────────────────────────────────────────────
 
 /// Run the media join and wrap the resulting transport in shared state.
+///
+/// `realm_mls_snapshot` is this device's persisted MLS snapshot for the
+/// call's realm, read by the caller (and the store read-guard dropped)
+/// before this async fn runs so the snapshot restore never holds a `Signal`
+/// guard across an `.await`. It is `None` when the realm has not synced an
+/// MLS group on this device, which makes the SFrame key derivation fail
+/// closed.
 async fn join_and_build_transport(
     base: &str,
     api_token: &str,
     join: &MediaJoinRequest,
     actor: &str,
     device: &str,
+    realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<(JoinedMediaSession, SharedTransport), RtcClientError> {
-    let session = join_via_api(base, api_token, join, actor, device).await?;
+    let session = join_via_api(base, api_token, join, actor, device, realm_mls_snapshot).await?;
     let transport = new_transport(&session);
     Ok((session, Rc::new(RefCell::new(transport))))
 }
 
 /// Build an authed API client and run `join_call_media`. The MLS exporter
-/// is the realm group on native; wasm has no MLS stack, so the SFrame key
-/// derivation fails closed (`e2ee_key_source_unauthorised`).
+/// is the realm's live, synchronised MLS group restored from this device's
+/// persisted snapshot (the same group the message E2EE path uses), so the
+/// SFrame exporter secret matches every other member's. When the realm has
+/// not synced an MLS group on this device yet, the exporter construction
+/// fails closed (`e2ee_key_source_unauthorised`) instead of fabricating an
+/// isolated group. wasm has no MLS stack, so it also fails closed.
 #[cfg(not(target_arch = "wasm32"))]
 async fn join_via_api(
     base: &str,
@@ -855,11 +922,23 @@ async fn join_via_api(
     join: &MediaJoinRequest,
     actor: &str,
     device: &str,
+    realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<JoinedMediaSession, RtcClientError> {
-    let exporter = crate::media::rtc::RealmMlsExporter::for_realm(actor, device, &join.realm_id)?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
+        realm_mls_snapshot,
+        secure_store.as_ref(),
+        actor,
+        device,
+    )?;
+    // Bind the SFrame frame key to the realm group's real MLS epoch instead
+    // of the hard-coded `0` the dialer seeds the request with, so the key
+    // rotates with the group epoch.
+    let mut join = join.clone();
+    join.epoch_id = exporter.epoch();
     let api = crate::views::helpers::authed_api(base, api_token.to_owned())
         .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
-    crate::media::rtc::join_call_media(&api, join, &exporter).await
+    crate::media::rtc::join_call_media(&api, &join, &exporter).await
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -869,6 +948,7 @@ async fn join_via_api(
     join: &MediaJoinRequest,
     _actor: &str,
     _device: &str,
+    _realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<JoinedMediaSession, RtcClientError> {
     // The browser build does not link the MLS stack, so no in-process
     // SFrame key can be derived. Run the verified token + ICE exchange and
@@ -880,10 +960,22 @@ async fn join_via_api(
 
 /// Install the SFrame key and start local capture on a freshly built
 /// transport.
-fn install_and_capture(transport: &SharedTransport, session: &JoinedMediaSession) {
+///
+/// Returns the transport's error when the keyprovider seed cannot be
+/// installed — on desktop the native transport is honestly not-ready and
+/// reports [`RtcClientError::DesktopMediaUnavailable`] here, which the
+/// caller turns into the "desktop calling is not ready yet" end state rather
+/// than driving the FSM to a fake `Active`/`Connecting`. Local capture is
+/// best-effort (a denied camera/mic permission should not abort the call
+/// setup), so its failure is not propagated.
+fn install_and_capture(
+    transport: &SharedTransport,
+    session: &JoinedMediaSession,
+) -> Result<(), RtcClientError> {
     let mut t = transport.borrow_mut();
-    let _ = t.install_frame_key(&session.frame_key);
+    t.install_frame_key(&session.frame_key)?;
     let _ = t.start_local_capture();
+    Ok(())
 }
 
 /// Drain and relay any local SDP/ICE signaling produced by the transport.
