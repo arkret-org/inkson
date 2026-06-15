@@ -94,6 +94,7 @@ pub mod seal_witness;
 pub mod oidc;
 pub mod operation;
 pub mod passkey_prf;
+pub mod pending_logout;
 /// Input-path perf helpers — draft-save debounce + typing throttle for the
 /// composer hot paths. See [`perf`] for the rationale.
 pub mod perf;

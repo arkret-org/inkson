@@ -92,6 +92,19 @@ impl DpopHandle {
         &self.jkt
     }
 
+    /// Export the raw 32-byte ed25519 seed as base64url-no-pad.
+    ///
+    /// Used only by the durable hard-logout journal
+    /// ([`crate::pending_logout`]): the logout wipes the live key, so a
+    /// copy of the seed is stashed (alongside [`Self::jkt`]) purely so a
+    /// later boot can rebuild this handle via
+    /// [`device_handle_from_seed`] and mint the holder proof that revokes
+    /// the *old* grant. This is the same secret already held in the secure
+    /// key store; it is cleared as soon as the revoke succeeds.
+    pub fn seed_b64(&self) -> String {
+        URL_SAFE_NO_PAD.encode(self.signing_key.to_bytes())
+    }
+
     /// Export the device signing key as PKCS#8 PEM.
     ///
     /// Used after a DPoP-bound session-grant rotation: the rotated grant's
@@ -250,6 +263,23 @@ pub fn load_device_key_with_secure_store(
     decode_record(&record).map(Some)
 }
 
+/// Rebuild a [`DpopHandle`] from a persisted seed + thumbprint pair,
+/// without touching the live key store.
+///
+/// Used by the durable hard-logout retry path
+/// ([`crate::pending_logout`]): a logout wipes the active device key so
+/// the next sign-in rotates `cnf.jkt`, but the pending-logout record
+/// stashes a copy of the *old* seed purely so a later boot can still mint
+/// the holder proof needed to revoke the *old* grant. The thumbprint is
+/// re-derived and checked against `jkt` to reject a tampered record.
+pub fn device_handle_from_seed(seed_b64: &str, jkt: &str) -> Result<DpopHandle, AuthDpopError> {
+    decode_record(&DpopDeviceKeyRecord {
+        seed_b64: seed_b64.to_owned(),
+        jkt: jkt.to_owned(),
+        created_at: Utc::now(),
+    })
+}
+
 fn decode_record(record: &DpopDeviceKeyRecord) -> Result<DpopHandle, AuthDpopError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(record.seed_b64.as_bytes())
@@ -380,6 +410,26 @@ mod tests {
             .unwrap();
         let payload = proof_payload(&proof);
         assert!(payload.get("ath").is_none());
+    }
+
+    #[test]
+    fn seed_export_rebuilds_an_equivalent_handle() {
+        // The durable hard-logout journal stashes seed_b64 + jkt and later
+        // rebuilds the holder key via device_handle_from_seed. The rebuilt
+        // handle must mint proofs under the same cnf.jkt as the original.
+        let mut store = isolated_store("seed-roundtrip");
+        let original = ensure_device_key(&mut store).unwrap();
+        let rebuilt =
+            device_handle_from_seed(&original.seed_b64(), original.jkt()).unwrap();
+        assert_eq!(rebuilt.jkt(), original.jkt());
+    }
+
+    #[test]
+    fn seed_rebuild_rejects_mismatched_thumbprint() {
+        let mut store = isolated_store("seed-tamper");
+        let original = ensure_device_key(&mut store).unwrap();
+        let result = device_handle_from_seed(&original.seed_b64(), "not-the-real-jkt");
+        assert!(result.is_err());
     }
 
     #[test]

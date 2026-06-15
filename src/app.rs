@@ -984,6 +984,15 @@ pub fn RouterView() -> Element {
         }
     });
 
+    // F7 — durable hard-logout retry. A logout journals its server-side
+    // termination intent to localStorage before wiping local creds; if the
+    // tab closed before the revoke completed (or coauth was unreachable),
+    // finish it on the next boot so the rotation chain can never outlive a
+    // "Log out" click. One-shot: reads no signals, so it runs once on mount.
+    use_future(move || async move {
+        crate::pending_logout::run_pending_logout_if_any(chrono::Utc::now()).await;
+    });
+
     // SyncEngine generation counter. Declared up front so the
     // bootstrap connect() can pass it via `ConnectContext`. The engine
     // itself is spawned by the `use_effect` further down.
@@ -4200,6 +4209,46 @@ pub fn RouterView() -> Element {
                                                     let mut store = state_store.write();
                                                     crate::auth_dpop::ensure_device_key(&mut store).ok()
                                                 };
+                                                // F7 — journal the logout intent durably BEFORE the
+                                                // local wipe. If the tab closes mid-flight or coauth is
+                                                // briefly unreachable, the next boot
+                                                // (`run_pending_logout_if_any`) retries the server-side
+                                                // termination so the rotation chain can't outlive the
+                                                // "logout". The record stashes the device seed (the live
+                                                // key is wiped below) purely to mint the revoke holder
+                                                // proof; it is cleared once coauth confirms the grant is
+                                                // gone (account-lifecycle §4.1).
+                                                let pending_logout =
+                                                    crate::pending_logout::PendingLogout {
+                                                        grant_jwt: logout_grant
+                                                            .as_ref()
+                                                            .map(|grant| grant.grant_jwt.clone()),
+                                                        device_seed_b64: logout_device_handle
+                                                            .as_ref()
+                                                            .map(|handle| handle.seed_b64()),
+                                                        device_jkt: logout_device_handle
+                                                            .as_ref()
+                                                            .map(|handle| handle.jkt().to_owned()),
+                                                        principal_server_url: logout_grant
+                                                            .as_ref()
+                                                            .map(|grant| {
+                                                                grant.principal_server_url.clone()
+                                                            }),
+                                                        base_url: base.clone(),
+                                                        bearer: api_token.clone(),
+                                                        account_did: actor.clone(),
+                                                        created_at: chrono::Utc::now(),
+                                                    };
+                                                if let Err(error) =
+                                                    crate::pending_logout::persist_pending_logout(
+                                                        &pending_logout,
+                                                    )
+                                                {
+                                                    tracing::warn!(
+                                                        ?error,
+                                                        "failed to journal pending logout"
+                                                    );
+                                                }
                                                 let logout_generation = session_generation() + 1;
                                                 account_session_state.set("Logging out".to_owned());
                                                 session_generation.set(logout_generation);
@@ -4262,44 +4311,25 @@ pub fn RouterView() -> Element {
                                                 account_menu_open.set(false);
                                                 redirect_to_login(navigator);
                                                 spawn(async move {
-                                                    // Terminate the Auth Server session first
-                                                    // (revoke grant + finish browser session) so the
-                                                    // device key can't resume the rotation chain.
-                                                    // Best-effort: local credentials are already
-                                                    // wiped, so a failure here cannot keep THIS
+                                                    // Drive the journalled logout: revoke the grant at
+                                                    // coauth (terminating the rotation chain) then run
+                                                    // the soland courtesy logout. On success the journal
+                                                    // entry is cleared; a transient coauth failure leaves
+                                                    // it for the next boot to retry. Local credentials are
+                                                    // already wiped, so a failure here never keeps THIS
                                                     // client signed in.
-                                                    if let (Some(grant), Some(handle)) =
-                                                        (logout_grant, logout_device_handle)
-                                                    {
-                                                        if let Err(error) =
-                                                            revoke_session_grant_at_coauth(
-                                                                &grant, &handle,
-                                                            )
-                                                            .await
-                                                        {
-                                                            tracing::warn!(
-                                                                ?error,
-                                                                "coauth session-grant revoke on logout failed"
-                                                            );
+                                                    let outcome =
+                                                        crate::pending_logout::execute_pending_logout(
+                                                            &pending_logout,
+                                                        )
+                                                        .await;
+                                                    let logout_message = match outcome {
+                                                        crate::pending_logout::LogoutRunOutcome::Completed => {
+                                                            "Logout ok: session revoked".to_owned()
                                                         }
-                                                    }
-                                                    let api_result = CokretApi::new(&base)
-                                                        .map(|api| api.with_bearer(api_token));
-                                                    let logout_message = match api_result {
-                                                        Ok(api) => match api.logout().await {
-                                                            Ok(revoked) => {
-                                                                if revoked {
-                                                                    "Logout ok: device session revoked".to_owned()
-                                                                } else {
-                                                                    "Logout ok: no live session to revoke".to_owned()
-                                                                }
-                                                            }
-                                                            Err(error) => {
-                                                                format!("Logout failed: {error}")
-                                                            }
-                                                        },
-                                                        Err(error) => {
-                                                            format!("Invalid server URL: {error}")
+                                                        crate::pending_logout::LogoutRunOutcome::Retain => {
+                                                            "Logged out locally; server revoke will retry"
+                                                                .to_owned()
                                                         }
                                                     };
                                                     if session_generation() == logout_generation {
@@ -6187,30 +6217,6 @@ async fn rotate_session_grant_via_device_proof(
         session_expires_at: None,
         stored_at: chrono::Utc::now(),
     })
-}
-
-/// Hard-logout revocation at the Auth Server: revoke the session grant and
-/// finish its browser session so the rotation chain cannot be resumed (even by
-/// the device key). Best-effort — the caller wipes local credentials regardless;
-/// this terminates the server-side authentication context (account-lifecycle
-/// §4.1). Must run BEFORE the local device key / grant are wiped, since it needs
-/// the grant JWT + a device holder proof.
-async fn revoke_session_grant_at_coauth(
-    grant: &crate::local_state::PersistedSessionGrant,
-    device_handle: &crate::auth_dpop::DpopHandle,
-) -> anyhow::Result<()> {
-    let auth_server_url =
-        crate::coauth::resolve_principal_auth_server_url(&grant.principal_server_url)
-            .await
-            .map_err(|error| anyhow::anyhow!("resolve auth server: {error}"))?;
-    let coauth = crate::coauth::CoauthApi::new(&auth_server_url)?;
-    let htu = coauth.endpoint_url("_cokret/gate/account/session-grants/revoke")?;
-    let dpop_proof = device_handle
-        .mint_proof("POST", &htu, Some(&grant.grant_jwt))
-        .map_err(|error| anyhow::anyhow!("mint logout DPoP proof: {error}"))?;
-    coauth
-        .revoke_session_grant(&grant.grant_jwt, &dpop_proof)
-        .await
 }
 
 fn oidc_refresh_error_invalidates_grant(error: &anyhow::Error) -> bool {
