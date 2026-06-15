@@ -7202,6 +7202,13 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // (dedup → incoming ring / per-call inbox). Done after
                         // the `store` write guard above is dropped so the hub
                         // Signal writes don't nest inside the store borrow.
+                        //
+                        // Receiver proof verification (`webrtc-signaling.md`
+                        // §5.1, fail-closed): each inbound envelope's `proof` is
+                        // verified against the sender's authoritative directory
+                        // verify key (resolved via `device_directory`) before any
+                        // ring / inbox side effect. The routing is async because
+                        // a directory cache miss resolves through `keys/query`.
                         {
                             let mut hub = ctx.call_signal_hub;
                             for (id, body) in &sync.realms {
@@ -7210,7 +7217,9 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     id,
                                     body,
                                     &canonical_actor,
-                                );
+                                    Some(&api),
+                                )
+                                .await;
                             }
                         }
                         let synced_timeline = {

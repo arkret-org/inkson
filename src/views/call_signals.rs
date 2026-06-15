@@ -22,6 +22,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use crate::api::CokretApi;
+
 /// Inbound invite presented to the user as a ring. Set on the hub when an
 /// `invite` arrives for a call the local client has no active session for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +154,12 @@ pub struct DecodedCallSignal {
     pub sender_device: String,
     pub video: bool,
     pub data: Value,
+    /// The full signed envelope `Value` (kind / realm_id / actor_id /
+    /// device_id / sent_at / expires_at / payload / proof). Retained so the
+    /// receive path can verify the ephemeral `proof` (`webrtc-signaling.md`
+    /// §5.1) against the sender's directory verify key before any UI side
+    /// effect. `Null` only in unit-test constructors that bypass decoding.
+    pub envelope: Value,
 }
 
 /// Pull the `call_signals[]` envelopes out of one realm sync body's
@@ -227,6 +235,7 @@ fn decode_call_signal_envelope(realm_id: &str, envelope: &Value) -> Option<Decod
         sender_device,
         video,
         data,
+        envelope: envelope.clone(),
     })
 }
 
@@ -249,15 +258,92 @@ fn invite_wants_video(data: &Value) -> bool {
 ///
 /// `local_actor` is this device's account DID; signals this client itself
 /// emitted (echoed back through sync) are skipped so we never self-drive.
-pub fn route_realm_call_signals(
+///
+/// **Receiver proof verification (`webrtc-signaling.md` §5.1, fail-closed).**
+/// Before any signal reaches [`route_decoded_signal`] it MUST pass detached-JWS
+/// proof verification against the sender's authoritative directory verify key
+/// (resolved via [`crate::device_directory`]). The sync-apply path is
+/// synchronous but the directory query is async, so this fn is `async` and
+/// takes an optional authenticated [`CokretApi`]:
+///
+/// - cache **Hit** → verify inline; pass routes, fail drops;
+/// - cache **NegativeHit** (revoked / absent / no key) → fail-closed drop;
+/// - cache **Miss**:
+///   - `invite` → `await` an async resolve, then verify and route on success
+///     (so the *first* inbound call still rings instead of being silently
+///     dropped);
+///   - non-invite → fail-closed drop + best-effort prefetch so a subsequent
+///     redelivery / follow-up signal hits the cache.
+///
+/// When `api` is `None` (no authenticated client yet) a cache Miss cannot be
+/// resolved and the signal is dropped fail-closed.
+pub async fn route_realm_call_signals(
     hub: &mut CallSignalHub,
     realm_id: &str,
     body: &Value,
     local_actor: &str,
+    api: Option<&CokretApi>,
 ) {
     for decoded in decode_realm_call_signals(realm_id, body) {
-        route_decoded_signal(hub, decoded, local_actor);
+        // Self-echo: skip verification + routing entirely (we trust our own
+        // outbound frames and never resolve our own key here).
+        if !local_actor.is_empty() && decoded.sender_actor == local_actor {
+            continue;
+        }
+        match crate::device_directory::cached_device_signing_key(
+            &decoded.sender_actor,
+            &decoded.sender_device,
+        ) {
+            crate::device_directory::CacheLookup::Hit(key) => {
+                if verify_decoded_proof(&decoded, &key) {
+                    route_decoded_signal(hub, decoded, local_actor);
+                }
+                // verify failed → fail-closed drop.
+            }
+            crate::device_directory::CacheLookup::NegativeHit => {
+                // Revoked / absent / no key → fail-closed drop.
+            }
+            crate::device_directory::CacheLookup::Miss => {
+                let Some(api) = api else {
+                    // No client to resolve with → fail-closed drop.
+                    continue;
+                };
+                if decoded.signal_type == "invite" {
+                    // First inbound call: resolve now so the ring is not lost.
+                    if let Ok(Some(key)) = crate::device_directory::resolve_device_signing_key(
+                        api,
+                        &decoded.sender_actor,
+                        &decoded.sender_device,
+                    )
+                    .await
+                        && verify_decoded_proof(&decoded, &key)
+                    {
+                        route_decoded_signal(hub, decoded, local_actor);
+                    }
+                    // resolve None / verify fail → fail-closed drop.
+                } else {
+                    // Non-invite miss: fail-closed drop now, prefetch so the
+                    // next frame for this device can be verified inline.
+                    let _ = crate::device_directory::resolve_device_signing_key(
+                        api,
+                        &decoded.sender_actor,
+                        &decoded.sender_device,
+                    )
+                    .await;
+                }
+            }
+        }
     }
+}
+
+/// Verify a decoded signal's envelope `proof` against `key` using the shared
+/// receiver primitive. Pure wrapper so the routing loop reads cleanly and the
+/// gate is unit-testable.
+fn verify_decoded_proof(
+    decoded: &DecodedCallSignal,
+    key: &cokret_sdk::signatures::PublicKeyMaterial,
+) -> bool {
+    crate::device_directory::verify_ephemeral_envelope_proof(&decoded.envelope, key)
 }
 
 /// Current ring/active snapshot a routing decision is taken against. Pulled
@@ -485,6 +571,7 @@ mod tests {
             sender_device: "dev-b".into(),
             video: data.get("video").and_then(Value::as_bool).unwrap_or(false),
             data,
+            envelope: Value::Null,
         }
     }
 
@@ -553,6 +640,134 @@ mod tests {
             decide_route(&d, "did:web:alice", false, &state),
             RouteDecision::ClearRing
         );
+    }
+
+    // ── Receiver proof verification (device-identity Phase 2) ──────────
+
+    /// Build a real signed `ck.call.signal` envelope the same way the sender
+    /// (`api::media::submit_call_signal_v1`) does: detached-JWS over the
+    /// canonical proof *binding object* `{event_digest, actor_id,
+    /// verification_method, created_at}`, with `event_digest` = canonical hash
+    /// of the envelope without `proof`.
+    fn signed_call_signal_envelope(
+        signer: &crate::event_signer::YougenEventSigner,
+        actor_id: &str,
+        device_id: &str,
+    ) -> Value {
+        let mut envelope = json!({
+            "kind": "ck.call.signal",
+            "realm_id": "ck:realm:r",
+            "actor_id": actor_id,
+            "device_id": device_id,
+            "sent_at": "2026-06-16T00:00:00Z",
+            "expires_at": "2026-06-16T00:01:00Z",
+            "payload": {
+                "call_id": "ck:call:verify-1",
+                "signal_type": "invite",
+                "seq": 1,
+                "data": { "video": true }
+            }
+        });
+        let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
+        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
+        let verification_method = format!("{actor_id}#device");
+        let created_at = "2026-06-16T00:00:00Z";
+        let binding = json!({
+            "event_digest": event_digest,
+            "actor_id": actor_id,
+            "verification_method": verification_method,
+            "created_at": created_at,
+        });
+        let binding_bytes = crate::canonical::canonical_json_bytes(&binding).unwrap();
+        let jws = signer.detached_jws_over(&binding_bytes).unwrap();
+        envelope.as_object_mut().unwrap().insert(
+            "proof".to_owned(),
+            json!({
+                "kind": "detached_jws",
+                "alg": signer.algorithm(),
+                "verification_method": verification_method,
+                "event_digest": event_digest,
+                "created_at": created_at,
+                "jws": jws,
+            }),
+        );
+        envelope
+    }
+
+    fn pubkey_material(seed: u8) -> cokret_sdk::signatures::PublicKeyMaterial {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+        let did = crate::did_key::did_key_from_verifying_key(&sk.verifying_key());
+        crate::device_directory::public_key_from_directory_value(&did).unwrap()
+    }
+
+    #[test]
+    fn valid_call_proof_verifies_and_routes_to_ring() {
+        let actor = "did:web:caller.example";
+        let device = "ck:device:caller-1";
+        let seed = 71u8;
+        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
+        let envelope = signed_call_signal_envelope(&signer, actor, device);
+        let key = pubkey_material(seed);
+
+        // Verifies under the correct key.
+        assert!(crate::device_directory::verify_ephemeral_envelope_proof(
+            &envelope, &key
+        ));
+
+        // And a verified invite produces a Ring decision.
+        let decoded =
+            decode_call_signal_envelope("ck:realm:r", &envelope).expect("decodes");
+        assert!(verify_decoded_proof(&decoded, &key));
+        match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
+            RouteDecision::Ring(info) => assert_eq!(info.peer_actor, actor),
+            other => panic!("expected Ring, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn call_proof_fails_closed_under_wrong_key() {
+        let actor = "did:web:caller.example";
+        let device = "ck:device:caller-1";
+        let signer = crate::event_signer::build_ed25519_signer([71u8; 32], actor);
+        let envelope = signed_call_signal_envelope(&signer, actor, device);
+        // A different device's key MUST NOT verify the proof.
+        let wrong_key = pubkey_material(99);
+        assert!(!crate::device_directory::verify_ephemeral_envelope_proof(
+            &envelope, &wrong_key
+        ));
+    }
+
+    #[test]
+    fn call_proof_fails_closed_under_tampered_signature() {
+        let actor = "did:web:caller.example";
+        let device = "ck:device:caller-1";
+        let seed = 71u8;
+        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
+        let mut envelope = signed_call_signal_envelope(&signer, actor, device);
+        // Flip the JWS tail → signature no longer matches the binding object.
+        let jws = envelope["proof"]["jws"].as_str().unwrap().to_owned();
+        let tampered = format!("{}A", &jws[..jws.len() - 1]);
+        envelope["proof"]["jws"] = json!(tampered);
+        let key = pubkey_material(seed);
+        assert!(!crate::device_directory::verify_ephemeral_envelope_proof(
+            &envelope, &key
+        ));
+    }
+
+    #[test]
+    fn call_proof_fails_closed_when_controller_differs_from_actor() {
+        // verification_method controller != envelope actor_id → reject, even if
+        // the signature itself is valid for the embedded method.
+        let actor = "did:web:caller.example";
+        let device = "ck:device:caller-1";
+        let seed = 71u8;
+        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
+        let mut envelope = signed_call_signal_envelope(&signer, actor, device);
+        envelope["proof"]["verification_method"] = json!("did:web:someone-else.example#device");
+        let key = pubkey_material(seed);
+        assert!(!crate::device_directory::verify_ephemeral_envelope_proof(
+            &envelope, &key
+        ));
     }
 
     #[test]

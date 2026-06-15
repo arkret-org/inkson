@@ -522,6 +522,12 @@ async fn run_iteration(
                 return IterationOutcome::Ok;
             }
             apply_response(&response, is_full_sync, ctx, invite_notifications);
+            // Receiver side of `ck.call.signal` (async, needs the directory):
+            // verify each inbound envelope's proof against the sender's
+            // authoritative verify key and route only verified signals
+            // (fail-closed). Done here, not inside the synchronous
+            // `apply_response`, because the directory query is async.
+            route_inbound_call_signals(&api, &response, ctx).await;
             if let Err(error) = process_to_device_delivery(&api, &response, ctx).await {
                 if is_auth_expired_error(&error) {
                     return IterationOutcome::AuthExpired;
@@ -616,6 +622,30 @@ async fn run_iteration(
             IterationOutcome::StaleFrontier
         }
         Err(error) => IterationOutcome::Transient(format!("sync_engine: {error}")),
+    }
+}
+
+/// Async receiver pass for inbound `ck.call.signal`: for each realm body,
+/// verify every call-signal envelope's `proof` against the sender's
+/// authoritative directory verify key (`device_directory`) and route only
+/// verified signals into the call-signal hub (fail-closed). Runs after the
+/// synchronous `apply_response` because directory resolution needs `keys/query`.
+async fn route_inbound_call_signals(
+    api: &CokretApi,
+    response: &ClientSyncOutcome,
+    ctx: &SyncEngineContext,
+) {
+    let account_did = ctx.account_did.read().clone();
+    let mut hub = ctx.call_signal_hub;
+    for (id, body) in &response.realms {
+        crate::views::call_signals::route_realm_call_signals(
+            &mut hub,
+            id,
+            body,
+            &account_did,
+            Some(api),
+        )
+        .await;
     }
 }
 
@@ -719,12 +749,12 @@ pub fn apply_response(
     // from each realm body into the hub (dedup → incoming ring / per-call
     // inbox). Done after the `store` write guard is dropped so the hub Signal
     // writes don't nest inside the store borrow.
-    {
-        let mut hub = ctx.call_signal_hub;
-        for (id, body) in &response.realms {
-            crate::views::call_signals::route_realm_call_signals(&mut hub, id, body, &account_did);
-        }
-    }
+    //
+    // NB: receiver proof verification + directory resolve for inbound
+    // `ck.call.signal` is async (needs `keys/query`); it cannot run here
+    // because `apply_response` is synchronous and holds no authenticated
+    // client. The async routing pass lives in `run_iteration`
+    // (`route_inbound_call_signals`) right after this call returns.
 
     // The `realm_tree_nodes` Signal is derived from `state_store.realm_tree_projections`
     // via a use_effect in `RouterView` — we don't `set` it here. We do

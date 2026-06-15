@@ -1,41 +1,67 @@
 use super::*;
 
+/// Canonical signing-input prefix for the MLS `keypackages/upload`
+/// `device_signature`. Distinct domain string from the prekey `keys/upload`
+/// (`ck-keys-upload-v1`, spec §8.1) so a signature over one batch can never be
+/// replayed as the other; binds the device + the published KeyPackage batch.
+const KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keypackage-upload-v1\n";
+
+/// Sign the MLS KeyPackage upload batch with the local event-signer (device
+/// identity Ed25519 `did:key`), binding `device_id` + the published
+/// `key_packages`. Fail-closed (`bail!`) when no signer is installed.
+fn sign_keypackage_upload_batch(
+    device_id: &str,
+    key_packages: &[Value],
+) -> anyhow::Result<Value> {
+    let signer = crate::event_signer::active_signer().ok_or_else(|| {
+        anyhow::anyhow!(
+            "keypackages/upload device_signature requires an active event-signer (fail-closed)"
+        )
+    })?;
+    let body = json!({
+        "device_id": device_id,
+        "key_packages": key_packages,
+    });
+    let canonical = crate::canonical::canonical_json_bytes(&body)?;
+    let mut input =
+        Vec::with_capacity(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.len() + canonical.len());
+    input.extend_from_slice(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.as_bytes());
+    input.extend_from_slice(&canonical);
+    let jws = signer
+        .detached_jws_over(&input)
+        .map_err(|err| anyhow::anyhow!("keypackages/upload device_signature sign failed: {err}"))?;
+    Ok(json!({
+        "alg": signer.algorithm(),
+        "kid": signer.verification_method(),
+        "jws": jws,
+    }))
+}
+
 impl CokretApi {
     /// Publish an MLS `MlsKeyPackageRecord` to
-    /// soland's `/_cokret/self/keys/upload` endpoint so peers can fetch it via
-    /// `query_keys` and `add_member()` against it. Other key fields
-    /// (one_time_keys / fallback_keys / device_signature) carry their
-    /// default-test shape; soland tolerates them being placeholder when
-    /// the only consumer is the MLS Welcome strand.
-    #[cfg(feature = "demo-crypto")]
+    /// soland's `/_cokret/self/keys/keypackages/upload` endpoint so peers can
+    /// fetch it via `query_keys` and `add_member()` against it. The
+    /// `device_signature` is a real EdDSA detached-JWS produced by the local
+    /// event-signer over the published KeyPackage batch (no placeholder).
     pub async fn publish_mls_key_package(
         &self,
         device_id: &str,
         record: &cokret_sdk::MlsKeyPackageRecord,
     ) -> anyhow::Result<cokret_sdk::KeyPackagesUploadOutcome> {
-        self.ensure_demo_crypto_fallback_allowed("keys/upload MLS demo device_signature")?;
+        let device_id = device_id.trim();
+        let key_packages = vec![serde_json::to_value(record)?];
+        let device_signature = sign_keypackage_upload_batch(device_id, &key_packages)?;
         let body = cokret_sdk::KeyPackagesUploadRequestBody {
             principal_id: record.principal_id.clone(),
-            device_id: cokret_sdk::DeviceId::new(device_id.trim().to_owned())?,
-            key_packages: vec![serde_json::to_value(record)?],
-            device_signature: json!({"alg": "EdDSA", "signature": "yougen-dev-signature"}),
+            device_id: cokret_sdk::DeviceId::new(device_id.to_owned())?,
+            key_packages,
+            device_signature,
             expires_at: None,
             strand_id: None,
             mls_group_id: None,
         };
         self.post_json("_cokret/self/keys/keypackages/upload", &body)
             .await
-    }
-
-    #[cfg(not(feature = "demo-crypto"))]
-    pub async fn publish_mls_key_package(
-        &self,
-        _device_id: &str,
-        _record: &cokret_sdk::MlsKeyPackageRecord,
-    ) -> anyhow::Result<KeysUploadOutcome> {
-        anyhow::bail!(
-            "publish_mls_key_package ships a dev `device_signature` placeholder and requires the `demo-crypto` build feature"
-        )
     }
 
     /// Fetch a peer's MLS key package via
@@ -50,16 +76,17 @@ impl CokretApi {
         device_id: &str,
     ) -> anyhow::Result<Option<cokret_sdk::MlsKeyPackageRecord>> {
         let resp = self.query_keys(actor, device_id).await?;
-        // SDK `KeysQueryOutcome::device_keys` is a typed
-        // `BTreeMap<Did, BTreeMap<DeviceId, Value>>`; the keys are newtype
-        // identifiers, so match them by their string form rather than a
-        // borrow-keyed `BTreeMap::get`.
+        // SDK `KeysQueryOutcome::device_keys` is now a typed
+        // `BTreeMap<Did, BTreeMap<DeviceId, QueryDeviceRecord>>`; the prekey /
+        // keypackage bundle lives under `record.algorithms`. Match the newtype
+        // identifier keys by their string form rather than a borrow-keyed
+        // `BTreeMap::get`.
         let packages = resp
             .device_keys
             .iter()
             .find(|(did, _)| did.as_str() == actor)
             .and_then(|(_, actor_map)| actor_map.iter().find(|(dev, _)| dev.as_str() == device_id))
-            .and_then(|(_, device_value)| device_value.get("mls_key_packages"));
+            .and_then(|(_, record)| record.algorithms.get("mls_key_packages"));
         let Some(packages) = packages else {
             return Ok(None);
         };

@@ -37,8 +37,13 @@ impl CokretApi {
             data,
         )?;
 
-        // Detached signature over canonical envelope bytes excluding
-        // `proof` itself (webrtc-signaling.md §5; RFC 8785 JCS).
+        // webrtc-signaling.md §5.1: the ephemeral `proof` is detached-JWS and
+        // **isomorphic to the persistent Event proof**. The receiver verifies
+        // it with the SAME SDK verifier (`verify_eddsa_detached_jws_proof`), so
+        // the JWS MUST sign the canonical proof *binding object*
+        // `{event_digest, actor_id, verification_method, created_at}` — NOT the
+        // raw envelope bytes — and the proof MUST carry `event_digest`
+        // (= canonical hash of the envelope without `proof`) and `created_at`.
         let signer = crate::event_signer::active_signer().ok_or_else(|| {
             anyhow::anyhow!(
                 "no active signer configured \u{2014} cannot submit ck.call.signal without device proof"
@@ -51,13 +56,27 @@ impl CokretApi {
         let canonical_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
             .canonical_bytes(&canonical)
             .map_err(|err| anyhow::anyhow!("ck.call.signal canonical encoding failed: {err}"))?;
+        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
+        let verification_method = format!("{actor_id}#device");
+        let created_at = crate::clock::now_rfc3339_secs();
+        let binding = json!({
+            "event_digest": event_digest,
+            "actor_id": actor_id,
+            "verification_method": verification_method,
+            "created_at": created_at,
+        });
+        let binding_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
+            .canonical_bytes(&binding)
+            .map_err(|err| anyhow::anyhow!("ck.call.signal binding encoding failed: {err}"))?;
         let jws = signer
-            .detached_jws_over(&canonical_bytes)
+            .detached_jws_over(&binding_bytes)
             .map_err(|err| anyhow::anyhow!("ck.call.signal proof signing failed: {err}"))?;
         envelope.proof = Some(json!({
             "kind": "detached_jws",
             "alg": signer.algorithm(),
-            "verification_method": format!("{actor_id}#device"),
+            "verification_method": verification_method,
+            "event_digest": event_digest,
+            "created_at": created_at,
             "jws": jws,
         }));
 

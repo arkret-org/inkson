@@ -1,9 +1,62 @@
 use super::*;
 
+/// Canonical signing-input prefix for the `keys/upload` `device_signature`
+/// (spec `device-lifecycle.md` §8.1).
+const KEYS_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keys-upload-v1\n";
+
+/// Build the spec `device-lifecycle.md` §8.1 canonical signing input for a
+/// `keys/upload` `device_signature`:
+///
+/// ```text
+/// "ck-keys-upload-v1\n" + canonical_json({device_id, one_time_keys, fallback_keys})
+/// ```
+///
+/// Missing `one_time_keys` / `fallback_keys` batches MUST normalize to an empty
+/// object `{}` (not be omitted) so sender and verifier hash byte-identical
+/// input. The body object is canonicalized with RFC 8785 JCS via
+/// [`crate::canonical`].
+fn keys_upload_signing_input(
+    device_id: &str,
+    one_time_keys: &BTreeMap<String, Value>,
+    fallback_keys: &BTreeMap<String, Value>,
+) -> anyhow::Result<Vec<u8>> {
+    let body = json!({
+        "device_id": device_id,
+        "one_time_keys": one_time_keys,
+        "fallback_keys": fallback_keys,
+    });
+    let canonical = crate::canonical::canonical_json_bytes(&body)?;
+    let mut input = Vec::with_capacity(KEYS_UPLOAD_SIGNATURE_PREFIX.len() + canonical.len());
+    input.extend_from_slice(KEYS_UPLOAD_SIGNATURE_PREFIX.as_bytes());
+    input.extend_from_slice(&canonical);
+    Ok(input)
+}
+
+/// Produce the real `device_signature` value for a `keys/upload` batch by
+/// signing the §8.1 canonical input with the local event-signer (the device
+/// identity Ed25519 `did:key`). Fail-closed (`bail!`) when no signer is
+/// installed — never emit a placeholder.
+pub(crate) fn sign_keys_upload_batch(
+    device_id: &str,
+    one_time_keys: &BTreeMap<String, Value>,
+    fallback_keys: &BTreeMap<String, Value>,
+) -> anyhow::Result<Value> {
+    let signer = crate::event_signer::active_signer().ok_or_else(|| {
+        anyhow::anyhow!("keys/upload device_signature requires an active event-signer (fail-closed)")
+    })?;
+    let input = keys_upload_signing_input(device_id, one_time_keys, fallback_keys)?;
+    let jws = signer
+        .detached_jws_over(&input)
+        .map_err(|err| anyhow::anyhow!("keys/upload device_signature sign failed: {err}"))?;
+    Ok(json!({
+        "alg": signer.algorithm(),
+        "kid": signer.verification_method(),
+        "jws": jws,
+    }))
+}
+
 impl CokretApi {
-    #[cfg(feature = "demo-crypto")]
     pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
-        self.ensure_demo_crypto_fallback_allowed("keys/upload demo device_signature")?;
         let mut one_time_keys = BTreeMap::new();
         one_time_keys.insert(
             "signed_curve25519:yougen-otk-1".to_owned(),
@@ -12,21 +65,17 @@ impl CokretApi {
                 "key": "yougen-one-time"
             }),
         );
+        let fallback_keys: BTreeMap<String, Value> = BTreeMap::new();
+        let device_signature =
+            sign_keys_upload_batch(device_id, &one_time_keys, &fallback_keys)?;
         let body = cokret_sdk::models::KeysUploadRequestBody {
             device_id: cokret_sdk::DeviceId::new(device_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?,
             one_time_keys,
-            fallback_keys: BTreeMap::new(),
-            device_signature: json!({"alg": "EdDSA", "signature": "yougen-dev-signature"}),
+            fallback_keys,
+            device_signature,
         };
         self.post_json("_cokret/self/keys/upload", &body).await
-    }
-
-    #[cfg(not(feature = "demo-crypto"))]
-    pub async fn upload_keys(&self, _device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
-        anyhow::bail!(
-            "upload_keys ships a dev `device_signature` placeholder and requires the `demo-crypto` build feature"
-        )
     }
 
     pub async fn claim_keys(
