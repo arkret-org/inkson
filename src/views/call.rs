@@ -980,12 +980,13 @@ async fn join_via_api(
 /// transport.
 ///
 /// Returns the transport's error when the keyprovider seed cannot be
-/// installed — on desktop the native transport is honestly not-ready and
-/// reports [`RtcClientError::DesktopMediaUnavailable`] here, which the
-/// caller turns into the "desktop calling is not ready yet" end state rather
-/// than driving the FSM to a fake `Active`/`Connecting`. Local capture is
-/// best-effort (a denied camera/mic permission should not abort the call
-/// setup), so its failure is not propagated.
+/// installed (MEDIA-1: only the MLS-exporter-derived 32-byte key is accepted),
+/// which the caller turns into a fail-closed end state rather than driving the
+/// FSM to a fake `Active`/`Connecting`. On both web and desktop the SFU path
+/// accepts the verified key here (desktop injects it into the webview LiveKit
+/// E2EE provider during `connect_sfu`). Local capture is best-effort (a denied
+/// camera/mic permission should not abort the call setup), so its failure is
+/// not propagated.
 fn install_and_capture(
     transport: &SharedTransport,
     session: &JoinedMediaSession,
