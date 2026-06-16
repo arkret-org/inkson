@@ -724,15 +724,31 @@ pub fn RouterView() -> Element {
                     let loaded_config = config_store_for_secure_upgrade
                         .read()
                         .load_with_secure_store(secure_store.as_ref());
-                    if token_for_secure_upgrade.peek().trim().is_empty()
-                        && let Some(rehydrated) = rehydrated_session_token_for_active_config(
+                    let held_token = token_for_secure_upgrade.peek().trim().to_owned();
+                    if held_token.is_empty() {
+                        if let Some(rehydrated) = rehydrated_session_token_for_active_config(
                             &loaded_config,
                             &base_url_for_secure_upgrade(),
                             &account_did_for_secure_upgrade(),
                             &device_id_for_secure_upgrade(),
-                        )
-                    {
-                        token_for_secure_upgrade.set(rehydrated);
+                        ) {
+                            token_for_secure_upgrade.set(rehydrated);
+                        }
+                    } else {
+                        // A bearer is already held in memory: sign-in completed
+                        // BEFORE this IndexedDB secure-store upgrade was ready, so
+                        // `config.rs` could only reach the localStorage tier — which
+                        // refuses bearer tokens — and the bearer was never persisted
+                        // (`config persisted without bearer`). Now that the upgraded
+                        // store is installed, re-persist it so the session survives a
+                        // reload / re-render instead of bouncing back to /login.
+                        persist_config(
+                            config_store_for_secure_upgrade,
+                            base_url_for_secure_upgrade(),
+                            account_did_for_secure_upgrade(),
+                            device_id_for_secure_upgrade(),
+                            held_token,
+                        );
                     }
                     let dpop_record = {
                         let store = state_store_for_secure_upgrade.read();

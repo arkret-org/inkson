@@ -1231,7 +1231,11 @@ impl CokretApi {
             return Ok(request);
         };
         let path = request.url().path().to_owned();
-        if !(path.contains("/_cokret/self/") || path.contains("/_soland/self/")) {
+        if !(path.contains("/_cokret/self/")
+            || path.contains("/_soland/self/")
+            || path.contains("/_cokret/root/")
+            || path.contains("/_soland/root/"))
+        {
             return Ok(request);
         }
         use cokret_sdk::http_signature::{
@@ -1333,7 +1337,11 @@ impl CokretApi {
             return Ok(request);
         };
         let path = request.url().path();
-        if !(path.contains("/_cokret/self/") || path.contains("/_soland/self/")) {
+        if !(path.contains("/_cokret/self/")
+            || path.contains("/_soland/self/")
+            || path.contains("/_cokret/root/")
+            || path.contains("/_soland/root/"))
+        {
             return Ok(request);
         }
         let htm = request.method().as_str().to_owned();
