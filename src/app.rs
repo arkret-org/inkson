@@ -6574,9 +6574,29 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 // sender-constrains it. `with_bearer` preserves this field, so all
                 // `api.clone().with_bearer(grant)` sites below inherit the DPoP
                 // device. Falls back to bearer-only if no device key is available.
-                let api = match crate::auth_dpop::load_device_key(&state_store.read()) {
-                    Ok(Some(handle)) => api.with_dpop_device(handle),
-                    _ => api,
+                let device_handle =
+                    crate::auth_dpop::load_device_key(&state_store.read()).ok().flatten();
+                let persisted_grant = state_store.read().session_grant();
+                let api = match device_handle {
+                    Some(handle) => {
+                        let mut api = api.with_dpop_device(handle.clone());
+                        // Attach the session-grant holder proof (minted from the
+                        // persisted grant + device key) so the Principal Server's
+                        // grant introspection passes on cache-miss / restore, not
+                        // just within the ≤120s introspection cache window seeded
+                        // by the initial login.
+                        if let Some(grant) = persisted_grant
+                            && let Ok(proof) = handle.mint_session_grant_introspection_proof(
+                                &grant.grant_id,
+                                &grant.grant_jwt,
+                                &grant.audience,
+                            )
+                        {
+                            api = api.with_session_grant_proof(proof);
+                        }
+                        api
+                    }
+                    None => api,
                 };
                 // Probe `/server/describe` for status text, but treat failure
                 // as non-fatal: a transient describe error (CORS preflight,

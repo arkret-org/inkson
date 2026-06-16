@@ -38,6 +38,18 @@ struct CompletedLogin {
     session_grant: Option<PersistedSessionGrant>,
 }
 
+// Process-global OIDC-callback completion guard. `callback_started` below is a
+// per-component signal, so a Dioxus double-mount (the 0.7.9 reactivity quirk
+// that occasionally renders the panel twice) gives each instance its own `false`
+// flag and BOTH run `finish_oidc_callback` — double-submitting the session-grant
+// and burning the single-use authorization_code (second POST → `invalid grant`
+// 400, which derails the whole login). This wasm-global latch ensures the OIDC
+// completion runs at most once per page load regardless of instance count. A new
+// sign-in navigates away and reloads (fresh wasm), resetting it.
+thread_local! {
+    static OIDC_CALLBACK_COMPLETION_STARTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[component]
 pub fn LoginPanel(
     base_url: Signal<String>,
@@ -63,6 +75,11 @@ pub fn LoginPanel(
 
     use_future(move || async move {
         if !auto_capture_callback || callback_started() {
+            return;
+        }
+        // Cross-instance latch: if another mount of this panel already began the
+        // OIDC completion, skip so the authorization_code is exchanged once.
+        if OIDC_CALLBACK_COMPLETION_STARTED.with(|started| started.replace(true)) {
             return;
         }
         callback_started.set(true);
@@ -550,10 +567,22 @@ async fn finish_oidc_callback(
     // grant's `cnf.jkt`. Verify the credential up front by reading the account
     // viewer through a grant+DPoP-bound client (api-conventions.md §3.3).
     let session_grant_exchange_path = "_cokret/gate/account/session-grants";
+    // Mint the session-grant holder proof presented on every `/_cokret/self/*`
+    // call: coauth's grant introspection (which the Principal Server invokes)
+    // requires it to confirm possession of the grant's session key, otherwise it
+    // answers `proof_required` and the grant reads inactive.
+    let grant_introspection_proof = dpop_handle
+        .mint_session_grant_introspection_proof(
+            session_grant.id.as_deref().unwrap_or_default(),
+            &session_grant.grant_jwt,
+            session_grant.audience.as_deref().unwrap_or_default(),
+        )
+        .map_err(|error| format!("session-grant introspection proof mint failed: {error}"))?;
     let authed_principal = principal
         .clone()
         .with_bearer(session_grant.grant_jwt.clone())
-        .with_dpop_device(dpop_handle.clone());
+        .with_dpop_device(dpop_handle.clone())
+        .with_session_grant_proof(grant_introspection_proof);
     let account = authed_principal
         .account_me()
         .await

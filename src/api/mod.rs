@@ -316,6 +316,11 @@ pub struct CokretApi {
     /// used by chime push register/unregister calls.
     chime_session_grant: Option<String>,
     chime_session_grant_proof: Option<SessionGrantIntrospectionProof>,
+    /// Session-grant holder proof presented on every `/_cokret/self/*` request
+    /// alongside the grant bearer + DPoP. coauth's grant introspection requires
+    /// it (otherwise `proof_required`/inactive); soland forwards it verbatim.
+    /// Minted from the same device key bound into the grant's `cnf.jkt`.
+    session_grant_proof: Option<SessionGrantIntrospectionProof>,
     network_state: Arc<RwLock<NetworkState>>,
     cancel_token: Option<CancellationToken>,
     /// SPEC-CR-001 — `ck.session.grant` signing key + its `keyid`. When set,
@@ -356,6 +361,10 @@ impl fmt::Debug for CokretApi {
             .field(
                 "chime_session_grant_proof",
                 &self.chime_session_grant_proof.as_ref().map(|_| "<proof>"),
+            )
+            .field(
+                "session_grant_proof",
+                &self.session_grant_proof.as_ref().map(|_| "<proof>"),
             )
             .field("cancel_token", &self.cancel_token)
             .field(
@@ -852,6 +861,7 @@ impl CokretApi {
             retry: options.retry,
             chime_session_grant: None,
             chime_session_grant_proof: None,
+            session_grant_proof: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
             cancel_token: None,
             session_signing_key: None,
@@ -899,6 +909,17 @@ impl CokretApi {
     /// pipeline ([`Self::attach_self_path_dpop`]); call sites only attach the
     /// key once. The grant must already be set via [`Self::with_bearer`] for the
     /// `ath` binding to be present.
+    /// ②(A+②) — attach the session-grant holder proof presented on every
+    /// `/_cokret/self/*` request (headers `X-Cokret-Session-Grant-Challenge` +
+    /// `-Proof`). coauth's grant introspection requires it to confirm the caller
+    /// holds the grant's session key; soland forwards it verbatim. Mint it from
+    /// the same device key as the grant's `cnf.jkt` via
+    /// [`crate::auth_dpop::DpopHandle::mint_session_grant_introspection_proof`].
+    pub fn with_session_grant_proof(mut self, proof: SessionGrantIntrospectionProof) -> Self {
+        self.session_grant_proof = Some(proof);
+        self
+    }
+
     pub fn with_dpop_device(mut self, handle: crate::auth_dpop::DpopHandle) -> Self {
         self.dpop_device = Some(handle);
         self
@@ -1327,6 +1348,19 @@ impl CokretApi {
             "dpop",
             reqwest::header::HeaderValue::from_str(&proof)?,
         );
+        // Present the session-grant holder proof so the Principal Server can
+        // forward it to coauth's grant introspection (which requires it to
+        // confirm possession of the grant's session key).
+        if let Some(grant_proof) = self.session_grant_proof.as_ref() {
+            request.headers_mut().insert(
+                "x-cokret-session-grant-challenge",
+                reqwest::header::HeaderValue::from_str(&grant_proof.challenge)?,
+            );
+            request.headers_mut().insert(
+                "x-cokret-session-grant-proof",
+                reqwest::header::HeaderValue::from_str(&grant_proof.proof_jwt)?,
+            );
+        }
         Ok(request)
     }
 

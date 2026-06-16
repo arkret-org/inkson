@@ -44,10 +44,23 @@ pub fn authed_api_with_sync(
 /// bearer-only.
 pub fn attach_device_dpop(api: CokretApi) -> CokretApi {
     let store = crate::local_state::LocalStateStore::default();
-    match crate::auth_dpop::load_device_key(&store) {
-        Ok(Some(handle)) => api.with_dpop_device(handle),
-        _ => api,
+    let Some(handle) = crate::auth_dpop::load_device_key(&store).ok().flatten() else {
+        return api;
+    };
+    let mut api = api.with_dpop_device(handle.clone());
+    // Attach the session-grant holder proof (minted from the persisted grant +
+    // device key) so the Principal Server's grant introspection passes; without
+    // it coauth answers `proof_required` and the grant reads inactive.
+    if let Some(grant) = store.session_grant()
+        && let Ok(proof) = handle.mint_session_grant_introspection_proof(
+            &grant.grant_id,
+            &grant.grant_jwt,
+            &grant.audience,
+        )
+    {
+        api = api.with_session_grant_proof(proof);
     }
+    api
 }
 
 /// Derive a lowercase handle string from a DID, suitable for registration.
