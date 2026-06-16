@@ -594,8 +594,22 @@ impl CoauthApi {
         requested_scope: Vec<String>,
         dpop_proof: &str,
     ) -> anyhow::Result<cokret_sdk::SessionGrantOutcome> {
-        let principal_id = cokret_sdk::Did::new(principal_id.trim().to_owned())
-            .map_err(|error| anyhow::anyhow!("invalid principal_id DID: {error}"))?;
+        // First sign-in (② contract D5) omits the principal DID: the client does
+        // not yet know it, and the Account Authority derives it from the OIDC
+        // subject (returned in `SessionGrantOutcome.principal_id`). A blank hint
+        // is therefore sent as `None`; only a non-empty hint is validated and
+        // forwarded for the re-auth binding check.
+        let principal_id = {
+            let trimmed = principal_id.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(
+                    cokret_sdk::Did::new(trimmed.to_owned())
+                        .map_err(|error| anyhow::anyhow!("invalid principal_id DID: {error}"))?,
+                )
+            }
+        };
         let device_id = cokret_sdk::DeviceId::new(device_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid device_id: {error}"))?;
         let proof = cokret_sdk::SessionGrantRequestProof {
@@ -629,8 +643,9 @@ impl CoauthApi {
             // ②(A+②) D5: `principal_id` is optional — on true first login the
             // client may not know its DID and the Account Authority derives it
             // (returned in `SessionGrantOutcome.principal_id`). We still forward
-            // the resolved/known DID when available.
-            principal_id: Some(principal_id),
+            // the resolved/known DID when available (see above: `None` on first
+            // sign-in, `Some(did)` on re-auth).
+            principal_id,
             device_id: Some(device_id),
             requested_scope,
             agent_key_authorization_ref: None,
@@ -731,7 +746,18 @@ impl CoauthApi {
     }
 
     fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
-        Ok(self.base_url.join(path.trim_start_matches('/'))?)
+        // The base may be a bare gate path (e.g. `…/_cokret/gate/account`) with
+        // no trailing slash. RFC 3986 `join` would then REPLACE the last segment
+        // (`account`) instead of appending — silently producing
+        // `…/_cokret/gate/session-grants` and 404-ing. Ensure the base path ends
+        // in `/` so a relative segment appends. Origin bases already end in `/`,
+        // so this is a no-op for the full-path callers (refresh/revoke).
+        let mut base = self.base_url.clone();
+        if !base.path().ends_with('/') {
+            let with_slash = format!("{}/", base.path());
+            base.set_path(&with_slash);
+        }
+        Ok(base.join(path.trim_start_matches('/'))?)
     }
 }
 
@@ -1537,6 +1563,37 @@ fn pkce_code_challenge_s256(code_verifier: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: a `gate_account_base` like `…/_cokret/gate/account` has no
+    /// trailing slash, so a naive `Url::join("session-grants")` would REPLACE the
+    /// `account` segment and POST to `…/_cokret/gate/session-grants` (404). The
+    /// `endpoint` helper must instead APPEND, preserving `account`.
+    #[test]
+    fn endpoint_appends_relative_path_to_bare_gate_account_base() {
+        let api = CoauthApi::new("https://local.host/_cokret/gate/account").unwrap();
+        assert_eq!(
+            api.endpoint("session-grants").unwrap().as_str(),
+            "https://local.host/_cokret/gate/account/session-grants"
+        );
+        assert_eq!(
+            api.endpoint("logout").unwrap().as_str(),
+            "https://local.host/_cokret/gate/account/logout"
+        );
+    }
+
+    /// An origin-rooted base (used by refresh/revoke with full paths) already
+    /// ends in `/`, so the slash-normalisation is a no-op and full paths resolve
+    /// from the origin root unchanged.
+    #[test]
+    fn endpoint_preserves_full_path_on_origin_base() {
+        let api = CoauthApi::new("https://auth.local.host").unwrap();
+        assert_eq!(
+            api.endpoint("_cokret/gate/account/session-grants/refresh")
+                .unwrap()
+                .as_str(),
+            "https://auth.local.host/_cokret/gate/account/session-grants/refresh"
+        );
+    }
 
     #[test]
     fn error_envelope_code_extracts_nested_code() {

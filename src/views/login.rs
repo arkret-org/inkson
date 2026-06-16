@@ -508,16 +508,12 @@ async fn finish_oidc_callback(
     }
     // The canonical Account Authority session-grants endpoint binds the issued
     // grant to `principal_id`; it MUST equal the DID the authenticated user
-    // resolves to. We forward the actor hint persisted with the scaffold (the
-    // re-auth case). KNOWN GAP: on true first login the DID is not yet known
-    // client-side, so this requires the actor DID to be pre-resolved before
-    // sign-in (the legacy bridge derived it server-side and returned a viewer).
-    if actor_hint.is_empty() {
-        return Err(
-            "First-login OIDC requires a known account DID for the Account Authority session-grant binding (principal_id). Pre-resolve the DID before sign-in."
-                .to_owned(),
-        );
-    }
+    // resolves to. On re-auth we forward the actor hint persisted with the
+    // scaffold. On true first sign-in the DID is not yet known client-side, so
+    // we forward an empty hint (sent as `None`): the Account Authority derives
+    // the principal DID from the OIDC subject and returns it in
+    // `SessionGrantOutcome.principal_id` (② contract D5), which the code below
+    // adopts as the authoritative actor DID.
     let outcome = gate_account
         .issue_session_grant_oidc(
             &actor_hint,
