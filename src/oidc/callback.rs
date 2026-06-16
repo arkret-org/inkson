@@ -3,7 +3,7 @@
 //! The lower-level pieces of the PKCE authorization-code strand already
 //! exist:
 //!
-//! * [`crate::coauth::build_oidc_scaffold_bundle`] / [`persist_oidc_scaffold`] mint cryptographic
+//! * [`crate::coauth::build_oidc_authorize_scaffold`] / [`persist_oidc_scaffold`] mint cryptographic
 //!   `state` / `nonce` / PKCE verifier and stash them in `localStorage` (web) before opening the
 //!   authorize URL.
 //! * [`crate::coauth::extract_authorization_code_from_callback`] / [`extract_state_from_callback`]
@@ -344,6 +344,8 @@ mod tests {
             principal_audience: "https://principal.example/api".to_owned(),
             callback_uri: "urn:yougen:oauth:callback".to_owned(),
             authorize_url: "https://issuer.example/auth?...".to_owned(),
+            issuer: "https://issuer.example".to_owned(),
+            gate_account_base: "https://principal.example/_cokret/gate/account".to_owned(),
         }
     }
 
