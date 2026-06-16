@@ -11,7 +11,36 @@
 //! live LiveKit SFU) cannot exercise the runtime connection — but the
 //! binding targets the real SDK and will connect for real in a browser.
 
+// `manganis` is pulled in alongside the asset items because the `asset!` macro
+// expands to `manganis::…` paths and must resolve that crate name in scope.
+use dioxus::prelude::{Asset, AssetOptions, asset, manganis};
 use wasm_bindgen::prelude::*;
+
+/// Make dx copy the vendored livekit-client bundle into the served
+/// `web/public/assets/` so the shim's hard-coded
+/// `import "/assets/livekit_vendor.js"` (see [`assets/livekit_shim.js`]) resolves
+/// to real JavaScript instead of falling through to the SPA `index.html` fallback
+/// (which the browser rejects as a module, collapsing the whole `yougen.js` module
+/// graph and leaving a blank white screen).
+///
+/// The shim imports the vendor by a fixed, unhashed path from *outside* Rust code,
+/// so per the manganis contract this asset:
+/// - sets `with_hash_suffix(false)` so dx serves it at exactly `/assets/livekit_vendor.js`;
+/// - is a `#[used] static` (not a referenced value) so the linker keeps it even
+///   though nothing in Rust reads the `Asset` — manganis requires `#[used]` for
+///   externally-referenced fixed-path assets;
+/// - sets `with_module(true)` because the file is an ES module (`export const …`)
+///   and `with_minify(false)` to ship the already-minified UMD bundle verbatim.
+///
+/// Refresh the bundle with `scripts/vendor_livekit.sh`.
+#[used]
+static LIVEKIT_VENDOR: Asset = asset!(
+    "/assets/livekit_vendor.js",
+    AssetOptions::js()
+        .with_hash_suffix(false)
+        .with_module(true)
+        .with_minify(false)
+);
 
 #[wasm_bindgen(module = "/assets/livekit_shim.js")]
 extern "C" {
