@@ -72,6 +72,27 @@ use crate::api::CokretApi;
 /// "missing → MUST treat as unverified".
 pub trait DidAnchor {
     fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument>;
+
+    /// P3.2b: asynchronously fetch + ingest `actor`'s DID document so a
+    /// subsequent [`Self::resolve_did_document`] can anchor the cross-signing
+    /// chain for `did:web` / `did:webvh` actors (whose key material lives
+    /// off-host). `http` is the caller's existing cross-platform
+    /// [`reqwest::Client`]. Returns `true` when the document is available
+    /// (fetched + ingested, or `did:key` which self-resolves and needs no
+    /// fetch), `false` fail-closed on any fetch / validation failure.
+    ///
+    /// The default is a no-op `true`: in-memory anchors (e.g. test fixtures)
+    /// pre-seed their evidence, so they need no network step. The live
+    /// [`crate::did_resolver::ResolverDidAnchor`] overrides this to perform the
+    /// real fetch + ingest.
+    fn ensure_actor_document<'a>(
+        &'a self,
+        http: &'a reqwest::Client,
+        actor: &'a Did,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + 'a>> {
+        let _ = (http, actor);
+        Box::pin(async { true })
+    }
 }
 
 /// Positive-entry TTL: a resolved key is trusted for this long before a fresh
@@ -376,8 +397,14 @@ pub async fn resolve_device_signing_key(
 
     let outcome = api.query_keys(actor, device).await?;
 
-    // DID anchoring (§8.3 step 1) needs the actor's DID document. An
-    // unresolvable actor → fail-closed (negative cache), per §8.2.
+    // P3.2b: DID anchoring (§8.3 step 1) needs the actor's DID document. For
+    // `did:web` / `did:webvh` actors that document lives off-host, so fetch +
+    // ingest it into the anchor's resolver first (best-effort: a failure leaves
+    // the anchor without evidence, and the synchronous resolve below then
+    // fail-closes). `did:key` actors self-resolve and skip the fetch.
+    let _ = anchor.ensure_actor_document(&api.http, &actor_did).await;
+
+    // An unresolvable actor → fail-closed (negative cache), per §8.2.
     let key = match anchor.resolve_did_document(&actor_did) {
         Some(did_document) => tier2_accepted_key(&outcome, &did_document, &actor_did, &device_id),
         None => None,
