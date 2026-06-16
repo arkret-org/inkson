@@ -122,7 +122,9 @@ try {
 try {
   const owned = new Uint8Array(config.frameKey.length);
   owned.set(config.frameKey);
-  await keyProvider.setKey(owned, undefined, 0);
+  // §8.1: the local frame key is sender-bound — install it under the local
+  // participant identity, never a room-wide slot.
+  await keyProvider.setKey(owned, config.localIdentity, 0);
   await room.setE2EEEnabled(true);
 } catch (error) {
   fail(error && error.message ? error.message : error);
@@ -176,7 +178,14 @@ for (;;) {
       case "set_e2ee_key": {
         const owned = new Uint8Array(command.key.length);
         owned.set(command.key);
-        await keyProvider.setKey(owned, undefined, (command.keyIndex || 0) >>> 0);
+        // A recomputed remote sender's key (or a rotated local key) is
+        // installed under its owning participant identity (§8.1), so the
+        // receiver can decrypt that specific sender's frames.
+        await keyProvider.setKey(
+          owned,
+          command.identity,
+          (command.keyIndex || 0) >>> 0,
+        );
         await room.setE2EEEnabled(true);
         break;
       }

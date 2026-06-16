@@ -22,9 +22,10 @@
 //! [`crate::media::rtc::join_call_media`]; [`MediaTransport::install_frame_key`]
 //! refuses any key whose provenance is not that derivation (MEDIA-1).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
-use crate::media::rtc::{JoinedMediaSession, RtcClientError};
+use crate::media::rtc::{JoinedMediaSession, PerSenderFrameKeys, RtcClientError};
 
 #[cfg(target_arch = "wasm32")]
 pub mod livekit_shim;
@@ -113,10 +114,33 @@ pub trait MediaTransport {
     /// new screen-capture flag.
     fn set_screen_share(&mut self, enabled: bool) -> Result<bool, RtcClientError>;
 
-    /// Install the MLS-exporter-derived SFrame frame key into the
-    /// transport's E2EE keyprovider. MUST reject any 0-length / non-32-byte
-    /// key (the only valid source is [`crate::media::rtc::join_call_media`]).
-    fn install_frame_key(&mut self, key: &[u8]) -> Result<(), RtcClientError>;
+    /// Install the local sender's MLS-exporter-derived SFrame frame key into
+    /// the transport's E2EE keyprovider, bound to the local
+    /// `participant_identity` (`media-service-binding.md` §8.1: the frame key is
+    /// sender-bound, so it is installed under the sender's own identity, never a
+    /// room-wide slot). MUST reject any 0-length / non-32-byte key (the only
+    /// valid source is [`crate::media::rtc::join_call_media`]). Failing to
+    /// install MUST fail closed — the call MUST NOT reach `Connected`.
+    fn install_frame_key(
+        &mut self,
+        participant_identity: &str,
+        key: &[u8],
+    ) -> Result<(), RtcClientError>;
+
+    /// Provide the per-sender remote frame-key deriver plus the
+    /// `participant_identity → device_id` map read from the verified
+    /// `ck.call.state.participants[]` roster. When a remote sender connects, the
+    /// transport derives that sender's frame key (same MLS group exporter, same
+    /// epoch, the remote's own `(participant_identity, device_id)` context) and
+    /// installs it under the remote's identity — which is the only way the
+    /// receiver can decrypt that sender's frames. Default no-op: the 1:1 P2P
+    /// path has a single shared peer and does not use SFU per-sender keys.
+    fn set_remote_key_source(
+        &mut self,
+        _keys: Rc<PerSenderFrameKeys>,
+        _identity_to_device: BTreeMap<String, String>,
+    ) {
+    }
 
     /// Seed the expected `ck.call.state.participants[]` SFU-local identity
     /// set BEFORE [`Self::connect_sfu`], so the SFU's asynchronous

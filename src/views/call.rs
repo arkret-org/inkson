@@ -9,14 +9,16 @@
 //! controls and opt-in recording.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
-use crate::media::rtc::{DesiredMedia, JoinedMediaSession, MediaJoinRequest, RtcClientError};
+use crate::media::rtc::{
+    DesiredMedia, JoinedMediaSession, MediaJoinRequest, PerSenderFrameKeys, RtcClientError,
+};
 use crate::rtc_transport::{LocalSignal, MediaTransport, new_transport};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::views::call_signals::{CallSignalHub, CallSignalInboxItem};
@@ -253,7 +255,13 @@ pub fn CallPanel(
             } else {
                 active_call_id()
             };
-            let (media_dids, focus_id, known_participant_identities, realm_mls_snapshot) = {
+            let (
+                media_dids,
+                focus_id,
+                known_participant_identities,
+                known_participant_devices,
+                realm_mls_snapshot,
+            ) = {
                 let store = state_store.read();
                 let snapshot = store.load();
                 let (media_dids, focus_id) = media_service_selection(&snapshot, &realm_id);
@@ -261,6 +269,7 @@ pub fn CallPanel(
                     media_dids,
                     focus_id,
                     call_state_participant_identities(&snapshot, &realm_id, &call),
+                    call_state_participant_device_map(&snapshot, &realm_id, &call),
                     store.mls_snapshot_for(&realm_id),
                 )
             };
@@ -320,7 +329,7 @@ pub fn CallPanel(
                 )
                 .await
                 {
-                    Ok((session, shared)) => {
+                    Ok((session, shared, per_sender_keys)) => {
                         if let Err(err) = install_and_capture(&shared, &session) {
                             // Transport could not accept the media key (desktop
                             // is honestly not-ready). Surface it and stay out of
@@ -373,6 +382,14 @@ pub fn CallPanel(
                                 // the LiveKit `ParticipantConnected` callback can
                                 // cross-check SFU identities fail-closed.
                                 shared.borrow_mut().set_expected_participants(&expected);
+                                // §8.1: hand the per-sender deriver + the durable
+                                // identity→device_id map to the transport so each
+                                // remote sender's frame key is recomputed and
+                                // installed when it connects (receiver decrypt).
+                                shared.borrow_mut().set_remote_key_source(
+                                    per_sender_keys.clone(),
+                                    known_participant_devices.clone(),
+                                );
                                 if let Err(err) = shared.borrow_mut().connect_sfu(&session) {
                                     last_error.set(media_error_label(err));
                                     stage.set(CallStage::Ended);
@@ -553,6 +570,7 @@ pub fn CallPanel(
                                             media_dids,
                                             focus_id,
                                             known_participant_identities,
+                                            known_participant_devices,
                                             realm_mls_snapshot,
                                         ) = {
                                             let store = state_store.read();
@@ -563,6 +581,9 @@ pub fn CallPanel(
                                                 media_dids,
                                                 focus_id,
                                                 call_state_participant_identities(
+                                                    &snapshot, &realm_id, &call,
+                                                ),
+                                                call_state_participant_device_map(
                                                     &snapshot, &realm_id, &call,
                                                 ),
                                                 store.mls_snapshot_for(&realm_id),
@@ -592,7 +613,7 @@ pub fn CallPanel(
                                             )
                                             .await
                                             {
-                                                Ok((session, shared)) => {
+                                                Ok((session, shared, per_sender_keys)) => {
                                                     if let Err(err) = install_and_capture(&shared, &session) {
                                                         last_error.set(media_error_label(err));
                                                         stage.set(CallStage::Ended);
@@ -639,6 +660,14 @@ pub fn CallPanel(
                                                     shared
                                                         .borrow_mut()
                                                         .set_expected_participants(&expected);
+                                                    // §8.1: hand the per-sender deriver +
+                                                    // identity→device_id map so each remote
+                                                    // sender's frame key is recomputed on
+                                                    // connect (receiver decrypt).
+                                                    shared.borrow_mut().set_remote_key_source(
+                                                        per_sender_keys.clone(),
+                                                        known_participant_devices.clone(),
+                                                    );
                                                     let connect_result =
                                                         { shared.borrow_mut().connect_sfu(&session) };
                                                     match connect_result {
@@ -1097,10 +1126,15 @@ async fn join_and_build_transport(
     actor: &str,
     device: &str,
     realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
-) -> Result<(JoinedMediaSession, SharedTransport), RtcClientError> {
-    let session = join_via_api(base, api_token, join, actor, device, realm_mls_snapshot).await?;
+) -> Result<(JoinedMediaSession, SharedTransport, Rc<PerSenderFrameKeys>), RtcClientError> {
+    let (session, per_sender_keys) =
+        join_via_api(base, api_token, join, actor, device, realm_mls_snapshot).await?;
     let transport = new_transport(&session);
-    Ok((session, Rc::new(RefCell::new(transport))))
+    Ok((
+        session,
+        Rc::new(RefCell::new(transport)),
+        Rc::new(per_sender_keys),
+    ))
 }
 
 /// Build an authed API client and run `join_call_media`. The MLS exporter
@@ -1124,7 +1158,7 @@ async fn join_via_api(
     actor: &str,
     device: &str,
     realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
-) -> Result<JoinedMediaSession, RtcClientError> {
+) -> Result<(JoinedMediaSession, PerSenderFrameKeys), RtcClientError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
         realm_mls_snapshot,
@@ -1139,7 +1173,23 @@ async fn join_via_api(
     join.epoch_id = exporter.epoch();
     let api = crate::views::helpers::authed_api(base, api_token.to_owned())
         .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
-    crate::media::rtc::join_call_media(&api, &join, &exporter).await
+    let session = crate::media::rtc::join_call_media(&api, &join, &exporter).await?;
+    // Retain the live MLS exporter (and the leg's static SFrame context) so the
+    // transport can recompute every remote sender's frame key on
+    // ParticipantConnected (§8.1). Building the deriver here keeps the exporter
+    // alive past the local-key derivation instead of dropping it.
+    let realm_id = cokret_sdk::RealmId::new(join.realm_id.clone())
+        .map_err(|_| RtcClientError::FocusMismatch)?;
+    let call_id = cokret_sdk::CallId::new(join.call_id.clone())
+        .map_err(|_| RtcClientError::FocusMismatch)?;
+    let per_sender_keys = PerSenderFrameKeys::new(
+        exporter,
+        realm_id,
+        call_id,
+        session.focus_id.clone(),
+        session.epoch_id,
+    );
+    Ok((session, per_sender_keys))
 }
 
 /// Install the SFrame key and start local capture on a freshly built
@@ -1158,7 +1208,8 @@ fn install_and_capture(
     session: &JoinedMediaSession,
 ) -> Result<(), RtcClientError> {
     let mut t = transport.borrow_mut();
-    t.install_frame_key(&session.frame_key)?;
+    // §8.1: the local key is sender-bound, installed under our own identity.
+    t.install_frame_key(&session.participant_identity, &session.frame_key)?;
     let _ = t.start_local_capture();
     Ok(())
 }
@@ -1744,6 +1795,53 @@ fn call_state_participant_identities(
     identities
 }
 
+/// Read the `participant_identity → device_id` map from the durable
+/// `ck.call.state.participants[]` projection for this call. Used to build a
+/// remote sender's SFrame [`FrameKeyContext`] (`media-service-binding.md` §8.1
+/// binds the sender's own `(participant_identity, device_id)`): when a remote
+/// connects, its `device_id` is looked up here so the receiver can recompute
+/// that sender's frame key from the shared MLS exporter. Entries missing either
+/// field are skipped (the remote's key cannot be derived → fail-closed for that
+/// one remote).
+fn call_state_participant_device_map(
+    state: &crate::local_state::ClientLocalState,
+    realm_id: &str,
+    call_id: &str,
+) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    for record in &state.raw_operations {
+        let kind = record
+            .payload
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if kind != "ck.call.state" || record.realm_id.as_deref() != Some(realm_id) {
+            continue;
+        }
+        let body = operation_body(&record.payload);
+        if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
+            continue;
+        }
+        let Some(participants) = body.get("participants").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for participant in participants {
+            let identity = participant
+                .get("participant_identity")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let device_id = participant
+                .get("device_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if !identity.trim().is_empty() && !device_id.trim().is_empty() {
+                map.insert(identity.to_owned(), device_id.to_owned());
+            }
+        }
+    }
+    map
+}
+
 /// Build the MEDIA-2 expected-participant identity set from durable call
 /// state, seeding the local token-exchange identity before the state sync
 /// loop has replayed our own write.
@@ -1890,6 +1988,46 @@ mod tests {
         );
         assert!(identities.contains("ck:rtc_participant:alice"));
         assert!(!identities.contains("did:web:alice.example"));
+    }
+
+    #[test]
+    fn call_state_participant_device_map_pairs_identity_and_device() {
+        let mut state = crate::local_state::ClientLocalState::default();
+        state.raw_operations.push(crate::local_state::RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ck.call.state",
+                "body": {
+                    "call_id": "ck:call:0196441c-0000-7000-8000-000000000000",
+                    "state": "active",
+                    "participants": [
+                        {
+                            "actor_id": "did:web:alice.example",
+                            "device_id": "ck:device:01904100-0000-7000-8000-00000000000a",
+                            "participant_identity": "ck:rtc_participant:alice"
+                        },
+                        {
+                            // Missing device_id -> skipped (cannot derive its key).
+                            "actor_id": "did:web:carol.example",
+                            "participant_identity": "ck:rtc_participant:carol"
+                        }
+                    ]
+                }
+            }),
+        });
+        let map = call_state_participant_device_map(
+            &state,
+            "ck:realm:01904100-0000-7000-8000-9b64700c6ee8",
+            "ck:call:0196441c-0000-7000-8000-000000000000",
+        );
+        assert_eq!(
+            map.get("ck:rtc_participant:alice").map(String::as_str),
+            Some("ck:device:01904100-0000-7000-8000-00000000000a")
+        );
+        // The participant with no device_id is fail-closed: not in the map.
+        assert!(!map.contains_key("ck:rtc_participant:carol"));
     }
 
     #[test]

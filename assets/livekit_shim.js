@@ -118,20 +118,33 @@ export async function cokretLivekitSetMuted(handle, kind, muted) {
   }
 }
 
-// cokretLivekitSetE2EEKey(handle, keyBytes, keyIndex) -> Promise<void>
+// cokretLivekitSetE2EEKey(handle, participantIdentity, keyBytes, keyIndex)
+//   -> Promise<void>
 //
-// Injects the MLS-exporter-derived 32-byte frame key into the real LiveKit
-// E2EE key provider and enables E2EE on the room. `keyBytes` is a Uint8Array
-// shared from wasm linear memory; copy it into a fresh buffer so the
-// provider keeps an owned copy.
-export async function cokretLivekitSetE2EEKey(handle, keyBytes, keyIndex) {
+// Injects a sender-bound MLS-exporter-derived 32-byte frame key into the real
+// LiveKit E2EE key provider, keyed to `participantIdentity`, and enables E2EE
+// on the room. `keyBytes` is a Uint8Array shared from wasm linear memory; copy
+// it into a fresh buffer so the provider keeps an owned copy.
+//
+// SFrame frame keys are sender-bound (media-service-binding.md §8.1): the
+// Context binds the sender's own (participant_identity, device_id). Each sender
+// derives its key from the shared MLS exporter, and every other member
+// recomputes that same sender's key from the same exporter (same epoch) and
+// installs it under that sender's identity here — which is how the receiver
+// decrypts that sender's frames. `participantIdentity` is therefore ALWAYS
+// passed (local identity for our own publish, the remote's identity for a
+// recomputed remote key), never undefined.
+export async function cokretLivekitSetE2EEKey(
+  handle,
+  participantIdentity,
+  keyBytes,
+  keyIndex,
+) {
   const { room, keyProvider } = lookup(handle);
   const owned = new Uint8Array(keyBytes.length);
   owned.set(keyBytes);
-  // ExternalE2EEKeyProvider.setKey(key, participantIdentity?, keyIndex?).
-  // Setting it room-wide (no participant identity) establishes the shared
-  // sender key all members derive from the same MLS exporter secret.
-  await keyProvider.setKey(owned, undefined, keyIndex >>> 0);
+  // ExternalE2EEKeyProvider.setKey(key, participantIdentity, keyIndex).
+  await keyProvider.setKey(owned, participantIdentity, keyIndex >>> 0);
   // Turn on frame encryption/decryption for this room.
   await room.setE2EEEnabled(true);
 }

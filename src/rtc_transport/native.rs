@@ -36,7 +36,7 @@
 //! ICE is ever produced.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use dioxus::document::{self, Eval};
@@ -48,7 +48,9 @@ use super::{
     LocalMediaState, LocalSignal, MediaTransport, RemoteParticipant, TransportState,
     ensure_valid_frame_key,
 };
-use crate::media::rtc::{JoinedMediaSession, RtcClientError, cross_check_participant_identity};
+use crate::media::rtc::{
+    JoinedMediaSession, PerSenderFrameKeys, RtcClientError, cross_check_participant_identity,
+};
 
 /// The desktop LiveKit driver, run in the webview over the eval bridge. The
 /// leading `__COKRET_DRIVER_CONFIG__` token is replaced per call with the
@@ -93,6 +95,16 @@ pub struct NativeRtcTransport {
     backend_token: String,
     frame_key: Vec<u8>,
     frame_key_installed: bool,
+    /// Local sender's SFU participant identity, bound into the local frame-key
+    /// install (`media-service-binding.md` §8.1: keys are sender-bound).
+    local_identity: String,
+    /// Per-sender remote frame-key deriver (retains the live MLS exporter) plus
+    /// the `participant_identity → device_id` map from the verified
+    /// `ck.call.state.participants[]` roster. Moved into the driver event loop
+    /// so each remote sender's recomputed key is injected into the webview
+    /// LiveKit provider under the remote identity.
+    remote_keys: Option<Rc<PerSenderFrameKeys>>,
+    identity_to_device: BTreeMap<String, String>,
     local: LocalMediaState,
     state: Rc<RefCell<TransportState>>,
     remotes: Rc<RefCell<Vec<RemoteParticipant>>>,
@@ -115,6 +127,9 @@ impl NativeRtcTransport {
             backend_token: session.backend_token.clone(),
             frame_key: Vec::new(),
             frame_key_installed: false,
+            local_identity: session.participant_identity.clone(),
+            remote_keys: None,
+            identity_to_device: BTreeMap::new(),
             local: LocalMediaState::default(),
             state: Rc::new(RefCell::new(TransportState::Idle)),
             remotes: Rc::new(RefCell::new(Vec::new())),
@@ -182,13 +197,30 @@ impl MediaTransport for NativeRtcTransport {
         Ok(enabled)
     }
 
-    fn install_frame_key(&mut self, key: &[u8]) -> Result<(), RtcClientError> {
+    fn install_frame_key(
+        &mut self,
+        participant_identity: &str,
+        key: &[u8],
+    ) -> Result<(), RtcClientError> {
         ensure_valid_frame_key(key)?;
-        // Retain the verified 32-byte MLS-exporter key so `connect_sfu` can
-        // inject it into the LiveKit ExternalE2EEKeyProvider in the webview.
+        // Retain the verified 32-byte MLS-exporter key and the local sender
+        // identity it is bound to so `connect_sfu` can inject it into the
+        // LiveKit ExternalE2EEKeyProvider under that identity in the webview.
         self.frame_key = key.to_vec();
+        if !participant_identity.trim().is_empty() {
+            self.local_identity = participant_identity.to_owned();
+        }
         self.frame_key_installed = true;
         Ok(())
+    }
+
+    fn set_remote_key_source(
+        &mut self,
+        keys: Rc<PerSenderFrameKeys>,
+        identity_to_device: BTreeMap<String, String>,
+    ) {
+        self.remote_keys = Some(keys);
+        self.identity_to_device = identity_to_device;
     }
 
     fn set_expected_participants(&mut self, expected: &BTreeSet<String>) {
@@ -212,6 +244,9 @@ impl MediaTransport for NativeRtcTransport {
             "audio": self.desired_audio,
             "video": self.desired_video,
             "frameKey": self.frame_key,
+            // §8.1: the local key is sender-bound; install it under the local
+            // participant identity, never a room-wide slot.
+            "localIdentity": self.local_identity,
         });
         let config_json = serde_json::to_string(&config)
             .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
@@ -239,6 +274,8 @@ impl MediaTransport for NativeRtcTransport {
         let state = self.state.clone();
         let remotes = self.remotes.clone();
         let expected = self.expected_participants.clone();
+        let remote_keys = self.remote_keys.clone();
+        let identity_to_device = self.identity_to_device.clone();
 
         spawn(async move {
             loop {
@@ -263,6 +300,25 @@ impl MediaTransport for NativeRtcTransport {
                         if cross_check_participant_identity(&identity, &expected.borrow()).is_err()
                         {
                             continue;
+                        }
+                        // §8.1 receiver side: recompute THIS remote sender's
+                        // frame key from the same MLS group exporter at the same
+                        // epoch (the remote's own (participant_identity,
+                        // device_id) context) and inject it into the webview
+                        // LiveKit provider under the remote identity so its
+                        // frames decrypt. Fail-closed: unknown device_id or a
+                        // derivation failure skips this one remote (its frames
+                        // stay undecryptable) without affecting any other.
+                        if let Some(keys) = remote_keys.as_ref()
+                            && let Some(device_id) = identity_to_device.get(&identity)
+                            && let Ok(remote_key) = keys.derive_remote_key(&identity, device_id)
+                        {
+                            let _ = event_bridge.send(json!({
+                                "cmd": "set_e2ee_key",
+                                "identity": identity,
+                                "key": remote_key,
+                                "keyIndex": 0,
+                            }));
                         }
                         let mut roster = remotes.borrow_mut();
                         if !roster.iter().any(|r| r.identity == identity) {
@@ -400,6 +456,10 @@ mod tests {
             ice_config: ice_config(),
             frame_key: vec![7u8; 32],
             desired_media: DesiredMedia::audio_video(),
+            device_id: "ck:device:01904100-0000-7000-8000-000000000005".to_owned(),
+            realm_id: "ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
+            call_id: "ck:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            epoch_id: 0,
         }
     }
 
@@ -431,10 +491,14 @@ mod tests {
         let session = session();
         let mut t = NativeRtcTransport::new(&session);
         assert_eq!(
-            t.install_frame_key(&[0u8; 16]).unwrap_err(),
+            t.install_frame_key("ck:rtc_participant:self", &[0u8; 16])
+                .unwrap_err(),
             RtcClientError::E2eeKeySourceUnauthorised
         );
-        assert!(t.install_frame_key(&[0u8; 32]).is_ok());
+        assert!(
+            t.install_frame_key("ck:rtc_participant:self", &[0u8; 32])
+                .is_ok()
+        );
     }
 
     #[test]

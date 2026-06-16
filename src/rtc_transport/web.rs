@@ -25,7 +25,7 @@
 //! non-32-byte key (MEDIA-1).
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
@@ -41,7 +41,9 @@ use super::{
     LocalMediaState, LocalSignal, MediaTransport, RemoteParticipant, TransportState,
     ensure_valid_frame_key, livekit_shim,
 };
-use crate::media::rtc::{JoinedMediaSession, RtcClientError, cross_check_participant_identity};
+use crate::media::rtc::{
+    JoinedMediaSession, PerSenderFrameKeys, RtcClientError, cross_check_participant_identity,
+};
 
 type SignalQueue = Rc<RefCell<Vec<LocalSignal>>>;
 
@@ -69,6 +71,16 @@ pub struct WebRtcTransport {
     /// the controller before `connect_sfu` and read inside the LiveKit
     /// `ParticipantConnected` callback for the MEDIA-2 cross-check.
     expected_participants: Rc<RefCell<BTreeSet<String>>>,
+    /// Local sender's SFU participant identity, bound into the local frame-key
+    /// install (`media-service-binding.md` §8.1: keys are sender-bound).
+    local_identity: String,
+    /// Per-sender remote frame-key deriver (retains the live MLS exporter) plus
+    /// the `participant_identity → device_id` map from the verified
+    /// `ck.call.state.participants[]` roster. Shared into the LiveKit
+    /// `ParticipantConnected` callback so each remote sender's key is derived
+    /// (same group exporter + epoch, the remote's own context) and installed.
+    remote_keys: Rc<RefCell<Option<Rc<PerSenderFrameKeys>>>>,
+    identity_to_device: Rc<RefCell<BTreeMap<String, String>>>,
     /// Live LiveKit room handle (SFU path) once `room.connect` resolves.
     room: RoomHandle,
     outbound: SignalQueue,
@@ -98,6 +110,9 @@ impl WebRtcTransport {
             frame_key: Vec::new(),
             remotes: Rc::new(RefCell::new(Vec::new())),
             expected_participants: Rc::new(RefCell::new(BTreeSet::new())),
+            local_identity: session.participant_identity.clone(),
+            remote_keys: Rc::new(RefCell::new(None)),
+            identity_to_device: Rc::new(RefCell::new(BTreeMap::new())),
             room: Rc::new(RefCell::new(None)),
             outbound: Rc::new(RefCell::new(Vec::new())),
             local_stream: Rc::new(RefCell::new(None)),
@@ -248,14 +263,31 @@ impl MediaTransport for WebRtcTransport {
         Ok(enabled)
     }
 
-    fn install_frame_key(&mut self, key: &[u8]) -> Result<(), RtcClientError> {
+    fn install_frame_key(
+        &mut self,
+        participant_identity: &str,
+        key: &[u8],
+    ) -> Result<(), RtcClientError> {
         ensure_valid_frame_key(key)?;
-        // Retain the verified 32-byte MLS-exporter key so the SFU path can
-        // inject it into the LiveKit ExternalE2EEKeyProvider once the room
+        // Retain the verified 32-byte MLS-exporter key (and the local sender
+        // identity it is bound to) so the SFU path can inject it into the
+        // LiveKit ExternalE2EEKeyProvider under that identity once the room
         // exists. The P2P path only needs the installed flag as an offer gate.
         self.frame_key = key.to_vec();
+        if !participant_identity.trim().is_empty() {
+            self.local_identity = participant_identity.to_owned();
+        }
         self.frame_key_installed = true;
         Ok(())
+    }
+
+    fn set_remote_key_source(
+        &mut self,
+        keys: Rc<PerSenderFrameKeys>,
+        identity_to_device: BTreeMap<String, String>,
+    ) {
+        *self.remote_keys.borrow_mut() = Some(keys);
+        *self.identity_to_device.borrow_mut() = identity_to_device;
     }
 
     fn set_expected_participants(&mut self, expected: &BTreeSet<String>) {
@@ -278,6 +310,7 @@ impl MediaTransport for WebRtcTransport {
         let connect_url = session.connect_url.clone();
         let backend_token = session.backend_token.clone();
         let frame_key = self.frame_key.clone();
+        let local_identity = self.local_identity.clone();
         let desired_audio = self.desired_audio;
         let desired_video = self.desired_video;
         let room_slot = self.room.clone();
@@ -285,6 +318,8 @@ impl MediaTransport for WebRtcTransport {
         let remotes = self.remotes.clone();
         let expected = self.expected_participants.clone();
         let participant_cb_slot = self.participant_cb.clone();
+        let remote_keys = self.remote_keys.clone();
+        let identity_to_device = self.identity_to_device.clone();
 
         spawn_local(async move {
             let opts = js_sys::Object::new();
@@ -313,11 +348,24 @@ impl MediaTransport for WebRtcTransport {
             }
             *room_slot.borrow_mut() = Some(handle.clone());
 
-            // Inject the MLS-exporter-derived frame key into LiveKit's E2EE
-            // key provider and enable room E2EE BEFORE publishing, so local
-            // media is encrypted from the first frame.
-            if let Ok(key_promise) = livekit_shim::set_e2ee_key(&handle, &frame_key, 0) {
-                let _ = JsFuture::from(key_promise).await;
+            // Inject the local sender's MLS-exporter-derived frame key into
+            // LiveKit's E2EE key provider, bound to the local participant
+            // identity (§8.1: keys are sender-bound, never a room-wide slot),
+            // and enable room E2EE BEFORE publishing so local media is
+            // encrypted from the first frame. Fail-closed: if the install does
+            // not resolve, the room MUST NOT reach Connected — peers could not
+            // decrypt our media otherwise.
+            match livekit_shim::set_e2ee_key(&handle, &local_identity, &frame_key, 0) {
+                Ok(key_promise) => {
+                    if JsFuture::from(key_promise).await.is_err() {
+                        *state.borrow_mut() = TransportState::Failed;
+                        return;
+                    }
+                }
+                Err(_) => {
+                    *state.borrow_mut() = TransportState::Failed;
+                    return;
+                }
             }
 
             // Publish local mic/cam per desired_media (real SDK toggles).
@@ -342,10 +390,32 @@ impl MediaTransport for WebRtcTransport {
             // stream is never surfaced) instead of trusted.
             let remotes_cb = remotes.clone();
             let expected_cb = expected.clone();
+            let remote_keys_cb = remote_keys.clone();
+            let identity_to_device_cb = identity_to_device.clone();
+            let key_room = handle.clone();
             let cb = Closure::wrap(Box::new(move |identity: JsValue| {
                 let identity = identity.as_string().unwrap_or_default();
                 if cross_check_participant_identity(&identity, &expected_cb.borrow()).is_err() {
                     return;
+                }
+                // §8.1 receiver side: derive THIS remote sender's frame key from
+                // the same MLS group exporter at the same epoch, using the
+                // remote's own (participant_identity, device_id) context, and
+                // install it under the remote identity so its frames decrypt.
+                // Fail-closed: if the device_id is unknown or derivation fails,
+                // skip this one remote (its frames stay undecryptable) without
+                // affecting any other remote or local media.
+                if let Some(keys) = remote_keys_cb.borrow().clone() {
+                    let device_id = identity_to_device_cb.borrow().get(&identity).cloned();
+                    if let Some(device_id) = device_id
+                        && let Ok(remote_key) = keys.derive_remote_key(&identity, &device_id)
+                        && let Ok(promise) =
+                            livekit_shim::set_e2ee_key(&key_room, &identity, &remote_key, 0)
+                    {
+                        spawn_local(async move {
+                            let _ = JsFuture::from(promise).await;
+                        });
+                    }
                 }
                 let mut roster = remotes_cb.borrow_mut();
                 if !roster.iter().any(|r| r.identity == identity) {

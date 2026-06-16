@@ -285,6 +285,97 @@ pub struct JoinedMediaSession {
     pub frame_key: Vec<u8>,
     /// `desired_media` echoed for the transport's publisher setup.
     pub desired_media: DesiredMedia,
+    /// Local participant's own `device_id` — bound into the local sender's
+    /// SFrame [`FrameKeyContext`] (`media-service-binding.md` §8.1) and used to
+    /// build the per-sender key install so peers can recompute it.
+    pub device_id: String,
+    /// Static SFrame context fields shared by every sender in this call leg:
+    /// `realm_id`, `call_id`, `focus_id`, and the MLS `epoch_id`. A remote
+    /// sender's key is the same MLS group exporter (same epoch) evaluated over
+    /// the remote sender's `(participant_identity, device_id)`.
+    pub realm_id: String,
+    pub call_id: String,
+    pub epoch_id: u64,
+}
+
+/// Per-sender SFrame key derivation for a joined call leg.
+///
+/// Every member of the call shares the same MLS group exporter secret at a
+/// given epoch, so any member can reproduce *another* sender's frame key by
+/// evaluating the exporter over that sender's
+/// `Context = canonical_json({realm_id, call_id, focus_id, epoch_id,
+/// participant_identity, device_id})` (`media-service-binding.md` §8.1). This
+/// is what lets the receiver install the remote sender's key and decrypt its
+/// frames — without it, two members each only know their own key and can never
+/// decrypt each other.
+///
+/// The deriver retains the live [`RealmMlsExporter`] (so the MLS group is not
+/// dropped after the local key is derived at join time) plus the static
+/// per-leg context. It is held behind an `Rc` and invoked from the transport's
+/// `ParticipantConnected` callback to install each remote sender's key.
+pub struct PerSenderFrameKeys {
+    exporter: RealmMlsExporter,
+    realm_id: RealmId,
+    call_id: CallId,
+    focus_id: String,
+    epoch_id: u64,
+}
+
+impl PerSenderFrameKeys {
+    /// Build the per-sender deriver from the joined leg's static context and the
+    /// retained MLS exporter. `epoch_id` MUST be the exporter's live epoch so a
+    /// remote key is derived under the same group secret as the local key.
+    pub fn new(
+        exporter: RealmMlsExporter,
+        realm_id: RealmId,
+        call_id: CallId,
+        focus_id: String,
+        epoch_id: u64,
+    ) -> Self {
+        Self {
+            exporter,
+            realm_id,
+            call_id,
+            focus_id,
+            epoch_id,
+        }
+    }
+
+    /// The live MLS epoch the local key was derived at. Remote keys are derived
+    /// at the same epoch.
+    pub fn epoch(&self) -> u64 {
+        self.epoch_id
+    }
+
+    /// Derive the SFrame frame key for one *remote* sender, identified by its
+    /// `(participant_identity, device_id)` from the verified
+    /// `ck.call.state.participants[]` roster.
+    ///
+    /// Fail-closed (`Err`) when the ids are malformed or the exporter rejects
+    /// the context; the caller skips installing that one remote's key (its
+    /// frames stay undecryptable) without affecting any other remote. The same
+    /// MLS group exporter at the same epoch is used, so the bytes are identical
+    /// to what the remote sender derived for itself.
+    pub fn derive_remote_key(
+        &self,
+        participant_identity: &str,
+        device_id: &str,
+    ) -> Result<Vec<u8>, RtcClientError> {
+        let realm_id = self.realm_id.clone();
+        let call_id = self.call_id.clone();
+        let device_id = DeviceId::new(device_id.to_owned())
+            .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
+        let context = FrameKeyContext {
+            realm_id,
+            call_id,
+            focus_id: self.focus_id.clone(),
+            epoch_id: self.epoch_id,
+            participant_identity: participant_identity.to_owned(),
+            device_id,
+        };
+        derive_frame_key(&self.exporter, &context)
+            .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)
+    }
 }
 
 /// Run the full media-plane join: token exchange → verify → ICE config →
@@ -342,12 +433,12 @@ pub async fn join_call_media(
     // participant_identity is the verified SFU-local handle from the
     // token binding, so the key is sender-bound per §8.1.
     let frame_context = FrameKeyContext {
-        realm_id: ids.realm_id,
-        call_id: ids.call_id,
+        realm_id: ids.realm_id.clone(),
+        call_id: ids.call_id.clone(),
         focus_id: request.focus_id.clone(),
         epoch_id: request.epoch_id,
         participant_identity: verification.participant_identity.clone(),
-        device_id: ids.device_id,
+        device_id: ids.device_id.clone(),
     };
     let frame_key = derive_frame_key(mls_exporter, &frame_context)
         .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
@@ -362,6 +453,10 @@ pub async fn join_call_media(
         ice_config,
         frame_key,
         desired_media: request.desired_media,
+        device_id: request.device_id.clone(),
+        realm_id: request.realm_id.clone(),
+        call_id: request.call_id.clone(),
+        epoch_id: request.epoch_id,
     })
 }
 
@@ -704,5 +799,161 @@ mod tests {
             result.err(),
             Some(RtcClientError::E2eeKeySourceUnauthorised)
         ));
+    }
+
+    // ── Cross-member SFrame key interop (the core receiver-side fix) ─────────
+    //
+    // The structural bug being fixed: each member only installed *its own*
+    // frame key, so two members could never decrypt each other. §8.1 frame keys
+    // are sender-bound, but every member of the same MLS group shares the epoch
+    // exporter secret, so any member can recompute *another* sender's key by
+    // evaluating the exporter over that sender's
+    // `Context = {realm_id, call_id, focus_id, epoch_id, participant_identity,
+    // device_id}`. This test builds a REAL two-member MLS group (Alice + Bob,
+    // distinct participant_identity + device_id), and proves Bob — using the
+    // production `PerSenderFrameKeys::derive_remote_key` path — recomputes the
+    // exact bytes Alice derived for herself. Unlike the single-exporter
+    // determinism tests, this is a genuine *cross-member* recomputation: two
+    // different groups, same exporter secret.
+
+    const ALICE_ACTOR: &str = "did:web:alice.example";
+    const ALICE_DEVICE: &str = "ck:device:01904100-0000-7000-8000-00000000000a";
+    const ALICE_IDENTITY: &str = "ck:rtc_participant:0198c2f4-0000-7000-8000-00000000000a";
+    const BOB_ACTOR: &str = "did:web:bob.example";
+    const BOB_DEVICE: &str = "ck:device:01904100-0000-7000-8000-00000000000b";
+    const BOB_IDENTITY: &str = "ck:rtc_participant:0198c2f4-0000-7000-8000-00000000000b";
+    const INTEROP_REALM: &str = "ck:realm:01904100-0000-7000-8000-1ad6479d4a41";
+    const INTEROP_CALL: &str = "ck:call:0196441c-0000-7000-8000-000000000000";
+
+    /// Snapshot a live MLS `group` under `(actor, device)`'s account secret in
+    /// `store` and restore it through the exact production `RealmMlsExporter`
+    /// path, so the test exporter is byte-identical to what the call surface
+    /// builds at join time.
+    fn exporter_from_group(
+        store: &crate::secure_key_store::MemorySecureKeyStore,
+        group: &cokret_sdk::CokretMlsGroup,
+        actor: &str,
+        device: &str,
+    ) -> RealmMlsExporter {
+        let secret =
+            crate::mls::runtime::load_or_create_device_snapshot_secret(store, actor, device)
+                .unwrap();
+        let record = group.export_state_record().unwrap();
+        let bytes = serde_json::to_vec(&record).unwrap();
+        let envelope = crate::mls::persistence::encrypt_state(
+            INTEROP_REALM,
+            &record.group_id,
+            record.epoch,
+            &bytes,
+            &secret,
+            b"deterministic-salt",
+        );
+        RealmMlsExporter::for_realm(Some(envelope), store, actor, device).unwrap()
+    }
+
+    #[test]
+    fn receiver_recomputes_remote_sender_frame_key_cross_member() {
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+
+        // Build a REAL two-member MLS group: Alice creates, Bob joins via Welcome.
+        let alice_identity = CokretMlsIdentity::new_basic(
+            Did::new(ALICE_ACTOR.to_owned()).unwrap(),
+            DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let bob_identity = CokretMlsIdentity::new_basic(
+            Did::new(BOB_ACTOR.to_owned()).unwrap(),
+            DeviceId::new(BOB_DEVICE.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let bob_key_package = bob_identity.key_package_record().unwrap();
+
+        let mut alice_group = alice_identity.create_group(INTEROP_REALM.as_bytes()).unwrap();
+        let add = alice_group.add_member(&bob_key_package).unwrap();
+        let bob_group =
+            cokret_sdk::CokretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();
+
+        // Both members are now on the same epoch with the same exporter secret.
+        assert_eq!(alice_group.epoch(), bob_group.epoch());
+        let epoch = alice_group.epoch();
+
+        // Restore each member's exporter through the production path.
+        let alice_store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let bob_store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let alice_exporter =
+            exporter_from_group(&alice_store, &alice_group, ALICE_ACTOR, ALICE_DEVICE);
+        let bob_exporter = exporter_from_group(&bob_store, &bob_group, BOB_ACTOR, BOB_DEVICE);
+
+        let realm_id = RealmId::new(INTEROP_REALM.to_owned()).unwrap();
+        let call_id = CallId::new(INTEROP_CALL.to_owned()).unwrap();
+        let focus_id = "fra-1".to_owned();
+
+        // Alice derives HER OWN sender frame key (the local install path) using
+        // her own (participant_identity, device_id).
+        let alice_self_ctx = FrameKeyContext {
+            realm_id: realm_id.clone(),
+            call_id: call_id.clone(),
+            focus_id: focus_id.clone(),
+            epoch_id: epoch,
+            participant_identity: ALICE_IDENTITY.to_owned(),
+            device_id: DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
+        };
+        let key_alice_self = derive_frame_key(&alice_exporter, &alice_self_ctx).unwrap();
+        assert_eq!(key_alice_self.len(), cokret_sdk::MEDIA_KEY_LEN);
+        assert!(key_alice_self.iter().any(|&b| b != 0));
+
+        // THE FIX: Bob (the RECEIVER, a different member) recomputes ALICE's
+        // sender key via the production `PerSenderFrameKeys::derive_remote_key`,
+        // using ALICE's (participant_identity, device_id) over Bob's own
+        // exporter at the same epoch.
+        let bob_per_sender = PerSenderFrameKeys::new(
+            bob_exporter,
+            realm_id.clone(),
+            call_id.clone(),
+            focus_id.clone(),
+            epoch,
+        );
+        let key_alice_recomputed_by_bob = bob_per_sender
+            .derive_remote_key(ALICE_IDENTITY, ALICE_DEVICE)
+            .expect("a co-member MUST be able to recompute the remote sender's key");
+
+        // The crux: two DIFFERENT members compute the SAME sender key bytes, so
+        // Bob can decrypt Alice's frames.
+        assert_eq!(
+            key_alice_self, key_alice_recomputed_by_bob,
+            "receiver (Bob) MUST recompute the exact frame key the sender (Alice) installed"
+        );
+
+        // Symmetric: Alice recomputes Bob's sender key, equal to Bob's own.
+        let bob_self_ctx = FrameKeyContext {
+            realm_id: realm_id.clone(),
+            call_id: call_id.clone(),
+            focus_id: focus_id.clone(),
+            epoch_id: epoch,
+            participant_identity: BOB_IDENTITY.to_owned(),
+            device_id: DeviceId::new(BOB_DEVICE.to_owned()).unwrap(),
+        };
+        let key_bob_self = derive_frame_key(&bob_per_sender.exporter, &bob_self_ctx).unwrap();
+        let alice_per_sender =
+            PerSenderFrameKeys::new(alice_exporter, realm_id, call_id, focus_id, epoch);
+        let key_bob_recomputed_by_alice = alice_per_sender
+            .derive_remote_key(BOB_IDENTITY, BOB_DEVICE)
+            .unwrap();
+        assert_eq!(key_bob_self, key_bob_recomputed_by_alice);
+
+        // Sender binding holds: Alice's and Bob's keys differ (distinct context).
+        assert_ne!(
+            key_alice_self, key_bob_self,
+            "distinct senders MUST get distinct keys (§8.1 sender-bound)"
+        );
+
+        // Fail-closed: an unresolved/garbage remote device_id MUST error, not
+        // fabricate a key.
+        assert!(
+            alice_per_sender
+                .derive_remote_key(BOB_IDENTITY, "not-a-device-id")
+                .is_err(),
+            "a malformed remote device_id MUST fail closed, not fabricate a key"
+        );
     }
 }

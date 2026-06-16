@@ -614,6 +614,7 @@ impl CoauthApi {
             audience: audience.to_owned(),
             expires_at: None,
             signature: String::new(),
+            verification_method: None,
             issuer: Some(issuer.to_owned()),
             client_id: Some(client_id.to_owned()),
             redirect_uri: Some(redirect_uri.to_owned()),
