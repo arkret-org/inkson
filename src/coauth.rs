@@ -623,7 +623,7 @@ impl CoauthApi {
             code_verifier: Some(code_verifier.to_owned()),
         };
         let body = cokret_sdk::SessionGrantRequestBody {
-            principal_id,
+            principal_id: Some(principal_id),
             device_id: Some(device_id),
             requested_scope,
             agent_key_authorization_ref: None,
