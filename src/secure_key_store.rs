@@ -61,6 +61,37 @@ const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds r
 const WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED: &str = "wasm account secrets and bearer tokens require IndexedDbSecureKeyStore with a \
      non-extractable SubtleCrypto AES-GCM wrapping key; localStorage read/write is disabled";
 
+/// localStorage flag that opts OUT of the wasm IndexedDB-only secure-secret
+/// hardening, allowing seeds / account secrets / bearer tokens to live in the
+/// AEAD-wrapped `localStorage` tier instead of requiring IndexedDB +
+/// non-extractable SubtleCrypto.
+///
+/// Default OFF (hardening enforced). Intended ONLY for (a) e2e/test harnesses
+/// that inject sessions into localStorage and (b) browsers without IndexedDB /
+/// SubtleCrypto. SECURITY NOTE: when ON, an attacker who can read localStorage
+/// (disk dump, same-origin XSS) recovers the AEAD wrapping seed alongside the
+/// ciphertext — the exact disk-dump protection the IndexedDB tier adds is lost.
+/// Production builds MUST leave this unset.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG: &str =
+    "yougen.security.allow_localstorage_secrets";
+
+/// `true` when [`WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG`] is set to a truthy value
+/// (`1`/`true`) in `localStorage`. Reading the flag itself from localStorage is
+/// safe (it carries no secret) and works even when IndexedDB/SubtleCrypto is
+/// unavailable.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn wasm_allow_localstorage_secrets() -> bool {
+    web_sys::window()
+        .and_then(|window| window.local_storage().ok().flatten())
+        .and_then(|storage| storage.get_item(WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG).ok().flatten())
+        .map(|value| {
+            let value = value.trim();
+            value.eq_ignore_ascii_case("1") || value.eq_ignore_ascii_case("true")
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
     key == SIGNING_SEED_KEY || key == WASM_LOCAL_IDENTITY_SEED_KEY
@@ -92,7 +123,9 @@ pub(crate) fn is_wasm_no_localstorage_mirror_key(key: &str) -> bool {
 pub(crate) fn require_wasm_indexeddb_ed25519_seed_store(
     store: &dyn SecureKeyStore,
 ) -> Result<(), SecureKeyStoreError> {
-    if store.backend_name() == WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND {
+    if store.backend_name() == WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND
+        || wasm_allow_localstorage_secrets()
+    {
         Ok(())
     } else {
         Err(SecureKeyStoreError::Unsupported(
@@ -1071,7 +1104,7 @@ impl std::fmt::Debug for LocalStorageSecureKeyStore {
 #[cfg(target_arch = "wasm32")]
 impl SecureKeyStore for LocalStorageSecureKeyStore {
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
-        if is_wasm_indexeddb_required_secret_key(key) {
+        if is_wasm_indexeddb_required_secret_key(key) && !wasm_allow_localstorage_secrets() {
             return Err(SecureKeyStoreError::Unsupported(
                 if is_wasm_ed25519_seed_key(key) {
                     WASM_ED25519_SEED_INDEXEDDB_REQUIRED
@@ -1088,7 +1121,7 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
     }
 
     fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
-        if is_wasm_indexeddb_required_secret_key(key) {
+        if is_wasm_indexeddb_required_secret_key(key) && !wasm_allow_localstorage_secrets() {
             return Err(SecureKeyStoreError::Unsupported(
                 if is_wasm_ed25519_seed_key(key) {
                     WASM_ED25519_SEED_INDEXEDDB_REQUIRED
@@ -2128,6 +2161,16 @@ impl std::fmt::Debug for SigningSeedMaterial {
             .field("seed", &"<redacted>")
             .field("local_signing_did", &self.local_signing_did)
             .finish()
+    }
+}
+
+impl SigningSeedMaterial {
+    /// Raw 32-byte Ed25519 public key for this device signing seed. This is the
+    /// `device_public_key` submitted to the enrollment authority.
+    pub fn device_public_key(&self) -> [u8; 32] {
+        ed25519_dalek::SigningKey::from_bytes(&self.seed)
+            .verifying_key()
+            .to_bytes()
     }
 }
 

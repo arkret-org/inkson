@@ -596,6 +596,109 @@ fn initial_session_token_from_state(
     String::new()
 }
 
+/// localStorage key the cotest joint-e2e harness uses to hand yougen a real
+/// `ck.session.grant` + the DPoP device seed it is bound to. Read ONCE at boot,
+/// only on wasm and only when `wasm_allow_localstorage_secrets()` is set — the
+/// same dev-only opt-in the harness already toggles. Production never sets
+/// either key, so this path is fully inert there.
+#[cfg(target_arch = "wasm32")]
+const TEST_SESSION_INJECTION_KEY: &str = "yougen.test.session_injection.v1";
+
+/// Dev-only boot injection of a real grant + DPoP key (cotest joint e2e,
+/// ②(A+②) model). Returns the injected grant JWT so the caller can seed the
+/// in-memory `token` signal before the bootstrap `connect()` reads it.
+///
+/// Timing: this MUST run before the bootstrap `connect()` block reads `token`
+/// and `state_store` (the DPoP key + persisted grant) so the very first
+/// `/_cokret/self/*` request carries a valid grant + DPoP + holder proof. It is
+/// driven from a `use_hook` placed ahead of that block so it executes once,
+/// synchronously, on first render.
+///
+/// On success it (1) writes the DPoP device key to the secure store via the
+/// localStorage tier (the harness sets `allow_localstorage_secrets`), with a
+/// thumbprint that equals the grant's `cnf.jkt` because both derive from the
+/// same seed, and (2) persists a `PersistedSessionGrant` whose
+/// `principal_server_url` is the active server so the bootstrap does not treat
+/// it as stale.
+#[cfg(target_arch = "wasm32")]
+fn inject_test_session_grant(
+    state_store: &mut Signal<LocalStateStore>,
+    config_store: Signal<LocalConfigStore>,
+    server_url: &str,
+    account_did: &str,
+    device_id: &str,
+) -> Option<String> {
+    if !crate::secure_key_store::wasm_allow_localstorage_secrets() {
+        return None;
+    }
+    let raw = web_sys::window()
+        .and_then(|window| window.local_storage().ok().flatten())
+        .and_then(|storage| storage.get_item(TEST_SESSION_INJECTION_KEY).ok().flatten())?;
+    let parsed: Value = serde_json::from_str(&raw).ok()?;
+    let grant_jwt = parsed.get("grant_jwt")?.as_str()?.to_owned();
+    let dpop_seed_b64url = parsed.get("dpop_seed_b64url")?.as_str()?.to_owned();
+    if grant_jwt.trim().is_empty() || dpop_seed_b64url.trim().is_empty() {
+        return None;
+    }
+    let grant_id = parsed
+        .get("grant_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let audience = parsed
+        .get("audience")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+
+    let record = match crate::auth_dpop::dpop_device_key_record_from_seed(&dpop_seed_b64url) {
+        Ok(record) => record,
+        Err(error) => {
+            tracing::warn!(?error, "test session injection: invalid DPoP seed");
+            return None;
+        }
+    };
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    if let Err(error) = state_store
+        .write()
+        .set_dpop_device_key_with_secure_store(Some(record), secure_store.as_ref())
+    {
+        tracing::warn!(?error, "test session injection: DPoP key persist failed");
+        return None;
+    }
+
+    let now = chrono::Utc::now();
+    let grant = PersistedSessionGrant {
+        grant_jwt: grant_jwt.clone(),
+        // ②(A+②): the grant rotation/holder proof is signed by the device DPoP
+        // key, not a separate session key, so no PEM is needed; e2e never
+        // refreshes the injected grant.
+        session_private_key_pem: String::new(),
+        grant_id,
+        audience,
+        principal_id: account_did.to_owned(),
+        device_id: device_id.to_owned(),
+        // MUST match the active server so the bootstrap does not discard the
+        // grant as stale (see `grant_matches_principal_server`).
+        principal_server_url: server_url.to_owned(),
+        session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
+        grant_expires_at: Some(now + chrono::Duration::hours(8)),
+        session_expires_at: Some(now + chrono::Duration::hours(8)),
+        stored_at: now,
+    };
+    state_store.write().set_session_grant(Some(grant));
+    // Mirror the grant into the persisted config bearer slot so a re-render /
+    // reload rehydrates the same session instead of bouncing to /login.
+    persist_config(
+        config_store,
+        server_url.to_owned(),
+        account_did.to_owned(),
+        device_id.to_owned(),
+        grant_jwt.clone(),
+    );
+    Some(grant_jwt)
+}
+
 #[component]
 pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
@@ -671,6 +774,28 @@ pub fn RouterView() -> Element {
             )) as crate::session::LocalRefreshFuture
         }));
     });
+
+    // Dev-only (wasm + `allow_localstorage_secrets`) real-grant injection for the
+    // cotest joint e2e harness. Runs once, synchronously, ahead of the bootstrap
+    // `connect()` below so the first `/_cokret/self/*` request already carries a
+    // valid grant + DPoP holder proof. Inert in production (neither localStorage
+    // key is set) and a no-op on native. See `inject_test_session_grant`.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut state_store = state_store;
+        let mut token = token;
+        use_hook(move || {
+            if let Some(grant_jwt) = inject_test_session_grant(
+                &mut state_store,
+                config_store,
+                &base_url(),
+                &account_did(),
+                &device_id(),
+            ) {
+                token.set(grant_jwt);
+            }
+        });
+    }
 
     let navigator = use_navigator();
     let route = use_route::<Route>();
@@ -1594,6 +1719,16 @@ pub fn RouterView() -> Element {
             let session = token();
             let actor = account_did();
             if session.trim().is_empty() || actor.trim().is_empty() {
+                return;
+            }
+            // Recovery setup requires an enrollment-capable session. Establishing
+            // the account recovery policy needs this device authorized as a
+            // key-management device, which goes through the account authority
+            // (coauth) and therefore requires an active `ck.session.grant`. A
+            // grant-less session (e.g. a dev-login bearer) can never pass that
+            // gate, so auto-prompting it only loops on `recovery_policy_device_
+            // not_authorized` and blocks the UI behind the modal. Don't prompt.
+            if state_store.read().session_grant().is_none() {
                 return;
             }
             let (inputs, already_prompted, local_only_fingerprint) = {
@@ -6541,6 +6676,68 @@ fn adopt_live_token_for_api(
     }
 }
 
+/// Enroll the current session `device` through the delegated account authority
+/// (decision 0002 §5.4). Resolves the gate base from the Principal Server's
+/// describe, derives this device's `device_public_key` from the persisted
+/// signing seed, reads the next `actor_seq` from the principal control stream,
+/// asks coauth to mint a signed `service_attested` `ck.device.authorize`, and
+/// submits it via `principal_api` (`POST /_cokret/self/events`).
+async fn enroll_current_session_device(
+    base: &str,
+    actor: &str,
+    device: &str,
+    principal_api: &CokretApi,
+    mut state_store: Signal<crate::local_state::LocalStateStore>,
+) -> anyhow::Result<()> {
+    let actor = actor.trim();
+    if actor.is_empty() {
+        anyhow::bail!("device enrollment requires a known account DID");
+    }
+    let grant = state_store
+        .read()
+        .session_grant()
+        .ok_or_else(|| anyhow::anyhow!("device enrollment requires an active session grant"))?;
+
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let material = crate::secure_key_store::ensure_signing_seed(secure_store.as_ref())
+        .map_err(|error| anyhow::anyhow!("ensure device signing seed: {error}"))?;
+    let device_public_key = crate::device_enrollment::device_public_key_multibase(&material);
+
+    let gate_account_base = crate::coauth::resolve_principal_auth_server_url(base)
+        .await
+        .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?;
+    let coauth = crate::coauth::CoauthApi::new(&gate_account_base)?;
+
+    let device_key = {
+        let mut store = state_store.write();
+        crate::auth_dpop::ensure_device_key(&mut store)
+            .map_err(|error| anyhow::anyhow!("load device holder key: {error}"))?
+    };
+    let htu = coauth.endpoint_url("device-authorize")?;
+    let dpop_proof = device_key
+        .mint_proof("POST", &htu, Some(&grant.grant_jwt))
+        .map_err(|error| anyhow::anyhow!("mint device-authorize DPoP proof: {error}"))?;
+
+    // Next control-stream sequence for this principal = highest accepted + 1.
+    let actor_seq = match principal_api.events_frontier_actor(actor).await {
+        Ok(view) => view.actor_seq.saturating_add(1),
+        Err(error) => {
+            tracing::debug!(?error, "no actor frontier yet; enrolling at seq 0");
+            0
+        }
+    };
+
+    let request = crate::device_enrollment::DeviceEnrollmentRequest {
+        grant_jwt: grant.grant_jwt,
+        dpop_proof,
+        device_id: device.to_owned(),
+        device_public_key,
+        actor_seq,
+        not_before: None,
+    };
+    crate::device_enrollment::enroll_current_device(&coauth, principal_api, &request, device).await
+}
+
 fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
     let device = normalize_device_id(&device);
     spawn(async move {
@@ -6928,6 +7125,41 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         tracing::warn!(?error, "device authorization check failed");
                         needs_device_authorization.set(true);
                         device_authorization_check_complete.set(true);
+                    }
+                }
+                // Decision 0002 §5.4 — when the Principal Server reports this
+                // session device is not yet authorized, enroll it through the
+                // delegated account authority: coauth signs a `service_attested`
+                // `ck.device.authorize` and we submit it to `/_cokret/self/events`,
+                // which gives the device row a `device_public_key` so recovery
+                // genesis stops failing with `recovery_policy_device_not_authorized`.
+                // Idempotent: skipped when already authorized, and a no-op-on-retry
+                // because the submit is a CAS on `actor_seq`.
+                if needs_device_authorization() {
+                    adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
+                    match enroll_current_session_device(
+                        &base,
+                        &canonical_actor,
+                        &device,
+                        &authed,
+                        state_store,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            if let Ok(viewer) = authed.list_devices().await {
+                                needs_device_authorization.set(
+                                    device_authorization_required_from_account_viewer(
+                                        &viewer, &device,
+                                    ),
+                                );
+                            } else {
+                                needs_device_authorization.set(false);
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(?error, "device enrollment failed");
+                        }
                     }
                 }
                 persist_config(

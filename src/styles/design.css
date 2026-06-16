@@ -709,6 +709,11 @@ button[data-style="link"]:disabled:hover {
   padding: 6px 10px;
   font-size: 13px;
   font-weight: 600;
+  /* Server error envelopes carry unbroken DID / device-id strings; without an
+     explicit break rule they force horizontal overflow and clip the dialog's
+     title and action buttons. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .btn.primary {
   background: var(--accent); color: var(--text-on-accent);
@@ -2856,9 +2861,19 @@ label.avatar-upload-button:active,
 }
 .recovery-key-setup-dialog {
   width: min(640px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   max-height: calc(100dvh - 32px);
   margin: auto;
   overflow: auto;
+}
+/* Long server error strings (DIDs, device ids) shown verbatim in the status
+   line / hints must wrap instead of widening the dialog past its max-width. */
+.recovery-key-setup-dialog .modal-body,
+.recovery-key-setup-dialog .muted,
+.recovery-key-setup-dialog [data-testid="recovery-key-setup-status"] {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
 }
 .mls-recovery-modal .mls-unlock-row input {
   flex: 1 1 260px;

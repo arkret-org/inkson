@@ -543,19 +543,34 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 }
 
 /// True when the server rejected the request because the authenticated
-/// session device is not authorized for the operation (`device_not_authorized`)
-/// — e.g. an unverified / unpaired device attempting to write the account
-/// Recovery Key backup. This is the wire code emitted by soland's
-/// `ensure_key_backup_writer_device_authorized` gate.
+/// session device is not authorized for the operation. Matches three wire
+/// codes that all reduce to "this device cannot establish a new account
+/// Recovery Key root":
 ///
-/// Recovery setup MUST treat this as fail-closed: a device that cannot pass
+/// - `device_not_authorized` — soland's `ensure_key_backup_writer_device_authorized`
+///   gate (unverified / unpaired device writing the account Recovery Key backup).
+/// - `recovery_policy_device_not_authorized` — the recovery-policy genesis path
+///   falls back to the projected device row's `device_public_key`; a session
+///   device that was never enrolled (no `ck.device.authorize`) has no key there.
+/// - `device_enrollment_authority_not_designated` — the `service_attested`
+///   enrollment path could not anchor an authority for this device
+///   (device-lifecycle.md §5.4).
+///
+/// Recovery setup MUST treat all three as fail-closed: a device that cannot pass
 /// the server's verified-device gate must never establish (or locally persist)
 /// a brand-new account Recovery Key root — it has to be authorized from an
 /// existing device, or the user must restore with their existing Recovery Key.
 pub fn is_device_not_authorized_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| api_error.error.code() == "device_not_authorized")
+        .is_some_and(|api_error| {
+            matches!(
+                api_error.error.code(),
+                "device_not_authorized"
+                    | "recovery_policy_device_not_authorized"
+                    | "device_enrollment_authority_not_designated"
+            )
+        })
 }
 
 /// True when the error envelope says the persisted coauth session grant
@@ -2746,6 +2761,33 @@ mod tests {
         }
         .into();
         assert!(is_device_not_authorized_error(&device_not_authorized));
+
+        // The recovery-policy genesis path emits its own code when the session
+        // device was never enrolled (no projected `device_public_key`). It must
+        // route to the same friendly "authorize this device" branch, not the
+        // raw long-error fallback that overflows the modal.
+        let recovery_policy_denial: anyhow::Error = CokretApiError {
+            status: StatusCode::CONFLICT,
+            error: decode_cokret_error(
+                StatusCode::CONFLICT,
+                br#"{"ok":false,"error":{"code":"recovery_policy_device_not_authorized","message":"recovery policy genesis requires an authorized device for did:webvh:..."}}"#,
+            ),
+        }
+        .into();
+        assert!(is_device_not_authorized_error(&recovery_policy_denial));
+
+        // The `service_attested` enrollment path's "no authority designated"
+        // rejection is likewise a device-authorization problem from the user's
+        // point of view.
+        let authority_denial: anyhow::Error = CokretApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_cokret_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"device_enrollment_authority_not_designated","message":"no enrollment authority designated"}}"#,
+            ),
+        }
+        .into();
+        assert!(is_device_not_authorized_error(&authority_denial));
 
         // A different denial (transient / unrelated capability) must NOT be
         // read as "device not authorized" — otherwise a flaky deny would wrongly

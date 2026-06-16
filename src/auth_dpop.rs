@@ -319,6 +319,35 @@ pub fn mint_dpop_proof(
     handle.mint_proof(htm, htu, ath)
 }
 
+/// Reconstruct a [`DpopDeviceKeyRecord`] from a base64url-no-pad 32-byte
+/// ed25519 seed, deriving the RFC 7638 thumbprint from the seed's public key.
+///
+/// The derived `jkt` is identical to the thumbprint the grant was bound to
+/// (`cnf.jkt`) precisely because both sides start from the same seed. Returns an
+/// error if the seed is not 32 base64url-no-pad bytes.
+pub fn dpop_device_key_record_from_seed(
+    seed_b64: &str,
+) -> Result<DpopDeviceKeyRecord, AuthDpopError> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(seed_b64.as_bytes())
+        .map_err(|err| AuthDpopError::PersistedSeed(format!("base64 decode: {err}")))?;
+    if bytes.len() != 32 {
+        return Err(AuthDpopError::PersistedSeed(format!(
+            "seed length {}, expected 32",
+            bytes.len()
+        )));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&bytes);
+    let signing_key = SigningKey::from_bytes(&seed);
+    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key());
+    Ok(DpopDeviceKeyRecord {
+        seed_b64: URL_SAFE_NO_PAD.encode(seed),
+        jkt,
+        created_at: Utc::now(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +450,24 @@ mod tests {
         let original = ensure_device_key(&mut store).unwrap();
         let rebuilt = device_handle_from_seed(&original.seed_b64(), original.jkt()).unwrap();
         assert_eq!(rebuilt.jkt(), original.jkt());
+    }
+
+    #[test]
+    fn record_from_seed_derives_matching_thumbprint() {
+        // The cotest joint-e2e injection rebuilds the DPoP key from the same
+        // seed the grant was bound to; the derived jkt MUST equal what a handle
+        // built from that seed reports, so it equals the grant's cnf.jkt.
+        let mut store = isolated_store("record-from-seed");
+        let original = ensure_device_key(&mut store).unwrap();
+        let record = dpop_device_key_record_from_seed(&original.seed_b64()).unwrap();
+        assert_eq!(record.jkt, original.jkt());
+        assert_eq!(record.seed_b64, original.seed_b64());
+        assert_eq!(decode_record(&record).unwrap().jkt(), original.jkt());
+    }
+
+    #[test]
+    fn record_from_seed_rejects_wrong_length() {
+        assert!(dpop_device_key_record_from_seed("AAAA").is_err());
     }
 
     #[test]

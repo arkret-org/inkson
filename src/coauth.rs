@@ -713,6 +713,61 @@ impl CoauthApi {
         ))
     }
 
+    /// Enrollment-authority signing oracle for the current session device
+    /// (decision 0002, device-lifecycle.md §5.4). The Account Authority holds
+    /// the persistent enrollment signing key; the client cannot produce a
+    /// `service_attested` `ck.device.authorize` proof itself. The client sends
+    /// the session's `device_id`, the device's `device_public_key`, and the next
+    /// `actor_seq` on the principal control stream; coauth verifies the
+    /// authenticated session owns that principal, assembles the
+    /// `ck.device.authorize` Event for that `device_id` (with `executed_by` /
+    /// `authorization_ref` / `enrollment_authority_binding`), signs it with the
+    /// enrollment key, and returns the fully-signed Event. The caller submits it
+    /// verbatim to the Principal Server's `POST /_cokret/self/events`.
+    ///
+    /// `self` MUST be rooted at the resolved `gate_account_base`. `grant_jwt` is
+    /// the active `ck.session.grant`; `dpop_proof` is the device holder proof
+    /// bound to the grant's `cnf.jkt`.
+    pub async fn device_authorize_signed_event(
+        &self,
+        grant_jwt: &str,
+        dpop_proof: &str,
+        device_id: &str,
+        device_public_key: &str,
+        actor_seq: u64,
+        not_before: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let endpoint = self.endpoint("device-authorize")?;
+        let mut body = json!({
+            "device_id": device_id,
+            "device_public_key": device_public_key,
+            "actor_seq": actor_seq,
+        });
+        if let Some(not_before) = not_before.filter(|value| !value.trim().is_empty()) {
+            body["not_before"] = Value::String(not_before.to_owned());
+        }
+        let response = self
+            .http
+            .post(endpoint)
+            .bearer_auth(grant_jwt)
+            .header("DPoP", dpop_proof)
+            .json(&body)
+            .send()
+            .await?;
+        let status = response.status();
+        let text = response.text().await.context("read device-authorize body")?;
+        if !status.is_success() {
+            let code = error_envelope_code(&text);
+            anyhow::bail!(
+                "device-authorize failed: status={} code={} body={}",
+                status.as_u16(),
+                code.as_deref().unwrap_or("<none>"),
+                text.chars().take(512).collect::<String>(),
+            );
+        }
+        serde_json::from_str(&text).context("parse device-authorize signed event")
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         Ok(self
             .http

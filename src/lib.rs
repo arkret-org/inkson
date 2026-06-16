@@ -45,6 +45,7 @@ pub mod crypto;
 pub mod crypto_boundary;
 pub mod cursor;
 pub mod device_directory;
+pub mod device_enrollment;
 pub mod device_name;
 pub mod device_revoke;
 pub mod did_key;

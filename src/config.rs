@@ -530,31 +530,45 @@ impl LocalConfigStore {
     }
 
     /// Reattach the session bearer to a config freshly read from the
-    /// plaintext persistence layer.
-    fn rehydrate_config(&self, mut config: ClientConfig) -> ClientConfig {
-        if config.account_did.is_empty() {
-            return config;
-        }
-        config.session_token.clear();
-        if let Some(token) = restore_session_token_secret(&config.account_did) {
-            config.session_token = token;
-        }
-        config
+    /// plaintext persistence layer (default secure store).
+    fn rehydrate_config(&self, config: ClientConfig) -> ClientConfig {
+        let store = config_secure_store();
+        self.reattach_session_bearer(config, store.as_ref())
     }
 
     fn rehydrate_config_with_secure_store(
         &self,
-        mut config: ClientConfig,
+        config: ClientConfig,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> ClientConfig {
+        self.reattach_session_bearer(config, secure_store)
+    }
+
+    /// Reattach the session bearer to `config` through `store`: prefer the value
+    /// already in the SecureKeyStore; otherwise, if the bearer exists only in
+    /// the plaintext config blob (legacy persistence, or a test/old-browser
+    /// injection), migrate it into `store` and use it. The store write is
+    /// best-effort — when the wasm IndexedDB-only hardening is enforced it is
+    /// refused and the token is still used in-memory for this load. Production
+    /// blobs never carry a bearer (redacted on save), so the migration branch is
+    /// inert there.
+    fn reattach_session_bearer(
+        &self,
+        mut config: ClientConfig,
+        store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> ClientConfig {
         if config.account_did.is_empty() {
             return config;
         }
-        config.session_token.clear();
-        if let Some(token) =
-            restore_session_token_secret_from_store(&config.account_did, secure_store)
-        {
+        let blob_token = std::mem::take(&mut config.session_token);
+        if let Some(token) = restore_session_token_secret_from_store(&config.account_did, store) {
             config.session_token = token;
+        } else if !blob_token.trim().is_empty() {
+            let _ = store.store_secret(&session_token_secret_key(&config.account_did), &blob_token);
+            if let Ok(mut cache) = session_token_cache().lock() {
+                cache.insert(config.account_did.clone(), Some(blob_token.clone()));
+            }
+            config.session_token = blob_token;
         }
         config
     }
