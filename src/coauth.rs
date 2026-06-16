@@ -614,6 +614,8 @@ impl CoauthApi {
             audience: audience.to_owned(),
             expires_at: None,
             signature: String::new(),
+            // Agent-runtime overlay (CKP-0008 §4.6); absent for the
+            // human oidc_code_exchange proof kind.
             verification_method: None,
             issuer: Some(issuer.to_owned()),
             client_id: Some(client_id.to_owned()),
@@ -624,6 +626,10 @@ impl CoauthApi {
             code_verifier: Some(code_verifier.to_owned()),
         };
         let body = cokret_sdk::SessionGrantRequestBody {
+            // ②(A+②) D5: `principal_id` is optional — on true first login the
+            // client may not know its DID and the Account Authority derives it
+            // (returned in `SessionGrantOutcome.principal_id`). We still forward
+            // the resolved/known DID when available.
             principal_id: Some(principal_id),
             device_id: Some(device_id),
             requested_scope,

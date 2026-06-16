@@ -447,8 +447,10 @@ async fn run_iteration(
     if base.trim().is_empty() || token.trim().is_empty() {
         return IterationOutcome::NotReady;
     }
+    // ②(A+②): `token` is the `ck.session.grant`; attach the device DPoP key so
+    // the account-subscribe self-path request is sender-constrained (§3.3).
     let api = match CokretApi::new(&base) {
-        Ok(api) => api.with_bearer(token.clone()),
+        Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(token.clone())),
         Err(error) => {
             return IterationOutcome::Transient(format!("sync_engine: invalid base URL: {error}"));
         }

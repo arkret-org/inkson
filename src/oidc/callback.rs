@@ -281,45 +281,14 @@ pub async fn process_callback(
         state_store.set_oidc_tokens(Some(token_bundle.clone()));
     }
 
-    // 6. Audience-grant exchange (optional).
-    let audience_session = match request.audience_grant {
-        Some(audience_grant) => {
-            let proof = match assemble_audience_grant_request(
-                audience_grant.grant_id,
-                audience_grant.grant_jwt,
-                audience_grant.audience,
-                audience_grant.device_signing_key,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    return CallbackOutcome::Failed {
-                        stage: "assemble_audience_grant_request",
-                        error,
-                    };
-                }
-            };
-            match audience_grant
-                .principal_api
-                .exchange_session_grant_at_with_proof(
-                    audience_grant.session_grant_exchange_path,
-                    audience_grant.grant_jwt,
-                    audience_grant.principal_id,
-                    audience_grant.device_id,
-                    Some(&proof),
-                )
-                .await
-            {
-                Ok(response) => Some(response),
-                Err(error) => {
-                    return CallbackOutcome::Failed {
-                        stage: "exchange_session_grant",
-                        error,
-                    };
-                }
-            }
-        }
-        None => None,
-    };
+    // 6. ②(A+②): there is no audience-grant exchange any more. The held
+    //    credential is the `ck.session.grant` itself, presented per-request as
+    //    `Authorization: Bearer <grant>` + a `DPoP` proof on `/_cokret/self/*`
+    //    (api-conventions.md §3.3). No principal bearer is minted, so
+    //    `audience_session` is always `None`; callers that previously consumed
+    //    the exchanged bearer now keep the grant as the live credential.
+    let _ = &request.audience_grant;
+    let audience_session = None;
 
     CallbackOutcome::Completed {
         token_bundle,

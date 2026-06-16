@@ -76,6 +76,12 @@ pub(super) struct ChatMessage {
     pub(super) realm_id: String,
     pub(super) id: String,
     pub(super) sender: String,
+    /// CKP-0008 §4.10 — envelope-level `executed_by`. Present only for
+    /// act-on-behalf events: `sender` (actor_id) is the controller and
+    /// `executed_by` is the agent that performed the action. Drives the
+    /// "X via Y" double-signature attribution. `None` for ordinary and
+    /// reply-as-agent messages.
+    pub(super) executed_by: Option<String>,
     pub(super) body: String,
     pub(super) timestamp: String,
     pub(super) strand_id: String,
@@ -1479,6 +1485,33 @@ pub(super) fn sender_display_label(
         .unwrap_or_else(|| short_principal_label(sender))
 }
 
+/// CKP-0008 §4.10 — resolve the agent label for an act-on-behalf
+/// message. Returns the agent's display label when `executed_by` is a
+/// distinct agent principal from `actor_id` (the controller); otherwise
+/// returns `None` (ordinary message or reply-as-agent, where the sender
+/// itself is the agent). The caller renders "{controller} via {agent}"
+/// with the controller as the primary name.
+pub(super) fn act_on_behalf_agent_label(
+    sender: &str,
+    executed_by: Option<&str>,
+    participants: &[SpaceParticipant],
+) -> Option<String> {
+    let executed_by = executed_by.map(str::trim).filter(|value| !value.is_empty())?;
+    if executed_by == sender.trim() {
+        return None;
+    }
+    let agent_participant = participants
+        .iter()
+        .find(|participant| participant.did == executed_by);
+    match agent_participant {
+        Some(participant) if participant.is_agent => Some(agent_display_label(participant)),
+        // The executor is not a known agent participant — fall back to a
+        // short principal label so the "via" attribution still renders.
+        Some(_) => None,
+        None => Some(short_principal_label(executed_by)),
+    }
+}
+
 pub(super) fn chat_reply_quote_preview(
     messages: &[ChatMessage],
     reply_id: &str,
@@ -2058,6 +2091,13 @@ pub(super) fn chat_message_from_event_with_sidecar(
         sender: message_actor_from_candidates(&candidates)
             .unwrap_or("did:web:unknown")
             .to_owned(),
+        // CKP-0008 §4.10 — act-on-behalf carries a signed envelope-level
+        // `executed_by`. When present and distinct from the actor, the
+        // renderer shows the "controller via agent" double signature.
+        executed_by: first_string_in_candidates(&candidates, &["executed_by"])
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
         body,
         timestamp: short_message_time(first_string_in_candidates(&candidates, &["created_at"])),
         strand_id,
@@ -3010,5 +3050,57 @@ mod device_identity_proof_tests {
         );
         // No regression: a proofless projection still renders.
         assert!(chat_message_from_event("ck:realm:r", &envelope).is_some());
+    }
+}
+
+#[cfg(test)]
+mod act_on_behalf_tests {
+    use super::*;
+
+    fn agent_participant(did: &str) -> SpaceParticipant {
+        SpaceParticipant {
+            did: did.to_owned(),
+            display_name: Some("Summary Assistant".to_owned()),
+            handle_label: None,
+            display_name_rank: 1,
+            role: SpaceParticipantRole::Member,
+            is_self: false,
+            is_agent: true,
+            agent_metadata: Some(AgentParticipantMetadata {
+                controller_did: "did:web:example.com:users:alice".to_owned(),
+                controller_handle: "alice".to_owned(),
+                agent_slug: "summary".to_owned(),
+                display_name: "Summary Assistant".to_owned(),
+            }),
+        }
+    }
+
+    #[test]
+    fn act_on_behalf_label_resolves_executor_agent() {
+        let agent = "did:web:agents.example:summary";
+        let controller = "did:web:example.com:users:alice";
+        let participants = vec![agent_participant(agent)];
+        // Controller is actor_id (sender); agent is executed_by.
+        let label = act_on_behalf_agent_label(controller, Some(agent), &participants);
+        assert_eq!(label.as_deref(), Some("Summary Assistant"));
+    }
+
+    #[test]
+    fn act_on_behalf_label_none_when_no_executed_by() {
+        let controller = "did:web:example.com:users:alice";
+        assert_eq!(act_on_behalf_agent_label(controller, None, &[]), None);
+        assert_eq!(act_on_behalf_agent_label(controller, Some(""), &[]), None);
+    }
+
+    #[test]
+    fn act_on_behalf_label_none_when_executor_equals_sender() {
+        // Reply-as-agent: the agent itself is the sender, so there is no
+        // separate "via" attribution.
+        let agent = "did:web:agents.example:summary";
+        let participants = vec![agent_participant(agent)];
+        assert_eq!(
+            act_on_behalf_agent_label(agent, Some(agent), &participants),
+            None
+        );
     }
 }

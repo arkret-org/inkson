@@ -15,6 +15,12 @@ pub fn authed_api(base_url: &str, access_token: String) -> anyhow::Result<Cokret
 
 /// Create an authenticated API client that also forwards the latest sync token
 /// for read-your-writes consistency on subsequent reads.
+///
+/// ②(A+②): `access_token` is the `ck.session.grant` JWT (the live credential).
+/// The client also binds the device DPoP holder key so every `/_cokret/self/*`
+/// request carries a per-request `DPoP` proof bound to the grant
+/// (api-conventions.md §3.3). This is the centralized self-path credential
+/// builder used across views.
 pub fn authed_api_with_sync(
     base_url: &str,
     access_token: String,
@@ -24,10 +30,24 @@ pub fn authed_api_with_sync(
     if !access_token.is_empty() {
         api = api.with_bearer(access_token);
     }
+    api = attach_device_dpop(api);
     if let Some(sync_token) = wait_for_sync_token {
         api = api.with_wait_for(sync_token);
     }
     Ok(api)
+}
+
+/// ②(A+②) — best-effort attach the device DPoP holder key to a client so its
+/// `/_cokret/self/*` requests are sender-constrained (api-conventions.md §3.3).
+/// In production the seed is read from the secure key store (independent of the
+/// passed state store); in tests no key is present and the client stays
+/// bearer-only.
+pub fn attach_device_dpop(api: CokretApi) -> CokretApi {
+    let store = crate::local_state::LocalStateStore::default();
+    match crate::auth_dpop::load_device_key(&store) {
+        Ok(Some(handle)) => api.with_dpop_device(handle),
+        _ => api,
+    }
 }
 
 /// Derive a lowercase handle string from a DID, suitable for registration.

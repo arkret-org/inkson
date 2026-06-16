@@ -440,10 +440,12 @@ async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow
     if token.is_empty() {
         anyhow::bail!("no authenticated session for blob download");
     }
-    let bytes = CokretApi::new(&config.server_url)?
-        .with_bearer(token)
-        .get_blob_bytes(blob_ref)
-        .await?;
+    // ②(A+②): grant + per-request DPoP for the self-path blob fetch (§3.3).
+    let bytes = crate::views::helpers::attach_device_dpop(
+        CokretApi::new(&config.server_url)?.with_bearer(token),
+    )
+    .get_blob_bytes(blob_ref)
+    .await?;
     let mime = if media_type.trim().is_empty() {
         "application/octet-stream"
     } else {

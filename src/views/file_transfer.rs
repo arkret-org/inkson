@@ -89,7 +89,7 @@ pub fn FileTransferPanel(
                                 status.set("Uploading".to_owned());
                                 spawn(async move {
                                     let api = match CokretApi::new(&base_url) {
-                                        Ok(api) => api.with_bearer(api_token.clone()),
+                                        Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token.clone())),
                                         Err(error) => {
                                             status.set(format!("Invalid server URL: {error}"));
                                             uploading.set(false);
@@ -272,7 +272,7 @@ fn FileTransferRow(
                             status.set("Preparing download".to_owned());
                             spawn(async move {
                                 let api = match CokretApi::new(&base_url) {
-                                    Ok(api) => api.with_bearer(api_token),
+                                    Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token)),
                                     Err(error) => {
                                         status.set(format!("Invalid server URL: {error}"));
                                         return;
@@ -327,7 +327,7 @@ fn refresh_items(
     status.set("Refreshing".to_owned());
     spawn(async move {
         let api = match CokretApi::new(&base_url) {
-            Ok(api) => api.with_bearer(api_token),
+            Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token)),
             Err(error) => {
                 status.set(format!("Invalid server URL: {error}"));
                 refreshing.set(false);
