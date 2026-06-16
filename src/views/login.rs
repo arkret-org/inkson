@@ -3,12 +3,12 @@ use dioxus::prelude::*;
 
 use crate::api::CokretApi;
 use crate::coauth::{
-    CoauthApi, CoauthSessionGrantInfo, authorize_url_with_forced_reauthentication,
-    capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
-    extract_authorization_code_from_callback, extract_error_description_from_callback,
-    extract_error_from_callback, extract_state_from_callback,
-    oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url, persist_oidc_scaffold,
-    resolve_principal_auth_server, restore_oidc_scaffold,
+    AuthorityResolver, CoauthApi, CoauthSessionGrantInfo, build_oidc_authorize_scaffold,
+    build_persisted_oidc_scaffold, capture_current_browser_callback_url,
+    clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
+    extract_error_description_from_callback, extract_error_from_callback,
+    extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
+    restore_oidc_scaffold,
 };
 use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant};
@@ -347,40 +347,69 @@ pub(crate) async fn start_oidc_strand(
     principal_server_url: &str,
     device_id: &str,
 ) -> Result<(), String> {
-    let principal_auth = resolve_principal_auth_server(principal_server_url)
+    // T1.Y1 — discover the Account Authority + auth methods from the Principal
+    // Server's root `/_cokret/describe` (service-surface §2.5.1).
+    let principal = CokretApi::new(principal_server_url)
+        .map_err(|error| format!("Invalid principal server URL: {error}"))?;
+    let description = principal
+        .describe()
         .await
         .map_err(|error| format_sign_in_discovery_error(principal_server_url, &error))?;
-    let coauth = CoauthApi::new(&principal_auth.auth_server_url)
-        .map_err(|error| format!("Invalid auth server URL: {error}"))?;
-    let bridge = coauth
-        .auth_bridge_describe()
+    let resolver = AuthorityResolver::from_description(principal_server_url, &description)
+        .map_err(|error| format!("Account Authority discovery failed: {error}"))?;
+    // Pick an OIDC method; fall back to the legacy auth_server_url alias for
+    // old servers that predate methods[].
+    let method = resolver
+        .oidc_method(Some(&description.auth_metadata))
+        .map_err(|error| format!("No OIDC sign-in method available: {error}"))?;
+    let discovery_url = oidc_discovery_url(&method)
+        .ok_or_else(|| "OIDC method published neither openid_configuration nor an issuer.".to_owned())?;
+    // Standard OpenID Connect Discovery 1.0 — no Cokret-private OAuth family.
+    let discovery = CoauthApi::fetch_oidc_discovery(&discovery_url)
         .await
-        .map_err(|error| format!("Server sign-in bridge metadata failed: {error}"))?;
-    let bridge_session = coauth
-        .start_oidc_browser_bridge(
-            &bridge.oauth.browser_bridge_session_path,
-            &crate::coauth::current_oidc_redirect_uri(),
-            "",
-            device_id,
-            Some(&principal_auth.principal_audience),
-            None,
-        )
-        .await
-        .map_err(|error| format!("Server sign-in bridge session failed: {error}"))?;
-    let mut bundle = oidc_scaffold_bundle_from_bridge_session(&bridge_session);
-    bundle.authorize_url = authorize_url_with_forced_reauthentication(&bundle.authorize_url)
-        .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
+        .map_err(|error| format!("OIDC discovery failed: {error}"))?;
+    let redirect_uri = crate::coauth::current_oidc_redirect_uri();
+    let bundle = build_oidc_authorize_scaffold(
+        &discovery,
+        &method,
+        &redirect_uri,
+        "",
+        device_id,
+        &resolver.principal_audience,
+    )
+    .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
 
-    persist_oidc_scaffold(
+    let scaffold = build_persisted_oidc_scaffold(
         &bundle,
-        &principal_auth.auth_server_url,
+        &resolver.gate_account_base,
         principal_server_url,
         "",
         device_id,
-    )
-    .map_err(|error| format!("Could not save sign-in state: {error}"))?;
+        &discovery.issuer,
+    );
+    persist_oidc_scaffold(&scaffold)
+        .map_err(|error| format!("Could not save sign-in state: {error}"))?;
     open_oidc_authorize_url(&bundle.authorize_url)
         .map_err(|error| format!("Could not open server sign-in: {error}"))
+}
+
+/// Standard OIDC discovery URL for an auth method: the explicit
+/// `openid_configuration` when present, else `{issuer}/.well-known/openid-configuration`.
+fn oidc_discovery_url(method: &cokret_sdk::AuthMethod) -> Option<String> {
+    if let Some(config) = method
+        .openid_configuration
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(config.to_owned());
+    }
+    method
+        .issuer
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|issuer| format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/')))
 }
 
 fn format_sign_in_discovery_error(principal_server_url: &str, error: &anyhow::Error) -> String {
@@ -433,23 +462,24 @@ async fn finish_oidc_callback(
 
     let authorization_code = extract_authorization_code_from_callback(&callback_url)
         .map_err(|error| format!("Callback did not include an authorization code: {error}"))?;
-    let auth_server_url = if scaffold.auth_server_url.trim().is_empty() {
-        scaffold.principal_server_url.clone()
-    } else {
+    // T1.Y4 — every gate/account call routes through the resolved
+    // `gate_account_base` persisted in the scaffold (service-surface §2.5.1).
+    let gate_account_base = if scaffold.gate_account_base.trim().is_empty() {
         scaffold.auth_server_url.clone()
+    } else {
+        scaffold.gate_account_base.clone()
     };
+    if gate_account_base.trim().is_empty() {
+        return Err("Sign-in state is missing the Account Authority base.".to_owned());
+    }
     let principal_server_url = if scaffold.principal_server_url.trim().is_empty() {
-        auth_server_url.clone()
+        gate_account_base.clone()
     } else {
         scaffold.principal_server_url.clone()
     };
-    let coauth = CoauthApi::new(&auth_server_url)
-        .map_err(|error| format!("Invalid auth server URL: {error}"))?;
-    let topology = coauth
-        .inspect_topology()
-        .await
-        .map_err(|error| format!("Server sign-in metadata failed: {error}"))?;
-    let actor_hint = scaffold.principal_actor_id.trim();
+    let gate_account = CoauthApi::new(&gate_account_base)
+        .map_err(|error| format!("Invalid Account Authority base: {error}"))?;
+    let actor_hint = scaffold.principal_actor_id.trim().to_owned();
     let device = if scaffold.device_id.trim().is_empty() {
         device_fallback.trim().to_owned()
     } else {
@@ -459,95 +489,85 @@ async fn finish_oidc_callback(
         return Err("No device identifier is available for this session.".to_owned());
     }
     let device = normalize_device_id(&device);
-    let bridge = coauth
-        .auth_bridge_describe()
-        .await
-        .map_err(|error| format!("Server sign-in bridge metadata failed: {error}"))?;
-    let exchange = coauth
-        .describe_oidc_exchange(&bridge.oauth.exchange_describe_path)
-        .await
-        .map_err(|error| format!("Server sign-in exchange metadata failed: {error}"))?;
-    let exchange_url = coauth
-        .endpoint_url(&exchange.exchange_path)
-        .map_err(|error| format!("OIDC bridge exchange URL preparation failed: {error}"))?;
-    let (dpop_proof, dpop_handle) = {
+    // T1.Y1 — DPoP holder proof bound to the session-grants URL; this is what
+    // makes the issued grant device-bound (cnf.jkt) at the Account Authority.
+    let session_grants_url = gate_account
+        .endpoint_url("session-grants")
+        .map_err(|error| format!("session-grants URL preparation failed: {error}"))?;
+    let (issue_dpop, dpop_handle) = {
         let mut store = state_store.write();
         let handle = crate::auth_dpop::ensure_device_key(&mut store)
-            .map_err(|error| format!("OIDC bridge DPoP key failed: {error}"))?;
+            .map_err(|error| format!("DPoP key failed: {error}"))?;
         let proof = handle
-            .mint_proof("POST", &exchange_url, None)
-            .map_err(|error| format!("OIDC bridge DPoP proof failed: {error}"))?;
+            .mint_proof("POST", &session_grants_url, None)
+            .map_err(|error| format!("DPoP proof failed: {error}"))?;
         (proof, handle)
     };
-    let token_endpoint = topology
-        .token_endpoint
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Server OIDC discovery did not publish a token endpoint.".to_owned())?;
-    let userinfo_endpoint = topology
-        .userinfo_endpoint
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Server OIDC discovery did not publish a userinfo endpoint.".to_owned())?;
-    let login = coauth
-        .exchange_oidc_code(
-            &exchange.exchange_path,
+    if scaffold.issuer.trim().is_empty() {
+        return Err("Sign-in state is missing the OIDC issuer.".to_owned());
+    }
+    // The canonical Account Authority session-grants endpoint binds the issued
+    // grant to `principal_id`; it MUST equal the DID the authenticated user
+    // resolves to. We forward the actor hint persisted with the scaffold (the
+    // re-auth case). KNOWN GAP: on true first login the DID is not yet known
+    // client-side, so this requires the actor DID to be pre-resolved before
+    // sign-in (the legacy bridge derived it server-side and returned a viewer).
+    if actor_hint.is_empty() {
+        return Err(
+            "First-login OIDC requires a known account DID for the Account Authority session-grant binding (principal_id). Pre-resolve the DID before sign-in."
+                .to_owned(),
+        );
+    }
+    let outcome = gate_account
+        .issue_session_grant_oidc(
+            &actor_hint,
+            &device,
+            &scaffold.issuer,
+            &scaffold.client_id,
+            &scaffold.callback_uri,
+            &returned_state,
+            &scaffold.expected_nonce,
             &authorization_code,
             &scaffold.code_verifier,
-            &scaffold.callback_uri,
-            &topology.issuer,
-            &token_endpoint,
-            &userinfo_endpoint,
-            &scaffold.client_id,
-            actor_hint,
-            &device,
-            Some(&scaffold.principal_audience),
-            Some(&returned_state),
-            Some(&scaffold.expected_state),
-            Some(&scaffold.expected_nonce),
-            Some(&dpop_proof),
+            &scaffold.principal_audience,
+            Vec::new(),
+            &issue_dpop,
         )
         .await
-        .map_err(|error| format!("OIDC bridge exchange failed: {error}"))?;
-    if login.status != "success" {
-        return Err(format!(
-            "Server sign-in failed: {}",
-            login.error.unwrap_or_else(|| "unknown_error".to_owned())
-        ));
-    }
-    let viewer = login
-        .viewer
-        .ok_or_else(|| "Server sign-in did not return an account viewer.".to_owned())?;
-    let session_grant = login
-        .session_grant
-        .ok_or_else(|| "Server sign-in did not return a principal session grant.".to_owned())?;
+        .map_err(|error| format!("Account Authority session-grant issue failed: {error}"))?;
+    let session_grant = session_grant_info_from_outcome(&outcome, &dpop_handle)
+        .map_err(|error| format!("Session grant outcome was incomplete: {error}"))?;
     let grant_id = session_grant
         .id
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Server sign-in did not return a session grant id.".to_owned())?;
+        .ok_or_else(|| "Account Authority did not return a session grant id.".to_owned())?;
     let grant_audience = session_grant
         .audience
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Server sign-in did not return a session grant audience.".to_owned())?;
+        .ok_or_else(|| "Account Authority did not return a session grant audience.".to_owned())?;
     let introspection_proof = dpop_handle
         .mint_session_grant_introspection_proof(grant_id, &session_grant.grant_jwt, grant_audience)
         .map_err(|error| format!("Principal session-grant proof failed: {error}"))?;
     let principal_target = principal_server_url;
     let principal = CokretApi::new(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
-    let actor = if viewer.did.trim().is_empty() {
-        actor_hint.to_owned()
+    let actor = if outcome.principal_id.as_str().trim().is_empty() {
+        actor_hint.clone()
     } else {
-        viewer.did
+        outcome.principal_id.as_str().to_owned()
     };
     if actor.trim().is_empty() {
-        return Err("Server sign-in did not return an account DID.".to_owned());
+        return Err("Account Authority did not return an account DID.".to_owned());
     }
+    // KNOWN GAP (per task brief): keep the existing grant→bearer exchange step
+    // working as-is. yougen exchanges the issued grant for a soland principal
+    // bearer at the Principal Server's canonical session-grants endpoint.
+    let session_grant_exchange_path = "_cokret/gate/account/session-grants";
     let session = principal
         .exchange_session_grant_at_with_proof(
-            &bridge.cokret.session_grants_path,
+            session_grant_exchange_path,
             &session_grant.grant_jwt,
             &actor,
             &device,
@@ -588,7 +608,7 @@ async fn finish_oidc_callback(
         &principal_target,
         &canonical_actor,
         &resolved_device,
-        &bridge.cokret.session_grants_path,
+        session_grant_exchange_path,
         Some(session.expires_at),
     )
     .ok();
@@ -600,6 +620,46 @@ async fn finish_oidc_callback(
         access_token: session.access_token,
         oidc_tokens: None,
         session_grant: persisted_session_grant,
+    })
+}
+
+/// Adapt the SDK [`cokret_sdk::SessionGrantOutcome`] returned by the Account
+/// Authority into the local [`CoauthSessionGrantInfo`] the refresh/persistence
+/// path expects. The grant is device-bound (`cnf.jkt`), so its signing key for
+/// the introspection proof is the device DPoP key, persisted here as
+/// `session_private_key_pem`. `grant_id` / `session_public_key` / `audience`
+/// ride in the outcome's `scope_details` object.
+fn session_grant_info_from_outcome(
+    outcome: &cokret_sdk::SessionGrantOutcome,
+    dpop_handle: &crate::auth_dpop::DpopHandle,
+) -> Result<CoauthSessionGrantInfo, String> {
+    let details = &outcome.scope_details;
+    let grant_id = details
+        .get("grant_id")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+    let session_public_key = details
+        .get("session_public_key")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let audience = details
+        .get("audience")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+    let session_private_key_pem = dpop_handle
+        .session_signing_key_pkcs8_pem()
+        .map_err(|error| format!("export device session key: {error}"))?;
+    Ok(CoauthSessionGrantInfo {
+        kind: Some("session_grant".to_owned()),
+        id: grant_id,
+        grant_jwt: outcome.session_grant.clone(),
+        session_public_key,
+        session_private_key_pem,
+        expires_at: outcome.expires_at.to_rfc3339(),
+        audience,
+        scopes: outcome.granted_scope.clone(),
+        principal_server: None,
     })
 }
 

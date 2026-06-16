@@ -3,17 +3,18 @@
 //! A hard logout ("Log out" button) must do more than wipe local
 //! credentials: per `account-lifecycle §4.1` it has to terminate the
 //! server-side authentication context so the rotation chain can never be
-//! resumed —
+//! resumed.
 //!
-//! 1. **coauth**: revoke the session grant + finish its browser session (presenting the device
-//!    holder proof bound into the grant's `cnf.jkt`). This is the *durable, security-critical*
-//!    step: while the grant lives, a holder of the device key could mint fresh access bearers for
-//!    up to the grant's 8h TTL.
-//! 2. **soland**: revoke the short principal bearer / device session. The bearer self-expires
-//!    within ≤15min, so this is a courtesy fast-path, not a durability requirement.
+//! T1.Y3 — this is now a SINGLE client-visible call to the Account Authority
+//! `POST {gate_account_base}/logout` (service-surface §2.5.1) carrying
+//! `Authorization: Bearer <ck.session.grant>` + a `DPoP` holder proof bound to
+//! that grant. The Account Authority internally terminates BOTH the Auth-side
+//! grant rotation chain + `browser_session` AND the Principal-side
+//! account/device session + to-device drop. The client MUST NOT fan out to two
+//! origins (the old coauth-grant-logout + soland-logout pair is collapsed).
 //!
-//! The old implementation fired both calls from a detached `spawn` after
-//! the local wipe. If the tab closed mid-flight, or coauth was briefly
+//! The old implementation fired two calls from a detached `spawn` after
+//! the local wipe. If the tab closed mid-flight, or the server was briefly
 //! unreachable, the grant could outlive the "logout" — a real hole: the
 //! UI says signed-out while the rotation chain is still alive server-side.
 //!
@@ -61,15 +62,19 @@ pub struct PendingLogout {
     /// Thumbprint that must re-derive from `device_seed_b64`.
     #[serde(default)]
     pub device_jkt: Option<String>,
-    /// Principal-server URL the grant was issued against; used to resolve
-    /// the grant's Auth Server for the revoke call.
+    /// Principal-server URL the grant was issued against; used to re-resolve
+    /// the Account Authority `gate_account_base` if it was not journalled.
     #[serde(default)]
     pub principal_server_url: Option<String>,
-    /// Principal-server base URL for the soland courtesy logout.
+    /// T1.Y4 — resolved Account Authority `gate_account_base`; the single
+    /// `/logout` origin. Preferred over re-resolving from
+    /// `principal_server_url` at retry time.
+    #[serde(default)]
+    pub gate_account_base: Option<String>,
+    /// Principal-server base URL (diagnostics / legacy field).
     pub base_url: String,
-    /// Short principal bearer for the soland courtesy logout. May already
-    /// be expired by retry time — that's fine, soland treats an expired
-    /// bearer as already-terminated.
+    /// Short principal bearer (diagnostics / legacy field). The single hard
+    /// logout authenticates with the grant + DPoP, not this bearer.
     #[serde(default)]
     pub bearer: String,
     /// Account DID, for diagnostics only.
@@ -87,14 +92,20 @@ impl PendingLogout {
         now - self.created_at >= Duration::hours(RECORD_TTL_HOURS)
     }
 
-    /// True when there is a coauth grant revoke to perform. A record with
-    /// no grant (or missing holder material) only carries the soland
-    /// courtesy logout.
+    /// True when there is a server-side grant chain to terminate. Requires the
+    /// grant JWT + holder material + a routable Account Authority base (either
+    /// the journalled `gate_account_base` or a `principal_server_url` to
+    /// re-resolve it from).
     pub fn has_coauth_revoke(&self) -> bool {
+        let has_route = self
+            .gate_account_base
+            .as_deref()
+            .is_some_and(|base| !base.trim().is_empty())
+            || self.principal_server_url.is_some();
         self.grant_jwt.is_some()
             && self.device_seed_b64.is_some()
             && self.device_jkt.is_some()
-            && self.principal_server_url.is_some()
+            && has_route
     }
 }
 
@@ -109,57 +120,39 @@ pub enum LogoutRunOutcome {
     Retain,
 }
 
-/// Run one pending-logout record to completion:
-///
-/// 1. Revoke the grant at coauth (the durable, critical step). Success — or a "grant already gone"
-///    error — clears the record.
-/// 2. Best-effort soland courtesy logout (never blocks clearing).
-///
-/// Returns whether the record was cleared. A still-live coauth failure
-/// keeps the record so a later boot retries it; the [`RECORD_TTL_HOURS`]
-/// bound (checked by [`run_pending_logout_if_any`]) prevents an immortal
-/// poison entry.
+/// Run one pending-logout record to completion via the SINGLE Account
+/// Authority hard logout (T1.Y3). Success — or a "grant already gone" error —
+/// clears the record. A still-live failure keeps the record so a later boot
+/// retries it; the [`RECORD_TTL_HOURS`] bound (checked by
+/// [`run_pending_logout_if_any`]) prevents an immortal poison entry.
 pub async fn execute_pending_logout(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> LogoutRunOutcome {
-    let coauth_done = if record.has_coauth_revoke() {
-        match revoke_grant_at_coauth(record).await {
-            // `revoke_session_grant` already classified the HTTP result: a
-            // structured terminal outcome (revoked / already-gone) resolves to
-            // `Ok`, and any real failure (bad proof, 5xx, transport) to `Err`.
-            // So we no longer string-match the error here — an `Err` always
-            // means retain + retry.
-            Ok(crate::coauth::SessionGrantRevokeOutcome::Terminated) => true,
-            Err(error) => {
-                tracing::warn!(?error, "pending logout: coauth revoke failed, will retry");
-                false
-            }
-        }
-    } else {
-        // No grant to revoke — the soland courtesy logout is the whole job.
-        true
-    };
-
-    if !coauth_done {
-        return LogoutRunOutcome::Retain;
+    if !record.has_coauth_revoke() {
+        // No grant / holder material to terminate server-side — nothing to do.
+        let _ = clear_pending_logout(store);
+        return LogoutRunOutcome::Completed;
     }
-
-    // Courtesy soland logout — revokes the short bearer / device session
-    // immediately instead of waiting out its ≤15min TTL. Never gates
-    // clearing: with the grant dead, no fresh bearer can be minted, so the
-    // existing one expires harmlessly on its own.
-    soland_courtesy_logout(record).await;
-
-    let _ = clear_pending_logout(store);
-    LogoutRunOutcome::Completed
+    match hard_logout_at_authority(record).await {
+        // `account_logout` already classifies the HTTP result: a terminal
+        // outcome (revoked / already-gone) → `Ok`, any real failure → `Err`.
+        Ok(crate::coauth::SessionGrantRevokeOutcome::Terminated) => {
+            let _ = clear_pending_logout(store);
+            LogoutRunOutcome::Completed
+        }
+        Err(error) => {
+            tracing::warn!(?error, "pending logout: authority logout failed, will retry");
+            LogoutRunOutcome::Retain
+        }
+    }
 }
 
-/// coauth grant revoke with a holder proof minted from the stashed device
-/// seed. Mirrors `app::revoke_session_grant_at_coauth`, but rebuilds the
-/// handle from the journalled seed (the live key is already wiped) and —
-/// critically — mints the DPoP proof against the **actual** revoke URL.
-async fn revoke_grant_at_coauth(
+/// T1.Y3 — single hard logout to `{gate_account_base}/logout` with the grant
+/// bearer + a DPoP holder proof minted from the stashed device seed (the live
+/// key is already wiped). The DPoP `htu` MUST equal the `/logout` URL and `ath`
+/// MUST bind the grant.
+async fn hard_logout_at_authority(
     record: &PendingLogout,
 ) -> anyhow::Result<crate::coauth::SessionGrantRevokeOutcome> {
     let grant_jwt = record
@@ -174,47 +167,30 @@ async fn revoke_grant_at_coauth(
         .device_jkt
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("pending logout missing device jkt"))?;
-    let principal_server_url = record
-        .principal_server_url
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("pending logout missing principal_server_url"))?;
 
     let handle = crate::auth_dpop::device_handle_from_seed(seed, jkt)
         .map_err(|error| anyhow::anyhow!("rebuild device handle: {error}"))?;
-    let auth_server_url = crate::coauth::resolve_principal_auth_server_url(principal_server_url)
-        .await
-        .map_err(|error| anyhow::anyhow!("resolve auth server: {error}"))?;
-    let coauth = crate::coauth::CoauthApi::new(&auth_server_url)?;
-    // The DPoP `htu` MUST equal the URL the request is actually sent to,
-    // which `CoauthApi::revoke_session_grant` posts to
-    // `_cokret/gate/account/session-grants/logout`.
-    let htu = coauth.endpoint_url("_cokret/gate/account/session-grants/logout")?;
+    // Prefer the journalled gate_account_base; re-resolve from the principal
+    // server only if it was not captured.
+    let gate_account_base = match record.gate_account_base.as_deref() {
+        Some(base) if !base.trim().is_empty() => base.to_owned(),
+        _ => {
+            let principal_server_url = record
+                .principal_server_url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("pending logout missing gate_account_base and principal_server_url"))?;
+            crate::coauth::resolve_principal_auth_server_url(principal_server_url)
+                .await
+                .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?
+        }
+    };
+    let gate_account = crate::coauth::CoauthApi::new(&gate_account_base)?;
+    // DPoP `htu` MUST equal the actual `/logout` URL; `ath` binds the grant.
+    let htu = gate_account.endpoint_url("logout")?;
     let dpop_proof = handle
         .mint_proof("POST", &htu, Some(grant_jwt))
         .map_err(|error| anyhow::anyhow!("mint logout DPoP proof: {error}"))?;
-    coauth.revoke_session_grant(grant_jwt, &dpop_proof).await
-}
-
-/// Best-effort soland logout. Swallows all errors: an expired bearer (the
-/// common case by retry time) or a transient failure is harmless because
-/// the grant is already dead.
-async fn soland_courtesy_logout(record: &PendingLogout) {
-    if record.base_url.trim().is_empty() {
-        return;
-    }
-    let api = match crate::api::CokretApi::new(&record.base_url) {
-        Ok(api) => api.with_bearer(record.bearer.clone()),
-        Err(error) => {
-            tracing::warn!(?error, "pending logout: invalid soland base url");
-            return;
-        }
-    };
-    if let Err(error) = api.logout().await {
-        tracing::info!(
-            ?error,
-            "pending logout: soland courtesy logout failed (ignored)"
-        );
-    }
+    gate_account.account_logout(grant_jwt, &dpop_proof).await
 }
 
 /// Journal a logout intent to the secure key store. Call this **before**
@@ -300,6 +276,7 @@ mod tests {
             device_seed_b64: Some("seed".to_owned()),
             device_jkt: Some("jkt".to_owned()),
             principal_server_url: Some("https://soland.example".to_owned()),
+            gate_account_base: Some("https://soland.example/_cokret/gate/account".to_owned()),
             base_url: "https://soland.example".to_owned(),
             bearer: "bearer".to_owned(),
             account_did: "did:web:soland.example:users:01".to_owned(),
@@ -354,9 +331,16 @@ mod tests {
         no_jkt.device_jkt = None;
         assert!(!no_jkt.has_coauth_revoke());
 
-        let mut no_principal = base_record(now);
-        no_principal.principal_server_url = None;
-        assert!(!no_principal.has_coauth_revoke());
+        // No route at all (neither gate_account_base nor principal_server_url).
+        let mut no_route = base_record(now);
+        no_route.principal_server_url = None;
+        no_route.gate_account_base = None;
+        assert!(!no_route.has_coauth_revoke());
+
+        // gate_account_base alone is a sufficient route.
+        let mut base_only = base_record(now);
+        base_only.principal_server_url = None;
+        assert!(base_only.has_coauth_revoke());
     }
 
     #[tokio::test]

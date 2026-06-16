@@ -12,7 +12,9 @@ use crate::api::CokretApi;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
-const PRINCIPAL_SESSION_BIND_SCOPE: &str = "urn:cokret:principal-server:session.bind";
+/// Fallback OIDC `client_id` when `auth_metadata.methods[].oidc.client_id` is
+/// absent. Public (PKCE, no secret) client.
+const YOUGEN_OIDC_CLIENT_ID: &str = "yougen";
 // Device-binding scope prefix (see coauth docs/zh/reference/scopes.md).
 // Requesting `urn:cokret:client:device:{device_id}` at authorize time binds
 // the OAuth session to our stable, persisted device id so coauth introspection
@@ -21,19 +23,6 @@ const PRINCIPAL_SESSION_BIND_SCOPE: &str = "urn:cokret:principal-server:session.
 // re-authentication and invalidates the globally-shared sync cursor
 // (`cursor_integrity_invalid` / "cursor device does not match request device").
 const COKRET_DEVICE_SCOPE_PREFIX: &str = "urn:cokret:client:device:";
-// These three constants are **only**
-// referenced by `build_authorize_url_preview` — the diagnostic /
-// inspector function that renders an example authorize URL without
-// running the real PKCE round trip. The production path
-// (`build_authorize_url_with_session`, line ~825) uses
-// `random_url_safe_token` for state + nonce and computes the code
-// challenge with `pkce_code_challenge_s256(&random_code_verifier)`. The
-// `_PREVIEW` suffix is intentional so a future code search for
-// `TODO_STATE` / `TODO_NONCE` / `TODO_PKCE_CODE_CHALLENGE` does not
-// confuse this with a real authorization gap.
-const OIDC_STATE_PREVIEW: &str = "[preview-state]";
-const OIDC_NONCE_PREVIEW: &str = "[preview-nonce]";
-const OIDC_CODE_CHALLENGE_PREVIEW: &str = "[preview-code-challenge]";
 
 #[derive(Clone, Debug)]
 pub struct CoauthApi {
@@ -107,117 +96,6 @@ pub struct CoauthPrincipalServerInfo {
     pub endpoint: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthAuthBridgeDescribe {
-    pub contract: String,
-    pub version: String,
-    pub api_base_path: String,
-    pub oauth: CoauthAuthBridgeOAuthDescriptor,
-    pub cokret: CoauthAuthBridgeCokretDescriptor,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthAuthBridgeOAuthDescriptor {
-    pub discovery_path: String,
-    #[serde(default)]
-    pub browser_bridge_session_path: String,
-    #[serde(default)]
-    pub exchange_describe_path: String,
-    pub exchange_path: String,
-    #[serde(default)]
-    pub supported_strands: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthIntegrationManifest {
-    pub contract: String,
-    pub version: String,
-    pub service: String,
-    pub service_kind: String,
-    pub api_base_path: String,
-    pub describe_path: String,
-    #[serde(default)]
-    pub dependencies: Vec<CoauthIntegrationDependency>,
-    #[serde(default)]
-    pub surfaces: Vec<CoauthIntegrationSurface>,
-    #[serde(default)]
-    pub examples: Value,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthIntegrationDependency {
-    pub service: String,
-    pub purpose: String,
-    pub required_contract: String,
-    pub discovery_path: String,
-    pub mode: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthIntegrationSurface {
-    pub name: String,
-    pub method: String,
-    pub path: String,
-    pub contract: String,
-    pub stability: String,
-    pub todo: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthAuthBridgeCokretDescriptor {
-    pub login_path: String,
-    pub logout_path: String,
-    pub providers_path: String,
-    pub session_grants_path: String,
-    pub session_grants_introspect_path: String,
-    pub session_grant_scope: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct CoauthTopologySnapshot {
-    pub service_did: Option<String>,
-    pub service_type: Option<String>,
-    pub protocol_version: Option<String>,
-    pub identity_service_did: Option<String>,
-    pub issuer: String,
-    pub authorization_endpoint: String,
-    pub token_endpoint: Option<String>,
-    pub userinfo_endpoint: Option<String>,
-    pub code_challenge_methods_supported: Vec<String>,
-    pub scopes_supported: Vec<String>,
-    pub oidc_clients: Vec<CoauthOidcClientHint>,
-    pub oidc_browser_bridge_session_path: String,
-    pub oidc_exchange_describe_path: String,
-    pub oidc_exchange_path: String,
-    pub auth_bridge_contract: String,
-    pub auth_bridge_todos: Vec<String>,
-    pub integration_manifest: CoauthIntegrationManifest,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthOidcBrowserBridgeSession {
-    pub contract: String,
-    pub version: String,
-    pub authorize_url: String,
-    pub callback_uri: String,
-    pub issuer: String,
-    pub authorization_endpoint: String,
-    pub token_endpoint: String,
-    pub userinfo_endpoint: String,
-    pub client_id: String,
-    pub state: String,
-    pub nonce: String,
-    pub code_verifier: String,
-    pub code_challenge: String,
-    pub code_challenge_method: String,
-    pub principal_audience: String,
-    pub todo: String,
-}
-
 /// Canonical OIDC token endpoint response shape. Used by
 /// [`CoauthApi::exchange_pkce_code_for_tokens`] and
 /// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
@@ -276,76 +154,6 @@ impl OidcTokenResponse {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthOidcExchangeDescribe {
-    pub contract: String,
-    pub version: String,
-    pub exchange_path: String,
-    pub upstream_boundary_mode: String,
-    #[serde(default)]
-    pub upstream_modes_supported: Vec<String>,
-    #[serde(default)]
-    pub required_fields: Vec<String>,
-    #[serde(default)]
-    pub validation_layers: Vec<String>,
-    #[serde(default)]
-    pub failure_codes: Vec<String>,
-    #[serde(default)]
-    pub example_request: Value,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthOidcClientHint {
-    #[serde(default)]
-    pub id: String,
-    pub client_id: String,
-    #[serde(default)]
-    pub client_name: Option<String>,
-    #[serde(default)]
-    pub redirect_uris: Vec<String>,
-    #[serde(default)]
-    pub grant_types: Vec<String>,
-    #[serde(default)]
-    pub token_endpoint_auth_method: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SolandSessionGrantPlan {
-    pub principal_server_url: String,
-    pub principal_audience: String,
-    pub actor_id: String,
-    pub device_id: String,
-    pub authorize_url_preview: String,
-    pub token_endpoint: Option<String>,
-    pub integration_manifest_summary: String,
-    pub todo: &'static str,
-}
-
-#[derive(Clone, Debug)]
-pub struct ChimePushGrantPlan {
-    pub principal_server_url: String,
-    pub principal_audience: String,
-    pub device_id: String,
-    pub register_request_preview: String,
-    pub todo: &'static str,
-}
-
-#[derive(Clone, Debug)]
-pub struct OidcCodeExchangePlan {
-    pub principal_server_url: String,
-    pub principal_audience: String,
-    pub actor_id: String,
-    pub device_id: String,
-    pub client_id: String,
-    pub authorize_url_preview: String,
-    pub token_endpoint: String,
-    pub exchange_request_preview: String,
-    pub integration_manifest_summary: String,
-    pub todo: &'static str,
-}
-
 #[derive(Clone, Debug)]
 pub struct OidcScaffoldBundle {
     pub client_id: String,
@@ -367,6 +175,9 @@ pub struct PersistedOidcScaffold {
     pub code_verifier: String,
     #[serde(default)]
     pub client_id: String,
+    /// Retained field name for back-compat; holds the resolved
+    /// `gate_account_base` (the Account Authority origin all `gate/account`
+    /// calls are routed to), not a private auth-server bridge base.
     pub auth_server_url: String,
     #[serde(default)]
     pub principal_server_url: String,
@@ -377,6 +188,13 @@ pub struct PersistedOidcScaffold {
     pub principal_audience: String,
     pub callback_uri: String,
     pub authorize_url: String,
+    /// T1.Y1 — the OIDC issuer the authorization code was obtained from. The
+    /// Account Authority redeems the code at this issuer's `token_endpoint`.
+    #[serde(default)]
+    pub issuer: String,
+    /// T1.Y4 — the resolved `gate_account_base` to POST `session-grants` to.
+    #[serde(default)]
+    pub gate_account_base: String,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -413,83 +231,6 @@ impl CoauthApi {
         })
     }
 
-    pub async fn inspect_topology(&self) -> anyhow::Result<CoauthTopologySnapshot> {
-        let server = self
-            .get_json::<Value>("_cokret/describe")
-            .await
-            .context("coauth server describe failed")?;
-        let identity = self
-            .get_json::<Value>("_cokret/root/identity/describe")
-            .await
-            .context("coauth identity describe failed")?;
-        let discovery = self
-            .get_json::<OidcDiscoveryDocument>(".well-known/openid-configuration")
-            .await
-            .context("coauth OIDC discovery failed")?;
-        let integration_manifest = CoauthIntegrationManifest {
-            contract: "cokret.spec_only.topology.v1".to_owned(),
-            version: "1.0".to_owned(),
-            service: "coauth".to_owned(),
-            service_kind: "account_authority".to_owned(),
-            api_base_path: "/_cokret".to_owned(),
-            describe_path: "/_cokret/describe".to_owned(),
-            dependencies: Vec::new(),
-            surfaces: Vec::new(),
-            examples: Value::Null,
-            todos: vec![
-                "coauth private bridge and integration descriptors are outside the Cokret spec and are not fetched by yougen".to_owned(),
-            ],
-        };
-
-        Ok(CoauthTopologySnapshot {
-            service_did: value_string(&server, "service_did"),
-            service_type: value_string(&server, "service_type"),
-            protocol_version: value_string(&server, "protocol_version"),
-            identity_service_did: value_string(&identity, "service_did")
-                .or_else(|| value_string(&identity, "issuer_did")),
-            issuer: discovery.issuer,
-            authorization_endpoint: discovery.authorization_endpoint,
-            token_endpoint: discovery.token_endpoint,
-            userinfo_endpoint: discovery.userinfo_endpoint,
-            code_challenge_methods_supported: discovery.code_challenge_methods_supported,
-            scopes_supported: discovery.scopes_supported,
-            oidc_clients: server
-                .get("auth_metadata")
-                .and_then(|value| value.get("oidc_clients"))
-                .cloned()
-                .map(serde_json::from_value)
-                .transpose()?
-                .unwrap_or_default(),
-            oidc_browser_bridge_session_path: String::new(),
-            oidc_exchange_describe_path: String::new(),
-            oidc_exchange_path: String::new(),
-            auth_bridge_contract: String::new(),
-            auth_bridge_todos: vec![
-                "coauth auth bridge is outside the Cokret spec and is not fetched by yougen"
-                    .to_owned(),
-            ],
-            integration_manifest,
-        })
-    }
-
-    pub async fn auth_bridge_describe(&self) -> anyhow::Result<CoauthAuthBridgeDescribe> {
-        self.get_json("_coauth/gate/account/auth/bridge/describe")
-            .await
-    }
-
-    pub async fn describe_oidc_exchange(
-        &self,
-        exchange_describe_path: &str,
-    ) -> anyhow::Result<CoauthOidcExchangeDescribe> {
-        self.get_json(exchange_describe_path).await
-    }
-
-    pub async fn integration_describe(&self) -> anyhow::Result<CoauthIntegrationManifest> {
-        anyhow::bail!(
-            "coauth integration describe is not part of the Cokret spec; yougen must not call private coauth paths"
-        )
-    }
-
     /// List invite-quarantine entries from coauth's admin endpoint. Admins
     /// receive every quarantined invite in the deployment; non-admin tokens
     /// 403 - the caller surfaces an inline "limited to your own invites"
@@ -524,46 +265,6 @@ impl CoauthApi {
         anyhow::bail!(
             "coauth invite quarantine is a private coauth surface; yougen must not call private coauth paths"
         )
-    }
-
-    pub async fn exchange_oidc_code(
-        &self,
-        exchange_path: &str,
-        authorization_code: &str,
-        code_verifier: &str,
-        redirect_uri: &str,
-        issuer: &str,
-        token_endpoint: &str,
-        userinfo_endpoint: &str,
-        client_id: &str,
-        login_hint: &str,
-        device_id: &str,
-        principal_audience: Option<&str>,
-        state: Option<&str>,
-        expected_state: Option<&str>,
-        expected_nonce: Option<&str>,
-        dpop_proof: Option<&str>,
-    ) -> anyhow::Result<CoauthLoginOutcome> {
-        self.post_json_with_dpop(
-            exchange_path,
-            json!({
-                "authorization_code": authorization_code,
-                "code_verifier": code_verifier,
-                "redirect_uri": redirect_uri,
-                "issuer": issuer,
-                "token_endpoint": token_endpoint,
-                "userinfo_endpoint": userinfo_endpoint,
-                "client_id": client_id,
-                "login_hint": login_hint,
-                "device_id": device_id,
-                "principal_audience": principal_audience,
-                "state": state,
-                "expected_state": expected_state,
-                "expected_nonce": expected_nonce,
-            }),
-            dpop_proof,
-        )
-        .await
     }
 
     /// Real OIDC token-endpoint exchange. Drives the PKCE authorization-code
@@ -845,26 +546,149 @@ impl CoauthApi {
         ))
     }
 
-    pub async fn start_oidc_browser_bridge(
+    /// Standard OIDC discovery (`/.well-known/openid-configuration`) for the
+    /// chosen `methods[].oidc`. `openid_configuration` is taken verbatim from
+    /// the auth method when present; otherwise it is derived from the issuer.
+    /// No Cokret-private OAuth endpoint family is involved — this is plain
+    /// OpenID Connect Discovery 1.0.
+    pub async fn fetch_oidc_discovery(
+        discovery_url: &str,
+    ) -> anyhow::Result<OidcDiscoveryDocument> {
+        let url = Url::parse(discovery_url)
+            .with_context(|| format!("invalid OIDC discovery URL: {discovery_url}"))?;
+        Ok(Client::new()
+            .get(url)
+            .send()
+            .await
+            .context("OIDC discovery request failed")?
+            .error_for_status()
+            .context("OIDC discovery returned an error status")?
+            .json()
+            .await
+            .context("parse OIDC discovery document")?)
+    }
+
+    /// T1.Y1 — issue a `ck.session.grant` from an OIDC authorization-code
+    /// callback. POSTs a SDK-canonical [`cokret_sdk::SessionGrantRequestBody`]
+    /// with `proof.proof_kind = oidc_code_exchange` to
+    /// `{gate_account_base}/session-grants`; the Account Authority redeems the
+    /// `authorization_code` + `code_verifier` at the issuer `token_endpoint`,
+    /// validates issuer/state/nonce/redirect/PKCE/principal/audience and the
+    /// `DPoP` holder proof (binding the grant to `cnf.jkt`), and returns a
+    /// device-bound [`cokret_sdk::SessionGrantOutcome`].
+    ///
+    /// `self` MUST be rooted at the resolved `gate_account_base`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn issue_session_grant_oidc(
         &self,
-        session_path: &str,
-        redirect_uri: &str,
-        login_hint: &str,
+        principal_id: &str,
         device_id: &str,
-        principal_audience: Option<&str>,
-        client_id_hint: Option<&str>,
-    ) -> anyhow::Result<CoauthOidcBrowserBridgeSession> {
-        self.post_json(
-            session_path,
-            json!({
-                "redirect_uri": redirect_uri,
-                "login_hint": login_hint,
-                "device_id": device_id,
-                "principal_audience": principal_audience,
-                "client_id_hint": client_id_hint,
-            }),
+        issuer: &str,
+        client_id: &str,
+        redirect_uri: &str,
+        state: &str,
+        nonce: &str,
+        authorization_code: &str,
+        code_verifier: &str,
+        audience: &str,
+        requested_scope: Vec<String>,
+        dpop_proof: &str,
+    ) -> anyhow::Result<cokret_sdk::SessionGrantOutcome> {
+        let principal_id = cokret_sdk::Did::new(principal_id.trim().to_owned())
+            .map_err(|error| anyhow::anyhow!("invalid principal_id DID: {error}"))?;
+        let device_id = cokret_sdk::DeviceId::new(device_id.trim().to_owned())
+            .map_err(|error| anyhow::anyhow!("invalid device_id: {error}"))?;
+        let proof = cokret_sdk::SessionGrantRequestProof {
+            proof_kind: cokret_sdk::SessionGrantProofKind::OidcCodeExchange,
+            // The DPoP holder proof (DPoP header) carries the device binding;
+            // the authorization-code exchange itself is the authentication
+            // material. `challenge` / `signature` are not consulted for the
+            // oidc_code_exchange branch, but the wire struct requires them.
+            challenge: String::new(),
+            request_canonical_digest: oidc_request_canonical_digest(
+                issuer,
+                client_id,
+                authorization_code,
+                state,
+            )?,
+            audience: audience.to_owned(),
+            expires_at: None,
+            signature: String::new(),
+            issuer: Some(issuer.to_owned()),
+            client_id: Some(client_id.to_owned()),
+            redirect_uri: Some(redirect_uri.to_owned()),
+            state: Some(state.to_owned()),
+            nonce: Some(nonce.to_owned()),
+            authorization_code: Some(authorization_code.to_owned()),
+            code_verifier: Some(code_verifier.to_owned()),
+        };
+        let body = cokret_sdk::SessionGrantRequestBody {
+            principal_id,
+            device_id: Some(device_id),
+            requested_scope,
+            agent_key_authorization_ref: None,
+            agent_scope_request: Value::Null,
+            proof,
+        };
+        self.post_json_with_dpop(
+            "session-grants",
+            serde_json::to_value(&body)?,
+            Some(dpop_proof),
         )
         .await
+    }
+
+    /// T1.Y3 — single client-visible hard logout (account-lifecycle §4.1).
+    /// POSTs to `{gate_account_base}/logout` with `Authorization: Bearer
+    /// <ck.session.grant>` + a `DPoP` holder proof; the Account Authority
+    /// internally terminates BOTH the Auth-side grant rotation chain +
+    /// `browser_session` AND the Principal-side account/device session. The
+    /// client MUST NOT fan out to two origins.
+    ///
+    /// `self` MUST be rooted at the resolved `gate_account_base`. Returns a
+    /// [`SessionGrantRevokeOutcome`] so the durable journal can distinguish a
+    /// provably-terminated chain (clear) from a retryable failure (retain).
+    pub async fn account_logout(
+        &self,
+        grant_jwt: &str,
+        dpop_proof: &str,
+    ) -> anyhow::Result<SessionGrantRevokeOutcome> {
+        let endpoint = self.endpoint("logout")?;
+        let response = self
+            .http
+            .post(endpoint)
+            .bearer_auth(grant_jwt)
+            .header("DPoP", dpop_proof)
+            .json(&cokret_sdk::AccountLogoutRequestBody::default())
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            return Ok(SessionGrantRevokeOutcome::Terminated);
+        }
+        // A missing grant means there is nothing left to revoke — terminal.
+        if status.as_u16() == 404 {
+            return Ok(SessionGrantRevokeOutcome::Terminated);
+        }
+        let body = response.text().await.unwrap_or_default();
+        let code = error_envelope_code(&body);
+        if let Some(code) = code.as_deref()
+            && matches!(
+                code,
+                "grant_already_consumed"
+                    | "session_logged_out"
+                    | "session_grant_not_found"
+                    | "authorized_grant_revoked"
+            )
+        {
+            return Ok(SessionGrantRevokeOutcome::Terminated);
+        }
+        Err(anyhow::anyhow!(
+            "account authority logout failed: status={} code={} body={body}",
+            status.as_u16(),
+            code.as_deref().unwrap_or("<none>"),
+        ))
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
@@ -941,30 +765,181 @@ pub(crate) struct PrincipalAuthServerResolution {
     pub principal_audience: String,
 }
 
+/// T1.Y4 — Account Authority resolver. The Principal Server's root
+/// `/_cokret/describe` (service-surface §2.5.1) publishes a strongly-typed
+/// `auth_metadata.account_authority.gate_account_base`; every Cokret
+/// `/_cokret/gate/account/*` request MUST be derived from that single base
+/// (a [`CoauthApi`] rooted at it), and the available authentication methods
+/// come from `auth_metadata.methods[]`.
+///
+/// The resolver fails closed: if the describe response carries neither a
+/// strong `account_authority` nor the legacy `auth_server_url` / `oauth_issuer`
+/// aliases, it errors instead of guessing a per-operation route.
+#[derive(Clone, Debug)]
+pub struct AuthorityResolver {
+    /// Absolute `gate_account_base` — the only origin client `gate/account`
+    /// calls are routed to (service-surface §2.5.1).
+    pub gate_account_base: String,
+    /// Principal Server origin that published the describe response.
+    pub principal_server_url: String,
+    /// Audience the issued grant / bearer authenticates against.
+    pub principal_audience: String,
+    /// Authentication methods the Account Authority accepts.
+    pub methods: Vec<cokret_sdk::AuthMethod>,
+}
+
+impl AuthorityResolver {
+    /// Discover the Account Authority from the Principal Server's root
+    /// `/_cokret/describe` and its strongly-typed `auth_metadata`.
+    pub async fn discover(principal_server_url: &str) -> anyhow::Result<Self> {
+        let principal = CokretApi::new(principal_server_url)?;
+        let description = principal.describe().await?;
+        Self::from_description(principal_server_url, &description)
+    }
+
+    pub(crate) fn from_description(
+        principal_server_url: &str,
+        description: &cokret_sdk::ServerDescription,
+    ) -> anyhow::Result<Self> {
+        let metadata = &description.auth_metadata;
+        let gate_account_base = resolve_gate_account_base(principal_server_url, metadata)?;
+        let principal_audience = {
+            let service_did = description.service_did.as_str().trim();
+            if service_did.is_empty() {
+                principal_audience(principal_server_url)?
+            } else {
+                service_did.to_owned()
+            }
+        };
+        Ok(Self {
+            gate_account_base,
+            principal_server_url: principal_server_url.to_owned(),
+            principal_audience,
+            methods: metadata.methods.clone(),
+        })
+    }
+
+    /// A [`CoauthApi`] rooted at the resolved `gate_account_base`. Every
+    /// `gate/account` call (session-grants, refresh, logout) goes through it.
+    pub fn gate_account_client(&self) -> anyhow::Result<CoauthApi> {
+        CoauthApi::new(&self.gate_account_base)
+    }
+
+    /// Pick the first `oidc` method, falling back to a synthesised one when the
+    /// server only published the legacy `auth_server_url` / `oauth_issuer`
+    /// aliases (older Principal Servers that predate `methods[]`).
+    pub fn oidc_method(
+        &self,
+        metadata: Option<&cokret_sdk::AuthMetadata>,
+    ) -> anyhow::Result<cokret_sdk::AuthMethod> {
+        if let Some(method) = self
+            .methods
+            .iter()
+            .find(|method| method.method == cokret_sdk::AuthMethodKind::Oidc)
+        {
+            return Ok(method.clone());
+        }
+        // Legacy alias fallback.
+        if let Some(metadata) = metadata {
+            if let Some(method) = synthesize_oidc_method_from_aliases(metadata) {
+                return Ok(method);
+            }
+        }
+        anyhow::bail!(
+            "principal server describe published no oidc auth method (methods[] empty and no auth_server_url/oauth_issuer alias)"
+        )
+    }
+}
+
+/// Derive the single client-visible `gate_account_base` from `auth_metadata`.
+///
+/// Order of preference (service-surface §2.5.1 + the legacy aliases the SDK
+/// `AuthMetadata` retains for old servers):
+///
+/// 1. `account_authority.gate_account_base` — canonical.
+/// 2. legacy `auth_server_url` alias — older deployments that ran the whole
+///    Account Authority on the auth origin; derive `{origin}/_cokret/gate/account`.
+/// 3. the Principal Server's own origin — personal deployments where the
+///    Account Authority is co-located.
+fn resolve_gate_account_base(
+    principal_server_url: &str,
+    metadata: &cokret_sdk::AuthMetadata,
+) -> anyhow::Result<String> {
+    if let Some(authority) = metadata.account_authority.as_ref() {
+        let base = authority.gate_account_base.trim();
+        if !base.is_empty() {
+            return Ok(normalize_gate_account_base(base));
+        }
+        let origin = authority.origin.trim();
+        if !origin.is_empty() {
+            return Ok(gate_account_base_from_origin(origin)?);
+        }
+    }
+    if let Some(auth_server_url) = metadata
+        .auth_server_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return gate_account_base_from_origin(auth_server_url);
+    }
+    // Personal deployment: Account Authority co-located with the Principal
+    // Server. Fail closed only if the URL itself is invalid.
+    gate_account_base_from_origin(principal_server_url)
+}
+
+fn gate_account_base_from_origin(origin: &str) -> anyhow::Result<String> {
+    let url = validate_server_url(origin)?;
+    let base = url
+        .join("_cokret/gate/account")
+        .map_err(|error| anyhow::anyhow!("invalid gate account base from origin {origin}: {error}"))?;
+    Ok(normalize_gate_account_base(base.as_str()))
+}
+
+fn normalize_gate_account_base(base: &str) -> String {
+    base.trim_end_matches('/').to_owned()
+}
+
+/// Build an `oidc` [`cokret_sdk::AuthMethod`] from the legacy compatibility
+/// aliases (`auth_server_url` / `oauth_issuer` / `openid_configuration`) so
+/// pre-`methods[]` servers still drive standard OIDC discovery.
+fn synthesize_oidc_method_from_aliases(
+    metadata: &cokret_sdk::AuthMetadata,
+) -> Option<cokret_sdk::AuthMethod> {
+    let issuer = metadata
+        .oauth_issuer
+        .as_deref()
+        .or(metadata.auth_server_url.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)?;
+    let openid_configuration = metadata
+        .openid_configuration
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| Some(format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'))));
+    Some(cokret_sdk::AuthMethod {
+        method: cokret_sdk::AuthMethodKind::Oidc,
+        issuer: Some(issuer),
+        provider: None,
+        openid_configuration,
+        client_id: None,
+        scopes: Vec::new(),
+        grant_exchange: cokret_sdk::AuthGrantExchange {
+            proof_kind: cokret_sdk::SessionGrantProofKind::OidcCodeExchange,
+        },
+    })
+}
+
 pub(crate) async fn resolve_principal_auth_server(
     principal_server_url: &str,
 ) -> anyhow::Result<PrincipalAuthServerResolution> {
-    let principal = CokretApi::new(principal_server_url)?;
-    let description = principal.describe().await?;
-    let auth_server_url = description
-        .auth_metadata
-        .get("auth_server_url")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!("principal server did not publish auth_metadata.auth_server_url")
-        })?;
-    let principal_audience = {
-        let service_did = description.service_did.as_str().trim();
-        if service_did.is_empty() {
-            principal_audience(principal_server_url)?
-        } else {
-            service_did.to_owned()
-        }
-    };
+    let resolver = AuthorityResolver::discover(principal_server_url).await?;
     Ok(PrincipalAuthServerResolution {
-        auth_server_url: validate_server_url(auth_server_url)?.to_string(),
-        principal_audience,
+        auth_server_url: resolver.gate_account_base.clone(),
+        principal_audience: resolver.principal_audience,
     })
 }
 
@@ -972,192 +947,46 @@ pub fn active_oidc_redirect_uri() -> String {
     current_oidc_redirect_uri()
 }
 
-pub fn summarize_coauth_integration_manifest(manifest: &CoauthIntegrationManifest) -> String {
-    let dependencies = if manifest.dependencies.is_empty() {
-        "none".to_owned()
-    } else {
-        manifest
-            .dependencies
-            .iter()
-            .map(|dependency| {
-                format!(
-                    "{}:{}@{}",
-                    dependency.service, dependency.purpose, dependency.discovery_path
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let surfaces = if manifest.surfaces.is_empty() {
-        "none".to_owned()
-    } else {
-        manifest
-            .surfaces
-            .iter()
-            .map(|surface| {
-                format!(
-                    "{} {} {} [{}]",
-                    surface.method, surface.path, surface.contract, surface.stability
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let todos = if manifest.todos.is_empty() {
-        "none".to_owned()
-    } else {
-        manifest.todos.join(" ")
-    };
-
-    format!(
-        "service={} kind={} contract={} version={}\ndependencies={}\nsurfaces:\n{}\ntodos={}",
-        manifest.service,
-        manifest.service_kind,
-        manifest.contract,
-        manifest.version,
-        dependencies,
-        surfaces,
-        todos,
-    )
-}
-
-pub fn build_session_grant_plan(
-    topology: &CoauthTopologySnapshot,
-    principal_server_url: &str,
-    actor_id: &str,
+/// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
+/// `authorization_endpoint` URL) directly from standard OIDC discovery and the
+/// chosen `methods[].oidc`, without any Cokret-private bridge. `client_id` is
+/// taken from the auth method when published, else falls back to the native
+/// yougen client id.
+pub fn build_oidc_authorize_scaffold(
+    discovery: &OidcDiscoveryDocument,
+    method: &cokret_sdk::AuthMethod,
+    redirect_uri: &str,
+    login_hint: &str,
     device_id: &str,
-) -> anyhow::Result<SolandSessionGrantPlan> {
-    let principal_server_url = validate_server_url(principal_server_url)?.to_string();
-    let principal_audience = principal_audience(principal_server_url.as_str())?;
-    let authorize_url_preview =
-        build_authorize_url_preview(topology, actor_id, device_id, principal_audience.as_str())?;
-
-    Ok(SolandSessionGrantPlan {
-        principal_server_url,
-        principal_audience,
-        actor_id: actor_id.to_owned(),
-        device_id: device_id.to_owned(),
-        authorize_url_preview,
-        token_endpoint: topology.token_endpoint.clone(),
-        integration_manifest_summary: summarize_coauth_integration_manifest(
-            &topology.integration_manifest,
-        ),
-        todo: "Closed: LoginPanel::finish_oidc_callback exchanges the authorization code, validates the principal/device binding, and swaps the resulting OIDC or session-grant bearer into the active principal session.",
-    })
-}
-
-pub fn build_chime_push_grant_plan(
-    principal_server_url: &str,
-    device_id: &str,
-) -> anyhow::Result<ChimePushGrantPlan> {
-    let principal_server_url = validate_server_url(principal_server_url)?.to_string();
-    let principal_audience = principal_audience(principal_server_url.as_str())?;
-    let register_request = crate::push::build_register_request(device_id)?;
-
-    Ok(ChimePushGrantPlan {
-        principal_server_url,
-        principal_audience,
-        device_id: device_id.to_owned(),
-        register_request_preview: serde_json::to_string_pretty(&register_request)?,
-        todo: "Closed: push token providers now supply WebPush/FCM/APNs material and register_via_chime attaches the persisted coauth session grant plus introspection proof headers.",
-    })
-}
-
-pub fn build_oidc_code_exchange_plan(
-    topology: &CoauthTopologySnapshot,
-    principal_server_url: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> anyhow::Result<OidcCodeExchangePlan> {
-    let principal_server_url = validate_server_url(principal_server_url)?.to_string();
-    let principal_audience = principal_audience(principal_server_url.as_str())?;
-    let redirect_uri = current_oidc_redirect_uri();
-    let client_id = resolve_oidc_client_id(topology, redirect_uri.as_str())?;
-    let authorize_url_preview =
-        build_authorize_url_preview(topology, actor_id, device_id, principal_audience.as_str())?;
-    let token_endpoint = topology
-        .token_endpoint
-        .clone()
-        .unwrap_or_else(|| "missing".to_owned());
-    let userinfo_endpoint = topology
-        .userinfo_endpoint
-        .clone()
-        .unwrap_or_else(|| "missing".to_owned());
-    let exchange_request_preview = serde_json::to_string_pretty(&json!({
-        "grant_type": "authorization_code",
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "issuer": topology.issuer,
-        "token_endpoint": token_endpoint,
-        "userinfo_endpoint": userinfo_endpoint,
-        "resource": principal_audience,
-        "code": "<authorization_code_from_callback>",
-        "code_verifier": "<persisted_pkce_code_verifier>",
-        "login_hint": actor_id,
-        "device_id": device_id,
-    }))?;
-
-    Ok(OidcCodeExchangePlan {
-        principal_server_url,
-        principal_audience,
-        actor_id: actor_id.to_owned(),
-        device_id: device_id.to_owned(),
-        client_id,
-        authorize_url_preview,
-        token_endpoint,
-        exchange_request_preview,
-        integration_manifest_summary: summarize_coauth_integration_manifest(
-            &topology.integration_manifest,
-        ),
-        todo: "Closed: the server sign-in button opens coauth's authorize URL, persists PKCE verifier state, auto-captures the callback URL, exchanges the returned code, and stores the resulting OIDC/session-grant credentials locally.",
-    })
-}
-
-pub fn build_oidc_scaffold_bundle(
-    topology: &CoauthTopologySnapshot,
-    principal_server_url: &str,
-    actor_id: &str,
-    device_id: &str,
+    principal_audience: &str,
 ) -> anyhow::Result<OidcScaffoldBundle> {
-    let principal_server_url = validate_server_url(principal_server_url)?.to_string();
-    // Validation only — keep the previous side effect of bailing on a bad
-    // principal server URL before we generate PKCE state.
-    let _ = principal_server_url;
-    let principal_audience = principal_audience(principal_server_url.as_str())?;
-    let callback_uri = current_oidc_redirect_uri();
-    let client_id = resolve_oidc_client_id(topology, callback_uri.as_str())?;
-    // RFC 6749 §10.12 / RFC 7636: state, nonce, and PKCE verifier MUST be
-    // unguessable per-strand values. The previous scaffold used deterministic
-    // strings derived from (actor_id, device_id), which would let an
-    // attacker who learned the DID + device id forge a matching callback
-    // payload. Replace with cryptographically random tokens and the spec
-    // S256 challenge transformation.
+    let client_id = method
+        .client_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| YOUGEN_OIDC_CLIENT_ID.to_owned());
     let state = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let nonce = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let code_verifier = random_url_safe_token(PKCE_VERIFIER_BYTES)?;
-    // `actor_id` / `device_id` are no longer factored into the (random) PKCE
-    // state, but both are still forwarded to `build_authorize_url` below —
-    // `actor_id` as `login_hint` and `device_id` as the device-binding scope.
-    let pkce_method = preferred_pkce_method(&topology.code_challenge_methods_supported);
+    let pkce_method = preferred_pkce_method(&discovery.code_challenge_methods_supported);
     let code_challenge = match pkce_method {
         Some("plain") => code_verifier.clone(),
-        // S256 is the spec-default + only other value we negotiate, so
-        // when the topology is silent we still emit an S256 challenge —
-        // the authorize URL builder simply omits it for non-PKCE strands.
         _ => pkce_code_challenge_s256(&code_verifier),
     };
-    let authorize_url = build_authorize_url(
-        topology,
-        client_id.as_str(),
-        callback_uri.as_str(),
-        actor_id,
+    let authorize_url = build_standard_authorize_url(
+        discovery,
+        method,
+        &client_id,
+        redirect_uri,
+        login_hint,
         device_id,
-        principal_audience.as_str(),
+        principal_audience,
         &state,
         &nonce,
         &code_challenge,
     )?;
-
     Ok(OidcScaffoldBundle {
         client_id,
         state,
@@ -1165,65 +994,76 @@ pub fn build_oidc_scaffold_bundle(
         code_verifier,
         code_challenge,
         authorize_url,
-        callback_uri,
-        principal_audience,
-        todo: "Closed: LoginPanel auto-captures the returned authorization code and exchanges it with the persisted PKCE verifier; state, nonce, and S256 challenge are generated from cryptographic RNG.",
+        callback_uri: redirect_uri.to_owned(),
+        principal_audience: principal_audience.to_owned(),
+        todo: "Closed: standard OIDC discovery + PKCE authorize; the login callback exchanges the code at the Account Authority session-grants endpoint.",
     })
 }
 
-pub fn oidc_scaffold_bundle_from_bridge_session(
-    session: &CoauthOidcBrowserBridgeSession,
-) -> OidcScaffoldBundle {
-    OidcScaffoldBundle {
-        client_id: session.client_id.clone(),
-        state: session.state.clone(),
-        nonce: session.nonce.clone(),
-        code_verifier: session.code_verifier.clone(),
-        code_challenge: session.code_challenge.clone(),
-        authorize_url: session.authorize_url.clone(),
-        callback_uri: session.callback_uri.clone(),
-        principal_audience: session.principal_audience.clone(),
-        todo: "Closed: browser-bridge sessions supply concrete state/nonce/challenge/verifier material and the login callback path completes the exchange automatically.",
-    }
-}
-
-pub fn authorize_url_with_forced_reauthentication(authorize_url: &str) -> anyhow::Result<String> {
-    let mut url = Url::parse(authorize_url)
-        .with_context(|| format!("invalid authorize URL: {authorize_url}"))?;
-    let mut query: Vec<(String, String)> = url.query_pairs().into_owned().collect();
-    let mut saw_prompt = false;
-    let mut saw_max_age = false;
-
-    for (key, value) in &mut query {
-        if key == "prompt" {
-            saw_prompt = true;
-            let mut prompts: Vec<String> = value
-                .split_ascii_whitespace()
-                .filter(|prompt| *prompt != "none")
-                .map(str::to_owned)
-                .collect();
-            if !prompts.iter().any(|prompt| prompt == "login") {
-                prompts.push("login".to_owned());
-            }
-            *value = prompts.join(" ");
-        } else if key == "max_age" {
-            saw_max_age = true;
-            *value = "0".to_owned();
+/// Build a standard OpenID Connect authorization-code + PKCE authorize URL
+/// from a discovery document and auth method. No Cokret-private scopes are
+/// required: `scope` defaults to `openid` plus any `methods[].scopes`, and the
+/// stable device binding rides as a `urn:cokret:client:device:{id}` scope.
+#[allow(clippy::too_many_arguments)]
+fn build_standard_authorize_url(
+    discovery: &OidcDiscoveryDocument,
+    method: &cokret_sdk::AuthMethod,
+    client_id: &str,
+    redirect_uri: &str,
+    login_hint: &str,
+    device_id: &str,
+    principal_audience: &str,
+    state: &str,
+    nonce: &str,
+    code_challenge: &str,
+) -> anyhow::Result<String> {
+    let mut url = Url::parse(&discovery.authorization_endpoint)
+        .with_context(|| format!("invalid authorization_endpoint: {}", discovery.authorization_endpoint))?;
+    let mut scope_tokens: Vec<String> = vec!["openid".to_owned()];
+    for scope in &method.scopes {
+        let scope = scope.trim();
+        if !scope.is_empty() && !scope_tokens.iter().any(|existing| existing == scope) {
+            scope_tokens.push(scope.to_owned());
         }
     }
-
-    if !saw_prompt {
-        query.push(("prompt".to_owned(), "login".to_owned()));
-    }
-    if !saw_max_age {
-        query.push(("max_age".to_owned(), "0".to_owned()));
-    }
-
-    url.set_query(None);
+    // Standard offline_access for refresh tokens when the issuer advertises it.
+    if discovery
+        .scopes_supported
+        .iter()
+        .any(|scope| scope == "offline_access")
+        && !scope_tokens.iter().any(|scope| scope == "offline_access")
     {
-        let mut pairs = url.query_pairs_mut();
-        for (key, value) in query {
-            pairs.append_pair(&key, &value);
+        scope_tokens.push("offline_access".to_owned());
+    }
+    // Bind this OAuth session to the stable device id so introspection returns
+    // a stable `org.cokret.device_id` (avoids per-session device drift →
+    // cursor_integrity_invalid). This is a parameterized capability scope,
+    // accepted verbatim by the issuer; not gated by discovery scopes_supported.
+    let device_id = device_id.trim();
+    if !device_id.is_empty() {
+        scope_tokens.push(format!("{COKRET_DEVICE_SCOPE_PREFIX}{device_id}"));
+    }
+    let scope = scope_tokens.join(" ");
+    let pkce_method = preferred_pkce_method(&discovery.code_challenge_methods_supported);
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("response_type", "code");
+        query.append_pair("client_id", client_id);
+        query.append_pair("redirect_uri", redirect_uri);
+        query.append_pair("scope", &scope);
+        query.append_pair("state", state);
+        query.append_pair("nonce", nonce);
+        if !login_hint.trim().is_empty() {
+            query.append_pair("login_hint", login_hint);
+        }
+        query.append_pair("resource", principal_audience);
+        // OIDC Core §3.1.2.1: force re-prompt so an app-level logout is not
+        // silently undone by a live IdP SSO cookie.
+        query.append_pair("prompt", "login");
+        query.append_pair("max_age", "0");
+        if let Some(pkce_method) = pkce_method {
+            query.append_pair("code_challenge_method", pkce_method);
+            query.append_pair("code_challenge", code_challenge);
         }
     }
     Ok(url.to_string())
@@ -1332,6 +1172,27 @@ pub fn build_session_grant_introspection_proof(
         expires_at: now + chrono::Duration::seconds(60),
     };
     sign_compact_jws_eddsa(&claims, signing_key)
+}
+
+/// Deterministic `sha256:<hex>` digest binding the OIDC code-exchange request
+/// fields. The Account Authority does not consult this for the
+/// `oidc_code_exchange` branch (it re-validates against the issuer), but the
+/// SDK [`cokret_sdk::SessionGrantRequestProof`] requires a valid [`Hash`], so
+/// we compute a real content digest of the binding fields rather than ship a
+/// placeholder.
+fn oidc_request_canonical_digest(
+    issuer: &str,
+    client_id: &str,
+    authorization_code: &str,
+    state: &str,
+) -> anyhow::Result<cokret_sdk::Hash> {
+    let canonical = format!("oidc_code_exchange|{issuer}|{client_id}|{authorization_code}|{state}");
+    let digest = format!(
+        "sha256:{}",
+        crate::canonical::hex_encode(&Sha256::digest(canonical.as_bytes()))
+    );
+    cokret_sdk::Hash::new(digest)
+        .map_err(|error| anyhow::anyhow!("invalid oidc request digest: {error}"))
 }
 
 /// Hash the grant JWT bytes per coauth's `session_grant_jwt_hash`
@@ -1519,47 +1380,52 @@ fn browser_initial_navigation_url(window: &web_sys::Window) -> Option<String> {
         .and_then(|value| value.as_string())
 }
 
-#[cfg(target_arch = "wasm32")]
-pub fn persist_oidc_scaffold(
+/// Assemble the durable scaffold record from a freshly-built authorize bundle
+/// plus the resolved Account Authority routing. Persisted across the browser
+/// redirect so the callback can restore PKCE verifier / state / nonce and the
+/// `gate_account_base` to POST the session-grant to.
+#[allow(clippy::too_many_arguments)]
+pub fn build_persisted_oidc_scaffold(
     bundle: &OidcScaffoldBundle,
-    auth_server_url: &str,
+    gate_account_base: &str,
     principal_server_url: &str,
     principal_actor_id: &str,
     device_id: &str,
-) -> anyhow::Result<()> {
-    let window =
-        web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
-    let storage = window
-        .local_storage()
-        .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
-        .ok_or_else(|| anyhow::anyhow!("localStorage is not available"))?;
-    let payload = PersistedOidcScaffold {
+    issuer: &str,
+) -> PersistedOidcScaffold {
+    PersistedOidcScaffold {
         expected_state: bundle.state.clone(),
         expected_nonce: bundle.nonce.clone(),
         code_verifier: bundle.code_verifier.clone(),
         client_id: bundle.client_id.clone(),
-        auth_server_url: auth_server_url.to_owned(),
+        auth_server_url: gate_account_base.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
         principal_actor_id: principal_actor_id.to_owned(),
         device_id: device_id.to_owned(),
         principal_audience: bundle.principal_audience.clone(),
         callback_uri: bundle.callback_uri.clone(),
         authorize_url: bundle.authorize_url.clone(),
-    };
+        issuer: issuer.to_owned(),
+        gate_account_base: gate_account_base.to_owned(),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn persist_oidc_scaffold(payload: &PersistedOidcScaffold) -> anyhow::Result<()> {
+    let window =
+        web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let storage = window
+        .local_storage()
+        .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
+        .ok_or_else(|| anyhow::anyhow!("localStorage is not available"))?;
     storage
-        .set_item(OIDC_SCAFFOLD_STORAGE_KEY, &serde_json::to_string(&payload)?)
+        .set_item(OIDC_SCAFFOLD_STORAGE_KEY, &serde_json::to_string(payload)?)
         .map_err(|error| anyhow::anyhow!("failed to persist OIDC scaffold: {error:?}"))?;
     Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn persist_oidc_scaffold(
-    _bundle: &OidcScaffoldBundle,
-    _auth_server_url: &str,
-    _principal_server_url: &str,
-    _principal_actor_id: &str,
-    _device_id: &str,
-) -> anyhow::Result<()> {
+pub fn persist_oidc_scaffold(_payload: &PersistedOidcScaffold) -> anyhow::Result<()> {
     Ok(())
 }
 
@@ -1608,179 +1474,6 @@ pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Diagnostic preview of the OIDC authorize URL using **stable
-/// non-secret placeholders** for state / nonce / code_challenge so the
-/// preview output is reproducible and obvious in the UI. The real
-/// authorize strand runs through [`build_authorize_url_with_session`]
-/// (~line 825) which generates the three values via
-/// `random_url_safe_token` + `pkce_code_challenge_s256` against fresh
-/// per-attempt randomness.
-fn build_authorize_url_preview(
-    topology: &CoauthTopologySnapshot,
-    actor_id: &str,
-    device_id: &str,
-    principal_audience: &str,
-) -> anyhow::Result<String> {
-    let redirect_uri = current_oidc_redirect_uri();
-    let client_id = resolve_oidc_client_id(topology, redirect_uri.as_str())?;
-    build_authorize_url(
-        topology,
-        client_id.as_str(),
-        redirect_uri.as_str(),
-        actor_id,
-        device_id,
-        principal_audience,
-        OIDC_STATE_PREVIEW,
-        OIDC_NONCE_PREVIEW,
-        OIDC_CODE_CHALLENGE_PREVIEW,
-    )
-}
-
-fn build_authorize_url(
-    topology: &CoauthTopologySnapshot,
-    client_id: &str,
-    redirect_uri: &str,
-    actor_id: &str,
-    device_id: &str,
-    principal_audience: &str,
-    state: &str,
-    nonce: &str,
-    code_challenge: &str,
-) -> anyhow::Result<String> {
-    let mut url = Url::parse(&topology.authorization_endpoint)?;
-    if !topology
-        .scopes_supported
-        .iter()
-        .any(|scope| scope == PRINCIPAL_SESSION_BIND_SCOPE)
-    {
-        anyhow::bail!(
-            "coauth discovery did not advertise required principal session scope {PRINCIPAL_SESSION_BIND_SCOPE}"
-        );
-    }
-    let mut scope_tokens: Vec<String> =
-        vec!["openid".to_owned(), PRINCIPAL_SESSION_BIND_SCOPE.to_owned()];
-    if topology
-        .scopes_supported
-        .iter()
-        .any(|scope| scope == "offline_access")
-    {
-        scope_tokens.push("offline_access".to_owned());
-    }
-    // Bind this OAuth session to our stable device id. The device scope is a
-    // parameterized `urn:cokret:client:*` capability that coauth accepts and
-    // stores verbatim on the session; it is NOT gated by `scopes_supported`
-    // discovery (which only advertises fixed scopes), so we always request it
-    // when we have a device id rather than probing the discovery list.
-    let device_id = device_id.trim();
-    if !device_id.is_empty() {
-        scope_tokens.push(format!("{COKRET_DEVICE_SCOPE_PREFIX}{device_id}"));
-    }
-    let scope = scope_tokens.join(" ");
-    let pkce_method = preferred_pkce_method(&topology.code_challenge_methods_supported);
-
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("response_type", "code");
-        query.append_pair("client_id", client_id);
-        query.append_pair("redirect_uri", redirect_uri);
-        query.append_pair("scope", &scope);
-        query.append_pair("state", state);
-        query.append_pair("nonce", nonce);
-        if !actor_id.trim().is_empty() {
-            query.append_pair("login_hint", actor_id);
-        }
-        query.append_pair("resource", principal_audience);
-        // OIDC Core §3.1.2.1: `prompt=login` forces the IdP to re-prompt
-        // the user for credentials even when an SSO session cookie is
-        // present. Without this, an explicit Logout in our app does not
-        // kill the IdP cookie, so clicking Continue on the login screen
-        // would silently re-authenticate the same user without a
-        // password.
-        query.append_pair("prompt", "login");
-        query.append_pair("max_age", "0");
-        if let Some(pkce_method) = pkce_method {
-            query.append_pair("code_challenge_method", pkce_method);
-            query.append_pair("code_challenge", code_challenge);
-        }
-    }
-
-    Ok(url.to_string())
-}
-
-fn resolve_oidc_client_id(
-    topology: &CoauthTopologySnapshot,
-    redirect_uri: &str,
-) -> anyhow::Result<String> {
-    let candidates: Vec<&CoauthOidcClientHint> = topology
-        .oidc_clients
-        .iter()
-        .filter(|client| {
-            client
-                .grant_types
-                .iter()
-                .any(|grant_type| grant_type == "authorization_code")
-        })
-        .filter(|client| {
-            client
-                .token_endpoint_auth_method
-                .as_deref()
-                .map(|method| method == "none")
-                .unwrap_or(true)
-        })
-        .collect();
-
-    if let Some(client) = candidates.iter().find(|client| {
-        client.redirect_uris.iter().any(|candidate_redirect_uri| {
-            redirect_uri_matches_client(candidate_redirect_uri, redirect_uri)
-        })
-    }) {
-        return Ok(client.client_id.clone());
-    }
-
-    let available = candidates
-        .iter()
-        .map(|client| {
-            format!(
-                "{}({}):[{}]",
-                client.client_id,
-                client
-                    .token_endpoint_auth_method
-                    .as_deref()
-                    .unwrap_or("none"),
-                client.redirect_uris.join(",")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" | ");
-
-    anyhow::bail!(
-        "coauth topology did not expose a usable public authorization_code client whose registered redirect_uris contain redirect_uri={redirect_uri}; available={available}"
-    )
-}
-
-fn redirect_uri_matches_client(registered_redirect_uri: &str, actual_redirect_uri: &str) -> bool {
-    if registered_redirect_uri == actual_redirect_uri {
-        return true;
-    }
-
-    let Ok(registered) = Url::parse(registered_redirect_uri) else {
-        return false;
-    };
-    let Ok(actual) = Url::parse(actual_redirect_uri) else {
-        return false;
-    };
-    let actual_host = actual.host_str().unwrap_or_default();
-    if !matches!(actual_host, "localhost" | "127.0.0.1" | "::1") {
-        return false;
-    }
-    registered.scheme() == actual.scheme()
-        && registered.host_str() == actual.host_str()
-        && registered.path() == actual.path()
-        && registered.query() == actual.query()
-        && registered.fragment() == actual.fragment()
-        && registered.port().is_none()
-}
-
 pub(crate) fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {
     Ok(validate_server_url(principal_server_url)?
         .join("api")?
@@ -1810,13 +1503,6 @@ fn preferred_pkce_method(methods: &[String]) -> Option<&'static str> {
     } else {
         None
     }
-}
-
-fn value_string(value: &Value, field: &str) -> Option<String> {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
 }
 
 /// Random byte length for OIDC `state` and `nonce` parameters. 16 bytes →
@@ -2164,101 +1850,116 @@ mod tests {
         );
     }
 
-    /// State and nonce tokens for the same input MUST diverge. The previous
-    /// scaffold derived both from `(actor_id, device_id, label)` so they
-    /// were predictable; this regression test pins the new behaviour.
-    #[test]
-    fn state_and_nonce_diverge_for_same_caller() {
-        let topology = test_topology();
-        let bundle_a = build_oidc_scaffold_bundle(
-            &topology,
-            "https://principal.example",
-            "did:web:alice.example",
-            "device-aaaa-1111",
-        )
-        .unwrap();
-        let bundle_b = build_oidc_scaffold_bundle(
-            &topology,
-            "https://principal.example",
-            "did:web:alice.example",
-            "device-aaaa-1111",
-        )
-        .unwrap();
-        assert_ne!(
-            bundle_a.state, bundle_b.state,
-            "same caller MUST get different state across calls"
-        );
-        assert_ne!(
-            bundle_a.nonce, bundle_b.nonce,
-            "same caller MUST get different nonce across calls"
-        );
-        assert_ne!(
-            bundle_a.code_verifier, bundle_b.code_verifier,
-            "same caller MUST get different verifier across calls"
-        );
-        assert_ne!(
-            bundle_a.state, bundle_a.nonce,
-            "state and nonce MUST be independent draws"
-        );
+    fn test_discovery() -> OidcDiscoveryDocument {
+        OidcDiscoveryDocument {
+            issuer: "https://issuer.example".to_owned(),
+            authorization_endpoint: "https://issuer.example/auth".to_owned(),
+            token_endpoint: Some("https://issuer.example/token".to_owned()),
+            userinfo_endpoint: Some("https://issuer.example/userinfo".to_owned()),
+            code_challenge_methods_supported: vec!["S256".to_owned()],
+            scopes_supported: vec!["openid".to_owned(), "offline_access".to_owned()],
+        }
     }
 
-    /// The bundle's `code_challenge` MUST be S256(code_verifier) when the
-    /// topology supports S256 — anything else means the authorize URL we
-    /// hand to the browser cannot complete the PKCE check.
+    fn test_oidc_method() -> cokret_sdk::AuthMethod {
+        cokret_sdk::AuthMethod {
+            method: cokret_sdk::AuthMethodKind::Oidc,
+            issuer: Some("https://issuer.example".to_owned()),
+            provider: None,
+            openid_configuration: Some(
+                "https://issuer.example/.well-known/openid-configuration".to_owned(),
+            ),
+            client_id: Some("yougen-test".to_owned()),
+            scopes: vec!["openid".to_owned(), "profile".to_owned()],
+            grant_exchange: cokret_sdk::AuthGrantExchange {
+                proof_kind: cokret_sdk::SessionGrantProofKind::OidcCodeExchange,
+            },
+        }
+    }
+
+    /// State and nonce tokens MUST diverge across calls (RFC 6749 §10.12 /
+    /// RFC 7636 unguessability).
+    #[test]
+    fn state_and_nonce_diverge_for_same_caller() {
+        let discovery = test_discovery();
+        let method = test_oidc_method();
+        let bundle_a = build_oidc_authorize_scaffold(
+            &discovery,
+            &method,
+            "https://app.example/auth/callback",
+            "",
+            "device-aaaa-1111",
+            "https://principal.example/api",
+        )
+        .unwrap();
+        let bundle_b = build_oidc_authorize_scaffold(
+            &discovery,
+            &method,
+            "https://app.example/auth/callback",
+            "",
+            "device-aaaa-1111",
+            "https://principal.example/api",
+        )
+        .unwrap();
+        assert_ne!(bundle_a.state, bundle_b.state);
+        assert_ne!(bundle_a.nonce, bundle_b.nonce);
+        assert_ne!(bundle_a.code_verifier, bundle_b.code_verifier);
+        assert_ne!(bundle_a.state, bundle_a.nonce);
+    }
+
+    /// `code_challenge` MUST be S256(code_verifier) when discovery supports S256.
     #[test]
     fn bundle_challenge_is_s256_of_verifier_when_supported() {
-        let topology = test_topology();
-        let bundle = build_oidc_scaffold_bundle(
-            &topology,
-            "https://principal.example",
-            "did:web:alice.example",
+        let bundle = build_oidc_authorize_scaffold(
+            &test_discovery(),
+            &test_oidc_method(),
+            "https://app.example/auth/callback",
+            "",
             "device-bbbb-2222",
+            "https://principal.example/api",
         )
         .unwrap();
         assert_eq!(
             bundle.code_challenge,
             pkce_code_challenge_s256(&bundle.code_verifier),
-            "S256 topology must produce S256(verifier) challenge"
+            "S256 discovery must produce S256(verifier) challenge"
         );
     }
 
+    /// The authorize URL forces re-authentication (prompt=login, max_age=0).
     #[test]
     fn authorize_url_forces_reauthentication() {
-        let topology = test_topology();
-        let bundle = build_oidc_scaffold_bundle(
-            &topology,
-            "https://principal.example",
-            "did:web:alice.example",
+        let bundle = build_oidc_authorize_scaffold(
+            &test_discovery(),
+            &test_oidc_method(),
+            "https://app.example/auth/callback",
+            "",
             "device-cccc-3333",
+            "https://principal.example/api",
         )
         .unwrap();
         let parsed = Url::parse(&bundle.authorize_url).unwrap();
         assert_eq!(
-            parsed
-                .query_pairs()
-                .find(|(key, _)| key == "prompt")
-                .unwrap()
-                .1,
+            parsed.query_pairs().find(|(key, _)| key == "prompt").unwrap().1,
             "login"
         );
         assert_eq!(
-            parsed
-                .query_pairs()
-                .find(|(key, _)| key == "max_age")
-                .unwrap()
-                .1,
+            parsed.query_pairs().find(|(key, _)| key == "max_age").unwrap().1,
             "0"
         );
     }
 
+    /// The authorize URL MUST request `openid`, the method scopes, and the
+    /// stable device-binding scope (prevents cursor_integrity_invalid drift).
     #[test]
-    fn authorize_url_requests_principal_session_scope() {
-        let topology = test_topology();
-        let bundle = build_oidc_scaffold_bundle(
-            &topology,
-            "https://principal.example",
-            "did:web:alice.example",
+    fn authorize_url_requests_standard_and_device_scope() {
+        let bundle = build_oidc_authorize_scaffold(
+            &test_discovery(),
+            &test_oidc_method(),
+            "https://app.example/auth/callback",
+            "",
             "device-dddd-4444",
+            "https://principal.example/api",
         )
         .unwrap();
         let parsed = Url::parse(&bundle.authorize_url).unwrap();
@@ -2268,91 +1969,77 @@ mod tests {
             .unwrap()
             .1
             .into_owned();
+        let scopes: Vec<&str> = requested_scope.split_ascii_whitespace().collect();
+        assert!(scopes.contains(&"openid"));
+        assert!(scopes.contains(&"profile"));
         assert!(
-            requested_scope
-                .split_ascii_whitespace()
-                .any(|scope| scope == PRINCIPAL_SESSION_BIND_SCOPE),
-            "authorize URL must request the principal session-bind scope"
-        );
-        // Regression guard: the authorize request MUST bind the OAuth session to
-        // our stable device id via `urn:cokret:client:device:{id}`. Without it
-        // coauth introspection returns no `org.cokret.device_id`, soland derives
-        // a per-session device id that drifts on every re-auth, and the shared
-        // sync cursor fails with `cursor_integrity_invalid`.
-        assert!(
-            requested_scope
-                .split_ascii_whitespace()
-                .any(|scope| scope == format!("{COKRET_DEVICE_SCOPE_PREFIX}device-dddd-4444")),
+            scopes.contains(&format!("{COKRET_DEVICE_SCOPE_PREFIX}device-dddd-4444").as_str()),
             "authorize URL must request the device-binding scope, got: {requested_scope}"
         );
     }
 
+    /// `client_id` falls back to the native yougen id when the method omits it.
     #[test]
-    fn bridge_authorize_url_gets_reauthentication_params() {
-        let updated = authorize_url_with_forced_reauthentication(
-            "https://issuer.example/auth?client_id=c&prompt=consent&max_age=3600",
+    fn authorize_url_falls_back_to_native_client_id() {
+        let mut method = test_oidc_method();
+        method.client_id = None;
+        let bundle = build_oidc_authorize_scaffold(
+            &test_discovery(),
+            &method,
+            "https://app.example/auth/callback",
+            "",
+            "device-eeee-5555",
+            "https://principal.example/api",
         )
         .unwrap();
-        let parsed = Url::parse(&updated).unwrap();
-        let prompt = parsed
-            .query_pairs()
-            .find(|(key, _)| key == "prompt")
-            .unwrap()
-            .1
-            .into_owned();
-        assert!(
-            prompt
-                .split_ascii_whitespace()
-                .any(|part| part == "consent")
-        );
-        assert!(prompt.split_ascii_whitespace().any(|part| part == "login"));
+        assert_eq!(bundle.client_id, YOUGEN_OIDC_CLIENT_ID);
+        let parsed = Url::parse(&bundle.authorize_url).unwrap();
         assert_eq!(
-            parsed
-                .query_pairs()
-                .find(|(key, _)| key == "max_age")
-                .unwrap()
-                .1,
-            "0"
+            parsed.query_pairs().find(|(key, _)| key == "client_id").unwrap().1,
+            YOUGEN_OIDC_CLIENT_ID
         );
     }
 
-    fn test_topology() -> CoauthTopologySnapshot {
-        CoauthTopologySnapshot {
-            service_did: None,
-            service_type: None,
-            protocol_version: None,
-            identity_service_did: None,
-            issuer: "https://issuer.example".to_owned(),
-            authorization_endpoint: "https://issuer.example/auth".to_owned(),
-            token_endpoint: Some("https://issuer.example/token".to_owned()),
-            userinfo_endpoint: Some("https://issuer.example/userinfo".to_owned()),
-            code_challenge_methods_supported: vec!["S256".to_owned()],
-            scopes_supported: vec!["openid".to_owned(), PRINCIPAL_SESSION_BIND_SCOPE.to_owned()],
-            oidc_clients: vec![CoauthOidcClientHint {
-                id: "test-client".to_owned(),
-                client_id: "yougen-test".to_owned(),
-                client_name: None,
-                redirect_uris: vec![current_oidc_redirect_uri()],
-                grant_types: vec!["authorization_code".to_owned()],
-                token_endpoint_auth_method: Some("none".to_owned()),
-            }],
-            oidc_browser_bridge_session_path: String::new(),
-            oidc_exchange_describe_path: String::new(),
-            oidc_exchange_path: String::new(),
-            auth_bridge_contract: "auth-bridge".to_owned(),
-            auth_bridge_todos: Vec::new(),
-            integration_manifest: CoauthIntegrationManifest {
-                contract: "integration".to_owned(),
-                version: "1".to_owned(),
-                service: "coauth".to_owned(),
-                service_kind: "auth".to_owned(),
-                api_base_path: "/_cokret".to_owned(),
-                describe_path: "describe".to_owned(),
-                dependencies: Vec::new(),
-                surfaces: Vec::new(),
-                examples: Value::Null,
-                todos: Vec::new(),
-            },
-        }
+    /// The legacy alias fallback synthesises an oidc method from
+    /// `auth_server_url` / `oauth_issuer` when `methods[]` is empty.
+    #[test]
+    fn synthesizes_oidc_method_from_legacy_aliases() {
+        let mut metadata = cokret_sdk::AuthMetadata::minimal("production");
+        metadata.auth_server_url = Some("https://auth.example".to_owned());
+        let method = synthesize_oidc_method_from_aliases(&metadata).expect("synthesized method");
+        assert_eq!(method.method, cokret_sdk::AuthMethodKind::Oidc);
+        assert_eq!(method.issuer.as_deref(), Some("https://auth.example"));
+        assert_eq!(
+            method.openid_configuration.as_deref(),
+            Some("https://auth.example/.well-known/openid-configuration")
+        );
+    }
+
+    /// `gate_account_base` derivation: prefer the strong account_authority,
+    /// then the legacy auth_server_url alias, else the principal origin.
+    #[test]
+    fn resolve_gate_account_base_prefers_account_authority() {
+        let mut metadata = cokret_sdk::AuthMetadata::minimal("production");
+        metadata.account_authority = Some(cokret_sdk::AccountAuthority {
+            origin: "https://aa.example".to_owned(),
+            gate_account_base: "https://aa.example/_cokret/gate/account".to_owned(),
+        });
+        let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
+        assert_eq!(base, "https://aa.example/_cokret/gate/account");
+    }
+
+    #[test]
+    fn resolve_gate_account_base_falls_back_to_auth_server_url() {
+        let mut metadata = cokret_sdk::AuthMetadata::minimal("production");
+        metadata.auth_server_url = Some("https://auth.example".to_owned());
+        let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
+        assert_eq!(base, "https://auth.example/_cokret/gate/account");
+    }
+
+    #[test]
+    fn resolve_gate_account_base_falls_back_to_principal_origin() {
+        let metadata = cokret_sdk::AuthMetadata::minimal("production");
+        let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
+        assert_eq!(base, "https://principal.example/_cokret/gate/account");
     }
 }
