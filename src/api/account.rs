@@ -62,51 +62,12 @@ impl CokretApi {
         )
     }
 
-    pub async fn exchange_session_grant_at(
-        &self,
-        path: &str,
-        grant_jwt: &str,
-        principal_id: &str,
-        device_id: &str,
-    ) -> anyhow::Result<SessionLoginOutcome> {
-        self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_id, device_id, None)
-            .await
-    }
-
-    pub async fn exchange_session_grant_at_with_proof(
-        &self,
-        path: &str,
-        grant_jwt: &str,
-        principal_id: &str,
-        device_id: &str,
-        introspection_proof: Option<&SessionGrantIntrospectionProof>,
-    ) -> anyhow::Result<SessionLoginOutcome> {
-        let body = cokret_sdk::SessionGrantExchangeRequestBody {
-            grant_jwt: grant_jwt.to_owned(),
-            principal_id: did_for_request_field("principal_id", principal_id)?,
-            device_id: device_id_for_request_field("device_id", device_id)?,
-            device_public_key: crate::event_signer::active_signer()
-                .and_then(|signer| signer.public_key_multibase()),
-            display_name: Some(crate::device_name::default_device_display_name()),
-            introspection_proof: introspection_proof.cloned(),
-        };
-        self.post_json(path, &body).await
-    }
-
-    pub async fn exchange_session_grant(
-        &self,
-        grant_jwt: &str,
-        principal_id: &str,
-        device_id: &str,
-    ) -> anyhow::Result<SessionLoginOutcome> {
-        self.exchange_session_grant_at(
-            "_cokret/gate/account/session-grants",
-            grant_jwt,
-            principal_id,
-            device_id,
-        )
-        .await
-    }
+    // ②(A+②): removed `exchange_session_grant*`. The Principal Server no longer
+    // mints a local bearer and there is no grant→principal-bearer exchange
+    // endpoint (api-conventions.md §3.3). The held credential is the
+    // `ck.session.grant` itself, presented per-request as
+    // `Authorization: Bearer <grant>` + a `DPoP` proof (see
+    // `CokretApi::with_bearer` / `with_dpop_device`).
 
     pub async fn register_account(
         &self,

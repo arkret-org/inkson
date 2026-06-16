@@ -29,7 +29,7 @@
 
 use cokret_sdk::RealmId;
 use cokret_sdk::models::{
-    AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentParticipation,
+    AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentKeyScope, AgentParticipation,
     AgentParticipationEntry, AgentParticipationScope, AgentParticipationSetRequestBody,
     AgentPauseRequestBody, AgentProvisionRequestBody, AgentResumeRequestBody,
     AgentRotateKeyRequestBody, AgentSidecarThreadEnsureRequestBody, AgentView,
@@ -85,6 +85,213 @@ pub fn actor_kind_badge_class(actor_kind: Option<&str>) -> &'static str {
 /// Whether the local UI should expose the agent endpoint / handoff panel.
 pub fn agents_enabled() -> bool {
     cfg!(feature = "experimental-agents")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CKP-0008 §4.7 — permission presets. The five presets are UI/SDK
+// affordances only; the canonical wire is `requested_scope`
+// (`AgentKeyScope`) for the provision call plus a fully expanded
+// `ck.capability.grant` object for each preset (actions + resource
+// selector + registered constraints + TTL). The preset names never
+// enter the canonical wire — `expand_preset_grant` materializes the
+// concrete capability grant per §4.9.
+// ─────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentPermissionPreset {
+    /// `read_only` — agent subscribes/reads selected objects.
+    ReadOnly,
+    /// `draft_only` — agent proposes controller-private drafts.
+    DraftOnly,
+    /// `reply_as_agent` — agent posts as itself.
+    ReplyAsAgent,
+    /// `act_on_behalf` — controller is actor_id, agent is executed_by.
+    /// High risk: the expanded grant carries a controller-approval
+    /// constraint per §4.10.
+    ActOnBehalf,
+    /// `organizer` — agent creates/updates Strands and relations.
+    Organizer,
+}
+
+impl AgentPermissionPreset {
+    pub const ALL: [AgentPermissionPreset; 5] = [
+        Self::ReadOnly,
+        Self::DraftOnly,
+        Self::ReplyAsAgent,
+        Self::ActOnBehalf,
+        Self::Organizer,
+    ];
+
+    /// The §4.7 preset name. Used only for UI labels and as a
+    /// `data-preset` attribute; never written to the canonical wire.
+    pub fn preset_name(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::DraftOnly => "draft_only",
+            Self::ReplyAsAgent => "reply_as_agent",
+            Self::ActOnBehalf => "act_on_behalf",
+            Self::Organizer => "organizer",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "Read only",
+            Self::DraftOnly => "Draft only",
+            Self::ReplyAsAgent => "Reply as agent",
+            Self::ActOnBehalf => "Act on my behalf",
+            Self::Organizer => "Organizer",
+        }
+    }
+
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "Subscribe and read selected objects. No writes.",
+            Self::DraftOnly => "Propose controller-private drafts for your approval before anything is published.",
+            Self::ReplyAsAgent => "Post and react as the agent itself, accountable to you.",
+            Self::ActOnBehalf => "Post as you (you stay the actor, the agent is recorded as executor). High risk; each action needs your approval.",
+            Self::Organizer => "Create and update Strands and relations, plus limited posting.",
+        }
+    }
+
+    /// The coarse agent-key scope this preset implies for the provision
+    /// call. Read/draft presets are `Limited`; write-capable presets run
+    /// at `Realm` scope.
+    pub fn key_scope(self) -> AgentKeyScope {
+        match self {
+            Self::ReadOnly | Self::DraftOnly => AgentKeyScope::Limited,
+            Self::ReplyAsAgent | Self::ActOnBehalf | Self::Organizer => AgentKeyScope::Realm,
+        }
+    }
+
+    /// Registered capability actions for this preset (CKP-0008 §4.7 /
+    /// §4.9). Only actions present in `capability-action-registry.json`
+    /// are emitted so soland never fail-closes on an unknown action.
+    pub fn actions(self) -> &'static [&'static str] {
+        match self {
+            Self::ReadOnly => &["ck.event.read"],
+            Self::DraftOnly => &["ck.agent.draft.propose", "ck.agent.action_request"],
+            Self::ReplyAsAgent => &["ck.message.create", "ck.reaction.add"],
+            Self::ActOnBehalf => &["ck.message.create"],
+            Self::Organizer => &[
+                "ck.strand.create",
+                "ck.strand.update",
+                "ck.relation.create",
+                "ck.message.create",
+            ],
+        }
+    }
+}
+
+/// Build the pairing deep-link the controller hands to the runtime.
+/// CKP-0008 §4.3 mandates a plain HTTPS URL assembled from the
+/// deployment-known `cokret_base_url`; no custom URI scheme. Mobile OSes
+/// route this via Universal Links / App Links.
+pub fn agent_pair_url(base_url: &str, pairing_request_id: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    format!("{base}/auth/account/agent-pair?request={pairing_request_id}")
+}
+
+/// Copy text to the clipboard using the browser clipboard API with a
+/// `document.execCommand` fallback for non-secure contexts.
+fn copy_text_to_clipboard(text: &str) {
+    let Ok(encoded) = serde_json::to_string(text) else {
+        return;
+    };
+    let script = format!(
+        r#"(async () => {{
+    const text = {encoded};
+    if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(text);
+        return true;
+    }}
+    const node = document.createElement("textarea");
+    node.value = text;
+    node.setAttribute("readonly", "");
+    node.style.position = "fixed";
+    node.style.left = "-9999px";
+    document.body.appendChild(node);
+    node.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(node);
+    return copied;
+}})()"#
+    );
+    let _ = document::eval(&script);
+}
+
+/// Open a URL in a new tab. Used for the pairing deep-link so the
+/// controller lands on the deployment's agent-pair page.
+fn open_url_in_new_tab(url: &str) {
+    let Ok(encoded) = serde_json::to_string(url) else {
+        return;
+    };
+    let script = format!("window.open({encoded}, \"_blank\", \"noopener,noreferrer\");");
+    let _ = document::eval(&script);
+}
+
+/// Combine the `requested_scope` (`AgentKeyScope`) for the provision
+/// call from the selected presets. The widest implied key scope wins:
+/// `Realm` ⊃ `Limited`. Returns `None` when no preset is selected so the
+/// provision body omits `requested_scope` and soland picks its default.
+pub fn requested_scope_for_presets(presets: &[AgentPermissionPreset]) -> Option<AgentKeyScope> {
+    let mut widest: Option<AgentKeyScope> = None;
+    for preset in presets {
+        let scope = preset.key_scope();
+        widest = Some(match (widest, scope) {
+            (Some(AgentKeyScope::Realm), _) | (_, AgentKeyScope::Realm) => AgentKeyScope::Realm,
+            _ => AgentKeyScope::Limited,
+        });
+    }
+    widest
+}
+
+/// Expand one preset into a canonical `ck.capability.grant` object for
+/// `ck.self.agent.grant.command.attach`. The agent principal id is the
+/// grant `subject`; `realm_id` scopes it; `expires_at` (RFC3339 Z)
+/// bounds the TTL. The grant carries
+/// `effective_after_first_authorized_key=true` (§4.3.2) so it is durable
+/// but inactive until pairing completes.
+///
+/// `act_on_behalf` additionally attaches a `claim_based` /
+/// `accountability` constraint (`controller_approval_required=true`) per
+/// §4.10 so the high-risk executor path cannot run without controller
+/// approval.
+pub fn expand_preset_grant(
+    preset: AgentPermissionPreset,
+    agent_principal_id: &str,
+    realm_id: Option<&str>,
+    expires_at: &str,
+) -> Value {
+    let actions: Vec<&str> = preset.actions().to_vec();
+    // Resource selector: scope every preset grant to the Realm when one
+    // is supplied; otherwise leave `resources` empty so the controller
+    // narrows it after provisioning (soland fail-closes an empty
+    // selector for write actions).
+    let resources: Vec<Value> = match realm_id {
+        Some(realm) if !realm.trim().is_empty() => vec![json!({
+            "kind": "realm",
+            "realm_id": realm.trim(),
+        })],
+        _ => Vec::new(),
+    };
+    let mut grant = json!({
+        "actions": actions,
+        "resources": resources,
+        "subject": agent_principal_id,
+        "expires_at": expires_at,
+        "effective_after_first_authorized_key": true,
+    });
+    if preset == AgentPermissionPreset::ActOnBehalf {
+        grant["constraints"] = json!([
+            {
+                "constraint_type": "claim_based",
+                "subtype": "accountability",
+                "controller_approval_required": true,
+            }
+        ]);
+    }
+    grant
 }
 
 /// R3 spec sync (b47ff6ec) — UI label for an agent FSM state.
@@ -1157,11 +1364,13 @@ fn agent_view_from_directory_row(row: Value) -> Option<AgentView> {
     })
 }
 
-/// Personal Agent admin panel. Renders the 11 soland HTTP operations
-/// as buttons; deeper form layouts are stubbed as TODO(P3-impl). The
-/// critical contract is that each soland endpoint has a matching
-/// client-side reqwest call so the cross-project wire shape is
-/// verified end to end.
+/// Personal Agent admin panel. Surfaces the soland personal-agent HTTP
+/// operations: provision (with §4.7 permission presets + pairing guide),
+/// list / get, lifecycle (pause / resume with sidecar exposure ack /
+/// deactivate), rotate-key, grant attach + per-row detach, participation,
+/// sidecar ensure, and the draft-approval surface. Each endpoint has a
+/// matching client-side call so the cross-project wire shape is verified
+/// end to end.
 #[component]
 pub fn PersonalAgentAdminPanel(
     base_url: String,
@@ -1173,6 +1382,24 @@ pub fn PersonalAgentAdminPanel(
     let mut selected_agent_id = use_signal(String::new);
     let mut new_display_name = use_signal(|| "my-personal-agent".to_owned());
     let mut new_agent_slug = use_signal(|| "summary".to_owned());
+    // CKP-0008 §4.7 — selected permission presets for the provision form
+    // and the Realm the preset grants are scoped to.
+    let mut provision_presets = use_signal(Vec::<AgentPermissionPreset>::new);
+    let mut provision_realm = use_signal(String::new);
+    // CKP-0008 §4.3 — pairing handle returned by the provision call.
+    // When `Some`, the pairing guide card renders the code / request id /
+    // expiry plus the HTTPS deep-link the controller hands to the runtime.
+    let mut pairing_outcome = use_signal(|| Option::<cokret_sdk::AgentProvisionOutcome>::None);
+    // Grant snapshots for the currently-selected agent, fetched via
+    // `ck.self.agent.resource.get`; drives the per-row detach list.
+    let mut selected_grants = use_signal(Vec::<Value>::new);
+    // CKP-0008 §4.5 / §4.11 — sidecar object_refs that became newly
+    // visible while the agent was paused. The controller MUST
+    // re-acknowledge them before resume. Populated from the agent view's
+    // sidecar exposure projection (soland projection pending; see the
+    // re-disclosure card below). When non-empty, resume sends a real
+    // `agent_sidecar_exposure_ack`.
+    let mut resume_sidecar_refs = use_signal(Vec::<String>::new);
     // Spec `agent_rotate_key_request_body` = `{replacement_key,
     // proof_of_possession}` (full JSON); the scaffold takes the raw body.
     let mut rotate_body_json = use_signal(String::new);
@@ -1316,7 +1543,10 @@ pub fn PersonalAgentAdminPanel(
                                         },
                                         "Select"
                                     }
-                                    // ck.self.agent.resource.get
+                                    // ck.self.agent.resource.get — also
+                                    // selects the agent and loads its grant
+                                    // snapshots so the detach list below
+                                    // renders real grant_ids.
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "agent-admin-get-button",
@@ -1327,6 +1557,7 @@ pub fn PersonalAgentAdminPanel(
                                                 let base = base.clone();
                                                 let id = id.clone();
                                                 let api_token = token();
+                                                selected_agent_id.set(id.clone());
                                                 spawn(async move {
                                                     match with_authed_api(&base, api_token, move |api| {
                                                         let id = id.clone();
@@ -1336,14 +1567,18 @@ pub fn PersonalAgentAdminPanel(
                                                     })
                                                     .await
                                                     {
-                                                        Ok(view) => last_op_status.set(format!(
-                                                            "get {} status={}",
-                                                            view.agent
-                                                                .get("agent_principal_id")
-                                                                .and_then(Value::as_str)
-                                                                .unwrap_or("(unknown)"),
-                                                            view.status
-                                                        )),
+                                                        Ok(view) => {
+                                                            selected_grants.set(view.grants.clone());
+                                                            last_op_status.set(format!(
+                                                                "get {} status={} ({} grant(s))",
+                                                                view.agent
+                                                                    .get("agent_principal_id")
+                                                                    .and_then(Value::as_str)
+                                                                    .unwrap_or("(unknown)"),
+                                                                view.status,
+                                                                view.grants.len()
+                                                            ));
+                                                        }
                                                         Err(err) => last_op_status.set(format!(
                                                             "get failed: {}",
                                                             err.display()
@@ -1363,8 +1598,11 @@ pub fn PersonalAgentAdminPanel(
 
             // ───────────────────────────────────────────────────────
             // Provision (ck.self.agent.command.provision)
-            // TODO(P3-impl): expand to a full form with initial_grants
-            // picker driven by the 14-capability-action registry.
+            // CKP-0008 §4.7 — permission-preset selector. The chosen
+            // presets drive `requested_scope` (coarse AgentKeyScope) on
+            // the provision body, and each preset is expanded into a
+            // canonical ck.capability.grant attached right after
+            // provisioning (effective_after_first_authorized_key=true).
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-provision",
                 div { class: "event-head",
@@ -1387,6 +1625,43 @@ pub fn PersonalAgentAdminPanel(
                         value: "{new_agent_slug}",
                         oninput: move |event: FormEvent| new_agent_slug.set(event.value()),
                     }
+                    Input {
+                        "data-testid": "agent-admin-provision-realm-input",
+                        placeholder: "realm_id to scope preset grants (ck:realm:...)",
+                        value: "{provision_realm}",
+                        oninput: move |event: FormEvent| provision_realm.set(event.value()),
+                    }
+                    div { class: "muted", "Permission presets (CKP-0008 §4.7) — select one or more:" }
+                    for preset in AgentPermissionPreset::ALL {
+                        {
+                            let is_on = provision_presets.read().contains(&preset);
+                            rsx! {
+                                label {
+                                    class: "metric",
+                                    "data-testid": "agent-admin-preset-row",
+                                    "data-preset": preset.preset_name(),
+                                    Checkbox {
+                                        "data-testid": "agent-admin-preset-checkbox",
+                                        checked: if is_on { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                        on_checked_change: move |s: CheckboxState| {
+                                            let mut current = provision_presets.write();
+                                            if bool::from(s) {
+                                                if !current.contains(&preset) {
+                                                    current.push(preset);
+                                                }
+                                            } else {
+                                                current.retain(|p| *p != preset);
+                                            }
+                                        },
+                                    }
+                                    span {
+                                        strong { "{preset.label()}" }
+                                        div { class: "muted", "{preset.help()}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 div { class: "actions",
                     Button {
@@ -1404,42 +1679,181 @@ pub fn PersonalAgentAdminPanel(
                                 } else {
                                     Some(slug.trim().to_owned())
                                 };
+                                let presets = provision_presets.read().clone();
+                                let realm = provision_realm();
+                                let realm_for_grant = if realm.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(realm.trim().to_owned())
+                                };
                                 // Spec `agent_provision_request_body`:
                                 // {display_name, agent_slug, requested_scope,
                                 // accountability, pairing_ttl_ms} — the
                                 // controller binding comes from the
-                                // authenticated session, not the body.
+                                // authenticated session, not the body. The
+                                // selected presets fold into requested_scope
+                                // (coarse AgentKeyScope); their canonical
+                                // capability grants attach after provision.
                                 let body = AgentProvisionRequestBody {
                                     display_name: Some(display),
                                     agent_slug,
-                                    requested_scope: None,
+                                    requested_scope: requested_scope_for_presets(&presets),
                                     accountability: Value::Null,
                                     pairing_ttl_ms: None,
                                 };
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, move |api| {
-                                        let body = body.clone();
-                                        async move {
-                                            api.agent_provision(&body).await
-                                        }
-                                    })
+                                    let outcome = match with_authed_api(
+                                        &base,
+                                        api_token.clone(),
+                                        move |api| {
+                                            let body = body.clone();
+                                            async move { api.agent_provision(&body).await }
+                                        },
+                                    )
                                     .await
                                     {
-                                        Ok(outcome) => last_op_status.set(format!(
-                                            "provisioned {} (pairing_request_id={}, expires_at={})",
-                                            outcome.agent_principal_id,
-                                            outcome.pairing_request_id,
-                                            outcome.expires_at
-                                        )),
-                                        Err(err) => last_op_status.set(format!(
-                                            "provision failed: {}",
-                                            err.display()
-                                        )),
+                                        Ok(outcome) => outcome,
+                                        Err(err) => {
+                                            last_op_status.set(format!(
+                                                "provision failed: {}",
+                                                err.display()
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                    let agent_id = outcome.agent_principal_id.to_string();
+                                    let expires_at = outcome.expires_at.to_rfc3339();
+                                    pairing_outcome.set(Some(outcome));
+                                    // Expand each preset into a canonical
+                                    // capability grant and attach it so the
+                                    // agent has its scoped capabilities the
+                                    // moment pairing completes.
+                                    let mut attached = 0usize;
+                                    let mut grant_errs: Vec<String> = Vec::new();
+                                    for preset in presets.iter() {
+                                        let grant = expand_preset_grant(
+                                            *preset,
+                                            &agent_id,
+                                            realm_for_grant.as_deref(),
+                                            &expires_at,
+                                        );
+                                        let attach_body = AgentGrantAttachRequestBody { grant };
+                                        let agent_id_for_call = agent_id.clone();
+                                        match with_authed_api(
+                                            &base,
+                                            api_token.clone(),
+                                            move |api| {
+                                                let body = attach_body.clone();
+                                                let id = agent_id_for_call.clone();
+                                                async move {
+                                                    api.agent_grant_attach(&id, &body).await
+                                                }
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(_) => attached += 1,
+                                            Err(err) => grant_errs.push(format!(
+                                                "{}: {}",
+                                                preset.preset_name(),
+                                                err.display()
+                                            )),
+                                        }
+                                    }
+                                    if grant_errs.is_empty() {
+                                        last_op_status.set(format!(
+                                            "provisioned {agent_id} ({attached} preset grant(s) attached)"
+                                        ));
+                                    } else {
+                                        last_op_status.set(format!(
+                                            "provisioned {agent_id}; {attached} grant(s) attached, errors: {}",
+                                            grant_errs.join("; ")
+                                        ));
                                     }
                                 });
                             }
                         },
                         "Provision"
+                    }
+                }
+                // CKP-0008 §4.3 — pairing guide card.
+                if let Some(outcome) = pairing_outcome() {
+                    {
+                        let agent_id = outcome.agent_principal_id.to_string();
+                        let request_id = outcome.pairing_request_id.clone();
+                        let pairing_code = outcome.pairing_code.clone();
+                        let expires_at = outcome.expires_at.to_rfc3339();
+                        let pair_url = agent_pair_url(&base_url, &request_id);
+                        rsx! {
+                            div {
+                                class: "event",
+                                "data-testid": "agent-admin-pairing-card",
+                                "data-pairing-request-id": "{request_id}",
+                                div { class: "event-head",
+                                    span { "Pair the runtime" }
+                                    span { class: "badge green", "pending_runtime_key" }
+                                }
+                                div { class: "muted",
+                                    "Hand these one-time, short-lived values to your agent runtime so it can pair its key and come online. They are not a session token and cannot be reused after pairing."
+                                }
+                                div { class: "metric-grid",
+                                    div { class: "metric",
+                                        strong { "Pairing code" }
+                                        if let Some(code) = pairing_code.clone() {
+                                            span { class: "mono", "data-testid": "agent-admin-pairing-code", "{code}" }
+                                        } else {
+                                            span { class: "muted", "data-testid": "agent-admin-pairing-code", "(delivered out of band)" }
+                                        }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Pairing request id" }
+                                        span { class: "mono", "data-testid": "agent-admin-pairing-request-id", "{request_id}" }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Expires at" }
+                                        span { class: "mono", "data-testid": "agent-admin-pairing-expires-at", "{expires_at}" }
+                                    }
+                                }
+                                div { class: "muted", "data-testid": "agent-admin-pairing-url", title: "{pair_url}", "{pair_url}" }
+                                div { class: "actions",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        "data-testid": "agent-admin-pairing-open-button",
+                                        onclick: {
+                                            let pair_url = pair_url.clone();
+                                            move |_| open_url_in_new_tab(&pair_url)
+                                        },
+                                        "Open pairing page"
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "agent-admin-pairing-copy-url-button",
+                                        onclick: {
+                                            let pair_url = pair_url.clone();
+                                            move |_| copy_text_to_clipboard(&pair_url)
+                                        },
+                                        "Copy link"
+                                    }
+                                    if let Some(code) = pairing_code.clone() {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "agent-admin-pairing-copy-code-button",
+                                            onclick: move |_| copy_text_to_clipboard(&code),
+                                            "Copy code"
+                                        }
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "agent-admin-pairing-select-button",
+                                        onclick: {
+                                            let agent_id = agent_id.clone();
+                                            move |_| selected_agent_id.set(agent_id.clone())
+                                        },
+                                        "Select this agent"
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1504,14 +1918,29 @@ pub fn PersonalAgentAdminPanel(
                         disabled: selected_agent_id().is_empty(),
                         onclick: {
                             let base = base_url.clone();
+                            let controller_did = controller_did.clone();
                             move |_| {
                                 let id = selected_agent_id();
                                 if id.is_empty() { return; }
                                 let base = base.clone();
                                 let api_token = token();
-                                // Spec resume body carries only the
-                                // optional sidecar_exposure_ack.
-                                let body = AgentResumeRequestBody { sidecar_exposure_ack: None };
+                                // CKP-0008 §4.5 / §4.11 — when sidecars
+                                // became newly visible while paused, resume
+                                // MUST carry a real agent_sidecar_exposure_ack
+                                // {acknowledged_at, acknowledged_by,
+                                // sidecar_refs[]}. With no new sidecars the
+                                // field stays absent.
+                                let refs = resume_sidecar_refs.read().clone();
+                                let sidecar_exposure_ack = if refs.is_empty() {
+                                    None
+                                } else {
+                                    Some(json!({
+                                        "acknowledged_at": crate::clock::now_rfc3339_secs(),
+                                        "acknowledged_by": controller_did.clone(),
+                                        "sidecar_refs": refs,
+                                    }))
+                                };
+                                let body = AgentResumeRequestBody { sidecar_exposure_ack };
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, move |api| {
                                         let id = id.clone();
@@ -1522,10 +1951,16 @@ pub fn PersonalAgentAdminPanel(
                                     })
                                     .await
                                     {
-                                        Ok(r) => last_op_status.set(format!(
-                                            "resume: status={}",
-                                            r.status.as_wire_str()
-                                        )),
+                                        Ok(r) => {
+                                            // The acknowledgement was consumed;
+                                            // clear the pending refs so the next
+                                            // resume does not re-send a stale ack.
+                                            resume_sidecar_refs.set(Vec::new());
+                                            last_op_status.set(format!(
+                                                "resume: status={}",
+                                                r.status.as_wire_str()
+                                            ));
+                                        }
                                         Err(err) => last_op_status.set(format!(
                                             "resume failed: {}", err.display()
                                         )),
@@ -1659,10 +2094,10 @@ pub fn PersonalAgentAdminPanel(
             // ───────────────────────────────────────────────────────
             // Grant attach / detach
             // (ck.self.agent.grant.command.attach / ck.self.agent.grant.resource.delete)
-            // TODO(P3-impl): wire a 14-capability-action picker
-            // (CAP_ACTION_AGENT_*); for now the grant_kind is a
-            // free-form input so cotest journey vectors can drive the
-            // wire shape.
+            // Attach takes a raw capability-grant object (the provision
+            // preset selector expands presets into the same shape).
+            // Detach is driven by the selected agent's real grant_ids,
+            // loaded via "Get" on an agent row.
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-grants",
                 div { class: "event-head",
@@ -1723,54 +2158,103 @@ pub fn PersonalAgentAdminPanel(
                                     });
                                 }
                             },
-                            "Attach grant"
+            "Attach grant"
                         }
-                        // Detach uses the latest known grant_id; the
-                        // detach surface is currently a stub button
-                        // wired to the most recent grant — TODO(P3-impl)
-                        // surface the grant list + per-row detach.
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "agent-admin-grant-detach-button",
-                            disabled: selected_agent_id().is_empty(),
-                            onclick: {
-                                let base = base_url.clone();
-                                move |_| {
-                                    let id = selected_agent_id();
-                                    if id.is_empty() { return; }
-                                    let base = base.clone();
-                                    let api_token = token();
-                                    // TODO(P3-impl): track the latest
-                                    // grant_id in a Signal once the
-                                    // grant list view ships; passing
-                                    // a placeholder here makes the
-                                    // wire call fail in a useful way.
-                                    let grant_id = format!(
-                                        "ck:grant:{}",
-                                        crate::operation::uuid_v7()
-                                    );
-                                    spawn(async move {
-                                        match with_authed_api(&base, api_token, move |api| {
-                                            let id = id.clone();
-                                            let grant_id = grant_id.clone();
-                                            async move {
-                                                api.agent_grant_detach(&id, &grant_id).await
+                    }
+                    // Detach list: per CKP-0008 §4.11 each grant row
+                    // carries its real grant_id (from the agent view's
+                    // grant_snapshot[]); detaching submits
+                    // ck.self.agent.grant.resource.delete for that id.
+                    // Use "Get" on an agent row to load this list.
+                    if selected_grants.read().is_empty() {
+                        div { class: "muted", "data-testid": "agent-admin-grant-empty",
+                            "No grants loaded. Use \"Get\" on an agent above to load its capability grants."
+                        }
+                    } else {
+                        div { class: "timeline", "data-testid": "agent-admin-grant-list",
+                            for grant in selected_grants.read().iter() {
+                                {
+                                    let grant_id = grant
+                                        .get("grant_id")
+                                        .or_else(|| grant.get("id"))
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned();
+                                    let grant_status = grant
+                                        .get("status")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("active")
+                                        .to_owned();
+                                    let expires_at = grant
+                                        .get("expires_at")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("-")
+                                        .to_owned();
+                                    let grant_id_label = short_protocol_id(&grant_id);
+                                    rsx! {
+                                        div {
+                                            class: "event",
+                                            "data-testid": "agent-admin-grant-row",
+                                            "data-grant-id": "{grant_id}",
+                                            div { class: "event-head",
+                                                span { class: "mono", title: "{grant_id}", "{grant_id_label}" }
+                                                span { class: "badge", "{grant_status}" }
                                             }
-                                        })
-                                        .await
-                                        {
-                                            Ok(r) => last_op_status.set(format!(
-                                                "grant.detach: ok={} revoked_at={}",
-                                                r.ok, r.revoked_at
-                                            )),
-                                            Err(err) => last_op_status.set(format!(
-                                                "grant.detach failed: {}", err.display()
-                                            )),
+                                            div { class: "muted", "expires_at: {expires_at}" }
+                                            div { class: "actions",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    "data-testid": "agent-admin-grant-detach-button",
+                                                    disabled: grant_id.is_empty(),
+                                                    onclick: {
+                                                        let base = base_url.clone();
+                                                        let grant_id = grant_id.clone();
+                                                        move |_| {
+                                                            let id = selected_agent_id();
+                                                            if id.is_empty() || grant_id.is_empty() { return; }
+                                                            let base = base.clone();
+                                                            let api_token = token();
+                                                            let grant_id = grant_id.clone();
+                                                            let grant_id_for_retain = grant_id.clone();
+                                                            spawn(async move {
+                                                                match with_authed_api(&base, api_token, move |api| {
+                                                                    let id = id.clone();
+                                                                    let grant_id = grant_id.clone();
+                                                                    async move {
+                                                                        api.agent_grant_detach(&id, &grant_id).await
+                                                                    }
+                                                                })
+                                                                .await
+                                                                {
+                                                                    Ok(r) => {
+                                                                        // Drop the detached row from the
+                                                                        // local snapshot so the list
+                                                                        // reflects the revoke immediately.
+                                                                        selected_grants.write().retain(|g| {
+                                                                            g.get("grant_id")
+                                                                                .or_else(|| g.get("id"))
+                                                                                .and_then(Value::as_str)
+                                                                                != Some(grant_id_for_retain.as_str())
+                                                                        });
+                                                                        last_op_status.set(format!(
+                                                                            "grant.detach: ok={} revoked_at={}",
+                                                                            r.ok, r.revoked_at
+                                                                        ));
+                                                                    }
+                                                                    Err(err) => last_op_status.set(format!(
+                                                                        "grant.detach failed: {}", err.display()
+                                                                    )),
+                                                                }
+                                                            });
+                                                        }
+                                                    },
+                                                    "Detach"
+                                                }
+                                            }
                                         }
-                                    });
+                                    }
                                 }
-                            },
-                            "Detach grant (latest)"
+                            }
                         }
                     }
                 }
@@ -2044,20 +2528,34 @@ pub fn PersonalAgentAdminPanel(
 
             SidecarExposureDisclosure {
                 controller_did: controller_did.clone(),
+                resume_sidecar_refs,
+            }
+
+            DraftApprovalPanel {
+                base_url: base_url.clone(),
+                token,
+                controller_did: controller_did.clone(),
             }
         }
     }
 }
 
 /// CKP-0009 §3 invariant 10 / CKP-0008 §4.5 — sidecar exposure
-/// disclosure panel. Surfaces the controller's device list, the
-/// currently active agent runtime endpoint, and the most recent
-/// `action_approve` nonce status so the controller can see what their
-/// agent is allowed to act on and from where. Data wiring is
-/// `TODO(P3-impl)` while soland's exposure projection ships; the
-/// component renders a clear placeholder until then.
+/// disclosure panel. Before resume, the controller MUST acknowledge any
+/// sidecar Circles that became newly visible while the agent was paused.
+/// The acknowledged object_refs feed `resume_sidecar_refs`, which the
+/// resume button folds into a real `agent_sidecar_exposure_ack`.
+///
+/// Data source: soland's sidecar exposure projection
+/// (`ck.agent.sidecar_projection.v1`) is not yet wired, so the disclosed
+/// refs are entered by the operator here; once the projection ships, the
+/// agent view's exposure field populates this list automatically.
 #[component]
-pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
+pub fn SidecarExposureDisclosure(
+    controller_did: String,
+    resume_sidecar_refs: Signal<Vec<String>>,
+) -> Element {
+    let mut ref_input = use_signal(String::new);
     rsx! {
         div { class: "event", "data-testid": "sidecar-exposure-disclosure",
             div { class: "event-head",
@@ -2065,27 +2563,58 @@ pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
                 span { class: "badge", "CKP-0009 §3 inv. 10" }
             }
             div { class: "muted",
-                "Controller: {controller_did}. Devices, agent runtime endpoint, and the most recent action_approve nonce status are shown here so you can audit what your agent can act on and from where."
+                "Controller: {controller_did}. Before resuming a paused agent, acknowledge any sidecar Circles that became newly visible while it was paused. Acknowledged refs are sent as the resume sidecar_exposure_ack."
             }
-            // TODO(P3-impl): replace these placeholders with live
-            // data once soland's exposure projection lands. The wire
-            // shape is documented in CKP-0009 §3 and the related
-            // account-data type `ck.agent.sidecar_projection.v1`.
-            div { class: "metric-grid",
-                div { class: "metric",
-                    strong { "Device list" }
-                    span { class: "badge amber", "Pending" }
-                    div { class: "muted", "Awaiting soland sidecar projection" }
+            div { class: "muted", "data-testid": "sidecar-exposure-data-source",
+                "Data source: soland sidecar exposure projection (ck.agent.sidecar_projection.v1) pending — enter the disclosed sidecar object_refs below until the projection auto-populates this list."
+            }
+            div { class: "workflow-form",
+                Input {
+                    "data-testid": "sidecar-exposure-ref-input",
+                    placeholder: "sidecar object_ref (ck:circle:... or ck:strand:...)",
+                    value: "{ref_input}",
+                    oninput: move |event: FormEvent| ref_input.set(event.value()),
                 }
-                div { class: "metric",
-                    strong { "Agent runtime endpoint" }
-                    span { class: "badge amber", "Pending" }
-                    div { class: "muted", "Awaiting ck.agent.endpoint resolution" }
+                div { class: "actions",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "sidecar-exposure-ack-add-button",
+                        disabled: ref_input().trim().is_empty(),
+                        onclick: move |_| {
+                            let value = ref_input().trim().to_owned();
+                            if value.is_empty() { return; }
+                            let mut refs = resume_sidecar_refs.write();
+                            if !refs.contains(&value) {
+                                refs.push(value);
+                            }
+                            ref_input.set(String::new());
+                        },
+                        "Acknowledge ref"
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "sidecar-exposure-ack-clear-button",
+                        disabled: resume_sidecar_refs.read().is_empty(),
+                        onclick: move |_| resume_sidecar_refs.set(Vec::new()),
+                        "Clear"
+                    }
                 }
-                div { class: "metric",
-                    strong { "Last action_approve nonce" }
-                    span { class: "badge amber", "Pending" }
-                    div { class: "muted", "Awaiting action_request stream" }
+                if resume_sidecar_refs.read().is_empty() {
+                    div { class: "muted", "data-testid": "sidecar-exposure-ack-empty",
+                        "No newly-exposed sidecars acknowledged. Resume will send no exposure ack."
+                    }
+                } else {
+                    div { class: "timeline", "data-testid": "sidecar-exposure-ack-list",
+                        for sidecar_ref in resume_sidecar_refs.read().iter() {
+                            div {
+                                class: "metric",
+                                "data-testid": "sidecar-exposure-ack-row",
+                                "data-sidecar-ref": "{sidecar_ref}",
+                                span { class: "mono", "{sidecar_ref}" }
+                                span { class: "badge green", "acknowledged" }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2231,6 +2760,290 @@ pub fn ActionApproveDialog(
     }
 }
 
+/// CKP-0008 §4.8 / §4.8.1 — build a `ck.agent.action_approve` payload
+/// for a controller-owned `ck.agent.draft.v1` draft. Binds `draft_id`,
+/// content digest, target descriptor, `proposed_action`, approved
+/// payload digest, approval expiry, and a single-use nonce. The content
+/// digest covers the draft's `content` object; the approved payload
+/// digest covers the same payload the publish executor will emit (the
+/// controller may edit before approving — here they approve as-is, so
+/// both digests are over `content`).
+pub fn build_action_approve_payload(draft: &Value, approval_expires_at: &str) -> Value {
+    let draft_id = draft.get("draft_id").and_then(Value::as_str).unwrap_or("");
+    let agent_principal_id = draft
+        .get("agent_principal_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let proposed_action = draft
+        .get("proposed_action")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let target = draft.get("target").cloned().unwrap_or(Value::Null);
+    let content = draft.get("content").cloned().unwrap_or(Value::Null);
+    let content_digest = cokret_sdk::canonical::canonical_json_bytes(&content)
+        .map(cokret_sdk::canonical::sha256_digest)
+        .unwrap_or_default();
+    json!({
+        "draft_id": draft_id,
+        "agent_principal_id": agent_principal_id,
+        "proposed_action": proposed_action,
+        "target": target,
+        "content_digest": content_digest,
+        "approved_payload_digest": content_digest,
+        "approval_expires_at": approval_expires_at,
+        "nonce": crate::operation::uuid_v7(),
+    })
+}
+
+/// Build a `ck.agent.action_reject` payload for a draft (CKP-0008
+/// §4.8.1). Carries the `draft_id` so the reducer transitions the draft
+/// to `rejected`.
+pub fn build_action_reject_payload(draft: &Value) -> Value {
+    json!({
+        "draft_id": draft.get("draft_id").and_then(Value::as_str).unwrap_or(""),
+        "agent_principal_id": draft
+            .get("agent_principal_id")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    })
+}
+
+/// CKP-0008 §4.8 — controller-owned draft approval panel. Lists
+/// `ck.agent.draft.v1` drafts and lets the controller approve (submits
+/// `ck.agent.action_approve`) or reject (submits `ck.agent.action_reject`).
+///
+/// Data source: drafts are delivered as controller-owned account-data
+/// over `ck.self.account.subscribe`. soland's draft materialization
+/// (agent `ck.agent.draft.propose` → controller `ck.agent.draft.v1`) is
+/// pending, so the list is populated here by pasting a draft payload;
+/// the approve / reject call chain is fully wired and exercises the real
+/// wire envelope today. Once the projection ships, the subscribe fold
+/// auto-populates this list.
+#[component]
+pub fn DraftApprovalPanel(
+    base_url: String,
+    token: Signal<String>,
+    controller_did: String,
+) -> Element {
+    let mut drafts = use_signal(Vec::<Value>::new);
+    let mut draft_input = use_signal(String::new);
+    let mut panel_status = use_signal(String::new);
+
+    // Controller-private events (action_approve / action_reject) author
+    // in the controller's principal-control realm.
+    let principal_realm = cokret_sdk::Did::new(controller_did.clone())
+        .ok()
+        .map(|principal| cokret_sdk::auth::principal_control_realm_id(&principal).to_string());
+
+    rsx! {
+        div { class: "event", "data-testid": "agent-draft-approval",
+            div { class: "event-head",
+                span { "Draft approvals" }
+                span { class: "badge blue", "ck.agent.draft.v1" }
+            }
+            div { class: "muted",
+                "Review agent-proposed drafts before anything reaches a shared Realm. Approve submits ck.agent.action_approve (binds draft_id + content digest + single-use nonce + expiry); reject submits ck.agent.action_reject."
+            }
+            div { class: "muted", "data-testid": "agent-draft-data-source",
+                "Data source: controller-owned account-data over ck.self.account.subscribe; soland draft materialization pending — paste a ck.agent.draft.v1 payload below to review it now."
+            }
+            if principal_realm.is_none() {
+                div { class: "badge amber", "data-testid": "agent-draft-no-realm",
+                    "controller principal realm unavailable — sign in to enable approvals"
+                }
+            }
+            div { class: "workflow-form",
+                Input {
+                    "data-testid": "agent-draft-input",
+                    placeholder: "ck.agent.draft.v1 payload (JSON)",
+                    value: "{draft_input}",
+                    oninput: move |event: FormEvent| draft_input.set(event.value()),
+                }
+                div { class: "actions",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "agent-draft-add-button",
+                        disabled: draft_input().trim().is_empty(),
+                        onclick: move |_| {
+                            match serde_json::from_str::<Value>(draft_input().as_str()) {
+                                Ok(value) => {
+                                    drafts.write().push(value);
+                                    draft_input.set(String::new());
+                                    panel_status.set("draft added".to_owned());
+                                }
+                                Err(err) => panel_status.set(format!(
+                                    "draft is not valid JSON: {err}"
+                                )),
+                            }
+                        },
+                        "Add draft"
+                    }
+                }
+                if !panel_status().is_empty() {
+                    div { class: "muted", "data-testid": "agent-draft-status", "{panel_status}" }
+                }
+            }
+            if drafts.read().is_empty() {
+                div { class: "muted", "data-testid": "agent-draft-empty",
+                    "No drafts to review."
+                }
+            } else {
+                div { class: "timeline", "data-testid": "agent-draft-list",
+                    for (idx, draft) in drafts.read().iter().enumerate() {
+                        {
+                            let draft_id = draft
+                                .get("draft_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("?")
+                                .to_owned();
+                            let proposed_action = draft
+                                .get("proposed_action")
+                                .and_then(Value::as_str)
+                                .unwrap_or("?")
+                                .to_owned();
+                            let agent_id = draft
+                                .get("agent_principal_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("?")
+                                .to_owned();
+                            let expires_at = draft
+                                .get("expires_at")
+                                .and_then(Value::as_str)
+                                .unwrap_or("-")
+                                .to_owned();
+                            let body_preview = draft
+                                .get("content")
+                                .and_then(|c| c.get("body"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_owned();
+                            let agent_id_label = short_protocol_id(&agent_id);
+                            let draft_id_label = short_protocol_id(&draft_id);
+                            rsx! {
+                                div {
+                                    class: "event",
+                                    "data-testid": "agent-draft-row",
+                                    "data-draft-id": "{draft_id}",
+                                    div { class: "event-head",
+                                        span { class: "mono", title: "{draft_id}", "{draft_id_label}" }
+                                        span { class: "badge", "{proposed_action}" }
+                                        span { class: "mono", title: "{agent_id}", "agent {agent_id_label}" }
+                                    }
+                                    if !body_preview.is_empty() {
+                                        div { class: "muted", "draft: {body_preview}" }
+                                    }
+                                    div { class: "muted", "expires_at: {expires_at}" }
+                                    div { class: "actions",
+                                        Button {
+                                            variant: ButtonVariant::Primary,
+                                            "data-testid": "agent-draft-approve-button",
+                                            disabled: principal_realm.is_none(),
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let actor = controller_did.clone();
+                                                let realm = principal_realm.clone();
+                                                move |_| {
+                                                    let Some(realm) = realm.clone() else { return; };
+                                                    let base = base.clone();
+                                                    let actor = actor.clone();
+                                                    let api_token = token();
+                                                    let draft = drafts.read()[idx].clone();
+                                                    // Default approval window: 1h
+                                                    // from now, single-use nonce.
+                                                    let approval_expires_at = crate::clock::rfc3339_secs_in(60);
+                                                    let payload = build_action_approve_payload(
+                                                        &draft, &approval_expires_at,
+                                                    );
+                                                    let op = crate::operation::OperationBuilder::new(
+                                                        &realm,
+                                                        &actor,
+                                                        "ck.agent.action_approve",
+                                                    )
+                                                    .body(payload)
+                                                    .build("yougen");
+                                                    spawn(async move {
+                                                        match with_authed_api(&base, api_token, move |api| {
+                                                            let op = op.clone();
+                                                            async move {
+                                                                api.submit_event_envelope(&op).await
+                                                            }
+                                                        })
+                                                        .await
+                                                        {
+                                                            Ok(resp) => {
+                                                                drafts.write().remove(idx);
+                                                                panel_status.set(format!(
+                                                                    "approved; event_id {}",
+                                                                    resp.event_id
+                                                                ));
+                                                            }
+                                                            Err(err) => panel_status.set(format!(
+                                                                "approve failed: {}", err.display()
+                                                            )),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Approve"
+                                        }
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "agent-draft-reject-button",
+                                            disabled: principal_realm.is_none(),
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let actor = controller_did.clone();
+                                                let realm = principal_realm.clone();
+                                                move |_| {
+                                                    let Some(realm) = realm.clone() else { return; };
+                                                    let base = base.clone();
+                                                    let actor = actor.clone();
+                                                    let api_token = token();
+                                                    let draft = drafts.read()[idx].clone();
+                                                    let payload = build_action_reject_payload(&draft);
+                                                    let op = crate::operation::OperationBuilder::new(
+                                                        &realm,
+                                                        &actor,
+                                                        "ck.agent.action_reject",
+                                                    )
+                                                    .body(payload)
+                                                    .build("yougen");
+                                                    spawn(async move {
+                                                        match with_authed_api(&base, api_token, move |api| {
+                                                            let op = op.clone();
+                                                            async move {
+                                                                api.submit_event_envelope(&op).await
+                                                            }
+                                                        })
+                                                        .await
+                                                        {
+                                                            Ok(resp) => {
+                                                                drafts.write().remove(idx);
+                                                                panel_status.set(format!(
+                                                                    "rejected; event_id {}",
+                                                                    resp.event_id
+                                                                ));
+                                                            }
+                                                            Err(err) => panel_status.set(format!(
+                                                                "reject failed: {}", err.display()
+                                                            )),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Reject"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod personal_agent_tests {
     use super::*;
@@ -2283,6 +3096,89 @@ mod personal_agent_tests {
             ActionRequestNonceStatus::Fresh.badge_class(),
             ActionRequestNonceStatus::Consumed.badge_class()
         );
+    }
+
+    #[test]
+    fn requested_scope_widens_to_realm_when_any_write_preset_selected() {
+        assert_eq!(requested_scope_for_presets(&[]), None);
+        assert_eq!(
+            requested_scope_for_presets(&[AgentPermissionPreset::ReadOnly]),
+            Some(AgentKeyScope::Limited)
+        );
+        assert_eq!(
+            requested_scope_for_presets(&[
+                AgentPermissionPreset::ReadOnly,
+                AgentPermissionPreset::ReplyAsAgent,
+            ]),
+            Some(AgentKeyScope::Realm)
+        );
+    }
+
+    #[test]
+    fn expand_preset_grant_emits_registered_actions_and_inactive_flag() {
+        let grant = expand_preset_grant(
+            AgentPermissionPreset::ReplyAsAgent,
+            "did:web:agents.example:summary",
+            Some("ck:realm:01"),
+            "2026-06-26T00:00:00Z",
+        );
+        assert_eq!(
+            grant["actions"],
+            serde_json::json!(["ck.message.create", "ck.reaction.add"])
+        );
+        assert_eq!(grant["subject"], "did:web:agents.example:summary");
+        assert_eq!(grant["resources"][0]["kind"], "realm");
+        assert_eq!(grant["resources"][0]["realm_id"], "ck:realm:01");
+        assert_eq!(grant["effective_after_first_authorized_key"], true);
+        assert_eq!(grant["expires_at"], "2026-06-26T00:00:00Z");
+        // Non-aob presets carry no controller-approval constraint.
+        assert!(grant.get("constraints").is_none());
+    }
+
+    #[test]
+    fn expand_preset_grant_act_on_behalf_carries_controller_approval() {
+        let grant = expand_preset_grant(
+            AgentPermissionPreset::ActOnBehalf,
+            "did:web:agents.example:summary",
+            None,
+            "2026-06-26T00:00:00Z",
+        );
+        // No realm supplied -> empty selector (controller narrows later).
+        assert_eq!(grant["resources"], serde_json::json!([]));
+        let constraint = &grant["constraints"][0];
+        assert_eq!(constraint["constraint_type"], "claim_based");
+        assert_eq!(constraint["subtype"], "accountability");
+        assert_eq!(constraint["controller_approval_required"], true);
+    }
+
+    #[test]
+    fn agent_pair_url_uses_https_and_request_param() {
+        assert_eq!(
+            agent_pair_url("https://cokret.example/", "0197-req"),
+            "https://cokret.example/auth/account/agent-pair?request=0197-req"
+        );
+    }
+
+    #[test]
+    fn build_action_approve_payload_binds_draft_digest_and_nonce() {
+        let draft = serde_json::json!({
+            "type": "ck.agent.draft.v1",
+            "draft_id": "0197-draft",
+            "agent_principal_id": "did:web:agents.example:summary",
+            "proposed_action": "ck.message.create",
+            "target": {"realm_id": "ck:realm:01"},
+            "content": {"body": "draft text"},
+        });
+        let payload = build_action_approve_payload(&draft, "2026-06-26T01:00:00Z");
+        assert_eq!(payload["draft_id"], "0197-draft");
+        assert_eq!(payload["proposed_action"], "ck.message.create");
+        assert_eq!(payload["approval_expires_at"], "2026-06-26T01:00:00Z");
+        let digest = payload["content_digest"].as_str().unwrap();
+        assert!(digest.starts_with("sha256:"));
+        // Approving as-is means both digests match.
+        assert_eq!(payload["content_digest"], payload["approved_payload_digest"]);
+        // Nonce is a fresh uuid, not empty.
+        assert!(!payload["nonce"].as_str().unwrap().is_empty());
     }
 
     #[test]

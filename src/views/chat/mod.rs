@@ -1617,6 +1617,15 @@ pub fn ChatPanel(
                                                     &participants_for_messages,
                                                 )
                                             });
+                                        // CKP-0008 §4.10 — act-on-behalf: the
+                                        // controller (actor_id = msg.sender) is
+                                        // the primary name, the agent executor
+                                        // (executed_by) renders as "via {agent}".
+                                        let act_on_behalf_agent = act_on_behalf_agent_label(
+                                            &msg.sender,
+                                            msg.executed_by.as_deref(),
+                                            &participants_for_messages,
+                                        );
                                         rsx! {
                                             if sender_is_agent {
                                                 span {
@@ -1632,6 +1641,14 @@ pub fn ChatPanel(
                                                     class: "agent-owner-label",
                                                     "data-testid": "message-agent-owner",
                                                     "agent of {owner_label}"
+                                                }
+                                            }
+                                            if let Some(agent_label) = act_on_behalf_agent {
+                                                span {
+                                                    class: "agent-via-label",
+                                                    "data-testid": "message-act-on-behalf-via",
+                                                    "data-executed-by": msg.executed_by.clone().unwrap_or_default(),
+                                                    "via {agent_label}"
                                                 }
                                             }
                                         }
@@ -3365,6 +3382,7 @@ pub fn ChatPanel(
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
                                             sender: actor.clone(),
+                                            executed_by: None,
                                             body: format!("[poll] {}", draft_snapshot.question),
                                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                             strand_id: selected_strand.clone(),
@@ -3458,6 +3476,7 @@ pub fn ChatPanel(
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
                                             sender: actor.clone(),
+                                            executed_by: None,
                                             body: format!("[poll] {}", draft_snapshot.question),
                                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                             strand_id: selected_strand.clone(),
@@ -3609,6 +3628,7 @@ pub fn ChatPanel(
                                     realm_id: realm.clone(),
                                     id: local_id.clone(),
                                     sender: actor.clone(),
+                                    executed_by: None,
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     strand_id: channel.strand_id.clone(),
@@ -3852,6 +3872,7 @@ pub fn ChatPanel(
                                     realm_id: realm.clone(),
                                     id: message_id.clone(),
                                     sender: actor.clone(),
+                                    executed_by: None,
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     strand_id: strand_id.clone(),
@@ -5001,6 +5022,7 @@ mod tests {
             realm_id: "ck:realm:demo".to_owned(),
             id: "ck:event:1".to_owned(),
             sender: "did:web:example.com:users:bob".to_owned(),
+            executed_by: None,
             body: "@alice:example.com/summary".to_owned(),
             timestamp: "10:00".to_owned(),
             strand_id: "ck:strand:demo".to_owned(),

@@ -4134,8 +4134,8 @@ pub fn RouterView() -> Element {
                                                     let device = device_id();
                                                     account_session_state.set("Refreshing session".to_owned());
                                                     spawn(async move {
-                                                        match CokretApi::new(&base) {
-                                                            Ok(api) => match api.with_bearer(api_token.clone()).account_me().await {
+                                                        match self_authed_api(&base, api_token.clone()) {
+                                                            Ok(api) => match api.account_me().await {
                                                                 Ok(account) => {
                                                                     let canonical_actor = account.did;
                                                                     if let Some(personal_handle) =
@@ -4170,9 +4170,8 @@ pub fn RouterView() -> Element {
                                                                         // *keep* the user signed in, not bounce
                                                                         // them to login on a routine token rollover.
                                                                         if let Some(fresh) = crate::session::refresh_current_bearer().await {
-                                                                            let canonical_actor = match CokretApi::new(&base) {
+                                                                            let canonical_actor = match self_authed_api(&base, fresh) {
                                                                                 Ok(api) => api
-                                                                                    .with_bearer(fresh)
                                                                                     .account_me()
                                                                                     .await
                                                                                     .ok()
@@ -6257,53 +6256,6 @@ async fn refresh_oidc_bearer_for_server(
     ))
 }
 
-/// Rotate a near-expiry session grant onto a fresh one using the durable device
-/// key bound into the grant's `cnf.jkt` (the `/_cokret` session-grant refresh
-/// protocol op). Returns the persisted grant to store on success.
-///
-/// The rotated grant binds `session_public_key` to the device key, so the new
-/// grant's `session_private_key_pem` is the device key itself — the subsequent
-/// principal-server exchange proof is then signed with it by the existing
-/// re-exchange path, uniformly with first login.
-async fn rotate_session_grant_via_device_proof(
-    grant: &crate::local_state::PersistedSessionGrant,
-    device_handle: &crate::auth_dpop::DpopHandle,
-) -> anyhow::Result<crate::local_state::PersistedSessionGrant> {
-    let auth_server_url =
-        crate::coauth::resolve_principal_auth_server_url(&grant.principal_server_url)
-            .await
-            .map_err(|error| anyhow::anyhow!("resolve auth server: {error}"))?;
-    let coauth = crate::coauth::CoauthApi::new(&auth_server_url)?;
-    let htu = coauth.endpoint_url("_cokret/gate/account/session-grants/refresh")?;
-    let dpop_proof = device_handle
-        .mint_proof("POST", &htu, Some(&grant.grant_jwt))
-        .map_err(|error| anyhow::anyhow!("mint rotation DPoP proof: {error}"))?;
-    let outcome = coauth
-        .refresh_session_grant(&grant.grant_jwt, Some(&grant.audience), &dpop_proof)
-        .await?;
-    let session_private_key_pem = device_handle
-        .session_signing_key_pkcs8_pem()
-        .map_err(|error| anyhow::anyhow!("export device session key: {error}"))?;
-    // SDK `SessionGrantRefreshOutcome.expires_at` is already a typed
-    // `DateTime<Utc>` (no string parsing needed).
-    let grant_expires_at = Some(outcome.expires_at);
-    Ok(crate::local_state::PersistedSessionGrant {
-        grant_jwt: outcome.grant_jwt,
-        session_private_key_pem,
-        grant_id: outcome.grant_id,
-        audience: outcome.audience,
-        principal_id: grant.principal_id.clone(),
-        device_id: grant.device_id.clone(),
-        principal_server_url: grant.principal_server_url.clone(),
-        session_grant_exchange_path: grant.session_grant_exchange_path.clone(),
-        grant_expires_at,
-        // Re-minted on the next exchange; leaving it None marks the bearer as
-        // due so the exchange runs promptly against the fresh grant.
-        session_expires_at: None,
-        stored_at: chrono::Utc::now(),
-    })
-}
-
 fn oidc_refresh_error_invalidates_grant(error: &anyhow::Error) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     message.contains("invalid_grant")
@@ -6415,59 +6367,24 @@ async fn remint_principal_bearer(
         }
     }
 
-    // Multi-day sliding session: when the persisted grant itself is near
-    // expiry, rotate it (DPoP holder proof signed by the durable device key
-    // bound into the grant's `cnf.jkt`) onto a fresh grant BEFORE it dies, so
-    // the session lives for days while access bearers stay short. Best-effort:
-    // any failure falls through to the re-exchange path below (which re-exchanges
-    // a still-valid grant, or surfaces LoginRequired once the grant is truly
-    // dead).
-    'rotate: {
-        let due_grant = {
-            let store = state_store.read();
-            store
-                .session_grant()
-                .filter(crate::session_refresh::grant_due_for_rotation)
-        };
-        let Some(grant) = due_grant else {
-            break 'rotate;
-        };
-        let device_handle = {
-            let mut store = state_store.write();
-            crate::auth_dpop::ensure_device_key(&mut store)
-        };
-        let device_handle = match device_handle {
-            Ok(handle) => handle,
-            Err(error) => {
-                tracing::warn!(?error, "grant rotation skipped: device key unavailable");
-                break 'rotate;
-            }
-        };
-        let rotated = rotate_session_grant_via_device_proof(&grant, &device_handle).await;
-        match rotated {
-            Ok(new_grant) => {
-                if !same_server_url(&base, &base_url()) || session_generation() != generation {
-                    return None;
-                }
-                state_store.write().set_session_grant(Some(new_grant));
-            }
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "session grant rotation failed; falling back to re-exchange"
-                );
-            }
-        }
-    }
-
+    // ②(A+②): multi-day sliding session. The held credential is the grant
+    // itself; when it is near its own expiry the refresh path rotates it (DPoP
+    // holder proof signed by the durable device key bound into `cnf.jkt`) onto a
+    // fresh grant, and the rotated grant JWT becomes the live credential. There
+    // is no longer a grant→bearer exchange. `prepare_refresh_for_server_after_unauthorized`
+    // forces a rotation attempt even when the local expiry metadata looks fresh
+    // (the server may have rotated/revoked the grant early).
     let prepared = {
         let mut store = state_store.write();
         crate::session_refresh::prepare_refresh_for_server_after_unauthorized(&mut store, &base)
     };
     let outcome = match prepared {
         crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
-        crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
-            let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
+        crate::session_refresh::RefreshPrepared::Ready {
+            grant,
+            device_handle,
+        } => {
+            let result = crate::session_refresh::exchange_refresh(&grant, &device_handle).await;
             // Same server-switch guard as the OIDC path: don't write the
             // old server's grant outcome onto a session that just moved or
             // logged out.
@@ -6584,6 +6501,17 @@ fn redirect_to_login(navigator: Navigator) {
     let _ = navigator.push(Route::Login);
 }
 
+/// ②(A+②) — build a `/_cokret/self/*`-ready client: the credential
+/// (`ck.session.grant` JWT) as the bearer plus the device DPoP holder key so
+/// each request carries a per-request `DPoP` proof (api-conventions.md §3.3).
+/// Used by standalone (non-`connect`) self-path call sites that build their own
+/// `CokretApi`. Best-effort on the DPoP key: if it cannot be loaded the bearer
+/// is still attached (dev-login / OAuth-introspection inbound paths).
+fn self_authed_api(base: &str, grant_or_bearer: impl Into<String>) -> anyhow::Result<CokretApi> {
+    let api = CokretApi::new(base)?.with_bearer(grant_or_bearer);
+    Ok(crate::views::helpers::attach_device_dpop(api))
+}
+
 fn adopt_live_token_for_api(
     api: &CokretApi,
     live_token: Signal<String>,
@@ -6639,20 +6567,15 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         last_error.set(None);
         match CokretApi::new(&base) {
             Ok(api) => {
-                // SPEC-CR-001 — bind the ck.session.grant signing key so every
-                // clone of this base client PoP-signs `/_cokret/self/*` requests
-                // (api-conventions.md §3.2). Falls back to bearer-only if no
-                // grant key is persisted or it fails to parse.
-                let api = match state_store.read().session_grant() {
-                    Some(grant) if !grant.session_private_key_pem.is_empty() => {
-                        match api
-                            .clone()
-                            .with_session_signing_key(&grant.session_private_key_pem)
-                        {
-                            Ok(signed) => signed,
-                            Err(_) => api,
-                        }
-                    }
+                // ②(A+②) — bind the device DPoP holder key so every clone of
+                // this base client attaches a per-request `DPoP` proof to
+                // `/_cokret/self/*` requests (api-conventions.md §3.3). The grant
+                // (set later via `with_bearer`) is the credential; the DPoP key
+                // sender-constrains it. `with_bearer` preserves this field, so all
+                // `api.clone().with_bearer(grant)` sites below inherit the DPoP
+                // device. Falls back to bearer-only if no device key is available.
+                let api = match crate::auth_dpop::load_device_key(&state_store.read()) {
+                    Ok(Some(handle)) => api.with_dpop_device(handle),
                     _ => api,
                 };
                 // Probe `/server/describe` for status text, but treat failure

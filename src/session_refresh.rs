@@ -1,37 +1,29 @@
-//! Principal-session refresh, driven by the persisted coauth
-//! `session_grant`.
+//! Session keep-alive, driven by the persisted `ck.session.grant`.
 //!
-//! `views/login.rs` runs the OIDC handshake against coauth, the coauth
-//! `oidc_exchange_path` returns a `session_grant` (long-lived JWT plus
-//! an ephemeral signing key), and the client trades that grant at the
-//! principal server's `session_grant_exchange_path` for a short-lived
-//! bearer `access_token`. The bearer expires on the order of minutes.
+//! ②(A+②) model (api-conventions.md §3.3): there is **no** grant→bearer
+//! exchange and **no** soland-minted local bearer. After login, the client
+//! holds the `ck.session.grant` (issued by the Account Authority) plus the
+//! device DPoP holder key whose thumbprint is the grant's `cnf.jkt`. The grant
+//! itself is the live credential for `/_cokret/self/*`: every request presents
+//! `Authorization: Bearer <grant>` + a per-request `DPoP` proof.
 //!
-//! Without a refresh path the user gets bounced back to the login page
-//! every time the bearer dies. We don't have a refresh token (the
-//! `SessionLoginOutcome` body doesn't carry one) — but we still have the
-//! grant. Persisting it lets us silently mint a new bearer by repeating
-//! the principal-side exchange.
-//!
-//! This module is the policy layer for that:
+//! This module's only job is therefore to keep that grant fresh:
 //!
 //! 1. [`refresh_decision`] inspects the persisted [`PersistedSessionGrant`] and decides whether to
-//!    do nothing, re-exchange now, or surface a "must re-login" event.
-//! 2. [`run_refresh`] performs the actual exchange against the principal server, persisting the
-//!    fresh `session_expires_at` and returning the new access token.
+//!    do nothing, rotate the grant now, or surface a "must re-login" event.
+//! 2. [`exchange_refresh`] rotates a near-expiry grant onto a fresh one via the existing DPoP
+//!    refresh (`refresh_session_grant`); when the grant still has runway it is returned unchanged.
+//! 3. [`commit_refresh`] persists the (possibly rotated) grant and hands the caller back the live
+//!    grant JWT — which the UI swaps into the `token` signal (the "current credential").
 //!
 //! The split keeps the policy pure (testable without spinning up
 //! reqwest) and the IO thin.
 
 use chrono::{DateTime, Utc};
 
-use crate::api::{CokretApi, SessionGrantIntrospectionProof};
-use crate::coauth::{
-    build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
-};
+use crate::auth_dpop::DpopHandle;
 use crate::config::normalize_server_url;
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
-use crate::models::SessionLoginOutcome;
 
 /// Window before the current `session_expires_at` at which the
 /// background poller proactively re-exchanges the grant.
@@ -49,14 +41,12 @@ pub enum RefreshDecision {
     /// No grant on disk — either the user hasn't logged in, or a
     /// previous failure wiped it. Caller must route to the login view.
     NoGrant,
-    /// Grant is on disk and the current minted session has plenty of
-    /// runway — caller does nothing.
+    /// Grant is on disk and still has plenty of runway — caller does nothing.
     Fresh,
-    /// Session token is within `REFRESH_SKEW_SECS` of expiry (or has no
-    /// recorded expiry, which we treat as "always refresh on demand").
-    /// Caller should run [`run_refresh`].
+    /// The grant is within `GRANT_ROTATION_SKEW_SECS` of its own expiry and
+    /// should be rotated onto a fresh grant. Caller should run [`run_refresh`].
     Due,
-    /// The grant itself has expired. Re-exchange will fail; caller
+    /// The grant itself has expired. Rotation will fail; caller
     /// should clear local state and bounce to login.
     GrantExpired,
 }
@@ -66,9 +56,10 @@ pub enum RefreshDecision {
 pub enum RefreshOutcome {
     /// No persisted grant — caller routes to login.
     NoGrant,
-    /// Nothing to do; the current session token is still fresh.
+    /// Nothing to do; the current grant is still fresh.
     Fresh,
-    /// A new principal `access_token` was minted; caller swaps it into
+    /// The grant was rotated (or kept). `access_token` carries the live
+    /// `ck.session.grant` JWT — the current credential; caller swaps it into
     /// the in-memory token signal and the persisted config.
     Refreshed {
         access_token: String,
@@ -78,9 +69,9 @@ pub enum RefreshOutcome {
     /// failure). The persisted grant has been cleared; caller must
     /// route to the login view.
     LoginRequired { reason: String },
-    /// Refresh attempt failed without proving the active bearer is dead
+    /// Rotation attempt failed without proving the grant is dead
     /// (network down, 5xx, or a consumed grant). Caller should
-    /// leave the current bearer alone.
+    /// leave the current grant alone.
     Transient { reason: String },
 }
 
@@ -105,22 +96,16 @@ pub fn grant_due_for_rotation(grant: &PersistedSessionGrant) -> bool {
     }
 }
 
-/// True when the persisted bearer is within `REFRESH_SKEW_SECS` of
-/// expiry. `None` for `session_expires_at` is treated as "due" — the
-/// safe choice since we don't know how much runway the token has.
-pub fn session_due_for_refresh(grant: &PersistedSessionGrant) -> bool {
-    match grant.session_expires_at {
-        Some(expires_at) => expires_at.timestamp() - Utc::now().timestamp() <= REFRESH_SKEW_SECS,
-        None => true,
-    }
-}
-
 /// True when the grant itself has gone past its `grant_expires_at`.
 pub fn grant_is_dead(grant: &PersistedSessionGrant) -> bool {
     matches!(grant.grant_expires_at, Some(expires_at) if expires_at <= Utc::now())
 }
 
 /// Inspect the persisted grant and decide what the caller should do.
+///
+/// ②(A+②): "Due" now means the grant itself is near its own expiry and should
+/// be rotated (DPoP holder proof → fresh grant). There is no separate
+/// session-token expiry to chase any more — the grant *is* the credential.
 pub fn refresh_decision(store: &LocalStateStore) -> RefreshDecision {
     let Some(grant) = store.session_grant() else {
         return RefreshDecision::NoGrant;
@@ -128,7 +113,7 @@ pub fn refresh_decision(store: &LocalStateStore) -> RefreshDecision {
     if grant_is_dead(&grant) {
         return RefreshDecision::GrantExpired;
     }
-    if session_due_for_refresh(&grant) {
+    if grant_due_for_rotation(&grant) {
         return RefreshDecision::Due;
     }
     RefreshDecision::Fresh
@@ -165,24 +150,25 @@ pub fn grant_matches_principal_server(
 /// the await crashes any concurrent signal mutation with
 /// `AlreadyBorrowedMut` — typical victims are UI handlers that persist
 /// user preferences (e.g. the sidebar scope toggle).
-#[allow(clippy::large_enum_variant)] // session grant + proof bundle dominates the union; happy path.
+#[allow(clippy::large_enum_variant)] // the persisted grant dominates the union; happy path.
 pub enum RefreshPrepared {
     /// Refresh is already resolved — caller turns this directly into
     /// the outcome and skips the network call.
     Done(RefreshOutcome),
     /// Caller should run [`exchange_refresh`] with these materials and
-    /// then feed the result into [`commit_refresh`].
+    /// then feed the result into [`commit_refresh`]. `device_handle` is the
+    /// DPoP holder key bound into the grant's `cnf.jkt`; it signs the rotation
+    /// proof.
     Ready {
         grant: PersistedSessionGrant,
-        proof: SessionGrantIntrospectionProof,
+        device_handle: DpopHandle,
     },
 }
 
-/// Synchronous prep: read the persisted grant, decide whether to
-/// refresh, and (when due) build the introspection proof. Writes
-/// happen only inside this function or [`commit_refresh`], so the
-/// caller can release its `LocalStateStore` borrow before awaiting the
-/// network exchange.
+/// Synchronous prep: read the persisted grant, decide whether to rotate, and
+/// (when due) load the device DPoP key. Writes happen only inside this function
+/// or [`commit_refresh`], so the caller can release its `LocalStateStore` borrow
+/// before awaiting the network rotation.
 pub fn prepare_refresh(store: &mut LocalStateStore) -> RefreshPrepared {
     match refresh_decision(store) {
         RefreshDecision::NoGrant => return RefreshPrepared::Done(RefreshOutcome::NoGrant),
@@ -207,31 +193,21 @@ fn prepare_refresh_grant(
     store: &mut LocalStateStore,
     grant: PersistedSessionGrant,
 ) -> RefreshPrepared {
-    let signing_key = match session_grant_signing_key_from_pem(&grant.session_private_key_pem) {
-        Ok(key) => key,
-        Err(error) => {
-            store.set_session_grant(None);
-            return RefreshPrepared::Done(RefreshOutcome::LoginRequired {
-                reason: format!("session grant signing key invalid: {error}"),
-            });
-        }
-    };
-
-    let proof = match build_session_grant_introspection_proof_bundle(
-        &grant.grant_id,
-        &grant.grant_jwt,
-        &grant.audience,
-        &signing_key,
-    ) {
-        Ok(value) => value,
+    // The rotation proof is signed by the durable device DPoP key (the same key
+    // bound into the grant's `cnf.jkt`), not the grant's own session key.
+    let device_handle = match crate::auth_dpop::ensure_device_key(store) {
+        Ok(handle) => handle,
         Err(error) => {
             return RefreshPrepared::Done(RefreshOutcome::Transient {
-                reason: format!("could not build introspection proof: {error}"),
+                reason: format!("could not load device DPoP key for grant rotation: {error}"),
             });
         }
     };
 
-    RefreshPrepared::Ready { grant, proof }
+    RefreshPrepared::Ready {
+        grant,
+        device_handle,
+    }
 }
 
 /// Like [`prepare_refresh`], but refuses to use a grant minted for any server
@@ -249,10 +225,10 @@ pub fn prepare_refresh_for_server(
     prepare_refresh(store)
 }
 
-/// Like [`prepare_refresh_for_server`], but forces a re-exchange after the
-/// server has already returned a definitive 401 for the current bearer. Local
-/// expiry metadata can be stale when the Principal Server restarted, rotated
-/// signing keys, or invalidated the session early.
+/// Like [`prepare_refresh_for_server`], but forces a rotation attempt after the
+/// server has already returned a definitive 401 for the current grant. Local
+/// expiry metadata can be stale when the Account Authority rotated or revoked
+/// the grant early.
 pub fn prepare_refresh_for_server_after_unauthorized(
     store: &mut LocalStateStore,
     principal_server_url: &str,
@@ -272,35 +248,71 @@ pub fn prepare_refresh_for_server_after_unauthorized(
     prepare_refresh_grant(store, grant)
 }
 
-/// Pure async exchange. Holds no `LocalStateStore` borrow.
+/// Pure async rotation. Holds no `LocalStateStore` borrow.
+///
+/// ②(A+②): there is no grant→bearer exchange. This rotates the near-expiry
+/// grant onto a fresh one via the DPoP refresh (`refresh_session_grant`) and
+/// returns the rotated [`PersistedSessionGrant`]. The grant itself remains the
+/// live credential; the caller swaps its JWT into the `token` signal.
 pub async fn exchange_refresh(
     grant: &PersistedSessionGrant,
-    proof: &SessionGrantIntrospectionProof,
-) -> anyhow::Result<SessionLoginOutcome> {
-    let api = CokretApi::new(&grant.principal_server_url)?;
-    api.exchange_session_grant_at_with_proof(
-        &grant.session_grant_exchange_path,
-        &grant.grant_jwt,
-        &grant.principal_id,
-        &grant.device_id,
-        Some(proof),
-    )
-    .await
+    device_handle: &DpopHandle,
+) -> anyhow::Result<PersistedSessionGrant> {
+    rotate_session_grant(grant, device_handle).await
 }
 
-/// Synchronous commit: persist the outcome (fresh expiry on success,
-/// cleared grant on definitive failure) and translate into a
-/// `RefreshOutcome` the caller can act on.
+/// Rotate a session grant onto a fresh one via the Account Authority's DPoP
+/// refresh endpoint. The DPoP proof is `htm=POST`, `htu`=absolute refresh URL,
+/// `ath`=hash(prior grant), signed by the device key bound into `cnf.jkt`.
+async fn rotate_session_grant(
+    grant: &PersistedSessionGrant,
+    device_handle: &DpopHandle,
+) -> anyhow::Result<PersistedSessionGrant> {
+    let auth_server_url =
+        crate::coauth::resolve_principal_auth_server_url(&grant.principal_server_url)
+            .await
+            .map_err(|error| anyhow::anyhow!("resolve auth server: {error}"))?;
+    let coauth = crate::coauth::CoauthApi::new(&auth_server_url)?;
+    let htu = coauth.endpoint_url("_cokret/gate/account/session-grants/refresh")?;
+    let dpop_proof = device_handle
+        .mint_proof("POST", &htu, Some(&grant.grant_jwt))
+        .map_err(|error| anyhow::anyhow!("mint rotation DPoP proof: {error}"))?;
+    let outcome = refresh_session_grant(&auth_server_url, &grant.grant_jwt, Some(&grant.audience), &dpop_proof)
+        .await?;
+    // The rotated grant binds to the same device key (`cnf.jkt` constant), so
+    // the introspection signing key persisted with the grant is this device key.
+    let session_private_key_pem = device_handle
+        .session_signing_key_pkcs8_pem()
+        .map_err(|error| anyhow::anyhow!("export device session key: {error}"))?;
+    Ok(PersistedSessionGrant {
+        grant_jwt: outcome.grant_jwt,
+        session_private_key_pem,
+        grant_id: outcome.grant_id,
+        audience: outcome.audience,
+        principal_id: grant.principal_id.clone(),
+        device_id: grant.device_id.clone(),
+        principal_server_url: grant.principal_server_url.clone(),
+        session_grant_exchange_path: grant.session_grant_exchange_path.clone(),
+        grant_expires_at: Some(outcome.expires_at),
+        session_expires_at: None,
+        stored_at: Utc::now(),
+    })
+}
+
+/// Synchronous commit: persist the rotated grant (or clear it on a definitive
+/// failure) and translate into a `RefreshOutcome` whose `access_token` carries
+/// the live grant JWT (the current credential).
 pub fn commit_refresh(
     store: &mut LocalStateStore,
-    result: anyhow::Result<SessionLoginOutcome>,
+    result: anyhow::Result<PersistedSessionGrant>,
 ) -> RefreshOutcome {
     match result {
-        Ok(session) => {
-            let session_expires_at = Some(session.expires_at);
-            store.update_session_expires_at(session_expires_at);
+        Ok(rotated) => {
+            let grant_jwt = rotated.grant_jwt.clone();
+            let session_expires_at = rotated.grant_expires_at;
+            store.set_session_grant(Some(rotated));
             RefreshOutcome::Refreshed {
-                access_token: session.access_token,
+                access_token: grant_jwt,
                 session_expires_at,
             }
         }
@@ -308,11 +320,11 @@ pub fn commit_refresh(
             if is_grant_dead_error(&error) {
                 store.set_session_grant(None);
                 RefreshOutcome::LoginRequired {
-                    reason: format!("session grant cannot refresh principal bearer: {error}"),
+                    reason: format!("session grant could not be rotated: {error}"),
                 }
             } else {
                 RefreshOutcome::Transient {
-                    reason: format!("session-grant re-exchange failed: {error}"),
+                    reason: format!("session-grant rotation failed: {error}"),
                 }
             }
         }
@@ -328,16 +340,19 @@ pub fn commit_refresh(
 #[cfg(test)]
 pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
     let prepared = prepare_refresh(store);
-    let (grant, proof) = match prepared {
+    let (grant, device_handle) = match prepared {
         RefreshPrepared::Done(outcome) => return outcome,
-        RefreshPrepared::Ready { grant, proof } => (grant, proof),
+        RefreshPrepared::Ready {
+            grant,
+            device_handle,
+        } => (grant, device_handle),
     };
-    let result = exchange_refresh(&grant, &proof).await;
+    let result = exchange_refresh(&grant, &device_handle).await;
     commit_refresh(store, result)
 }
 
-/// Exchange the persisted session grant for a fresh one against coauth's
-/// private refresh endpoint.
+/// Rotate the persisted session grant onto a fresh one against the Account
+/// Authority's DPoP refresh endpoint (kept from the existing refresh path).
 ///
 /// The endpoint requires:
 ///
@@ -345,19 +360,11 @@ pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
 ///   claim (issuance side: G3.S1 / G3.C1).
 /// * The prior grant JWT in the body (single-use: the old grant is revoked on success).
 ///
-/// On success the caller persists the rotated grant + access-token
-/// materials and bumps the in-memory token signal. On a 401 / 403 /
-/// `grant_already_consumed`-style error the caller must fall
-/// through to the soft-logout path (clear access token + bounce to
-/// `/login`) but keep the device DPoP key in place per the G3.Y0
-/// soft/hard split.
-///
-/// Returns the SDK [`cokret_sdk::SessionGrantRefreshOutcome`] body so
-/// the caller can persist the new grant id + `cnf.jkt` for the next
-/// rotation. The `htu` argument is the absolute URL of coauth's
-/// refresh endpoint — the cotest harness pins it; production callers
-/// derive it from the persisted grant's audience.
-pub async fn refresh_via_dpop(
+/// Returns the SDK [`cokret_sdk::SessionGrantRefreshOutcome`] body so the caller
+/// can persist the new grant id + expiry for the next rotation. The DPoP proof
+/// MUST already be minted against `htm=POST`, `htu`=absolute refresh URL,
+/// `ath`=hash(prior grant).
+pub async fn refresh_session_grant(
     auth_server_url: &str,
     grant_jwt: &str,
     audience: Option<&str>,
@@ -448,19 +455,23 @@ mod tests {
     }
 
     #[test]
-    fn decision_due_when_session_within_skew() {
+    fn decision_due_when_grant_within_rotation_skew() {
+        // ②(A+②): "Due" is driven by the grant's own expiry (rotation), not a
+        // separate session-token expiry. Grant within the 30-min skew → rotate.
         let mut store = isolated_store("due");
-        store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
+        store.set_session_grant(Some(grant_with_session_expiry(30, 600)));
         assert_eq!(refresh_decision(&store), RefreshDecision::Due);
     }
 
     #[test]
-    fn decision_due_when_session_expiry_unknown() {
-        let mut store = isolated_store("due-unknown");
+    fn decision_fresh_when_grant_expiry_unknown() {
+        // Unknown grant expiry is never blindly rotated by the poller; the 401
+        // path forces a rotation attempt instead.
+        let mut store = isolated_store("fresh-unknown");
         let mut grant = grant_with_session_expiry(3600, 86400);
-        grant.session_expires_at = None;
+        grant.grant_expires_at = None;
         store.set_session_grant(Some(grant));
-        assert_eq!(refresh_decision(&store), RefreshDecision::Due);
+        assert_eq!(refresh_decision(&store), RefreshDecision::Fresh);
     }
 
     #[test]

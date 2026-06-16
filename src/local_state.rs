@@ -788,18 +788,19 @@ pub struct UserActionLogEntry {
     pub recorded_at: DateTime<Utc>,
 }
 
-/// Persisted coauth `session_grant` returned by the auth-server during
-/// login. Keeping this on disk lets the client re-run
-/// `exchange_session_grant_at_with_proof` to mint a fresh principal
-/// `access_token` after the previous one expires — no user-visible
-/// re-login as long as the grant itself is still valid.
+/// Persisted `ck.session.grant` issued by the Account Authority during login.
 ///
-/// The fields mirror the inputs needed by
-/// [`crate::api::CokretApi::exchange_session_grant_at_with_proof`] plus
-/// the `session_private_key_pem` the introspection proof is signed with.
-/// The private key here is the ephemeral session-grant key (coauth's
-/// `session_public_key` registration), not the long-lived device
-/// identity — losing it only invalidates the current grant.
+/// ②(A+②) model (api-conventions.md §3.3): the grant itself is the live
+/// credential for `/_cokret/self/*` — there is no grant→bearer exchange and no
+/// soland-minted local bearer. Each request presents `Authorization: Bearer
+/// <grant_jwt>` + a per-request `DPoP` proof bound to the device key. Keeping
+/// the grant on disk lets the client keep using it directly and rotate it (DPoP
+/// holder proof → fresh grant) before its own expiry — no user-visible re-login
+/// as long as the grant chain is still rotatable.
+///
+/// `session_private_key_pem` is retained for the introspection-proof helper; the
+/// rotation/holder proof is signed by the durable device DPoP key whose
+/// thumbprint is the grant's `cnf.jkt`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedSessionGrant {
     /// The signed grant JWT (long-lived, signed by coauth).

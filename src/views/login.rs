@@ -255,8 +255,8 @@ pub fn LoginPanel(
                                             };
                                             let outcome = match prepared {
                                                 crate::session_refresh::RefreshPrepared::Done(o) => o,
-                                                crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
-                                                    let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
+                                                crate::session_refresh::RefreshPrepared::Ready { grant, device_handle } => {
+                                                    let result = crate::session_refresh::exchange_refresh(&grant, &device_handle).await;
                                                     let mut store = state_store_write.write();
                                                     crate::session_refresh::commit_refresh(&mut store, result)
                                                 }
@@ -537,19 +537,6 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("Account Authority session-grant issue failed: {error}"))?;
     let session_grant = session_grant_info_from_outcome(&outcome, &dpop_handle)
         .map_err(|error| format!("Session grant outcome was incomplete: {error}"))?;
-    let grant_id = session_grant
-        .id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Account Authority did not return a session grant id.".to_owned())?;
-    let grant_audience = session_grant
-        .audience
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Account Authority did not return a session grant audience.".to_owned())?;
-    let introspection_proof = dpop_handle
-        .mint_session_grant_introspection_proof(grant_id, &session_grant.grant_jwt, grant_audience)
-        .map_err(|error| format!("Principal session-grant proof failed: {error}"))?;
     let principal_target = principal_server_url;
     let principal = CokretApi::new(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
@@ -561,30 +548,21 @@ async fn finish_oidc_callback(
     if actor.trim().is_empty() {
         return Err("Account Authority did not return an account DID.".to_owned());
     }
-    // KNOWN GAP (per task brief): keep the existing grant→bearer exchange step
-    // working as-is. yougen exchanges the issued grant for a soland principal
-    // bearer at the Principal Server's canonical session-grants endpoint.
+    // ②(A+②): there is no grant→bearer exchange. The held credential is the
+    // `ck.session.grant` itself; every `/_cokret/self/*` request presents it as
+    // `Authorization: Bearer <grant>` + a per-request `DPoP` proof bound to the
+    // grant's `cnf.jkt`. Verify the credential up front by reading the account
+    // viewer through a grant+DPoP-bound client (api-conventions.md §3.3).
     let session_grant_exchange_path = "_cokret/gate/account/session-grants";
-    let session = principal
-        .exchange_session_grant_at_with_proof(
-            session_grant_exchange_path,
-            &session_grant.grant_jwt,
-            &actor,
-            &device,
-            Some(&introspection_proof),
-        )
-        .await
-        .map_err(|error| format!("Principal session-grant exchange failed: {error}"))?;
-    if session.access_token.trim().is_empty() {
-        return Err("Principal session exchange did not return an access token.".to_owned());
-    }
-    let account = principal
+    let authed_principal = principal
         .clone()
-        .with_bearer(session.access_token.clone())
+        .with_bearer(session_grant.grant_jwt.clone())
+        .with_dpop_device(dpop_handle.clone());
+    let account = authed_principal
         .account_me()
         .await
         .map_err(|error| {
-            format!("Principal server did not accept the exchanged bearer token: {error}")
+            format!("Principal server did not accept the session grant + DPoP: {error}")
         })?;
     let canonical_actor = if account.did.trim().is_empty() {
         actor
@@ -593,23 +571,18 @@ async fn finish_oidc_callback(
     };
     let _ = clear_persisted_oidc_scaffold();
 
-    let resolved_device = if session.device_id.as_str().trim().is_empty() {
-        device
-    } else {
-        session.device_id.as_str().to_owned()
-    };
-    // Persist the principal session grant so the (already-built) refresh path
-    // can silently re-mint the short access bearer until the grant's own TTL
-    // elapses — instead of bouncing the user to login the moment the first
-    // short bearer dies. The grant carries its session signing key, which the
-    // refresh path needs to mint the re-exchange introspection proof.
+    let resolved_device = device;
+    // Persist the principal session grant as the live credential. The refresh
+    // path keeps it fresh by rotating it (DPoP holder proof → fresh grant) when
+    // near expiry; there is no short bearer to re-mint any more.
     let persisted_session_grant = persisted_session_grant_from_parts(
         &session_grant,
         &principal_target,
         &canonical_actor,
         &resolved_device,
         session_grant_exchange_path,
-        Some(session.expires_at),
+        // ②(A+②): the credential is the grant itself; its expiry == grant expiry.
+        parse_rfc3339_utc(&session_grant.expires_at),
     )
     .ok();
 
@@ -617,7 +590,8 @@ async fn finish_oidc_callback(
         principal_server_url: principal_target,
         actor: canonical_actor,
         device_id: resolved_device,
-        access_token: session.access_token,
+        // The grant JWT is now the live credential carried in the `token` signal.
+        access_token: session_grant.grant_jwt.clone(),
         oidc_tokens: None,
         session_grant: persisted_session_grant,
     })
