@@ -24,7 +24,7 @@ use chrono::{DateTime, Duration, Utc};
 use cokret_sdk::identity::{
     CompositeDidResolver, DID_WEB_MAX_DOCUMENT_BYTES, DidKeyResolver, DidResolver as _,
     DidWebDocumentOutcome, DidWebResolver, DidWebvhDocumentOutcome, DidWebvhLogOutcome,
-    DidWebvhResolver, ResolverFailMode, ResolverPolicy,
+    DidWebvhResolver, ResolverFailMode, ResolverPolicy, host_is_safe_for_outbound,
 };
 use cokret_sdk::{Did, DidDocument};
 
@@ -217,6 +217,13 @@ impl ResolverDidAnchor {
             // did:key self-resolves via DidKeyResolver; no document to fetch.
             "key" => true,
             "web" => {
+                // P3.2c peek: if this actor's did.json is already ingested (a
+                // prior ensure already fetched it, or the cache was seeded),
+                // skip the network round-trip entirely. `resolve_did` on the
+                // offline resolver succeeds only when evidence is present.
+                if self.web.borrow().resolve_did(actor).is_ok() {
+                    return true;
+                }
                 let outcome = match fetch_did_web_document(http, actor).await {
                     Some(outcome) => outcome,
                     None => return false,
@@ -227,6 +234,11 @@ impl ResolverDidAnchor {
                     .is_ok()
             }
             "webvh" => {
+                // P3.2c peek: skip the fetch when the webvh document + log are
+                // already ingested for this actor.
+                if self.webvh.borrow().resolve_did(actor).is_ok() {
+                    return true;
+                }
                 let Some((doc, log)) = fetch_did_webvh_document(http, actor).await else {
                     return false;
                 };
@@ -267,6 +279,52 @@ impl crate::device_directory::DidAnchor for ResolverDidAnchor {
 /// wider (×32, matching `DidWebvhResolver::ingest_log`'s own ceiling).
 const DID_WEBVH_MAX_LOG_BYTES: usize = DID_WEB_MAX_DOCUMENT_BYTES * 32;
 
+/// P3.2c: SSRF host guard for an about-to-be-fetched `did:web` / `did:webvh`
+/// URL. Returns `false` (caller fails closed, does **not** fetch) when the
+/// URL's host is unsafe to reach from a client:
+///
+/// - a **literal IP** in non-public space: IPv4 loopback `127.0.0.0/8`,
+///   unspecified `0.0.0.0`, private `10/8` + `172.16/12` + `192.168/16`,
+///   link-local `169.254/16` (incl. the `169.254.169.254` cloud-metadata
+///   endpoint), CGNAT `100.64/10`; IPv6 `::1`, unique-local `fc00::/7`,
+///   link-local `fe80::/10`, and any IPv4-mapped form of the above. The IP
+///   classification is delegated to the SDK's [`host_is_safe_for_outbound`]
+///   (the shared STA-05-001 egress blocklist) so yougen and the SDK never
+///   drift on which ranges count as private.
+/// - bare `localhost` / `*.localhost` (handled by the SDK helper) and any
+///   host ending in `.local` (mDNS — added here on top of the SDK helper).
+///
+/// Only `https` is accepted; the SDK URL builders only ever emit `https://`,
+/// so a non-https scheme here means a malformed/forged URL and is rejected.
+///
+/// ## Boundary: registered domain names are NOT DNS-resolved.
+///
+/// This is a *static* host check. A registered domain (e.g. `evil.example`
+/// whose A record points at `127.0.0.1`) passes this guard — the client has no
+/// DNS in the wasm browser-fetch backend, and resolving here would both be
+/// platform-specific and open a DNS-rebinding gap (the name could resolve to a
+/// public IP at check time and a private one at fetch time). Blocking literal
+/// IPs + `localhost`/`.local` covers the dominant client-side SSRF surface
+/// (an attacker putting a raw private IP / metadata address straight into the
+/// actor DID). `std::net` parsing used by the SDK helper is pure (no syscalls)
+/// and therefore works on `wasm32-unknown-unknown` as well.
+fn url_host_is_safe(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "https" {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    // mDNS `.local` is not covered by the SDK's localhost-only name check.
+    if host.to_ascii_lowercase().ends_with(".local") {
+        return false;
+    }
+    host_is_safe_for_outbound(host)
+}
+
 /// Fetch `url` over `http` with an enforced response-size ceiling and a JSON
 /// content-type check. Cross-platform: `bytes()` works on both the native and
 /// the wasm browser-fetch reqwest backends (the wasm backend does not expose
@@ -283,6 +341,18 @@ async fn fetch_did_bytes(
     url: &str,
     max_bytes: usize,
 ) -> Option<(String, Vec<u8>)> {
+    // P3.2c SSRF egress guard — fail-closed *before* any outbound request.
+    // The `did:web` host is taken verbatim from an untrusted actor DID, so a
+    // hostile `did:web:127.0.0.1` / `did:web:169.254.169.254` (cloud metadata)
+    // / `did:web:localhost` must never let the client reach into loopback,
+    // private, link-local or carrier-NAT address space. We re-derive the host
+    // from the constructed URL and reject it here, independently of the SDK
+    // `document_url` helper (defence in depth — even though that helper already
+    // applies the same check, this module must not rely on that internal
+    // behaviour for its own security property).
+    if !url_host_is_safe(url) {
+        return None;
+    }
     let response = http.get(url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
@@ -846,5 +916,119 @@ mod tests {
         let did = parse("did:web:not-allowed.example");
         let http = reqwest::Client::new();
         assert!(!anchor.ensure_actor_document(&http, &did).await);
+    }
+
+    // ── P3.2c: SSRF host guard ───────────────────────────────────────────────
+
+    #[test]
+    fn url_host_guard_rejects_literal_private_and_metadata_ips() {
+        // Every range an SSRF egress guard must block. Built as the exact
+        // https URL shape the did:web / did:webvh fetch path constructs.
+        let blocked = [
+            // IPv4 loopback / unspecified.
+            "https://127.0.0.1/.well-known/did.json",
+            "https://127.13.37.42/.well-known/did.json",
+            "https://0.0.0.0/.well-known/did.json",
+            // RFC1918 private.
+            "https://10.0.0.5/.well-known/did.json",
+            "https://172.16.9.9/.well-known/did.json",
+            "https://192.168.1.1/.well-known/did.json",
+            // Link-local incl. cloud metadata.
+            "https://169.254.1.1/.well-known/did.json",
+            "https://169.254.169.254/.well-known/did.json",
+            // CGNAT 100.64/10.
+            "https://100.64.0.1/.well-known/did.json",
+            "https://100.127.255.254/.well-known/did.json",
+            // IPv6 loopback / ULA / link-local (bracketed authority).
+            "https://[::1]/.well-known/did.json",
+            "https://[fc00::1]/.well-known/did.json",
+            "https://[fd12:3456::1]/.well-known/did.json",
+            "https://[fe80::1]/.well-known/did.json",
+            // IPv4-mapped IPv6 of a private address.
+            "https://[::ffff:10.0.0.1]/.well-known/did.json",
+            "https://[::ffff:169.254.169.254]/.well-known/did.json",
+        ];
+        for url in blocked {
+            assert!(!url_host_is_safe(url), "must reject {url}");
+        }
+    }
+
+    #[test]
+    fn url_host_guard_rejects_localhost_and_dot_local() {
+        assert!(!url_host_is_safe("https://localhost/.well-known/did.json"));
+        assert!(!url_host_is_safe(
+            "https://api.localhost/.well-known/did.json"
+        ));
+        // mDNS .local (added on top of the SDK's localhost-only name check).
+        assert!(!url_host_is_safe("https://printer.local/.well-known/did.json"));
+        assert!(!url_host_is_safe("https://HOST.LOCAL/.well-known/did.json"));
+    }
+
+    #[test]
+    fn url_host_guard_rejects_non_https_scheme() {
+        // The SDK URL builders only ever emit https; a non-https URL is forged.
+        assert!(!url_host_is_safe("http://alice.example/.well-known/did.json"));
+        assert!(!url_host_is_safe(
+            "file:///etc/passwd/.well-known/did.json"
+        ));
+    }
+
+    #[test]
+    fn url_host_guard_allows_public_registered_domains() {
+        // A normal public host passes — the guard only blocks literal private
+        // IPs + localhost/.local (DNS resolution of domains is out of scope).
+        assert!(url_host_is_safe(
+            "https://alice.example/.well-known/did.json"
+        ));
+        assert!(url_host_is_safe(
+            "https://did.acroidea.com/path/did.json"
+        ));
+    }
+
+    #[tokio::test]
+    async fn ensure_actor_document_fail_closed_for_metadata_ip() {
+        // did:web:169.254.169.254 (cloud-metadata) parses as a valid DID and is
+        // allowed by the PersonalNode policy, but the SSRF guard must keep the
+        // fetch from ever reaching that address → ensure returns false and the
+        // actor never anchors. The host carries a dot so it survives the SDK's
+        // bare-IP-without-dot rejection and genuinely exercises the IP guard.
+        let anchor = ResolverDidAnchor::from_profile(
+            DeploymentProfile::PersonalNode,
+            DidResolutionCache::new(8),
+        );
+        let did = parse("did:web:169.254.169.254");
+        let http = reqwest::Client::new();
+        assert!(!anchor.ensure_actor_document(&http, &did).await);
+        assert!(anchor.resolve_did_document(&did).is_none());
+    }
+
+    #[tokio::test]
+    async fn ensure_actor_document_peeks_and_skips_fetch_when_already_ingested() {
+        // Seed the offline did:web resolver with a valid document (the offline
+        // half of a prior fetch). A second ensure must short-circuit on the
+        // peek and return true WITHOUT any network — proven by handing it a
+        // client pointed at a guaranteed-dead address that would error if used.
+        let anchor = ResolverDidAnchor::from_profile(
+            DeploymentProfile::PersonalNode,
+            DidResolutionCache::new(8),
+        );
+        let did = parse("did:web:already-ingested.example");
+        let document = DidDocument::new(did.clone(), "owner", "z6Mkpeekkey");
+        assert!(anchor.ingest_web_for_test(
+            &did,
+            web_outcome(&did, &document, "application/did+json")
+        ));
+
+        // A client whose only proxy is an unroutable address: if ensure tried
+        // to fetch, the request would fail and ensure would return false.
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(1))
+            .build()
+            .unwrap();
+        assert!(
+            anchor.ensure_actor_document(&http, &did).await,
+            "already-ingested actor must skip the fetch via peek"
+        );
+        assert!(anchor.resolve_did_document(&did).is_some());
     }
 }
