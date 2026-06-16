@@ -637,6 +637,20 @@ async fn route_inbound_call_signals(
 ) {
     let account_did = ctx.account_did.read().clone();
     let mut hub = ctx.call_signal_hub;
+    let mut did_cache = ctx.did_cache;
+
+    // Tier-2 (device-lifecycle.md §8.3): the call-signal receiver verifies the
+    // sender device key's full cross-signing chain, which needs the sender's
+    // DID document. Build a resolver-backed anchor from a snapshot of the
+    // session DID cache so the SAME authority-grade resolver / cache that login
+    // and trust UI use also governs device-key trust. The anchor back-fills
+    // resolved documents into its private cache copy; write it back afterwards
+    // so subsequent iterations reuse it.
+    let anchor = crate::did_resolver::ResolverDidAnchor::from_profile(
+        crate::did_resolver::DeploymentProfile::PersonalNode,
+        did_cache.read().clone(),
+    );
+
     for (id, body) in &response.realms {
         crate::views::call_signals::route_realm_call_signals(
             &mut hub,
@@ -644,9 +658,12 @@ async fn route_inbound_call_signals(
             body,
             &account_did,
             Some(api),
+            &anchor,
         )
         .await;
     }
+
+    *did_cache.write() = anchor.into_cache();
 }
 
 /// Apply an account subscribe response: persist projections (server-authoritatively

@@ -1289,6 +1289,7 @@ pub fn RouterView() -> Element {
                     session_boot_state,
                     navigator,
                     call_signal_hub,
+                    did_cache,
                 },
             );
         } else if !base.trim().is_empty() {
@@ -2687,6 +2688,7 @@ pub fn RouterView() -> Element {
                                     session_boot_state,
                                     navigator,
                                     call_signal_hub,
+                                    did_cache,
                                 },
                             )
                         },
@@ -2867,6 +2869,7 @@ pub fn RouterView() -> Element {
                                                         session_boot_state,
                                                         navigator,
                                                         call_signal_hub,
+                                                        did_cache,
                                                     },
                                                 );
                                             }
@@ -6535,6 +6538,12 @@ struct ConnectContext {
     /// `ck.call.signal` envelopes into it (dedup → incoming ring / per-call
     /// inbox); `CallPanel` drains it. See `crate::views::call_signals`.
     call_signal_hub: crate::views::call_signals::CallSignalHub,
+    /// Session DID-resolution cache handle. The boot sync's Tier-2 device-key
+    /// chain verification (`device-lifecycle.md` §8.3) anchors the published
+    /// PSK against the actor's DID document through a resolver backed by a
+    /// snapshot of this cache; back-fills are written back. Shared with the
+    /// SyncEngine's `did_cache` so both receive paths reuse resolved documents.
+    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
 }
 
 fn redirect_to_login(navigator: Navigator) {
@@ -7211,6 +7220,16 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // a directory cache miss resolves through `keys/query`.
                         {
                             let mut hub = ctx.call_signal_hub;
+                            // Tier-2 (device-lifecycle.md §8.3): resolver-backed
+                            // DID anchor over a snapshot of the session DID
+                            // cache, so the receiver verifies the sender device
+                            // key's full cross-signing chain (not just soland's
+                            // assertion). Cache back-fills are written back.
+                            let mut did_cache = ctx.did_cache;
+                            let anchor = crate::did_resolver::ResolverDidAnchor::from_profile(
+                                crate::did_resolver::DeploymentProfile::PersonalNode,
+                                did_cache.read().clone(),
+                            );
                             for (id, body) in &sync.realms {
                                 crate::views::call_signals::route_realm_call_signals(
                                     &mut hub,
@@ -7218,9 +7237,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     body,
                                     &canonical_actor,
                                     Some(&api),
+                                    &anchor,
                                 )
                                 .await;
                             }
+                            *did_cache.write() = anchor.into_cache();
                         }
                         let synced_timeline = {
                             // Merge encrypted bodies on read (author sidecar →

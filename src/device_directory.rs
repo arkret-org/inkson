@@ -28,13 +28,51 @@
 //! `NegativeHit`, and the receive path fail-closed drops the signal. A genuine
 //! query error (network / decode) is NOT cached so a transient failure can be
 //! retried by the next prefetch.
+//!
+//! ## Tier-2: client-side cross-signing chain verification (§8.3)
+//!
+//! Tier-1 trusts soland's assertion that `device_signing_key` is the device's
+//! authoritative verify key. Tier-2 ([`verify_tier2_chain`]) does **not**: before
+//! a key is cached / used for proof verification the client independently
+//! verifies the full cross-signing chain per `device-lifecycle.md` §5.2.1 / §8.3:
+//!
+//!   1. **DID anchoring** (done here, not by the SDK): resolve the actor's DID
+//!      document through yougen's existing resolver chain
+//!      ([`crate::did_resolver`]) and confirm `cross_signing[principal]
+//!      .principal_signing_key` (`kid` + `public_key`) equals the DID-resolved
+//!      verification method key byte-for-byte. Mismatch / unresolvable → fail.
+//!   2. **PSK→SSK→device chain**: hand the DID-anchored PSK plus the publish
+//!      payload, the device's `cross_signing_binding`, and the directory key to
+//!      the SDK primitive [`cokret_sdk::verify_device_cross_signing_chain`].
+//!   3. **Accept only on `CrossSigned`**. Missing `cross_signing` / missing
+//!      `cross_signing_binding` (incl. inception bootstrap devices) /
+//!      `Unverified` / `NeedsReverification` all map to a **negative** cache
+//!      entry — fail-closed, no Tier-1 fallback. The directory `device_signing_key`
+//!      is NEVER trusted on the server's word alone.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
 use cokret_sdk::signatures::PublicKeyMaterial;
+use cokret_sdk::{
+    CrossSigningPublishContent, DeviceId, DeviceTrustBinding, DeviceTrustState, Did, DidDocument,
+    QueryDeviceCrossSigningBinding, resolve_verification_method_key_from_document,
+};
 
 use crate::api::CokretApi;
+
+/// Resolve the DID document for an `actor` so the Tier-2 anchoring step can
+/// confirm the published PSK against the actor's current DID control set.
+///
+/// Implementations wrap yougen's authority-grade DID resolver
+/// ([`crate::did_resolver::build_default_resolver`] + `resolve_with_cache`),
+/// so the same fail-closed policy that governs login / trust UI also governs
+/// device-key trust. Returning `None` (unresolvable / disallowed method / no
+/// evidence) makes [`verify_tier2_chain`] fail-closed — exactly the §8.2 rule
+/// "missing → MUST treat as unverified".
+pub trait DidAnchor {
+    fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument>;
+}
 
 /// Positive-entry TTL: a resolved key is trusted for this long before a fresh
 /// `keys/query` is required. Bounded so a revoke that lands after the key was
@@ -162,22 +200,188 @@ fn directory_verdict(
     Some(key)
 }
 
-/// Async resolve: query soland for the `(actor, device)` directory record,
-/// update the cache (positive or negative), and return the resolved key.
+// ── Tier-2: client-side cross-signing chain verification (§8.3) ────────────
+
+/// Convert the directory `cross_signing[principal]` publish payload (the
+/// `cross-signing-publish.schema.json` counterpart [`cokret_sdk::CrossSigningPublish`])
+/// into the SDK chain-verifier input type [`CrossSigningPublishContent`]. The
+/// two are field-for-field 1:1 (soland produces one from the other by the same
+/// round-trip), so a JSON round-trip is lossless; a shape mismatch fails closed.
+fn publish_content_from_directory(
+    publish: &cokret_sdk::CrossSigningPublish,
+) -> Option<CrossSigningPublishContent> {
+    let value = serde_json::to_value(publish).ok()?;
+    serde_json::from_value(value).ok()
+}
+
+/// Convert the per-device directory `cross_signing_binding`
+/// ([`QueryDeviceCrossSigningBinding`], `alg` optional) into the SDK chain
+/// input [`DeviceTrustBinding`] (`alg` required). `alg` defaults to `EdDSA`
+/// (the v1 core signature algorithm) when the directory omits it.
+fn trust_binding_from_directory(binding: &QueryDeviceCrossSigningBinding) -> DeviceTrustBinding {
+    DeviceTrustBinding {
+        verification_method: binding.verification_method.clone(),
+        alg: binding.alg.clone().unwrap_or_else(|| "EdDSA".to_owned()),
+        ssk_generation: binding.ssk_generation,
+        signature: binding.signature.clone(),
+    }
+}
+
+/// DID-anchor the published PSK: confirm `publish.principal_signing_key`
+/// (`kid` + `public_key`) equals the verification-method key in the actor's
+/// resolved DID document, byte-for-byte (§8.3 step 1). Returns the anchored PSK
+/// key material on success, `None` on any mismatch / lookup failure.
+fn anchor_psk_against_did(
+    did_document: &DidDocument,
+    publish: &CrossSigningPublishContent,
+) -> Option<PublicKeyMaterial> {
+    let resolved =
+        resolve_verification_method_key_from_document(did_document, &publish.principal_signing_key.kid)
+            .ok()?;
+    // The published PSK public_key is a bare multibase Ed25519 key; decode both
+    // sides to raw bytes and require exact equality. This is the byte-for-byte
+    // anchoring §8.3 step 1 mandates — we do NOT trust the publish's own
+    // assertion of the PSK key; only the DID control set decides.
+    let published = PublicKeyMaterial::Ed25519Multibase {
+        value: publish.principal_signing_key.public_key.clone(),
+    };
+    if resolved.public_key.ed25519_bytes().ok()? != published.ed25519_bytes().ok()? {
+        return None;
+    }
+    Some(resolved.public_key)
+}
+
+/// Tier-2 chain verdict for one `(actor, device)` (§5.2.1 / §8.3), end to end:
+/// DID-anchor the PSK, then run the SDK PSK→SSK→device chain verifier. Returns
+/// [`DeviceTrustState::CrossSigned`] only when the whole chain holds; any
+/// failure (DID anchoring, signature, generation) maps to a non-`CrossSigned`
+/// state and the caller fail-closes.
 ///
-/// Returns `Ok(Some(key))` only for an active device with a decodable key;
-/// `Ok(None)` for revoked / absent / no-key (a negative cache entry is
-/// written); `Err` for a transport / decode failure (NOT cached, so a later
-/// prefetch retries).
+/// `device_signing_key_multibase` is the bare multibase Ed25519 key the
+/// directory exposed (the inner key of the `did:key` `device_signing_key`). It
+/// is the *same* key fed to the device-binding canonical input, closing §8.3
+/// step 5 "directory key ⇔ cross-signed key".
+pub fn verify_tier2_chain(
+    did_document: &DidDocument,
+    publish: &cokret_sdk::CrossSigningPublish,
+    binding: &QueryDeviceCrossSigningBinding,
+    actor: &Did,
+    device: &DeviceId,
+    device_signing_key_multibase: &str,
+) -> DeviceTrustState {
+    let Some(publish_content) = publish_content_from_directory(publish) else {
+        return DeviceTrustState::Unverified;
+    };
+    // §8.3 step 1: the publish's principal_id MUST be the actor we're anchoring.
+    if publish_content.principal_id.as_str() != actor.as_str() {
+        return DeviceTrustState::Unverified;
+    }
+    let Some(anchored_psk) = anchor_psk_against_did(did_document, &publish_content) else {
+        return DeviceTrustState::Unverified;
+    };
+    let trust_binding = trust_binding_from_directory(binding);
+    cokret_sdk::verify_device_cross_signing_chain(
+        &publish_content,
+        &trust_binding,
+        actor,
+        device,
+        device_signing_key_multibase,
+        &anchored_psk,
+    )
+}
+
+/// Apply the full Tier-2 acceptance gate to a `keys/query` outcome for one
+/// `(actor, device)`: read the per-device `cross_signing_binding` + the
+/// per-principal `cross_signing` publish, DID-anchor + chain-verify, and accept
+/// the directory key **only** when the chain is `CrossSigned`.
+///
+/// Returns the key to cache: `Some(key)` (positive) only on a clean
+/// `CrossSigned`; `None` (negative) for every other case — missing publish,
+/// missing binding (incl. inception bootstrap), DID anchoring failure,
+/// `Unverified` / `NeedsReverification`, or an undecodable directory key. There
+/// is no Tier-1 fallback: a present-but-unverifiable key is rejected.
+fn tier2_accepted_key(
+    outcome: &cokret_sdk::models::KeysQueryOutcome,
+    did_document: &DidDocument,
+    actor: &Did,
+    device: &DeviceId,
+) -> Option<PublicKeyMaterial> {
+    // Tier-1 facet first: a revoked / absent / no-key device is already a
+    // negative verdict regardless of Tier-2 material.
+    let directory_key = directory_verdict(outcome, actor.as_str(), device.as_str())??;
+
+    // §8.2: missing per-principal `cross_signing` OR missing per-device
+    // `cross_signing_binding` → MUST treat as unverified, fail-closed. Inception
+    // bootstrap devices (no binding) fall here on purpose (§8.3 step 3 / §5.0.1
+    // exception is deferred to a later line — do NOT relax to pass).
+    let publish = outcome.cross_signing.iter().find_map(|(did, publish)| {
+        (did.as_str() == actor.as_str()).then_some(publish)
+    })?;
+    let record = outcome
+        .device_keys
+        .iter()
+        .find(|(did, _)| did.as_str() == actor.as_str())
+        .and_then(|(_, devices)| devices.iter().find(|(dev, _)| dev.as_str() == device.as_str()))
+        .map(|(_, record)| record)?;
+    let binding = record.cross_signing_binding.as_ref()?;
+
+    // §8.3 step 5: verify the chain over the SAME bare multibase key the
+    // directory exposed (and which we will use for proof verification).
+    let multibase = directory_signing_key_multibase(record.device_signing_key.as_deref()?)?;
+    match verify_tier2_chain(did_document, publish, binding, actor, device, &multibase) {
+        DeviceTrustState::CrossSigned => Some(directory_key),
+        _ => None,
+    }
+}
+
+/// Strip the optional `did:key:` prefix from a directory `device_signing_key`,
+/// returning the bare multibase (`z…`) form that the device-binding canonical
+/// input was signed over. Returns `None` for a non-multibase value.
+fn directory_signing_key_multibase(value: &str) -> Option<String> {
+    let multibase = value.trim().strip_prefix("did:key:").unwrap_or(value.trim());
+    multibase.starts_with('z').then(|| multibase.to_owned())
+}
+
+/// Async resolve: query soland for the `(actor, device)` directory record,
+/// DID-anchor + chain-verify the cross-signing chain (Tier-2, §8.3), update the
+/// cache (positive or negative), and return the resolved key.
+///
+/// Returns `Ok(Some(key))` **only** for an active device whose full
+/// cross-signing chain verifies `CrossSigned` against the DID-anchored PSK;
+/// `Ok(None)` for revoked / absent / no-key / missing-Tier-2-material /
+/// chain-verification-failure (a negative cache entry is written, fail-closed);
+/// `Err` for a transport / decode failure (NOT cached, so a later prefetch
+/// retries).
 pub async fn resolve_device_signing_key(
     api: &CokretApi,
+    anchor: &dyn DidAnchor,
     actor: &str,
     device: &str,
 ) -> anyhow::Result<Option<PublicKeyMaterial>> {
+    let actor_did = match Did::new(actor.to_owned()) {
+        Ok(did) => did,
+        // Malformed actor DID → fail-closed negative cache.
+        Err(_) => {
+            store_entry(actor, device, None);
+            return Ok(None);
+        }
+    };
+    let device_id = match DeviceId::new(device.to_owned()) {
+        Ok(id) => id,
+        Err(_) => {
+            store_entry(actor, device, None);
+            return Ok(None);
+        }
+    };
+
     let outcome = api.query_keys(actor, device).await?;
-    // `None` (device absent) and `Some(None)` (revoked / no key) are both
-    // negative verdicts for the cache.
-    let key = directory_verdict(&outcome, actor, device).unwrap_or(None);
+
+    // DID anchoring (§8.3 step 1) needs the actor's DID document. An
+    // unresolvable actor → fail-closed (negative cache), per §8.2.
+    let key = match anchor.resolve_did_document(&actor_did) {
+        Some(did_document) => tier2_accepted_key(&outcome, &did_document, &actor_did, &device_id),
+        None => None,
+    };
     store_entry(actor, device, key.clone());
     Ok(key)
 }
@@ -186,12 +390,16 @@ pub async fn resolve_device_signing_key(
 /// members on load / sync). Pairs already covered by a fresh cache entry are
 /// skipped. Best-effort: a per-pair query error is swallowed (left uncached for
 /// retry) so one unreachable device never blocks the rest.
-pub async fn prefetch_device_keys(api: &CokretApi, pairs: &[(String, String)]) {
+pub async fn prefetch_device_keys(
+    api: &CokretApi,
+    anchor: &dyn DidAnchor,
+    pairs: &[(String, String)],
+) {
     for (actor, device) in pairs {
         if !matches!(cached_device_signing_key(actor, device), CacheLookup::Miss) {
             continue;
         }
-        let _ = resolve_device_signing_key(api, actor, device).await;
+        let _ = resolve_device_signing_key(api, anchor, actor, device).await;
     }
 }
 
@@ -446,5 +654,352 @@ mod tests {
         }))
         .unwrap();
         assert!(directory_verdict(&outcome, "did:web:nobody", TEST_DEVICE_ID).is_none());
+    }
+
+    // ── Tier-2 client cross-signing chain (§8.3) ───────────────────────────
+    //
+    // These exercise the real DID-anchoring + real SDK chain verifier over
+    // genuine Ed25519 signatures, following the SDK's own
+    // `signed_chain_fixture` construction (sdk devices/tests.rs §550+).
+
+    use cokret_sdk::{base64url_encode, CrossSigningBinding, CrossSigningKeyRecord,
+        CrossSigningPublishContent as SdkPublishContent, SignedCrossSigningKey, TypedTrustDomainId};
+    use ed25519_dalek::Signer;
+
+    const TIER2_TRUST_DOMAIN: &str = "ck:trust_domain:example.net";
+
+    /// In-memory [`DidAnchor`] backed by a fixed actor→document map.
+    struct TestAnchor {
+        documents: HashMap<String, DidDocument>,
+    }
+
+    impl DidAnchor for TestAnchor {
+        fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument> {
+            self.documents.get(actor.as_str()).cloned()
+        }
+    }
+
+    /// A fully-signed Tier-2 fixture: the actor DID document (anchoring the
+    /// published PSK), the directory `cross_signing` publish payload, the
+    /// per-device `cross_signing_binding`, and the directory `device_signing_key`
+    /// (did:key). `publish_gen` is the accepted publish generation;
+    /// `binding_gen` is the `ssk_generation` baked into the device binding —
+    /// differ them to drive the generation-comparison branches.
+    struct Tier2Fixture {
+        actor: Did,
+        device: DeviceId,
+        document: DidDocument,
+        publish: cokret_sdk::CrossSigningPublish,
+        binding: QueryDeviceCrossSigningBinding,
+        device_signing_key: String,
+    }
+
+    fn build_tier2_fixture(
+        actor_str: &str,
+        device_str: &str,
+        psk_seed: u8,
+        ssk_seed: u8,
+        device_seed: u8,
+        publish_gen: u64,
+        binding_gen: u64,
+    ) -> Tier2Fixture {
+        let actor = Did::new(actor_str.to_owned()).unwrap();
+        let device = DeviceId::new(device_str.to_owned()).unwrap();
+
+        let psk = SigningKey::from_bytes(&[psk_seed; 32]);
+        let ssk = SigningKey::from_bytes(&[ssk_seed; 32]);
+        let device_key = SigningKey::from_bytes(&[device_seed; 32]);
+
+        let psk_multibase = crate::did_key::encode_ed25519_did_key_multibase(&psk.verifying_key());
+        let ssk_multibase = crate::did_key::encode_ed25519_did_key_multibase(&ssk.verifying_key());
+        let device_multibase =
+            crate::did_key::encode_ed25519_did_key_multibase(&device_key.verifying_key());
+        let device_signing_key = format!("did:key:{device_multibase}");
+
+        let psk_kid = format!("{actor_str}#ck_principal_signing_v1");
+        let ssk_kid = format!("{actor_str}#ck_self_signing_v1");
+        let usk_kid = format!("{actor_str}#ck_user_signing_v1");
+
+        // DID document anchoring the PSK kid → PSK public key (multibase).
+        let document = DidDocument::new(actor.clone(), psk_kid.clone(), psk_multibase.clone());
+
+        // Build the SDK publish content so we compute the PSK→SSK binding
+        // signature with the exact canonical input the verifier reconstructs.
+        let mut content = SdkPublishContent {
+            principal_id: actor.clone(),
+            trust_domain: TypedTrustDomainId::new(TIER2_TRUST_DOMAIN).unwrap(),
+            principal_signing_key: CrossSigningKeyRecord {
+                kid: psk_kid.clone(),
+                alg: "EdDSA".to_owned(),
+                public_key: psk_multibase.clone(),
+                key_format: "multibase".to_owned(),
+            },
+            self_signing_key: SignedCrossSigningKey {
+                key: CrossSigningKeyRecord {
+                    kid: ssk_kid.clone(),
+                    alg: "EdDSA".to_owned(),
+                    public_key: ssk_multibase.clone(),
+                    key_format: "multibase".to_owned(),
+                },
+                binding: CrossSigningBinding {
+                    verification_method: psk_kid.clone(),
+                    alg: "EdDSA".to_owned(),
+                    signature: String::new(),
+                },
+            },
+            user_signing_key: SignedCrossSigningKey {
+                key: CrossSigningKeyRecord {
+                    kid: usk_kid,
+                    alg: "EdDSA".to_owned(),
+                    // Distinct from SSK (publish validation requires it).
+                    public_key: format!("{ssk_multibase}USK"),
+                    key_format: "multibase".to_owned(),
+                },
+                binding: CrossSigningBinding {
+                    verification_method: psk_kid.clone(),
+                    alg: "EdDSA".to_owned(),
+                    signature: "unused".to_owned(),
+                },
+            },
+            expected_previous_generation: publish_gen.saturating_sub(1),
+            generation: publish_gen,
+            issued_at: chrono::Utc::now(),
+        };
+        let ssk_input = content.self_signing_binding_input().unwrap();
+        content.self_signing_key.binding.signature = base64url_encode(psk.sign(&ssk_input).to_bytes());
+
+        // Serialize the SDK content into the artifact `CrossSigningPublish` the
+        // directory carries (1:1 field shape).
+        let publish: cokret_sdk::CrossSigningPublish =
+            serde_json::from_value(serde_json::to_value(&content).unwrap()).unwrap();
+
+        // SSK signs the device binding over the bare multibase device key
+        // (§8.3 step 5: the same key the directory exposes).
+        let device_input =
+            DeviceTrustBinding::canonical_input(&actor, &device, &device_multibase, binding_gen)
+                .unwrap();
+        let binding = QueryDeviceCrossSigningBinding {
+            verification_method: ssk_kid,
+            alg: Some("EdDSA".to_owned()),
+            ssk_generation: binding_gen,
+            signature: base64url_encode(ssk.sign(&device_input).to_bytes()),
+        };
+
+        Tier2Fixture {
+            actor,
+            device,
+            document,
+            publish,
+            binding,
+            device_signing_key,
+        }
+    }
+
+    impl Tier2Fixture {
+        fn device_multibase(&self) -> String {
+            directory_signing_key_multibase(&self.device_signing_key).unwrap()
+        }
+
+        /// Build a `keys/query` outcome carrying this fixture's directory facet
+        /// + Tier-2 material for the `(actor, device)`.
+        fn outcome(&self) -> cokret_sdk::models::KeysQueryOutcome {
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {
+                    self.actor.as_str(): {
+                        self.device.as_str(): {
+                            "algorithms": {},
+                            "device_signing_key": self.device_signing_key,
+                            "device_status": "active",
+                            "cross_signing_binding": serde_json::to_value(&self.binding).unwrap(),
+                        }
+                    }
+                },
+                "cross_signing": {
+                    self.actor.as_str(): serde_json::to_value(&self.publish).unwrap(),
+                }
+            }))
+            .unwrap()
+        }
+    }
+
+    const TIER2_ACTOR: &str = "did:web:tier2-alice.example";
+    const TIER2_DEVICE: &str = "ck:device:01904100-0000-7000-8000-0000000000a1";
+
+    #[test]
+    fn tier2_well_formed_chain_is_cross_signed() {
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        let state = verify_tier2_chain(
+            &fx.document,
+            &fx.publish,
+            &fx.binding,
+            &fx.actor,
+            &fx.device,
+            &fx.device_multibase(),
+        );
+        assert_eq!(state, DeviceTrustState::CrossSigned);
+    }
+
+    #[test]
+    fn tier2_accepts_key_only_on_cross_signed() {
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        let key = tier2_accepted_key(&fx.outcome(), &fx.document, &fx.actor, &fx.device)
+            .expect("a CrossSigned chain accepts the directory key");
+        assert_eq!(
+            key.ed25519_bytes().unwrap(),
+            public_key_from_directory_value(&fx.device_signing_key)
+                .unwrap()
+                .ed25519_bytes()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn tier2_tampered_device_binding_rejected() {
+        let mut fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        let mut raw = cokret_sdk::base64url_decode(&fx.binding.signature).unwrap();
+        raw[0] ^= 0xff;
+        fx.binding.signature = base64url_encode(&raw);
+        assert_eq!(
+            verify_tier2_chain(
+                &fx.document,
+                &fx.publish,
+                &fx.binding,
+                &fx.actor,
+                &fx.device,
+                &fx.device_multibase(),
+            ),
+            DeviceTrustState::Unverified
+        );
+        // And the acceptance gate yields no key (fail-closed).
+        assert!(tier2_accepted_key(&fx.outcome(), &fx.document, &fx.actor, &fx.device).is_none());
+    }
+
+    #[test]
+    fn tier2_psk_not_matching_did_rejected() {
+        // The DID document anchors a DIFFERENT PSK than the publish carries:
+        // anchoring fails byte-comparison → Unverified, key rejected.
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        let wrong_psk = SigningKey::from_bytes(&[99u8; 32]);
+        let wrong_doc = DidDocument::new(
+            fx.actor.clone(),
+            format!("{TIER2_ACTOR}#ck_principal_signing_v1"),
+            crate::did_key::encode_ed25519_did_key_multibase(&wrong_psk.verifying_key()),
+        );
+        assert_eq!(
+            verify_tier2_chain(
+                &wrong_doc,
+                &fx.publish,
+                &fx.binding,
+                &fx.actor,
+                &fx.device,
+                &fx.device_multibase(),
+            ),
+            DeviceTrustState::Unverified
+        );
+        let outcome = fx.outcome();
+        assert!(tier2_accepted_key(&outcome, &wrong_doc, &fx.actor, &fx.device).is_none());
+    }
+
+    #[test]
+    fn tier2_did_anchoring_absent_document_fails_closed() {
+        // No DID document for the actor → resolver returns None → no key.
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        let anchor = TestAnchor {
+            documents: HashMap::new(),
+        };
+        assert!(anchor.resolve_did_document(&fx.actor).is_none());
+    }
+
+    #[test]
+    fn tier2_stale_generation_needs_reverification() {
+        // Accepted publish generation 2, device binding signed under gen 1 →
+        // cross-signing reset since → NeedsReverification (not accepted).
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 2, 1);
+        assert_eq!(
+            verify_tier2_chain(
+                &fx.document,
+                &fx.publish,
+                &fx.binding,
+                &fx.actor,
+                &fx.device,
+                &fx.device_multibase(),
+            ),
+            DeviceTrustState::NeedsReverification
+        );
+        assert!(tier2_accepted_key(&fx.outcome(), &fx.document, &fx.actor, &fx.device).is_none());
+    }
+
+    #[test]
+    fn tier2_missing_cross_signing_publish_fails_closed() {
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        // Strip the per-principal `cross_signing` publish from the outcome.
+        let mut outcome = fx.outcome();
+        outcome.cross_signing.clear();
+        assert!(tier2_accepted_key(&outcome, &fx.document, &fx.actor, &fx.device).is_none());
+    }
+
+    #[test]
+    fn tier2_missing_device_binding_fails_closed() {
+        // Inception bootstrap shape: directory key present, no
+        // `cross_signing_binding`. Tier-2 treats missing binding as Unverified
+        // (do NOT relax for bootstrap on this line).
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        let outcome: cokret_sdk::models::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
+            "device_keys": {
+                fx.actor.as_str(): {
+                    fx.device.as_str(): {
+                        "algorithms": {},
+                        "device_signing_key": fx.device_signing_key,
+                        "device_status": "active"
+                        // no cross_signing_binding
+                    }
+                }
+            },
+            "cross_signing": {
+                fx.actor.as_str(): serde_json::to_value(&fx.publish).unwrap(),
+            }
+        }))
+        .unwrap();
+        assert!(tier2_accepted_key(&outcome, &fx.document, &fx.actor, &fx.device).is_none());
+    }
+
+    #[test]
+    fn tier2_revoked_device_never_anchors() {
+        // Revoked status → Tier-1 facet already negative; Tier-2 never even
+        // reaches the chain. No key regardless of valid Tier-2 material.
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        let outcome: cokret_sdk::models::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
+            "device_keys": {
+                fx.actor.as_str(): {
+                    fx.device.as_str(): {
+                        "algorithms": {},
+                        "device_status": "revoked",
+                        "cross_signing_binding": serde_json::to_value(&fx.binding).unwrap(),
+                    }
+                }
+            },
+            "cross_signing": {
+                fx.actor.as_str(): serde_json::to_value(&fx.publish).unwrap(),
+            }
+        }))
+        .unwrap();
+        assert!(tier2_accepted_key(&outcome, &fx.document, &fx.actor, &fx.device).is_none());
+    }
+
+    #[test]
+    fn tier2_anchor_drives_resolve_to_positive_or_negative() {
+        // End-to-end through the TestAnchor: a present, well-formed document
+        // → key accepted; the SAME outcome with no document → fail-closed.
+        let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
+        let with_doc = TestAnchor {
+            documents: HashMap::from([(fx.actor.as_str().to_owned(), fx.document.clone())]),
+        };
+        let resolved = with_doc.resolve_did_document(&fx.actor).unwrap();
+        assert!(tier2_accepted_key(&fx.outcome(), &resolved, &fx.actor, &fx.device).is_some());
+
+        let without = TestAnchor {
+            documents: HashMap::new(),
+        };
+        assert!(without.resolve_did_document(&fx.actor).is_none());
     }
 }

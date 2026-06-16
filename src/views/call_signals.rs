@@ -283,6 +283,7 @@ pub async fn route_realm_call_signals(
     body: &Value,
     local_actor: &str,
     api: Option<&CokretApi>,
+    did_anchor: &dyn crate::device_directory::DidAnchor,
 ) {
     for decoded in decode_realm_call_signals(realm_id, body) {
         // Self-echo: skip verification + routing entirely (we trust our own
@@ -312,6 +313,7 @@ pub async fn route_realm_call_signals(
                     // First inbound call: resolve now so the ring is not lost.
                     if let Ok(Some(key)) = crate::device_directory::resolve_device_signing_key(
                         api,
+                        did_anchor,
                         &decoded.sender_actor,
                         &decoded.sender_device,
                     )
@@ -326,6 +328,7 @@ pub async fn route_realm_call_signals(
                     // next frame for this device can be verified inline.
                     let _ = crate::device_directory::resolve_device_signing_key(
                         api,
+                        did_anchor,
                         &decoded.sender_actor,
                         &decoded.sender_device,
                     )

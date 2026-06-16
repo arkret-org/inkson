@@ -127,6 +127,53 @@ pub fn verify_principal(
     Ok(doc)
 }
 
+/// Resolver-backed [`crate::device_directory::DidAnchor`] for the Tier-2
+/// device-key cross-signing chain (`device-lifecycle.md` §8.3 step 1).
+///
+/// Wraps a [`CompositeDidResolver`] + a [`DidResolutionCache`] so the device
+/// directory's DID-anchoring step reuses the *same* authority-grade resolution
+/// path as login / coauth (cache-first via [`resolve_with_cache`], fail-closed
+/// on policy / unresolved). The cache is held behind a [`RefCell`] so the
+/// `&self` [`crate::device_directory::DidAnchor`] trait can still back-fill
+/// resolved documents; callers reclaim the (possibly grown) cache via
+/// [`ResolverDidAnchor::into_cache`] to persist it back into their signal.
+pub struct ResolverDidAnchor {
+    resolver: CompositeDidResolver,
+    cache: std::cell::RefCell<DidResolutionCache>,
+}
+
+impl ResolverDidAnchor {
+    /// Build an anchor from a resolver and a (typically signal-snapshotted)
+    /// cache. The resolver MUST already carry whatever document / key-log
+    /// evidence is needed to resolve the actors in question; absent evidence,
+    /// resolution fails closed and the device key is rejected.
+    pub fn new(resolver: CompositeDidResolver, cache: DidResolutionCache) -> Self {
+        Self {
+            resolver,
+            cache: std::cell::RefCell::new(cache),
+        }
+    }
+
+    /// Build an anchor for `profile` with a fresh default resolver chain and a
+    /// snapshot of `cache`.
+    pub fn from_profile(profile: DeploymentProfile, cache: DidResolutionCache) -> Self {
+        Self::new(build_default_resolver(profile), cache)
+    }
+
+    /// Reclaim the (possibly back-filled) cache so the caller can write it
+    /// back into its `Signal<DidResolutionCache>`.
+    pub fn into_cache(self) -> DidResolutionCache {
+        self.cache.into_inner()
+    }
+}
+
+impl crate::device_directory::DidAnchor for ResolverDidAnchor {
+    fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument> {
+        let mut cache = self.cache.borrow_mut();
+        resolve_with_cache(&self.resolver, &mut cache, actor, Utc::now()).ok()
+    }
+}
+
 /// Y1:以缓存为先的 authority 解析辅助。
 ///
 /// 这是 authority 调用点(`verify_principal` 之前)应当走的入口:
