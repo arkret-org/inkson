@@ -24,7 +24,7 @@
 /// §8.1`). Re-exported from the SDK so the renderer pins exactly one value.
 pub use cokret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use cokret_sdk::{
-    CallId, CallMediaDesiredMedia, CallMediaTokenExchangeOutcome,
+    CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
     CallMediaTokenExchangeRequestBody, DeviceId, Did, FrameKeyContext, IceConfig,
     MediaIceConfigRequestBody, MediaIceMode, MediaServiceAnchors, MlsExporterSource, RealmId,
     call_media_token_exchange, derive_frame_key, verify_call_media_token_outcome,
@@ -265,6 +265,8 @@ pub struct JoinedMediaSession {
     /// SFU backend type (`livekit` / `mediasoup` / …) — already checked
     /// against [`ALLOWED_FOCUS_TYPES`].
     pub backend_type: String,
+    /// Authoritative focus id echoed by the token issuer.
+    pub focus_id: String,
     /// Backend WebSocket connect URL (e.g. LiveKit `wss://…`).
     pub connect_url: String,
     /// Opaque backend join token (LiveKit JWT, etc.).
@@ -272,6 +274,10 @@ pub struct JoinedMediaSession {
     /// SFU-local participant identity, cross-checked against
     /// `ck.call.state.participants[]` on `ParticipantConnected`.
     pub participant_identity: String,
+    /// Token issuer's signed tuple for the local participant. The call
+    /// controller writes this into `ck.call.state.participants[]` before
+    /// connecting the SFU so remote streams have a durable roster to check.
+    pub participant_binding: CallMediaParticipantBinding,
     /// Verified ICE configuration (STUN/TURN + force_turn + ttl).
     pub ice_config: IceConfig,
     /// 32-byte SFrame frame key derived from the MLS exporter
@@ -348,8 +354,10 @@ pub async fn join_call_media(
 
     Ok(JoinedMediaSession {
         backend_type: outcome.backend_type,
+        focus_id: outcome.focus_id,
         connect_url: outcome.connect_url,
         backend_token: outcome.backend_token,
+        participant_binding: outcome.participant_binding,
         participant_identity: verification.participant_identity,
         ice_config,
         frame_key,

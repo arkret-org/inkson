@@ -785,14 +785,13 @@ impl CoauthApi {
     /// Returns a structured [`SessionGrantRevokeOutcome`] so the durable-logout
     /// retry can distinguish two cases that look alike at the HTTP layer:
     ///
-    /// * **terminated** (2xx, or a 404 / `grant_already_consumed` /
-    ///   `session_logged_out` / `session_grant_not_found` envelope) — the grant
-    ///   chain is provably gone; the caller MAY clear its journal.
-    /// * **failure** (any other 4xx — `device_proof_required`, an invalid DPoP
-    ///   proof, a bad body, an `audience_mismatch` — or any 5xx / transport
-    ///   error) — the server did NOT terminate anything; the caller MUST keep
-    ///   the journal and retry. This is the key fix over string-matching the
-    ///   raw error: a 400 caused by a malformed proof is no longer mistaken for
+    /// * **terminated** (2xx, or a 404 / `grant_already_consumed` / `session_logged_out` /
+    ///   `session_grant_not_found` envelope) — the grant chain is provably gone; the caller MAY
+    ///   clear its journal.
+    /// * **failure** (any other 4xx — `device_proof_required`, an invalid DPoP proof, a bad body,
+    ///   an `audience_mismatch` — or any 5xx / transport error) — the server did NOT terminate
+    ///   anything; the caller MUST keep the journal and retry. This is the key fix over
+    ///   string-matching the raw error: a 400 caused by a malformed proof is no longer mistaken for
     ///   "already revoked".
     pub async fn revoke_session_grant(
         &self,

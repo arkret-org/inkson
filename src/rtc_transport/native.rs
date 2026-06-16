@@ -356,9 +356,32 @@ mod tests {
     fn session() -> JoinedMediaSession {
         JoinedMediaSession {
             backend_type: "livekit".to_owned(),
+            focus_id: "fra-1".to_owned(),
             connect_url: "wss://livekit.example".to_owned(),
             backend_token: "jwt".to_owned(),
             participant_identity: "ck:rtc_participant:self".to_owned(),
+            participant_binding: cokret_sdk::CallMediaParticipantBinding {
+                scheme: cokret_sdk::PARTICIPANT_BINDING_SCHEMA.to_owned(),
+                sig: "sig".to_owned(),
+                issuer_kid: "did:web:media.example#key-1".to_owned(),
+                realm_id: cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-9b64700c6ee8")
+                    .unwrap(),
+                call_id: cokret_sdk::CallId::new("ck:call:0196441c-0000-7000-8000-000000000000")
+                    .unwrap(),
+                focus_id: "fra-1".to_owned(),
+                actor_id: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
+                device_id: cokret_sdk::DeviceId::new(
+                    "ck:device:01904100-0000-7000-8000-000000000005",
+                )
+                .unwrap(),
+                participant_identity: "ck:rtc_participant:self".to_owned(),
+                issued_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+                expires_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:05:00Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+            },
             ice_config: ice_config(),
             frame_key: vec![7u8; 32],
             desired_media: DesiredMedia::audio_video(),

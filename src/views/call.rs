@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use dioxus::prelude::*;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
 use crate::media::rtc::{DesiredMedia, JoinedMediaSession, MediaJoinRequest, RtcClientError};
@@ -239,13 +239,6 @@ pub fn CallPanel(
             let realm_id = active_realm();
             let api_token = token();
             let want_video = want_video_signal();
-            let (media_dids, realm_mls_snapshot) = {
-                let store = state_store.read();
-                (
-                    media_service_dids(&store.load(), &realm_id),
-                    store.mls_snapshot_for(&realm_id),
-                )
-            };
 
             let peers: Vec<String> = match mode {
                 CallMode::P2p => vec![peer_input().trim().to_owned()]
@@ -260,36 +253,47 @@ pub fn CallPanel(
             } else {
                 active_call_id()
             };
+            let (media_dids, focus_id, known_participant_identities, realm_mls_snapshot) = {
+                let store = state_store.read();
+                let snapshot = store.load();
+                let (media_dids, focus_id) = media_service_selection(&snapshot, &realm_id);
+                (
+                    media_dids,
+                    focus_id,
+                    call_state_participant_identities(&snapshot, &realm_id, &call),
+                    store.mls_snapshot_for(&realm_id),
+                )
+            };
             active_call_id.set(call.clone());
             call_seq.set(0);
             participants.set(build_roster(&actor, &peers));
             stage.set(CallStage::OutgoingRinging);
             status.set("placing call".to_owned());
             last_error.set(String::new());
-
-            // MEDIA-2 expected roster (durable participant identities) used to
-            // cross-check the SFU's `ParticipantConnected` events fail-closed.
-            let expected = expected_participant_set(&peers, &actor);
+            let invite_peers = peers.clone();
 
             spawn(async move {
                 // 1) Invite signal opens the call (ephemeral `ck.call.signal`).
-                let invite_data = json!({ "participants": peers, "video": want_video });
-                if let Err(err) = emit_signal(
-                    &base,
-                    &api_token,
-                    &realm_id,
-                    &call,
-                    &actor,
-                    &device,
-                    "invite",
-                    1,
-                    invite_data,
-                )
-                .await
-                {
-                    last_error.set(format!("invite failed: {err}"));
+                if matches!(mode, CallMode::P2p) {
+                    let invite_data =
+                        json!({ "participants": invite_peers.clone(), "video": want_video });
+                    if let Err(err) = emit_signal(
+                        &base,
+                        &api_token,
+                        &realm_id,
+                        &call,
+                        &actor,
+                        &device,
+                        "invite",
+                        1,
+                        invite_data,
+                    )
+                    .await
+                    {
+                        last_error.set(format!("invite failed: {err}"));
+                    }
+                    call_seq.set(1);
                 }
-                call_seq.set(1);
 
                 // 2) Join the media plane (token + ICE + SFrame key).
                 let join = MediaJoinRequest {
@@ -297,7 +301,7 @@ pub fn CallPanel(
                     call_id: call.clone(),
                     actor_id: actor.clone(),
                     device_id: device.clone(),
-                    focus_id: default_focus_id(&media_dids),
+                    focus_id: focus_id.clone(),
                     epoch_id: 0,
                     desired_media: if want_video {
                         DesiredMedia::audio_video()
@@ -327,6 +331,44 @@ pub fn CallPanel(
                         }
                         match mode {
                             CallMode::Sfu => {
+                                if let Err(err) = submit_call_state_participant(
+                                    &base,
+                                    &api_token,
+                                    &realm_id,
+                                    &call,
+                                    &actor,
+                                    &device,
+                                    "connecting",
+                                    "sfu",
+                                    &session,
+                                )
+                                .await
+                                {
+                                    last_error.set(format!("call state failed: {err}"));
+                                    stage.set(CallStage::Ended);
+                                    return;
+                                }
+                                let invite_data = json!({ "participants": invite_peers.clone(), "video": want_video });
+                                if let Err(err) = emit_signal(
+                                    &base,
+                                    &api_token,
+                                    &realm_id,
+                                    &call,
+                                    &actor,
+                                    &device,
+                                    "invite",
+                                    1,
+                                    invite_data,
+                                )
+                                .await
+                                {
+                                    last_error.set(format!("invite failed: {err}"));
+                                }
+                                call_seq.set(1);
+                                let expected = expected_participant_set(
+                                    &known_participant_identities,
+                                    &session.participant_identity,
+                                );
                                 // MEDIA-2: seed the durable participant roster so
                                 // the LiveKit `ParticipantConnected` callback can
                                 // cross-check SFU identities fail-closed.
@@ -336,6 +378,11 @@ pub fn CallPanel(
                                     stage.set(CallStage::Ended);
                                     return;
                                 }
+                                let _ = submit_call_state_participant(
+                                    &base, &api_token, &realm_id, &call, &actor, &device, "active",
+                                    "sfu", &session,
+                                )
+                                .await;
                                 stage.set(CallStage::Active);
                                 status.set(format!("joined SFU room ({})", session.backend_type));
                             }
@@ -502,38 +549,35 @@ pub fn CallPanel(
                                         let realm_id = active_realm();
                                         let call = active_call_id();
                                         let api_token = token();
-                                        let (media_dids, realm_mls_snapshot) = {
+                                        let (
+                                            media_dids,
+                                            focus_id,
+                                            known_participant_identities,
+                                            realm_mls_snapshot,
+                                        ) = {
                                             let store = state_store.read();
+                                            let snapshot = store.load();
+                                            let (media_dids, focus_id) =
+                                                media_service_selection(&snapshot, &realm_id);
                                             (
-                                                media_service_dids(&store.load(), &realm_id),
+                                                media_dids,
+                                                focus_id,
+                                                call_state_participant_identities(
+                                                    &snapshot, &realm_id, &call,
+                                                ),
                                                 store.mls_snapshot_for(&realm_id),
                                             )
                                         };
                                         let want_video = want_video_signal();
-                                        // MEDIA-2 expected roster from the durable
-                                        // participant projection, captured before
-                                        // the async move.
-                                        let expected: BTreeSet<String> = participants()
-                                            .iter()
-                                            .map(|p| p.actor_id.clone())
-                                            .collect();
                                         stage.set(CallStage::Connecting);
                                         status.set("answering".to_owned());
                                         spawn(async move {
-                                            // Multi-device: the first device to
-                                            // emit `answer` wins; the rest stop
-                                            // ringing on `answered_elsewhere`.
-                                            let _ = emit_signal(
-                                                &base, &api_token, &realm_id, &call, &actor,
-                                                &device, "answer", 1, json!({ "accepted": true }),
-                                            )
-                                            .await;
                                             let join = MediaJoinRequest {
                                                 realm_id: realm_id.clone(),
                                                 call_id: call.clone(),
                                                 actor_id: actor.clone(),
                                                 device_id: device.clone(),
-                                                focus_id: default_focus_id(&media_dids),
+                                                focus_id: focus_id.clone(),
                                                 epoch_id: 0,
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
                                                 media_service_dids: media_dids,
@@ -549,13 +593,68 @@ pub fn CallPanel(
                                             .await
                                             {
                                                 Ok((session, shared)) => {
+                                                    if let Err(err) = install_and_capture(&shared, &session) {
+                                                        last_error.set(media_error_label(err));
+                                                        stage.set(CallStage::Ended);
+                                                        return;
+                                                    }
+                                                    if let Err(err) = submit_call_state_participant(
+                                                        &base,
+                                                        &api_token,
+                                                        &realm_id,
+                                                        &call,
+                                                        &actor,
+                                                        &device,
+                                                        "connecting",
+                                                        "sfu",
+                                                        &session,
+                                                    )
+                                                    .await
+                                                    {
+                                                        last_error.set(format!(
+                                                            "call state failed: {err}"
+                                                        ));
+                                                        stage.set(CallStage::Ended);
+                                                        return;
+                                                    }
+                                                    // Multi-device: the first device to
+                                                    // emit `answer` wins; the rest stop
+                                                    // ringing on `answered_elsewhere`.
+                                                    let _ = emit_signal(
+                                                        &base,
+                                                        &api_token,
+                                                        &realm_id,
+                                                        &call,
+                                                        &actor,
+                                                        &device,
+                                                        "answer",
+                                                        1,
+                                                        json!({ "accepted": true }),
+                                                    )
+                                                    .await;
+                                                    let expected = expected_participant_set(
+                                                        &known_participant_identities,
+                                                        &session.participant_identity,
+                                                    );
                                                     shared
                                                         .borrow_mut()
                                                         .set_expected_participants(&expected);
-                                                    let connected = install_and_capture(&shared, &session)
-                                                        .and_then(|()| shared.borrow_mut().connect_sfu(&session));
-                                                    match connected {
+                                                    let connect_result =
+                                                        { shared.borrow_mut().connect_sfu(&session) };
+                                                    match connect_result {
                                                         Ok(()) => {
+                                                            let _ = submit_call_state_participant(
+                                                                &base,
+                                                                &api_token,
+                                                                &realm_id,
+                                                                &call,
+                                                                &actor,
+                                                                &device,
+                                                                "active",
+                                                                "sfu",
+                                                                &session,
+                                                            )
+                                                            .await;
                                                             transport_handle.set(Some(shared));
                                                             stage.set(CallStage::Active);
                                                             status.set("connected".to_owned());
@@ -1075,6 +1174,53 @@ fn install_and_capture(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn submit_call_state_participant(
+    base: &str,
+    api_token: &str,
+    realm_id: &str,
+    call_id: &str,
+    actor: &str,
+    device: &str,
+    state: &str,
+    mode: &str,
+    session: &JoinedMediaSession,
+) -> Result<(), String> {
+    let participant_binding = serde_json::to_value(&session.participant_binding)
+        .map_err(|err| format!("participant_binding serialize failed: {err}"))?;
+    let desired = session.desired_media;
+    let participant = json!({
+        "actor_id": actor,
+        "device_id": device,
+        "joined_at": crate::clock::now_rfc3339_secs(),
+        "foci_preferred": [session.focus_id.clone()],
+        "participant_identity": session.participant_identity.clone(),
+        "participant_binding": participant_binding,
+        "media": {
+            "audio": desired.audio,
+            "video": desired.video,
+            "screen": desired.screen,
+        },
+    });
+    let body = json!({
+        "call_id": call_id,
+        "state": state,
+        "mode": mode,
+        "session_focus": session.focus_id.clone(),
+        "participants": [participant],
+    });
+    let op = crate::operation::OperationBuilder::new(realm_id, actor, "ck.call.state")
+        .target_ref(call_id)
+        .body(body)
+        .build("yougen");
+    with_authed_api(base, api_token.to_owned(), move |api| async move {
+        api.submit_event_envelope(&op).await?;
+        Ok(())
+    })
+    .await
+    .map_err(|err| err.display())
+}
+
 /// Drain and relay any local SDP/ICE signaling produced by the transport.
 async fn relay_local_signals(
     transport: &SharedTransport,
@@ -1505,36 +1651,56 @@ fn media_error_label(err: RtcClientError) -> String {
     format!("call failed: {} ({})", err.as_wire(), err.i18n_key())
 }
 
-/// Derive the realm's anchored media-service DIDs from local state. The
-/// `ck.realm.media_service` projection lands on `raw_operations`; until the
-/// projection is hydrated this returns the realm's own service DID heuristic
-/// so the anchor set is non-empty (fail-closed on a truly empty set is
-/// handled by `MediaJoinRequest::anchors`).
-fn media_service_dids(state: &crate::local_state::ClientLocalState, realm_id: &str) -> Vec<String> {
+fn operation_body(payload: &Value) -> &Value {
+    payload
+        .get("body")
+        .or_else(|| payload.get("payload"))
+        .unwrap_or(payload)
+}
+
+/// Derive the realm's anchored media-service DIDs and preferred focus from
+/// the local `ck.realm.media_service` projection.
+fn media_service_selection(
+    state: &crate::local_state::ClientLocalState,
+    realm_id: &str,
+) -> (Vec<String>, String) {
     let mut dids = BTreeSet::new();
+    let mut focus_ids = Vec::<String>::new();
     for record in &state.raw_operations {
         let kind = record
             .payload
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind == "ck.realm.media_service"
-            && record.realm_id.as_deref() == Some(realm_id)
-            && let Some(service_id) = record
-                .payload
-                .get("body")
-                .and_then(|b| b.get("service_id"))
-                .and_then(|v| v.as_str())
-        {
+        if kind != "ck.realm.media_service" || record.realm_id.as_deref() != Some(realm_id) {
+            continue;
+        }
+        let body = operation_body(&record.payload);
+        if let Some(service_id) = body.get("service_id").and_then(|v| v.as_str()) {
             dids.insert(service_id.to_owned());
         }
+        if let Some(foci) = body.get("foci").and_then(|v| v.as_array()) {
+            for focus in foci {
+                let Some(focus_id) = focus.get("focus_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if !focus_id.trim().is_empty() && !focus_ids.iter().any(|known| known == focus_id) {
+                    focus_ids.push(focus_id.to_owned());
+                }
+            }
+        }
     }
-    dids.into_iter().collect()
+    let media_dids: Vec<String> = dids.into_iter().collect();
+    let focus_id = focus_ids
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| default_focus_id(&media_dids));
+    (media_dids, focus_id)
 }
 
-/// Pick the focus id from the anchored service set. The focus selection is
-/// part of the `ck.realm.media_service.foci[]` projection; absent a richer
-/// projection the first service DID's host segment seeds a stable focus id.
+/// Fallback used only before the media-service projection is hydrated. A
+/// real media join still fails closed when the anchored issuer DID set is
+/// empty.
 fn default_focus_id(media_dids: &[String]) -> String {
     media_dids
         .first()
@@ -1554,16 +1720,53 @@ fn participant_list_from_input(input: &str) -> Vec<String> {
         .collect()
 }
 
-/// Build the MEDIA-2 expected-participant identity set from the durable
-/// call roster (`actor` + invited `peers`). The SFU's asynchronous
-/// `ParticipantConnected` events are cross-checked fail-closed against this
-/// set before any remote stream is surfaced.
-fn expected_participant_set(peers: &[String], actor: &str) -> BTreeSet<String> {
-    std::iter::once(actor.trim())
-        .chain(peers.iter().map(|p| p.trim()))
-        .filter(|id| !id.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
+fn call_state_participant_identities(
+    state: &crate::local_state::ClientLocalState,
+    realm_id: &str,
+    call_id: &str,
+) -> BTreeSet<String> {
+    let mut identities = BTreeSet::new();
+    for record in &state.raw_operations {
+        let kind = record
+            .payload
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if kind != "ck.call.state" || record.realm_id.as_deref() != Some(realm_id) {
+            continue;
+        }
+        let body = operation_body(&record.payload);
+        if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
+            continue;
+        }
+        let Some(participants) = body.get("participants").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for participant in participants {
+            if let Some(identity) = participant
+                .get("participant_identity")
+                .and_then(|v| v.as_str())
+                && !identity.trim().is_empty()
+            {
+                identities.insert(identity.to_owned());
+            }
+        }
+    }
+    identities
+}
+
+/// Build the MEDIA-2 expected-participant identity set from durable call
+/// state, seeding the local token-exchange identity before the state sync
+/// loop has replayed our own write.
+fn expected_participant_set(
+    durable_identities: &BTreeSet<String>,
+    local_participant_identity: &str,
+) -> BTreeSet<String> {
+    let mut expected = durable_identities.clone();
+    if !local_participant_identity.trim().is_empty() {
+        expected.insert(local_participant_identity.to_owned());
+    }
+    expected
 }
 
 fn build_roster(actor: &str, peers: &[String]) -> Vec<CallParticipant> {
@@ -1645,5 +1848,68 @@ mod tests {
             "media.example"
         );
         assert_eq!(default_focus_id(&[]), "default");
+    }
+
+    #[test]
+    fn media_service_selection_reads_declared_focus() {
+        let mut state = crate::local_state::ClientLocalState::default();
+        state
+            .raw_operations
+            .push(crate::local_state::RawOperationRecord {
+                operation_id: "op-1".to_owned(),
+                realm_id: Some("ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "kind": "ck.realm.media_service",
+                    "body": {
+                        "service_id": "did:web:media.example",
+                        "foci": [
+                            {"focus_id": "fra-1", "type": "livekit"},
+                            {"focus_id": "us-east-1", "type": "livekit"}
+                        ]
+                    }
+                }),
+            });
+        let (dids, focus_id) =
+            media_service_selection(&state, "ck:realm:01904100-0000-7000-8000-9b64700c6ee8");
+        assert_eq!(dids, vec!["did:web:media.example"]);
+        assert_eq!(focus_id, "fra-1");
+    }
+
+    #[test]
+    fn call_state_participant_identities_read_sfu_handles() {
+        let mut state = crate::local_state::ClientLocalState::default();
+        state.raw_operations.push(crate::local_state::RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ck.call.state",
+                "body": {
+                    "call_id": "ck:call:0196441c-0000-7000-8000-000000000000",
+                    "state": "connecting",
+                    "participants": [
+                        {"actor_id": "did:web:alice.example", "participant_identity": "ck:rtc_participant:alice"}
+                    ]
+                }
+            }),
+        });
+        let identities = call_state_participant_identities(
+            &state,
+            "ck:realm:01904100-0000-7000-8000-9b64700c6ee8",
+            "ck:call:0196441c-0000-7000-8000-000000000000",
+        );
+        assert!(identities.contains("ck:rtc_participant:alice"));
+        assert!(!identities.contains("did:web:alice.example"));
+    }
+
+    #[test]
+    fn expected_participant_set_uses_rtc_identities() {
+        let mut durable = BTreeSet::new();
+        durable.insert("ck:rtc_participant:remote".to_owned());
+        let expected = expected_participant_set(&durable, "ck:rtc_participant:self");
+        assert!(expected.contains("ck:rtc_participant:self"));
+        assert!(expected.contains("ck:rtc_participant:remote"));
+        assert!(!expected.contains("did:web:alice.example"));
     }
 }

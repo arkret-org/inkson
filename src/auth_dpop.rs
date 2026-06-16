@@ -419,8 +419,7 @@ mod tests {
         // handle must mint proofs under the same cnf.jkt as the original.
         let mut store = isolated_store("seed-roundtrip");
         let original = ensure_device_key(&mut store).unwrap();
-        let rebuilt =
-            device_handle_from_seed(&original.seed_b64(), original.jkt()).unwrap();
+        let rebuilt = device_handle_from_seed(&original.seed_b64(), original.jkt()).unwrap();
         assert_eq!(rebuilt.jkt(), original.jkt());
     }
 

@@ -283,16 +283,14 @@ const DID_WEBVH_MAX_LOG_BYTES: usize = DID_WEB_MAX_DOCUMENT_BYTES * 32;
 /// URL. Returns `false` (caller fails closed, does **not** fetch) when the
 /// URL's host is unsafe to reach from a client:
 ///
-/// - a **literal IP** in non-public space: IPv4 loopback `127.0.0.0/8`,
-///   unspecified `0.0.0.0`, private `10/8` + `172.16/12` + `192.168/16`,
-///   link-local `169.254/16` (incl. the `169.254.169.254` cloud-metadata
-///   endpoint), CGNAT `100.64/10`; IPv6 `::1`, unique-local `fc00::/7`,
-///   link-local `fe80::/10`, and any IPv4-mapped form of the above. The IP
-///   classification is delegated to the SDK's [`host_is_safe_for_outbound`]
-///   (the shared STA-05-001 egress blocklist) so yougen and the SDK never
-///   drift on which ranges count as private.
-/// - bare `localhost` / `*.localhost` (handled by the SDK helper) and any
-///   host ending in `.local` (mDNS — added here on top of the SDK helper).
+/// - a **literal IP** in non-public space: IPv4 loopback `127.0.0.0/8`, unspecified `0.0.0.0`,
+///   private `10/8` + `172.16/12` + `192.168/16`, link-local `169.254/16` (incl. the
+///   `169.254.169.254` cloud-metadata endpoint), CGNAT `100.64/10`; IPv6 `::1`, unique-local
+///   `fc00::/7`, link-local `fe80::/10`, and any IPv4-mapped form of the above. The IP
+///   classification is delegated to the SDK's [`host_is_safe_for_outbound`] (the shared STA-05-001
+///   egress blocklist) so yougen and the SDK never drift on which ranges count as private.
+/// - bare `localhost` / `*.localhost` (handled by the SDK helper) and any host ending in `.local`
+///   (mDNS — added here on top of the SDK helper).
 ///
 /// Only `https` is accepted; the SDK URL builders only ever emit `https://`,
 /// so a non-https scheme here means a malformed/forged URL and is rejected.
@@ -382,7 +380,10 @@ async fn fetch_did_bytes(
 /// The URL helper only ever yields `https://…/did.json`, so plaintext hosts are
 /// rejected by construction; the SDK `insert_from_https_response` re-validates
 /// the URL, content-type and document `id`.
-async fn fetch_did_web_document(http: &reqwest::Client, did: &Did) -> Option<DidWebDocumentOutcome> {
+async fn fetch_did_web_document(
+    http: &reqwest::Client,
+    did: &Did,
+) -> Option<DidWebDocumentOutcome> {
     let url = DidWebResolver::document_url(did).ok()?;
     let (content_type, body) = fetch_did_bytes(http, &url, DID_WEB_MAX_DOCUMENT_BYTES).await?;
     Some(DidWebDocumentOutcome {
@@ -820,8 +821,9 @@ mod tests {
 
     // ── P3.2b: anchor fetch + ingest of did:web documents ────────────────────
 
-    use crate::device_directory::DidAnchor as _;
     use cokret_sdk::identity::DidWebDocumentOutcome;
+
+    use crate::device_directory::DidAnchor as _;
 
     /// Serialize a `DidDocument` into the exact `did.json` body shape the SDK
     /// `insert_from_https_response` validates (the round-trip the helper's own
@@ -848,7 +850,9 @@ mod tests {
         assert!(anchor.resolve_did_document(&did).is_none());
 
         let document = DidDocument::new(did.clone(), "owner", "z6Mkanchorkey");
-        assert!(anchor.ingest_web_for_test(&did, web_outcome(&did, &document, "application/did+json")));
+        assert!(
+            anchor.ingest_web_for_test(&did, web_outcome(&did, &document, "application/did+json"))
+        );
 
         let resolved = anchor
             .resolve_did_document(&did)
@@ -960,17 +964,19 @@ mod tests {
             "https://api.localhost/.well-known/did.json"
         ));
         // mDNS .local (added on top of the SDK's localhost-only name check).
-        assert!(!url_host_is_safe("https://printer.local/.well-known/did.json"));
+        assert!(!url_host_is_safe(
+            "https://printer.local/.well-known/did.json"
+        ));
         assert!(!url_host_is_safe("https://HOST.LOCAL/.well-known/did.json"));
     }
 
     #[test]
     fn url_host_guard_rejects_non_https_scheme() {
         // The SDK URL builders only ever emit https; a non-https URL is forged.
-        assert!(!url_host_is_safe("http://alice.example/.well-known/did.json"));
         assert!(!url_host_is_safe(
-            "file:///etc/passwd/.well-known/did.json"
+            "http://alice.example/.well-known/did.json"
         ));
+        assert!(!url_host_is_safe("file:///etc/passwd/.well-known/did.json"));
     }
 
     #[test]
@@ -980,9 +986,7 @@ mod tests {
         assert!(url_host_is_safe(
             "https://alice.example/.well-known/did.json"
         ));
-        assert!(url_host_is_safe(
-            "https://did.acroidea.com/path/did.json"
-        ));
+        assert!(url_host_is_safe("https://did.acroidea.com/path/did.json"));
     }
 
     #[tokio::test]
@@ -1014,10 +1018,9 @@ mod tests {
         );
         let did = parse("did:web:already-ingested.example");
         let document = DidDocument::new(did.clone(), "owner", "z6Mkpeekkey");
-        assert!(anchor.ingest_web_for_test(
-            &did,
-            web_outcome(&did, &document, "application/did+json")
-        ));
+        assert!(
+            anchor.ingest_web_for_test(&did, web_outcome(&did, &document, "application/did+json"))
+        );
 
         // A client whose only proxy is an unroutable address: if ensure tried
         // to fetch, the request would fail and ensure would return false.

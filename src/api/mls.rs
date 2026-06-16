@@ -9,10 +9,7 @@ const KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keypackage-upload-v1\n";
 /// Sign the MLS KeyPackage upload batch with the local event-signer (device
 /// identity Ed25519 `did:key`), binding `device_id` + the published
 /// `key_packages`. Fail-closed (`bail!`) when no signer is installed.
-fn sign_keypackage_upload_batch(
-    device_id: &str,
-    key_packages: &[Value],
-) -> anyhow::Result<Value> {
+fn sign_keypackage_upload_batch(device_id: &str, key_packages: &[Value]) -> anyhow::Result<Value> {
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!(
             "keypackages/upload device_signature requires an active event-signer (fail-closed)"
@@ -23,8 +20,7 @@ fn sign_keypackage_upload_batch(
         "key_packages": key_packages,
     });
     let canonical = crate::canonical::canonical_json_bytes(&body)?;
-    let mut input =
-        Vec::with_capacity(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.len() + canonical.len());
+    let mut input = Vec::with_capacity(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.len() + canonical.len());
     input.extend_from_slice(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.as_bytes());
     input.extend_from_slice(&canonical);
     let jws = signer

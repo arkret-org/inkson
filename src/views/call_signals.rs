@@ -61,6 +61,7 @@ pub struct CallSignalInboxItem {
 /// once; this is the client-side belt-and-braces guard so a redelivered sync
 /// frame (catchup overlap, reconnect replay) never double-drives the FSM.
 pub type SignalDedupKey = (String, String, String, String, u64);
+pub type SignalSeqKey = (String, String, String, String);
 
 /// The cross-component signaling hub. Cloned cheaply (every field is a
 /// `Signal`, which is `Copy`). Provided once at the app root and read by
@@ -75,6 +76,8 @@ pub struct CallSignalHub {
     pub inbox: Signal<BTreeMap<String, VecDeque<CallSignalInboxItem>>>,
     /// Processed-signal dedup set.
     pub seen: Signal<BTreeSet<SignalDedupKey>>,
+    /// Highest accepted seq per `(realm, call, sender_actor, sender_device)`.
+    pub last_seq: Signal<BTreeMap<SignalSeqKey, u64>>,
     /// Call ids the local client currently owns an active session for. An
     /// `invite` for a call already in this set is treated as a re-invite and
     /// does NOT raise a fresh ring.
@@ -88,6 +91,7 @@ impl CallSignalHub {
             incoming_call: Signal::new(None),
             inbox: Signal::new(BTreeMap::new()),
             seen: Signal::new(BTreeSet::new()),
+            last_seq: Signal::new(BTreeMap::new()),
             active_calls: Signal::new(BTreeSet::new()),
         }
     }
@@ -126,6 +130,7 @@ impl CallSignalHub {
     pub fn forget_call(&mut self, call_id: &str) {
         self.inbox.write().remove(call_id);
         self.active_calls.write().remove(call_id);
+        self.last_seq.write().retain(|key, _| key.1 != call_id);
         let clear = self
             .incoming_call
             .read()
@@ -268,12 +273,9 @@ fn invite_wants_video(data: &Value) -> bool {
 ///
 /// - cache **Hit** → verify inline; pass routes, fail drops;
 /// - cache **NegativeHit** (revoked / absent / no key) → fail-closed drop;
-/// - cache **Miss**:
-///   - `invite` → `await` an async resolve, then verify and route on success
-///     (so the *first* inbound call still rings instead of being silently
-///     dropped);
-///   - non-invite → fail-closed drop + best-effort prefetch so a subsequent
-///     redelivery / follow-up signal hits the cache.
+/// - cache **Miss** → `await` an async resolve, then verify and route on success. This covers
+///   `invite` as well as the first `answer`/`candidate` after an outbound call; one-shot signaling
+///   frames are not discarded merely because the directory cache was cold.
 ///
 /// When `api` is `None` (no authenticated client yet) a cache Miss cannot be
 /// resolved and the signal is dropped fail-closed.
@@ -297,7 +299,7 @@ pub async fn route_realm_call_signals(
         ) {
             crate::device_directory::CacheLookup::Hit(key) => {
                 if verify_decoded_proof(&decoded, &key) {
-                    route_decoded_signal(hub, decoded, local_actor);
+                    route_verified_decoded_signal(hub, decoded, local_actor);
                 }
                 // verify failed → fail-closed drop.
             }
@@ -309,30 +311,16 @@ pub async fn route_realm_call_signals(
                     // No client to resolve with → fail-closed drop.
                     continue;
                 };
-                if decoded.signal_type == "invite" {
-                    // First inbound call: resolve now so the ring is not lost.
-                    if let Ok(Some(key)) = crate::device_directory::resolve_device_signing_key(
-                        api,
-                        did_anchor,
-                        &decoded.sender_actor,
-                        &decoded.sender_device,
-                    )
-                    .await
-                        && verify_decoded_proof(&decoded, &key)
-                    {
-                        route_decoded_signal(hub, decoded, local_actor);
-                    }
-                    // resolve None / verify fail → fail-closed drop.
-                } else {
-                    // Non-invite miss: fail-closed drop now, prefetch so the
-                    // next frame for this device can be verified inline.
-                    let _ = crate::device_directory::resolve_device_signing_key(
-                        api,
-                        did_anchor,
-                        &decoded.sender_actor,
-                        &decoded.sender_device,
-                    )
-                    .await;
+                if let Ok(Some(key)) = crate::device_directory::resolve_device_signing_key(
+                    api,
+                    did_anchor,
+                    &decoded.sender_actor,
+                    &decoded.sender_device,
+                )
+                .await
+                    && verify_decoded_proof(&decoded, &key)
+                {
+                    route_verified_decoded_signal(hub, decoded, local_actor);
                 }
             }
         }
@@ -435,6 +423,39 @@ pub fn decide_route(
         sender_device: decoded.sender_device.clone(),
         data: decoded.data.clone(),
     })
+}
+
+fn route_verified_decoded_signal(
+    hub: &mut CallSignalHub,
+    decoded: DecodedCallSignal,
+    local_actor: &str,
+) {
+    if !advance_signal_seq(hub, &decoded, local_actor) {
+        return;
+    }
+    route_decoded_signal(hub, decoded, local_actor);
+}
+
+fn advance_signal_seq(
+    hub: &mut CallSignalHub,
+    decoded: &DecodedCallSignal,
+    local_actor: &str,
+) -> bool {
+    if !local_actor.is_empty() && decoded.sender_actor == local_actor {
+        return true;
+    }
+    let key: SignalSeqKey = (
+        decoded.realm_id.clone(),
+        decoded.call_id.clone(),
+        decoded.sender_actor.clone(),
+        decoded.sender_device.clone(),
+    );
+    let mut last_seq = hub.last_seq.write();
+    if last_seq.get(&key).is_some_and(|prev| decoded.seq <= *prev) {
+        return false;
+    }
+    last_seq.insert(key, decoded.seq);
+    true
 }
 
 /// Route a single decoded signal: compute the pure [`decide_route`] decision
@@ -718,8 +739,7 @@ mod tests {
         ));
 
         // And a verified invite produces a Ring decision.
-        let decoded =
-            decode_call_signal_envelope("ck:realm:r", &envelope).expect("decodes");
+        let decoded = decode_call_signal_envelope("ck:realm:r", &envelope).expect("decodes");
         assert!(verify_decoded_proof(&decoded, &key));
         match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
             RouteDecision::Ring(info) => assert_eq!(info.peer_actor, actor),

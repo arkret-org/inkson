@@ -5,14 +5,12 @@
 //! server-side authentication context so the rotation chain can never be
 //! resumed —
 //!
-//! 1. **coauth**: revoke the session grant + finish its browser session
-//!    (presenting the device holder proof bound into the grant's
-//!    `cnf.jkt`). This is the *durable, security-critical* step: while the
-//!    grant lives, a holder of the device key could mint fresh access
-//!    bearers for up to the grant's 8h TTL.
-//! 2. **soland**: revoke the short principal bearer / device session. The
-//!    bearer self-expires within ≤15min, so this is a courtesy
-//!    fast-path, not a durability requirement.
+//! 1. **coauth**: revoke the session grant + finish its browser session (presenting the device
+//!    holder proof bound into the grant's `cnf.jkt`). This is the *durable, security-critical*
+//!    step: while the grant lives, a holder of the device key could mint fresh access bearers for
+//!    up to the grant's 8h TTL.
+//! 2. **soland**: revoke the short principal bearer / device session. The bearer self-expires
+//!    within ≤15min, so this is a courtesy fast-path, not a durability requirement.
 //!
 //! The old implementation fired both calls from a detached `spawn` after
 //! the local wipe. If the tab closed mid-flight, or coauth was briefly
@@ -113,8 +111,8 @@ pub enum LogoutRunOutcome {
 
 /// Run one pending-logout record to completion:
 ///
-/// 1. Revoke the grant at coauth (the durable, critical step). Success —
-///    or a "grant already gone" error — clears the record.
+/// 1. Revoke the grant at coauth (the durable, critical step). Success — or a "grant already gone"
+///    error — clears the record.
 /// 2. Best-effort soland courtesy logout (never blocks clearing).
 ///
 /// Returns whether the record was cleared. A still-live coauth failure
@@ -212,7 +210,10 @@ async fn soland_courtesy_logout(record: &PendingLogout) {
         }
     };
     if let Err(error) = api.logout().await {
-        tracing::info!(?error, "pending logout: soland courtesy logout failed (ignored)");
+        tracing::info!(
+            ?error,
+            "pending logout: soland courtesy logout failed (ignored)"
+        );
     }
 }
 

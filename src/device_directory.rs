@@ -10,15 +10,14 @@
 //! runs on the *synchronous* sync-apply path with no `.await` seam. This module
 //! bridges that gap with a process-wide cache:
 //!
-//! - [`resolve_device_signing_key`] is the async path: it calls `keys/query`,
-//!   decodes the `did:key` multibase into [`PublicKeyMaterial`], and writes the
-//!   result (positive *or* negative) into the cache with a TTL.
-//! - [`cached_device_signing_key`] is the sync lookup the receive path uses. It
-//!   never blocks; it returns [`CacheLookup::Hit`] / [`CacheLookup::NegativeHit`]
-//!   / [`CacheLookup::Miss`].
-//! - [`prefetch_device_keys`] primes the cache for a set of `(actor, device)`
-//!   pairs (called when a realm's members load / sync), so a normal inbound
-//!   invite hits the cache and can be verified inline.
+//! - [`resolve_device_signing_key`] is the async path: it calls `keys/query`, decodes the `did:key`
+//!   multibase into [`PublicKeyMaterial`], and writes the result (positive *or* negative) into the
+//!   cache with a TTL.
+//! - [`cached_device_signing_key`] is the sync lookup the receive path uses. It never blocks; it
+//!   returns [`CacheLookup::Hit`] / [`CacheLookup::NegativeHit`] / [`CacheLookup::Miss`].
+//! - [`prefetch_device_keys`] primes the cache for a set of `(actor, device)` pairs (called when a
+//!   realm's members load / sync), so a normal inbound invite hits the cache and can be verified
+//!   inline.
 //!
 //! ## Negative caching + status semantics
 //!
@@ -36,19 +35,17 @@
 //! a key is cached / used for proof verification the client independently
 //! verifies the full cross-signing chain per `device-lifecycle.md` §5.2.1 / §8.3:
 //!
-//!   1. **DID anchoring** (done here, not by the SDK): resolve the actor's DID
-//!      document through yougen's existing resolver chain
-//!      ([`crate::did_resolver`]) and confirm `cross_signing[principal]
-//!      .principal_signing_key` (`kid` + `public_key`) equals the DID-resolved
-//!      verification method key byte-for-byte. Mismatch / unresolvable → fail.
-//!   2. **PSK→SSK→device chain**: hand the DID-anchored PSK plus the publish
-//!      payload, the device's `cross_signing_binding`, and the directory key to
-//!      the SDK primitive [`cokret_sdk::verify_device_cross_signing_chain`].
-//!   3. **Accept only on `CrossSigned`**. Missing `cross_signing` / missing
-//!      `cross_signing_binding` (incl. inception bootstrap devices) /
-//!      `Unverified` / `NeedsReverification` all map to a **negative** cache
-//!      entry — fail-closed, no Tier-1 fallback. The directory `device_signing_key`
-//!      is NEVER trusted on the server's word alone.
+//!   1. **DID anchoring** (done here, not by the SDK): resolve the actor's DID document through
+//!      yougen's existing resolver chain ([`crate::did_resolver`]) and confirm
+//!      `cross_signing[principal] .principal_signing_key` (`kid` + `public_key`) equals the
+//!      DID-resolved verification method key byte-for-byte. Mismatch / unresolvable → fail.
+//!   2. **PSK→SSK→device chain**: hand the DID-anchored PSK plus the publish payload, the device's
+//!      `cross_signing_binding`, and the directory key to the SDK primitive
+//!      [`cokret_sdk::verify_device_cross_signing_chain`].
+//!   3. **Accept only on `CrossSigned`**. Missing `cross_signing` / missing `cross_signing_binding`
+//!      (incl. inception bootstrap devices) / `Unverified` / `NeedsReverification` all map to a
+//!      **negative** cache entry — fail-closed, no Tier-1 fallback. The directory
+//!      `device_signing_key` is NEVER trusted on the server's word alone.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
@@ -174,7 +171,10 @@ fn store_entry(actor: &str, device: &str, key: Option<PublicKeyMaterial>) {
 /// Returns `None` for an unparseable / wrong-curve value so the caller treats
 /// it as "no usable key" (fail-closed).
 pub fn public_key_from_directory_value(value: &str) -> Option<PublicKeyMaterial> {
-    let multibase = value.trim().strip_prefix("did:key:").unwrap_or(value.trim());
+    let multibase = value
+        .trim()
+        .strip_prefix("did:key:")
+        .unwrap_or(value.trim());
     if !multibase.starts_with('z') {
         return None;
     }
@@ -201,9 +201,7 @@ fn directory_verdict(
         .device_keys
         .iter()
         .find(|(did, _)| did.as_str() == actor)
-        .and_then(|(_, devices)| {
-            devices.iter().find(|(dev, _)| dev.as_str() == device)
-        })
+        .and_then(|(_, devices)| devices.iter().find(|(dev, _)| dev.as_str() == device))
         .map(|(_, record)| record)?;
 
     // Spec §8.2: a non-active status, or an omitted key, both mean unusable.
@@ -256,9 +254,11 @@ fn anchor_psk_against_did(
     did_document: &DidDocument,
     publish: &CrossSigningPublishContent,
 ) -> Option<PublicKeyMaterial> {
-    let resolved =
-        resolve_verification_method_key_from_document(did_document, &publish.principal_signing_key.kid)
-            .ok()?;
+    let resolved = resolve_verification_method_key_from_document(
+        did_document,
+        &publish.principal_signing_key.kid,
+    )
+    .ok()?;
     // The published PSK public_key is a bare multibase Ed25519 key; decode both
     // sides to raw bytes and require exact equality. This is the byte-for-byte
     // anchoring §8.3 step 1 mandates — we do NOT trust the publish's own
@@ -335,14 +335,19 @@ fn tier2_accepted_key(
     // `cross_signing_binding` → MUST treat as unverified, fail-closed. Inception
     // bootstrap devices (no binding) fall here on purpose (§8.3 step 3 / §5.0.1
     // exception is deferred to a later line — do NOT relax to pass).
-    let publish = outcome.cross_signing.iter().find_map(|(did, publish)| {
-        (did.as_str() == actor.as_str()).then_some(publish)
-    })?;
+    let publish = outcome
+        .cross_signing
+        .iter()
+        .find_map(|(did, publish)| (did.as_str() == actor.as_str()).then_some(publish))?;
     let record = outcome
         .device_keys
         .iter()
         .find(|(did, _)| did.as_str() == actor.as_str())
-        .and_then(|(_, devices)| devices.iter().find(|(dev, _)| dev.as_str() == device.as_str()))
+        .and_then(|(_, devices)| {
+            devices
+                .iter()
+                .find(|(dev, _)| dev.as_str() == device.as_str())
+        })
         .map(|(_, record)| record)?;
     let binding = record.cross_signing_binding.as_ref()?;
 
@@ -359,7 +364,10 @@ fn tier2_accepted_key(
 /// returning the bare multibase (`z…`) form that the device-binding canonical
 /// input was signed over. Returns `None` for a non-multibase value.
 fn directory_signing_key_multibase(value: &str) -> Option<String> {
-    let multibase = value.trim().strip_prefix("did:key:").unwrap_or(value.trim());
+    let multibase = value
+        .trim()
+        .strip_prefix("did:key:")
+        .unwrap_or(value.trim());
     multibase.starts_with('z').then(|| multibase.to_owned())
 }
 
@@ -457,11 +465,10 @@ fn verification_method_controller(verification_method: &str) -> &str {
 ///
 /// Checks, in order, fail-closed on any miss:
 ///   1. `proof.verification_method` controller DID == `actor_id` (byte-equal);
-///   2. SDK [`verify_eddsa_detached_jws_proof`] — recomputes the canonical
-///      envelope digest, compares it to `proof.event_digest`, rebuilds the
-///      binding object `{event_digest, actor_id, verification_method,
-///      created_at, domain?, audience?}`, and verifies the detached JWS over it
-///      with `public_key`.
+///   2. SDK [`verify_eddsa_detached_jws_proof`] — recomputes the canonical envelope digest,
+///      compares it to `proof.event_digest`, rebuilds the binding object `{event_digest, actor_id,
+///      verification_method, created_at, domain?, audience?}`, and verifies the detached JWS over
+///      it with `public_key`.
 pub fn verify_proof_value(
     envelope_without_proof: &serde_json::Value,
     proof_value: &serde_json::Value,
@@ -573,8 +580,9 @@ pub(crate) fn seed_negative_for_test(actor: &str, device: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ed25519_dalek::SigningKey;
+
+    use super::*;
 
     fn test_did_key(seed: u8) -> String {
         let sk = SigningKey::from_bytes(&[seed; 32]);
@@ -632,18 +640,19 @@ mod tests {
     #[test]
     fn directory_verdict_revoked_is_negative_even_with_key() {
         let did = test_did_key(33);
-        let outcome: cokret_sdk::models::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
-            "device_keys": {
-                "did:web:carol": {
-                    TEST_DEVICE_ID: {
-                        "algorithms": {},
-                        "device_signing_key": did,
-                        "device_status": "revoked"
+        let outcome: cokret_sdk::models::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {
+                    "did:web:carol": {
+                        TEST_DEVICE_ID: {
+                            "algorithms": {},
+                            "device_signing_key": did,
+                            "device_status": "revoked"
+                        }
                     }
                 }
-            }
-        }))
-        .unwrap();
+            }))
+            .unwrap();
         let verdict = directory_verdict(&outcome, "did:web:carol", TEST_DEVICE_ID);
         // Present-but-revoked → Some(None): a usable key MUST NOT be derived.
         assert!(matches!(verdict, Some(None)));
@@ -652,23 +661,27 @@ mod tests {
     #[test]
     fn directory_verdict_active_with_key_resolves() {
         let did = test_did_key(44);
-        let outcome: cokret_sdk::models::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
-            "device_keys": {
-                "did:web:dave": {
-                    TEST_DEVICE_ID: {
-                        "algorithms": {},
-                        "device_signing_key": did.clone(),
-                        "device_status": "active"
+        let outcome: cokret_sdk::models::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {
+                    "did:web:dave": {
+                        TEST_DEVICE_ID: {
+                            "algorithms": {},
+                            "device_signing_key": did.clone(),
+                            "device_status": "active"
+                        }
                     }
                 }
-            }
-        }))
-        .unwrap();
+            }))
+            .unwrap();
         let verdict = directory_verdict(&outcome, "did:web:dave", TEST_DEVICE_ID);
         match verdict {
             Some(Some(key)) => assert_eq!(
                 key.ed25519_bytes().unwrap(),
-                public_key_from_directory_value(&did).unwrap().ed25519_bytes().unwrap()
+                public_key_from_directory_value(&did)
+                    .unwrap()
+                    .ed25519_bytes()
+                    .unwrap()
             ),
             _ => panic!("expected active key verdict"),
         }
@@ -676,10 +689,11 @@ mod tests {
 
     #[test]
     fn directory_verdict_absent_device_is_none() {
-        let outcome: cokret_sdk::models::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
-            "device_keys": {}
-        }))
-        .unwrap();
+        let outcome: cokret_sdk::models::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {}
+            }))
+            .unwrap();
         assert!(directory_verdict(&outcome, "did:web:nobody", TEST_DEVICE_ID).is_none());
     }
 
@@ -689,8 +703,11 @@ mod tests {
     // genuine Ed25519 signatures, following the SDK's own
     // `signed_chain_fixture` construction (sdk devices/tests.rs §550+).
 
-    use cokret_sdk::{base64url_encode, CrossSigningBinding, CrossSigningKeyRecord,
-        CrossSigningPublishContent as SdkPublishContent, SignedCrossSigningKey, TypedTrustDomainId};
+    use cokret_sdk::{
+        CrossSigningBinding, CrossSigningKeyRecord,
+        CrossSigningPublishContent as SdkPublishContent, SignedCrossSigningKey, TypedTrustDomainId,
+        base64url_encode,
+    };
     use ed25519_dalek::Signer;
 
     const TIER2_TRUST_DOMAIN: &str = "ck:trust_domain:example.net";
@@ -793,7 +810,8 @@ mod tests {
             issued_at: chrono::Utc::now(),
         };
         let ssk_input = content.self_signing_binding_input().unwrap();
-        content.self_signing_key.binding.signature = base64url_encode(psk.sign(&ssk_input).to_bytes());
+        content.self_signing_key.binding.signature =
+            base64url_encode(psk.sign(&ssk_input).to_bytes());
 
         // Serialize the SDK content into the artifact `CrossSigningPublish` the
         // directory carries (1:1 field shape).
@@ -971,22 +989,23 @@ mod tests {
         // `cross_signing_binding`. Tier-2 treats missing binding as Unverified
         // (do NOT relax for bootstrap on this line).
         let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
-        let outcome: cokret_sdk::models::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
-            "device_keys": {
-                fx.actor.as_str(): {
-                    fx.device.as_str(): {
-                        "algorithms": {},
-                        "device_signing_key": fx.device_signing_key,
-                        "device_status": "active"
-                        // no cross_signing_binding
+        let outcome: cokret_sdk::models::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {
+                    fx.actor.as_str(): {
+                        fx.device.as_str(): {
+                            "algorithms": {},
+                            "device_signing_key": fx.device_signing_key,
+                            "device_status": "active"
+                            // no cross_signing_binding
+                        }
                     }
+                },
+                "cross_signing": {
+                    fx.actor.as_str(): serde_json::to_value(&fx.publish).unwrap(),
                 }
-            },
-            "cross_signing": {
-                fx.actor.as_str(): serde_json::to_value(&fx.publish).unwrap(),
-            }
-        }))
-        .unwrap();
+            }))
+            .unwrap();
         assert!(tier2_accepted_key(&outcome, &fx.document, &fx.actor, &fx.device).is_none());
     }
 
@@ -995,21 +1014,22 @@ mod tests {
         // Revoked status → Tier-1 facet already negative; Tier-2 never even
         // reaches the chain. No key regardless of valid Tier-2 material.
         let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
-        let outcome: cokret_sdk::models::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
-            "device_keys": {
-                fx.actor.as_str(): {
-                    fx.device.as_str(): {
-                        "algorithms": {},
-                        "device_status": "revoked",
-                        "cross_signing_binding": serde_json::to_value(&fx.binding).unwrap(),
+        let outcome: cokret_sdk::models::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {
+                    fx.actor.as_str(): {
+                        fx.device.as_str(): {
+                            "algorithms": {},
+                            "device_status": "revoked",
+                            "cross_signing_binding": serde_json::to_value(&fx.binding).unwrap(),
+                        }
                     }
+                },
+                "cross_signing": {
+                    fx.actor.as_str(): serde_json::to_value(&fx.publish).unwrap(),
                 }
-            },
-            "cross_signing": {
-                fx.actor.as_str(): serde_json::to_value(&fx.publish).unwrap(),
-            }
-        }))
-        .unwrap();
+            }))
+            .unwrap();
         assert!(tier2_accepted_key(&outcome, &fx.document, &fx.actor, &fx.device).is_none());
     }
 

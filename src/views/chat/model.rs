@@ -2034,9 +2034,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
         // so the user is prompted to verify before trusting the body.
         _ => true,
     };
-    let crypto_state = if scope_mismatch
-        || proof_verdict == ChatProofVerdict::Unresolved
-    {
+    let crypto_state = if scope_mismatch || proof_verdict == ChatProofVerdict::Unresolved {
         // Either a Circle-scope mismatch, OR a present sender proof whose verify
         // key is not yet resolvable from the directory cache — flag for
         // verification rather than presenting the body as trusted.
@@ -2857,8 +2855,9 @@ pub(super) async fn submit_chat_operation_with_auth_refresh(
 
 #[cfg(test)]
 mod device_identity_proof_tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     /// Build a signed persistent message envelope: `proofs:[<detached_jws>]`
     /// over the canonical proof binding object, with `event_digest` = canonical
@@ -2969,8 +2968,7 @@ mod device_identity_proof_tests {
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let mut envelope = signed_message_envelope(&signer, actor, device);
         // Point the verification_method at a different controller DID.
-        envelope["proofs"][0]["verification_method"] =
-            json!("did:web:imposter.example#device");
+        envelope["proofs"][0]["verification_method"] = json!("did:web:imposter.example#device");
         crate::device_directory::seed_positive_for_test(actor, device, pubkey(seed));
         assert_eq!(
             verify_chat_envelope_proof(&envelope),

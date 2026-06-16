@@ -30,19 +30,27 @@ use crate::operation::OperationBuilder;
 /// Call lifecycle state for `ck.call.state`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallState {
+    Scheduled,
     Ringing,
-    Connected,
+    Connecting,
+    Active,
     Ended,
+    Missed,
     Failed,
+    Cancelled,
 }
 
 impl CallState {
     pub fn as_wire(self) -> &'static str {
         match self {
+            Self::Scheduled => "scheduled",
             Self::Ringing => "ringing",
-            Self::Connected => "connected",
+            Self::Connecting => "connecting",
+            Self::Active => "active",
             Self::Ended => "ended",
+            Self::Missed => "missed",
             Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
         }
     }
 }
@@ -194,12 +202,12 @@ mod tests {
             "ck:realm:s1",
             "did:web:alice",
             "ck:call:c1",
-            CallState::Connected,
+            CallState::Active,
             None,
         )
         .build("node");
         assert_eq!(op.kind, "ck.call.state");
-        assert_eq!(op.payload["state"], "connected");
+        assert_eq!(op.payload["state"], "active");
     }
 
     #[test]

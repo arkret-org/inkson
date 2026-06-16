@@ -2283,7 +2283,9 @@ mod tests {
         assert!(is_wasm_indexeddb_required_secret_key(
             PENDING_LOGOUT_SECRET_KEY
         ));
-        assert!(is_wasm_no_localstorage_mirror_key(PENDING_LOGOUT_SECRET_KEY));
+        assert!(is_wasm_no_localstorage_mirror_key(
+            PENDING_LOGOUT_SECRET_KEY
+        ));
         assert!(is_wasm_no_localstorage_mirror_key(SIGNING_SEED_KEY));
         assert!(!is_wasm_no_localstorage_mirror_key(
             "coauth.refresh_token.did:example:alice"

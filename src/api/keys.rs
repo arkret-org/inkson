@@ -42,7 +42,9 @@ pub(crate) fn sign_keys_upload_batch(
     fallback_keys: &BTreeMap<String, Value>,
 ) -> anyhow::Result<Value> {
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!("keys/upload device_signature requires an active event-signer (fail-closed)")
+        anyhow::anyhow!(
+            "keys/upload device_signature requires an active event-signer (fail-closed)"
+        )
     })?;
     let input = keys_upload_signing_input(device_id, one_time_keys, fallback_keys)?;
     let jws = signer
@@ -66,8 +68,7 @@ impl CokretApi {
             }),
         );
         let fallback_keys: BTreeMap<String, Value> = BTreeMap::new();
-        let device_signature =
-            sign_keys_upload_batch(device_id, &one_time_keys, &fallback_keys)?;
+        let device_signature = sign_keys_upload_batch(device_id, &one_time_keys, &fallback_keys)?;
         let body = cokret_sdk::models::KeysUploadRequestBody {
             device_id: cokret_sdk::DeviceId::new(device_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?,
