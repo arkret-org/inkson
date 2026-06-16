@@ -1109,8 +1109,14 @@ async fn join_and_build_transport(
 /// SFrame exporter secret matches every other member's. When the realm has
 /// not synced an MLS group on this device yet, the exporter construction
 /// fails closed (`e2ee_key_source_unauthorised`) instead of fabricating an
-/// isolated group. wasm has no MLS stack, so it also fails closed.
-#[cfg(not(target_arch = "wasm32"))]
+/// isolated group.
+///
+/// This path is platform-uniform: the browser (wasm) build links the same SDK
+/// MLS stack the chat/reaction send path already uses to restore the group and
+/// read its epoch exporter secret, so the web call surface derives the SFrame
+/// keyprovider seed in-process from the realm's real exporter secret — never a
+/// self-minted key and never a backend bridge. A realm with no synced snapshot
+/// on this device still fails closed on every platform.
 async fn join_via_api(
     base: &str,
     api_token: &str,
@@ -1134,23 +1140,6 @@ async fn join_via_api(
     let api = crate::views::helpers::authed_api(base, api_token.to_owned())
         .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
     crate::media::rtc::join_call_media(&api, &join, &exporter).await
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn join_via_api(
-    base: &str,
-    api_token: &str,
-    join: &MediaJoinRequest,
-    _actor: &str,
-    _device: &str,
-    _realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
-) -> Result<JoinedMediaSession, RtcClientError> {
-    // The browser build does not link the MLS stack, so no in-process
-    // SFrame key can be derived. Run the verified token + ICE exchange and
-    // surface the E2EE provenance gap as a fail-closed reason; the web
-    // host MLS bridge must supply the keyprovider seed.
-    let _ = (base, api_token, join);
-    Err(RtcClientError::E2eeKeySourceUnauthorised)
 }
 
 /// Install the SFrame key and start local capture on a freshly built

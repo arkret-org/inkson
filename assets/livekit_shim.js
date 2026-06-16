@@ -9,12 +9,12 @@
 // `#[wasm_bindgen(module = "/assets/livekit_shim.js")]`. Promise-returning
 // functions are awaited from Rust via `wasm_bindgen_futures::JsFuture`.
 
-// CDN location of the livekit-client UMD bundle. Exposes the global
-// `LivekitClient`. Kept here (not index.html) because the Dioxus web build
-// ships no static index.html; we load it lazily and idempotently the first
-// time a room join is requested.
-const LIVEKIT_UMD_URL =
-  "https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js";
+// Vendored livekit-client UMD, wrapped as an ES module (assets/livekit_vendor.js,
+// pinned 2.19.2). Importing it self-executes the UMD against `window`, which
+// registers the global `window.LivekitClient`. This is a static, bundled import
+// — wasm-bindgen pulls the wrapper into the build's snippet graph — so there is
+// no runtime CDN fetch and the call surface works fully offline.
+import "/assets/livekit_vendor.js";
 
 // Handle registry: opaque string ids handed to Rust map to live Room objects
 // plus their per-room key provider, so subsequent publish/mute/key/leave
@@ -22,47 +22,14 @@ const LIVEKIT_UMD_URL =
 const rooms = new Map();
 let nextHandle = 1;
 
-// Load a script tag once and resolve when its global is available.
-function loadScriptOnce(url) {
-  return new Promise((resolve, reject) => {
-    if (typeof window === "undefined" || typeof document === "undefined") {
-      reject(new Error("livekit_shim: no DOM (not a browser context)"));
-      return;
-    }
-    // Already loaded?
-    if (window.LivekitClient && window.LivekitClient.Room) {
-      resolve();
-      return;
-    }
-    const existing = document.querySelector(`script[data-cokret-livekit="1"]`);
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () =>
-        reject(new Error("livekit_shim: livekit-client UMD failed to load"))
-      );
-      return;
-    }
-    const tag = document.createElement("script");
-    tag.src = url;
-    tag.async = true;
-    tag.setAttribute("data-cokret-livekit", "1");
-    tag.addEventListener("load", () => resolve());
-    tag.addEventListener("error", () =>
-      reject(new Error("livekit_shim: livekit-client UMD failed to load"))
-    );
-    document.head.appendChild(tag);
-  });
-}
-
 async function ensureLivekit() {
   if (typeof window !== "undefined" && window.LivekitClient && window.LivekitClient.Room) {
     return window.LivekitClient;
   }
-  await loadScriptOnce(LIVEKIT_UMD_URL);
-  if (!(typeof window !== "undefined" && window.LivekitClient && window.LivekitClient.Room)) {
-    throw new Error("livekit_shim: LivekitClient global unavailable after load");
-  }
-  return window.LivekitClient;
+  // The vendored module is imported statically above, so the global must be
+  // present by the time any join is requested. If it is not, the build is
+  // broken — fail closed rather than silently degrade.
+  throw new Error("livekit_shim: vendored LivekitClient global unavailable");
 }
 
 // cokretLivekitJoin(connectUrl, token, opts) -> Promise<handle string>

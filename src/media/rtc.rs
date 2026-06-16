@@ -381,13 +381,12 @@ pub fn cross_check_participant_identity(
 
 /// MLS exporter backing the SFrame frame-key derivation.
 ///
-/// On native targets this wraps the live [`cokret_sdk::CokretMlsGroup`]
-/// restored from this device's persisted per-realm MLS snapshot — the same
-/// synchronised group (full membership, applied Welcomes/commits) the
-/// message E2EE send/receive path uses via `crate::mls::runtime`. The
-/// exported secret is therefore a real RFC 9420 §8 MLS-Exporter output that
-/// every member's device can reproduce, never a per-device value and never a
-/// backend KMS key (MEDIA-1).
+/// This wraps the live [`cokret_sdk::CokretMlsGroup`] restored from this
+/// device's persisted per-realm MLS snapshot — the same synchronised group
+/// (full membership, applied Welcomes/commits) the message E2EE send/receive
+/// path uses via `crate::mls::runtime`. The exported secret is therefore a
+/// real RFC 9420 §8 MLS-Exporter output that every member's device can
+/// reproduce, never a per-device value and never a backend KMS key (MEDIA-1).
 ///
 /// If the realm has no synchronised MLS group on this device yet (no
 /// persisted snapshot, or the device snapshot secret is unavailable / cannot
@@ -396,16 +395,17 @@ pub fn cross_check_participant_identity(
 /// single-member group: an isolated group's exporter secret differs across
 /// devices, so the media could never be decrypted by peers.
 ///
-/// On wasm the MLS stack is not linked, so the exporter is unavailable and
-/// key derivation fails closed with `e2ee_key_source_unauthorised`; the web
-/// call surface MUST therefore run the SFrame keyprovider through the host
-/// MLS bridge, not a self-minted key.
-#[cfg(not(target_arch = "wasm32"))]
+/// The same construction runs on wasm: the browser build links the full SDK
+/// MLS stack (the chat/reaction path already restores the group and reads the
+/// epoch exporter secret on wasm via `crate::mls::runtime`, with no platform
+/// gate). The web call surface therefore derives the SFrame keyprovider seed
+/// in-process from the realm's real MLS exporter secret — identical bytes to
+/// every other member's device — instead of relying on an external host MLS
+/// bridge or a self-minted key.
 pub struct RealmMlsExporter {
     group: cokret_sdk::CokretMlsGroup,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl RealmMlsExporter {
     /// Restore the realm's live, synchronised MLS group from this device's
     /// persisted snapshot so the SFrame exporter secret matches every other
@@ -448,7 +448,6 @@ impl RealmMlsExporter {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl MlsExporterSource for RealmMlsExporter {
     fn export_secret(
         &self,
@@ -582,5 +581,128 @@ mod tests {
     fn frame_key_label_matches_spec() {
         assert_eq!(SFRAME_FRAME_KEY_LABEL, "ck-rtc-frame-key/v1");
         assert_eq!(MEDIA_TOKEN_TTL_MAX_SECS, 600);
+    }
+
+    // ── RealmMlsExporter (T5 — wasm MLS exporter unlock) ────────────────────
+    //
+    // The exporter is no longer gated to native: the browser build links the
+    // same SDK MLS stack the chat/reaction send path already uses on wasm, so
+    // the web call surface derives the SFrame frame key in-process from the
+    // realm's real MLS exporter secret. These tests build a genuine MLS group,
+    // persist its snapshot exactly like the message E2EE path, and assert the
+    // exporter restores it and derives a real 32-byte frame key — never a
+    // placeholder — while every no-key path still fails closed.
+
+    const EXPORTER_ACTOR: &str = "did:web:alice.example";
+    const EXPORTER_DEVICE: &str = "ck:device:01904100-0000-7000-8000-000000000001";
+    const EXPORTER_REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000003";
+
+    /// Build a real MLS group for `EXPORTER_REALM`, store its account snapshot
+    /// secret in `store`, and return the encrypted snapshot envelope — the same
+    /// construction `crate::mls::runtime` uses for chat/reaction restore.
+    fn seed_realm_snapshot(
+        store: &crate::secure_key_store::MemorySecureKeyStore,
+    ) -> crate::mls::persistence::MlsSnapshotEnvelope {
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+
+        let secret = crate::mls::runtime::load_or_create_device_snapshot_secret(
+            store,
+            EXPORTER_ACTOR,
+            EXPORTER_DEVICE,
+        )
+        .unwrap();
+        let identity = CokretMlsIdentity::new_basic(
+            Did::new(EXPORTER_ACTOR.to_owned()).unwrap(),
+            DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let group = identity.create_group(EXPORTER_REALM.as_bytes()).unwrap();
+        let record = group.export_state_record().unwrap();
+        let bytes = serde_json::to_vec(&record).unwrap();
+        crate::mls::persistence::encrypt_state(
+            EXPORTER_REALM,
+            &record.group_id,
+            record.epoch,
+            &bytes,
+            &secret,
+            b"deterministic-salt",
+        )
+    }
+
+    #[test]
+    fn realm_mls_exporter_derives_real_frame_key_from_snapshot() {
+        let store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let snapshot = seed_realm_snapshot(&store);
+
+        let exporter = RealmMlsExporter::for_realm(
+            Some(snapshot),
+            &store,
+            EXPORTER_ACTOR,
+            EXPORTER_DEVICE,
+        )
+        .expect("a synced snapshot + account secret must restore the group");
+
+        // Derive the SFrame frame key the way join_call_media does. The key is
+        // a real RFC 9420 §8 MLS-Exporter output, not a placeholder.
+        let ctx = FrameKeyContext {
+            realm_id: RealmId::new(EXPORTER_REALM.to_owned()).unwrap(),
+            call_id: CallId::new("ck:call:0196441c-0000-7000-8000-000000000000".to_owned())
+                .unwrap(),
+            focus_id: "fra-1".to_owned(),
+            epoch_id: exporter.epoch(),
+            participant_identity:
+                "ck:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned(),
+            device_id: cokret_sdk::DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
+        };
+        let key = derive_frame_key(&exporter, &ctx).expect("frame key derivation");
+
+        assert_eq!(key.len(), cokret_sdk::MEDIA_KEY_LEN);
+        assert_eq!(key.len(), 32);
+        // Not a placeholder: a real exporter secret is not all-zero.
+        assert!(key.iter().any(|&b| b != 0));
+
+        // Deterministic for the same group epoch + context (peers reproduce it).
+        let key_again = derive_frame_key(&exporter, &ctx).unwrap();
+        assert_eq!(key, key_again);
+    }
+
+    #[test]
+    fn realm_mls_exporter_fails_closed_without_snapshot() {
+        let store = crate::secure_key_store::MemorySecureKeyStore::new();
+        // Even with the account secret present, no snapshot means no synced
+        // group on this device: honest fail-closed, no fabricated key.
+        let _ = crate::mls::runtime::load_or_create_device_snapshot_secret(
+            &store,
+            EXPORTER_ACTOR,
+            EXPORTER_DEVICE,
+        )
+        .unwrap();
+
+        let result =
+            RealmMlsExporter::for_realm(None, &store, EXPORTER_ACTOR, EXPORTER_DEVICE);
+        assert!(matches!(
+            result.err(),
+            Some(RtcClientError::E2eeKeySourceUnauthorised)
+        ));
+    }
+
+    #[test]
+    fn realm_mls_exporter_fails_closed_without_account_secret() {
+        // Snapshot present, but the device has no account MLS secret to unwrap
+        // it (e.g. fresh browser before account recovery): fail closed.
+        let seed_store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let snapshot = seed_realm_snapshot(&seed_store);
+
+        let empty_store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let result = RealmMlsExporter::for_realm(
+            Some(snapshot),
+            &empty_store,
+            EXPORTER_ACTOR,
+            EXPORTER_DEVICE,
+        );
+        assert!(matches!(
+            result.err(),
+            Some(RtcClientError::E2eeKeySourceUnauthorised)
+        ));
     }
 }

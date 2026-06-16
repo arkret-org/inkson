@@ -35,51 +35,34 @@
 
 const config = __COKRET_DRIVER_CONFIG__;
 
-// CDN location of the livekit-client UMD bundle. Exposes the global
-// `LivekitClient`. Loaded lazily and idempotently inside the webview the
-// first time a room join is requested (the Dioxus desktop build ships no
-// static index.html to host a <script> tag).
-const LIVEKIT_UMD_URL =
-  "https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js";
+// Vendored livekit-client UMD source (pinned 2.19.2). native.rs substitutes the
+// `__COKRET_LIVEKIT_UMD_SOURCE__` token with the bundled UMD body (read via
+// `include_str!`), so it ships inside the desktop binary — no runtime CDN
+// fetch, works fully offline. Evaluating the UMD against the webview `window`
+// registers the global `window.LivekitClient`, matching the wasm shim's
+// vendored ES-module import.
+const LIVEKIT_UMD_SOURCE = __COKRET_LIVEKIT_UMD_SOURCE__;
 
-function loadScriptOnce(url) {
-  return new Promise((resolve, reject) => {
-    if (typeof window === "undefined" || typeof document === "undefined") {
-      reject(new Error("livekit_desktop_driver: no DOM (not a webview context)"));
-      return;
-    }
-    if (window.LivekitClient && window.LivekitClient.Room) {
-      resolve();
-      return;
-    }
-    const existing = document.querySelector(`script[data-cokret-livekit="1"]`);
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () =>
-        reject(new Error("livekit_desktop_driver: livekit-client UMD failed to load"))
-      );
-      return;
-    }
-    const tag = document.createElement("script");
-    tag.src = url;
-    tag.async = true;
-    tag.setAttribute("data-cokret-livekit", "1");
-    tag.addEventListener("load", () => resolve());
-    tag.addEventListener("error", () =>
-      reject(new Error("livekit_desktop_driver: livekit-client UMD failed to load"))
+function ensureLivekitVendored() {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    throw new Error("livekit_desktop_driver: no DOM (not a webview context)");
+  }
+  if (window.LivekitClient && window.LivekitClient.Room) {
+    return;
+  }
+  // Evaluate the bundled UMD once. The UMD self-registers
+  // `window.LivekitClient` via its global branch.
+  // eslint-disable-next-line no-new-func
+  new Function(LIVEKIT_UMD_SOURCE).call(window);
+  if (!(window.LivekitClient && window.LivekitClient.Room)) {
+    throw new Error(
+      "livekit_desktop_driver: vendored LivekitClient global unavailable after eval"
     );
-    document.head.appendChild(tag);
-  });
+  }
 }
 
 async function ensureLivekit() {
-  if (typeof window !== "undefined" && window.LivekitClient && window.LivekitClient.Room) {
-    return window.LivekitClient;
-  }
-  await loadScriptOnce(LIVEKIT_UMD_URL);
-  if (!(typeof window !== "undefined" && window.LivekitClient && window.LivekitClient.Room)) {
-    throw new Error("livekit_desktop_driver: LivekitClient global unavailable after load");
-  }
+  ensureLivekitVendored();
   return window.LivekitClient;
 }
 

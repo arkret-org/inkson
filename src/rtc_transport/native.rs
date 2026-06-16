@@ -52,8 +52,15 @@ use crate::media::rtc::{JoinedMediaSession, RtcClientError, cross_check_particip
 
 /// The desktop LiveKit driver, run in the webview over the eval bridge. The
 /// leading `__COKRET_DRIVER_CONFIG__` token is replaced per call with the
-/// JSON connect config (URL, token, media flags, frame key).
+/// JSON connect config (URL, token, media flags, frame key); the
+/// `__COKRET_LIVEKIT_UMD_SOURCE__` token is replaced once with the vendored
+/// UMD body so the SDK ships inside the binary (no runtime CDN fetch).
 const DESKTOP_DRIVER_JS: &str = include_str!("../../assets/livekit_desktop_driver.js");
+
+/// Vendored livekit-client UMD (pinned 2.19.2), bundled into the desktop
+/// binary. Injected into the driver as a JS string literal so the webview can
+/// evaluate it offline. Refresh with `scripts/vendor_livekit.sh`.
+const LIVEKIT_UMD_SOURCE: &str = include_str!("../../assets/vendor/livekit-client.umd.min.js");
 
 /// One event pushed back from the webview driver over the eval bridge.
 #[derive(Debug, Deserialize)]
@@ -208,7 +215,15 @@ impl MediaTransport for NativeRtcTransport {
         });
         let config_json = serde_json::to_string(&config)
             .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
-        let script = DESKTOP_DRIVER_JS.replacen("__COKRET_DRIVER_CONFIG__", &config_json, 1);
+        // Embed the vendored UMD as a JS string literal. serde_json produces a
+        // valid double-quoted JS string (escaping quotes/backslashes/newlines),
+        // which the driver evaluates via `new Function(...)` to register
+        // `window.LivekitClient` offline.
+        let umd_literal = serde_json::to_string(LIVEKIT_UMD_SOURCE)
+            .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
+        let script = DESKTOP_DRIVER_JS
+            .replacen("__COKRET_DRIVER_CONFIG__", &config_json, 1)
+            .replacen("__COKRET_LIVEKIT_UMD_SOURCE__", &umd_literal, 1);
 
         *self.state.borrow_mut() = TransportState::Connecting;
 
