@@ -765,7 +765,17 @@ impl CoauthApi {
                 text.chars().take(512).collect::<String>(),
             );
         }
-        serde_json::from_str(&text).context("parse device-authorize signed event")
+        // coauth returns `DeviceAuthorizeOutcome { principal_id, device_id,
+        // authority_did, event }`; the signed Event to submit is nested under
+        // `event`. Extract it so the caller submits the envelope verbatim (not
+        // the outcome wrapper, which has no `kind`/`proofs` and fails the
+        // `parse_signed_device_authorize` envelope decode).
+        let outcome: Value =
+            serde_json::from_str(&text).context("parse device-authorize response")?;
+        outcome
+            .get("event")
+            .cloned()
+            .context("device-authorize response missing `event`")
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {

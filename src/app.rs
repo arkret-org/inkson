@@ -6719,11 +6719,14 @@ async fn enroll_current_session_device(
         .map_err(|error| anyhow::anyhow!("mint device-authorize DPoP proof: {error}"))?;
 
     // Next control-stream sequence for this principal = highest accepted + 1.
+    // `actor_seq` is 1-indexed on the Principal Server (soland rejects 0 with
+    // `actor_seq must be greater than zero`), so an empty stream (no frontier
+    // yet) enrolls at seq 1, not 0.
     let actor_seq = match principal_api.events_frontier_actor(actor).await {
         Ok(view) => view.actor_seq.saturating_add(1),
         Err(error) => {
-            tracing::debug!(?error, "no actor frontier yet; enrolling at seq 0");
-            0
+            tracing::debug!(?error, "no actor frontier yet; enrolling at seq 1");
+            1
         }
     };
 
