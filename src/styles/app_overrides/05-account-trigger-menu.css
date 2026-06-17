@@ -1,0 +1,733 @@
+/* The account trigger is just the avatar — drop the icon-button frame
+   (border + surface fill) the other topbar icons carry, so the avatar
+   reads as itself rather than a boxed glyph. Scoped through
+   `.account-menu-wrap` to outrank the base `.btn` border/background. */
+.account-menu-wrap .account-menu-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+.account-menu-wrap .account-menu-button:hover,
+.account-menu-wrap .account-menu-button:active {
+  background: transparent;
+}
+.account-menu-wrap .account-menu-button:hover .topbar-account-avatar {
+  filter: brightness(1.08);
+}
+
+.account-menu-scrim {
+  position: fixed;
+  inset: -100vmax;
+  z-index: var(--layer-global-scrim);
+  background: transparent;
+}
+
+.account-menu-button .dot-online {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  margin: 0;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* Topbar account trigger shows the same avatar as the settings "Account
+   identity" card — the uploaded photo, or the default letter+tone circle —
+   instead of a generic person glyph. Frameless and sized to fill the
+   topbar slot so it reads larger than the boxed icons next to it. */
+.account-menu-button .topbar-account-avatar {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  transition: filter 120ms ease;
+}
+.account-menu-button .topbar-account-avatar.default-avatar {
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: none;
+}
+.account-menu-button .topbar-account-avatar.default-avatar::after {
+  inset: 4px;
+}
+.account-menu-button .topbar-account-avatar .content-block-image,
+.account-menu-button .topbar-account-avatar .content-block-image img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+.account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: var(--layer-global-popover);
+  width: min(420px, 92vw);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-solid, var(--surface));
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
+  isolation: isolate;
+}
+
+.shell.rtl .account-menu {
+  right: auto;
+  left: 0;
+}
+
+.account-menu__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.account-menu__head .grow {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+}
+
+.account-menu__head .who {
+  display: block;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.account-menu__head .handle {
+  display: block;
+  color: var(--text-3);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* Account-menu header avatar — same identity avatar as the topbar trigger
+   (uploaded photo or default letter+tone circle), but larger to anchor the
+   menu header. */
+.account-menu__head .account-menu__avatar {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+}
+.account-menu__head .account-menu__avatar.default-avatar {
+  font-size: 18px;
+  font-weight: 700;
+  box-shadow: none;
+}
+.account-menu__head .account-menu__avatar.default-avatar::after {
+  inset: 6px;
+}
+.account-menu__head .account-menu__avatar .content-block-image,
+.account-menu__head .account-menu__avatar .content-block-image img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Match the header avatar's footprint. The selector carries the full
+   `.btn.icon.sm` chain so it outranks `.btn.icon.sm` (width:22) and the
+   `.btn.icon` min-width:32 that otherwise clamp this Link. */
+.account-menu__qr.btn.icon,
+.account-menu__qr.btn.icon.sm {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  margin-left: auto;
+  padding: 0;
+}
+.account-menu__qr .ui-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.account-menu__rows {
+  display: grid;
+  gap: 6px;
+}
+
+.account-menu__row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.account-menu__row strong {
+  color: var(--text-3);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.account-menu__row > span,
+.account-menu__value span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.account-menu__copy {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.account-menu__row:hover .account-menu__copy,
+.account-menu__row:focus-within .account-menu__copy {
+  opacity: 1;
+}
+
+.account-menu__section {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.account-menu__section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.account-menu__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.badge.green,
+.badge-success {
+  background: var(--success-soft);
+  color: var(--success-ink);
+}
+
+.badge.blue {
+  background: var(--info-soft);
+  color: var(--info-ink);
+}
+
+.badge.amber,
+.badge-warning {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+}
+
+.badge-error {
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+}
+
+.status.sidebar-status {
+  margin: 0 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.status.sidebar-status .entity-title {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.status.sidebar-status .actions {
+  gap: 6px;
+}
+
+.main.workspace {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.topbar.workspace-header {
+  flex: 0 0 auto;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  overflow: visible;
+}
+
+.workspace-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.workspace-body > .timeline {
+  overflow: visible;
+  align-content: start;
+  gap: 16px;
+}
+
+.compose-safety-banner {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--warning-ink, var(--text));
+  background: color-mix(in srgb, var(--warning-soft) 58%, var(--surface));
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workspace-body > .timeline.kanban-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  overflow: hidden;
+  gap: 10px;
+  background: var(--bg);
+}
+
+.workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) > .timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) > .composer[data-testid="composer"] {
+  flex: 0 0 auto;
+  margin-top: 16px;
+}
+
+.event {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: none;
+  padding: 14px 16px;
+  color: var(--text);
+}
+
+.settings-avatar-card {
+  grid-template-columns: minmax(176px, 200px) minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 12px;
+  align-items: stretch;
+}
+
+.settings-avatar-card > .event-head {
+  grid-column: 1 / -1;
+}
+
+.settings-avatar-actions {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 16px 12px 0;
+  border-right: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.settings-avatar-card [data-testid="settings-avatar-preview"] {
+  width: 128px;
+  height: 128px;
+  font-size: 42px;
+}
+
+.settings-avatar-card [data-testid="settings-avatar-preview"].default-avatar::after {
+  inset: 16px;
+}
+
+.settings-avatar-card [data-testid="settings-avatar-preview"] .content-block-image,
+.settings-avatar-card [data-testid="settings-avatar-preview"] .content-block-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.settings-avatar-controls {
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.settings [data-testid="settings-avatar-upload-label"],
+.settings label.avatar-upload-button,
+label.avatar-upload-button {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 92%, transparent);
+  border-radius: 8px;
+  background: var(--primary-color-5);
+  color: var(--secondary-color-1);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 4%, transparent);
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.settings [data-testid="settings-avatar-upload-label"]:hover,
+.settings label.avatar-upload-button:hover,
+label.avatar-upload-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--primary-color-5) 84%, var(--accent-soft));
+  color: var(--secondary-color-1);
+}
+
+.settings [data-testid="settings-avatar-upload-label"] .ui-icon,
+.settings label.avatar-upload-button .ui-icon,
+label.avatar-upload-button .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.settings-account-identity-grid {
+  grid-column: 2;
+  grid-template-columns: 1fr;
+  align-content: center;
+  gap: 8px;
+  margin-top: 0;
+}
+
+.settings-account-identity-grid .settings-identity-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.28fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-color: color-mix(in srgb, var(--border) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+
+.settings-account-identity-grid .settings-identity-row strong {
+  margin-bottom: 0;
+  color: var(--text-3);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.settings-identity-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-identity-value > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-identity-copy {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.settings-identity-row:hover .settings-identity-copy,
+.settings-identity-row:focus-within .settings-identity-copy {
+  opacity: 1;
+}
+
+@media (max-width: 900px) {
+  .settings-avatar-card {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-avatar-actions,
+  .settings-account-identity-grid {
+    grid-column: 1;
+  }
+
+  .settings-avatar-actions {
+    padding: 8px 0 14px;
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  }
+}
+
+@media (max-width: 760px) {
+  .workspace-manage-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workspace-manage-stats {
+    justify-content: flex-start;
+  }
+
+  .workspace-manage-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-manage-actions {
+    justify-content: flex-start;
+  }
+
+  .workspace-manage-row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .workspace-manage-row-meta {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+
+.event.nested-card {
+  padding: 10px 12px;
+  background: var(--surface-2);
+}
+
+.workspace-manage-page {
+  width: min(100%, 1080px);
+  margin: 0 auto;
+}
+
+.workspace-manage-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-manage-main {
+  gap: 12px;
+}
+
+.workspace-manage-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-color: color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--surface) 88%, var(--accent-soft)), var(--surface)),
+    var(--surface);
+}
+
+.workspace-manage-title-block {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-manage-icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--surface-2));
+}
+
+.workspace-manage-icon .ui-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.workspace-manage-stats {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.workspace-manage-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-manage-search {
+  position: relative;
+  min-width: 0;
+}
+
+.workspace-manage-search input {
+  width: 100%;
+  min-height: 36px;
+  padding-left: 34px;
+}
+
+.workspace-manage-search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.workspace-manage-search-icon .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.workspace-manage-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workspace-manage-status {
+  border-left: 3px solid color-mix(in srgb, var(--accent) 58%, var(--border));
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.workspace-manage-list-card {
+  gap: 12px;
+}
+
+.workspace-manage-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-manage-row {
+  min-width: 0;
+  min-height: 56px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface));
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.workspace-manage-row:hover,
+.workspace-manage-row:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--surface-2) 64%, var(--accent-soft));
+}
+
+.workspace-manage-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.workspace-manage-row-main strong,
+.workspace-manage-row-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-manage-row-meta {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.workspace-manage-row-meta .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-manage-row-meta .ui-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.event-head {
+  color: var(--text-3);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+.entity-title,
+.title {
+  color: var(--text);
+}
+
+.card-meta,
+.muted {
+  color: var(--text-2);
+}
+
+.sidebar .muted {
+  color: var(--text-3);
+}
+

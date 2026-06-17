@@ -1,0 +1,145 @@
+//! Setup surface: Realm bootstrap, Space create, and the overview map.
+//!
+//! `SetupPanel` is a thin router over three section components, split out by
+//! responsibility:
+//! - [`overview::OverviewSection`] — the setup surface map.
+//! - [`realms::RealmsSection`] — the `ck.realm.create` wizard.
+//! - [`new_space::NewSpaceSection`] — the `ck.space.create` form + lifecycle.
+//!
+//! Shared static option tables live in [`data`], the section / wizard-step
+//! enums in [`model`], and pure helpers in [`helpers`].
+
+use dioxus::prelude::*;
+
+use crate::config::LocalConfigStore;
+use crate::local_state::LocalStateStore;
+use crate::models::RealmTreeNode;
+
+mod data;
+mod helpers;
+mod model;
+mod new_space;
+mod overview;
+mod realms;
+
+use model::{NewRealmStep, SetupSection};
+use new_space::NewSpaceSection;
+use overview::OverviewSection;
+use realms::RealmsSection;
+
+#[component]
+pub fn SetupPanel(
+    base_url: String,
+    plaintext_service_did: String,
+    secure_store_ready: bool,
+    token: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
+    config_store: Signal<LocalConfigStore>,
+    state_store: Signal<LocalStateStore>,
+    realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
+    selected_realm_id: Signal<String>,
+    new_space_context_node: Signal<String>,
+    status: Signal<String>,
+    section: Option<String>,
+) -> Element {
+    let active_section = SetupSection::from_slug(section.as_deref());
+
+    // Wizard / form state lives on the parent so each section's in-progress
+    // draft survives switching between conditionally-rendered sections.
+    let create_step = use_signal(|| NewRealmStep::Basics);
+    let seed_members = use_signal(String::new);
+    let realm_title = use_signal(String::new);
+    let realm_summary = use_signal(String::new);
+    let realm_discoverability = use_signal(|| "listed".to_owned());
+    let realm_policy_join_rule = use_signal(|| "invite".to_owned());
+    let realm_policy_history_visibility = use_signal(|| "shared".to_owned());
+    // Spec realm-and-space.md §2.3 — `encryption_profile` and `security_class`
+    // are Realm create-locked fields; default to the safe `mls_rfc9420` +
+    // `standard` case.
+    let realm_encryption_profile = use_signal(|| "mls_rfc9420".to_owned());
+    let realm_security_class = use_signal(|| "standard".to_owned());
+    // Spec realm-and-space.md §2.3 advanced create-locked fields; safe defaults
+    // `restricted` / `single_did` / `sha256`.
+    let realm_federation_policy = use_signal(|| "restricted".to_owned());
+    let realm_notary_profile = use_signal(|| "single_did".to_owned());
+    let realm_digest_algorithm = use_signal(|| "sha256".to_owned());
+    let realm_state = use_signal(|| "Draft not created yet".to_owned());
+    let realm_create_busy = use_signal(|| false);
+    let created_realm_id = use_signal(String::new);
+    // S6 recovery soft-gate for encrypted-Realm creation.
+    let pending_recovery_gate = use_signal(|| false);
+    let recovery_gate_acknowledged = use_signal(|| false);
+
+    // Phase 3 — `ck.space.create` form state.
+    let new_space_realm_id = use_signal(String::new);
+    let new_space_title = use_signal(String::new);
+    let new_space_summary = use_signal(String::new);
+    let new_space_kind = use_signal(|| "space".to_owned());
+    let new_space_parent_id = use_signal(String::new);
+    let new_space_default_realm_id = use_signal(String::new);
+    let new_space_context_seen = use_signal(String::new);
+    let new_space_state = use_signal(|| "Draft not created yet".to_owned());
+    let new_space_created_id = use_signal(String::new);
+
+    rsx! {
+        div { class: "timeline", "data-testid": "setup-panel",
+            if active_section == SetupSection::Overview {
+                OverviewSection { selected_realm_id }
+            }
+
+            if active_section == SetupSection::Realms {
+                RealmsSection {
+                    base_url: base_url.clone(),
+                    plaintext_service_did,
+                    secure_store_ready,
+                    token,
+                    account_did,
+                    device_id,
+                    config_store,
+                    state_store,
+                    selected_realm_id,
+                    status,
+                    create_step,
+                    seed_members,
+                    realm_title,
+                    realm_summary,
+                    realm_discoverability,
+                    realm_policy_join_rule,
+                    realm_policy_history_visibility,
+                    realm_encryption_profile,
+                    realm_security_class,
+                    realm_federation_policy,
+                    realm_notary_profile,
+                    realm_digest_algorithm,
+                    realm_state,
+                    realm_create_busy,
+                    created_realm_id,
+                    pending_recovery_gate,
+                    recovery_gate_acknowledged,
+                }
+            }
+
+            if active_section == SetupSection::NewSpace {
+                NewSpaceSection {
+                    base_url: base_url.clone(),
+                    token,
+                    account_did,
+                    state_store,
+                    selected_realm_id,
+                    realm_tree_nodes,
+                    new_space_context_node,
+                    new_space_realm_id,
+                    new_space_title,
+                    new_space_summary,
+                    new_space_kind,
+                    new_space_parent_id,
+                    new_space_default_realm_id,
+                    new_space_context_seen,
+                    new_space_state,
+                    new_space_created_id,
+                }
+            }
+        }
+    }
+}

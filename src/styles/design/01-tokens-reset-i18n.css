@@ -1,0 +1,207 @@
+/* ===================================================================
+ * Claude Design — Cokret v1 UI shared stylesheet
+ * -------------------------------------------------------------------
+ * Design language: neutral, dense, protocol-literate.
+ * Inspired by Linear / Notion / Raycast surfaces with explicit
+ * affordances for protocol concepts (events, frontier, capability,
+ * E2EE state, sync degradation).
+ *
+ * Theming  : light / dark via [data-theme] on <html>.
+ * i18n     : zh / en via [data-lang] on <html>. Use class .i18n with
+ *            <span class="zh">…</span><span class="en">…</span>
+ *            children — opposite-lang span is hidden by attribute.
+ *
+ * Layout sets used in this design:
+ *   - .gallery        — index page
+ *   - .auth-shell     — login / onboarding / recovery / verify-device
+ *   - .app            — main 2-col chrome (sidebar + workspace)
+ *   - .app.three-col  — 3-col chrome (+ right panel)
+ *   - .mobile-stage   — mobile mock frame
+ * ================================================================ */
+
+/* ===== 1. THEME TOKENS ============================================ */
+
+:root,
+[data-theme="light"] {
+  /* Surfaces */
+  --bg:           #f3f6f2;
+  --bg-elev:      #edf2ed;
+  --surface:      #ffffff;
+  --surface-2:    #f4f7f4;
+  --surface-3:    #ebf0eb;
+  --surface-inv:  #16171d;
+  --hover:        rgba(20, 22, 30, 0.04);
+  --hover-strong: rgba(20, 22, 30, 0.07);
+
+  /* Lines */
+  --border:        #dbe4dc;
+  --border-strong: #c4d1c6;
+  --border-faint:  #edf2ee;
+
+  /* Text */
+  --text:    #19211c;
+  --text-2:  #57655b;
+  --text-3:  #829085;
+  --text-on-accent: #ffffff;
+  --text-inv: #f5f6fa;
+
+  /* Brand */
+  --accent:        #1f6b4f;
+  --accent-strong: #195540;
+  --accent-soft:   #e7f1eb;
+  --accent-2:      #3b8a67;
+  --accent-ink:    #174c38;
+
+  /* Semantic */
+  --success:        #21784d;
+  --success-soft:   #e4f3e8;
+  --success-ink:    #184b30;
+  --warning:        #a46a12;
+  --warning-soft:   #f6edd9;
+  --warning-ink:    #6f460d;
+  --danger:         #b91c1c;
+  --danger-soft:    #fde2e2;
+  --danger-ink:     #7f1d1d;
+  --info:           #0f766e;
+  --info-soft:      #ddf2ed;
+  --info-ink:       #0f4d46;
+  --neutral-soft:   #e9efea;
+
+  /* Protocol callout (dark inline block — same in both themes by design) */
+  --proto-bg:    #14151c;
+  --proto-fg:    #d6d8ec;
+  --proto-meta:  #8b8fb1;
+  --proto-accent:#9bd9b8;
+
+  /* Effect */
+  --shadow-xs: 0 1px 1px rgba(20, 22, 30, 0.05);
+  --shadow-sm: 0 1px 2px rgba(20, 22, 30, 0.05), 0 1px 1px rgba(20, 22, 30, 0.04);
+  --shadow-md: 0 4px 14px rgba(20, 22, 30, 0.08), 0 1px 2px rgba(20, 22, 30, 0.04);
+  --shadow-lg: 0 18px 36px rgba(20, 22, 30, 0.12);
+  --ring: 0 0 0 3px rgba(31, 107, 79, 0.16);
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius:    10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  /* Fonts */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
+               Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei",
+               sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+
+  /* Layout */
+  --sidebar-w:    260px;
+  --right-pane-w: 340px;
+  --topbar-h:     52px;
+
+  /* Layering */
+  --layer-sticky: 10;
+  --layer-local-scrim: 30;
+  --layer-local-popover: 40;
+  --layer-chrome: 100;
+  --layer-global-scrim: 150;
+  --layer-global-popover: 160;
+  --layer-modal: 300;
+  --layer-toast: 400;
+  --layer-drag-shield: 900;
+  --surface-solid: #ffffff;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg:           #0d1411;
+  --bg-elev:      #121b17;
+  --surface:      #16201c;
+  --surface-2:    #1b2721;
+  --surface-3:    #223129;
+  --surface-inv:  #f6f6fa;
+  --hover:        rgba(255, 255, 255, 0.04);
+  --hover-strong: rgba(255, 255, 255, 0.08);
+
+  --border:        #26352d;
+  --border-strong: #33463b;
+  --border-faint:  #1b2620;
+
+  --text:   #e7efe9;
+  --text-2: #a5b5aa;
+  --text-3: #748378;
+  --text-on-accent: #ffffff;
+  --text-inv: #1c1e25;
+
+  --accent:        #72b58f;
+  --accent-strong: #91caaa;
+  --accent-soft:   #173227;
+  --accent-2:      #4f9d76;
+  --accent-ink:    #d3f1de;
+
+  --success:        #5fc48d;
+  --success-soft:   #143324;
+  --success-ink:    #c8f0d8;
+  --warning:        #d7a54c;
+  --warning-soft:   #322413;
+  --warning-ink:    #f3ddb2;
+  --danger:         #f87171;
+  --danger-soft:    #311515;
+  --danger-ink:     #fecaca;
+  --info:           #4bb3a6;
+  --info-soft:      #0f2d2a;
+  --info-ink:       #bfe7e1;
+  --neutral-soft:   #1f2923;
+
+  --proto-bg:    #0a0b10;
+  --proto-fg:    #d6d8ec;
+  --proto-meta:  #8b8fb1;
+  --proto-accent:#a6e0c1;
+
+  --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 18px 36px rgba(0, 0, 0, 0.6);
+  --ring: 0 0 0 3px rgba(114, 181, 143, 0.26);
+  --surface-solid: #16201c;
+
+  color-scheme: dark;
+}
+
+/* ===== 2. RESET / BASE ============================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a { color: inherit; text-decoration: none; }
+a.link { color: var(--accent); }
+a.link:hover { text-decoration: underline; }
+
+button { font-family: inherit; cursor: pointer; }
+small { font-size: 12px; color: var(--text-2); }
+code, kbd { font-family: var(--font-mono); font-size: 12px; }
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+
+/* ===== 3. i18n VISIBILITY ========================================= */
+
+html[data-lang="zh"] :is(.en, [lang="en"]) { display: none; }
+html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
+
+/* spans inside an inline strand stay inline */
+.i18n { display: inline; }
+.i18n.block { display: block; }
+

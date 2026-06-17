@@ -1,0 +1,170 @@
+/* Cokret design implementation layer. */
+.shell {
+  grid-template-columns: 316px minmax(0, 1fr) 352px;
+}
+.shell.rtl {
+  grid-template-columns: 352px minmax(0, 1fr) 316px;
+}
+.sidebar {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 18px;
+  overflow: hidden;
+}
+.ck-sidebar-brand {
+  display: grid;
+  gap: 2px;
+}
+.brand-subtitle {
+  color: #9fb0c3;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-left: 44px;
+}
+.sidebar-context {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 18px;
+  padding: 12px;
+  background:
+    radial-gradient(circle at top right, rgba(43, 107, 79, 0.22), transparent 42%),
+    rgba(255, 255, 255, 0.055);
+}
+.context-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.context-label {
+  color: #9fb0c3;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+}
+.context-title {
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.context-meta {
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.server-connect {
+  display: grid;
+  gap: 9px;
+}
+.server-connect input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.62);
+  color: #f8fafc;
+}
+.sidebar-status {
+  margin-top: 2px;
+}
+.topbar-eyebrow {
+  color: var(--ck-muted);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+.shell.rtl .context-row,
+.shell.rtl .topbar {
+  direction: rtl;
+}
+
+/* Document collaboration cursor markers. Shared caret geometry lives here
+   instead of being repeated inline on each span; the per-role colour is the
+   only difference (self = accent, remote = warning). */
+.document-cursor-self,
+.document-cursor-remote {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin: 0 2px;
+}
+.document-cursor-self {
+  background: var(--accent, #4c8bf5);
+}
+.document-cursor-remote {
+  background: var(--warning, #f5a623);
+}
+/* Inline document block text (heading / paragraph) renders flush with no
+   default browser margins so the block padding controls spacing. */
+.document-block-text {
+  margin: 0;
+}
+
+/* ── Contacts list (U1/U5) + invite-from-contacts (U3) + invite policy (U4) ── */
+
+/* Dimmed presentation for rejected / tombstoned / blocked contact rows. */
+.contact-row.weak {
+  opacity: 0.6;
+}
+
+/* Per-row block-confirm + status sit slightly inset from the row body. */
+.contact-block-confirm {
+  margin-top: 8px;
+}
+
+.contact-message-counter.over {
+  color: var(--danger, #d4504e);
+}
+
+/* U3 — "from contacts" picker vs the locator (stranger) path. The divider
+   makes the two entry points visually distinct; the contacts path is primary. */
+.invite-from-contacts {
+  display: grid;
+  gap: 8px;
+}
+
+.invite-contact-row,
+.invite-policy-kind-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.invite-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+  font-size: 0.85rem;
+}
+
+.invite-divider::before,
+.invite-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-default, var(--border, #333));
+}
+
+/* U4 — invite policy section spacing. */
+.settings-subsection {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.settings-subsection-title {
+  font-size: 0.9rem;
+}
+
+.invite-policy-blocked-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}

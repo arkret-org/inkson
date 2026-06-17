@@ -399,11 +399,12 @@ impl CokretApi {
         actor_id: &str,
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope =
+        let mut envelope =
             crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?.build("yougen");
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
+        stamp_invite_join_seal_ref(&mut envelope, candidate);
         self.submit_event_envelope_via_join_candidate(candidate, &envelope)
             .await
     }
@@ -417,10 +418,11 @@ impl CokretApi {
         actor_id: &str,
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
+        let mut envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
+        stamp_invite_join_seal_ref(&mut envelope, candidate);
         self.submit_event_envelope_via_join_candidate(candidate, &envelope)
             .await
     }
@@ -876,5 +878,27 @@ impl CokretApi {
     pub async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
         let view = self.events_frontier_realm_seal_view(realm_id).await?;
         Ok(view.seal_id.to_string())
+    }
+}
+
+/// Stamp an invite→join event's `seal_ref` from the resolve-realm join
+/// candidate's `seal_head_ref`.
+///
+/// The invitee is not yet a member, so it cannot read the membership-gated
+/// `GET /_cokret/self/events/frontier?realm_id=` Realm Seal view (it answers
+/// `404 realm not found`). The current Seal head is instead disclosed by
+/// resolve-realm — authorized by the invite — in the join candidate. Stamp it
+/// before signing so [`CokretApi::submit_event_envelope`] does not fall back
+/// to the 404-prone frontier read.
+///
+/// Only stamps when the event actually needs a seal (`seal_ref` empty and it
+/// carries `effects`) and the candidate advertised a head — mirroring
+/// `submit_event_envelope`'s own seal-stamp condition so it is a no-op
+/// otherwise.
+fn stamp_invite_join_seal_ref(envelope: &mut EventEnvelope, candidate: &RealmJoinCandidate) {
+    if envelope.seal_ref.is_none() && !envelope.effects.is_empty() {
+        if let Some(seal_head) = candidate.seal_head_ref.as_ref() {
+            envelope.seal_ref = Some(seal_head.as_str().to_owned());
+        }
     }
 }

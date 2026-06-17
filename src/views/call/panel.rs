@@ -1,0 +1,901 @@
+use dioxus::prelude::*;
+use serde_json::json;
+
+use super::media::{
+    install_and_capture, join_and_build_transport, media_error_label, submit_call_state_participant,
+};
+use super::moderator::ModeratorControls;
+use super::projection::{
+    build_roster, call_state_participant_device_map, call_state_participant_identities,
+    expected_participant_set, media_service_selection, participant_list_from_input,
+    set_local_state,
+};
+use super::signaling::{
+    apply_inbox_items, emit_async, emit_signal, end_call, relay_local_signals, spawn_reject,
+};
+use super::types::{CallMode, CallParticipant, CallStage, RecordingState, SharedTransport};
+use crate::local_state::LocalStateStore;
+use crate::media::rtc::{DesiredMedia, MediaJoinRequest};
+use crate::ui::button::{Button, ButtonVariant};
+use crate::views::call_signals::CallSignalHub;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
+
+#[component]
+#[allow(clippy::too_many_arguments)]
+pub fn CallPanel(
+    base_url: String,
+    token: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+    selected_realm_id: String,
+    account_did: String,
+    device_id: String,
+    /// Deep-linked call id (`ck:call:…`); empty when the user opens the
+    /// dialer fresh.
+    #[props(default)]
+    call_id: String,
+    /// 1:1 callee DID; empty for an SFU group call.
+    #[props(default)]
+    peer: String,
+    /// Start with video enabled.
+    #[props(default)]
+    want_video: bool,
+    /// This surface was opened to answer an inbound ring.
+    #[props(default)]
+    incoming: bool,
+) -> Element {
+    let initial_stage = if incoming {
+        CallStage::IncomingRinging
+    } else if !call_id.is_empty() {
+        CallStage::OutgoingRinging
+    } else {
+        CallStage::Idle
+    };
+
+    let mut stage = use_signal(|| initial_stage);
+    let mut status = use_signal(String::new);
+    let mut last_error = use_signal(String::new);
+    let mut mic_muted = use_signal(|| false);
+    let mut camera_on = use_signal(|| want_video);
+    let mut screen_sharing = use_signal(|| false);
+    let mut recording = use_signal(|| RecordingState::Off);
+    let mut participants = use_signal(Vec::<CallParticipant>::new);
+    let mut active_call_id = use_signal(|| call_id.clone());
+    let mut call_seq = use_signal(|| 0_u64);
+    let mut active_realm = use_signal(|| selected_realm_id.clone());
+    let mut peer_input = use_signal(|| peer.clone());
+    let mut group_input = use_signal(|| "did:web:bob.example\ndid:web:carol.example".to_owned());
+    let mut want_video_signal = use_signal(|| want_video);
+
+    // Transport handle — `None` until a media session is joined.
+    let transport = use_signal(|| Option::<SharedTransport>::None);
+    let mut transport_handle = transport;
+
+    // Receive side: the app-level signaling hub (`crate::views::call_signals`)
+    // the sync apply paths feed inbound `ck.call.signal` envelopes into. The
+    // drain effect below consumes this call's inbox and applies each item to
+    // the transport / FSM. Best-effort: `None` under isolated unit renders.
+    let call_signal_hub = CallSignalHub::try_use();
+
+    // This panel now owns an active session for `call_id` (deep-link / dialer
+    // start / accept). Mark it active so a re-delivered `invite` does not
+    // raise a duplicate ring, and clear any pending incoming-ring state for it.
+    if let Some(mut hub) = call_signal_hub {
+        let owned = active_call_id();
+        use_effect(move || {
+            let id = active_call_id();
+            if !id.trim().is_empty() {
+                hub.mark_active(&id);
+            }
+        });
+        let _ = owned;
+    }
+
+    // Release hub per-call state (inbox + active flag + pending ring) when
+    // the call ends, regardless of which path ended it (Leave / Decline /
+    // Cancel / inbound hangup / reset). Keeps the hub from leaking inbox
+    // entries across calls.
+    if let Some(mut hub) = call_signal_hub {
+        use_effect(move || {
+            if stage() == CallStage::Ended {
+                let id = active_call_id();
+                if !id.trim().is_empty() {
+                    hub.forget_call(&id);
+                }
+            }
+        });
+    }
+
+    // Drain effect — consume this call's inbox and drive the transport / FSM.
+    // Re-runs whenever the hub inbox or the active call id changes. Each item
+    // is removed as it is consumed (`drain_call`). Reads of the inbox `Signal`
+    // inside the effect subscribe it to inbox mutations the sync path makes.
+    if let Some(mut hub) = call_signal_hub {
+        let base = base_url.clone();
+        let actor = account_did.clone();
+        let device = device_id.clone();
+        use_effect(move || {
+            let call = active_call_id();
+            // Subscribe to inbox changes for this call id.
+            let has_pending = hub
+                .inbox
+                .read()
+                .get(&call)
+                .map(|q| !q.is_empty())
+                .unwrap_or(false);
+            if call.trim().is_empty() || !has_pending {
+                return;
+            }
+            let items = hub.drain_call(&call);
+            if items.is_empty() {
+                return;
+            }
+            apply_inbox_items(
+                items,
+                transport,
+                base.clone(),
+                token,
+                actor.clone(),
+                device.clone(),
+                active_realm(),
+                call,
+                call_seq,
+                stage,
+                status,
+                last_error,
+                participants,
+            );
+        });
+    }
+
+    let account_label = short_protocol_id(&account_did);
+    let device_label = short_protocol_id(&device_id);
+
+    let observed_signals = state_store
+        .read()
+        .load()
+        .raw_operations
+        .iter()
+        .filter(|record| {
+            record
+                .payload
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .map(|kind| kind.starts_with("ck.call."))
+                .unwrap_or(false)
+        })
+        .count();
+
+    // ── Start an outgoing call (1:1 or SFU). ─────────────────────────
+    let start_call = {
+        let base = base_url.clone();
+        let actor = account_did.clone();
+        let device = device_id.clone();
+        move |mode: CallMode| {
+            let base = base.clone();
+            let actor = actor.clone();
+            let device = device.clone();
+            let realm_id = active_realm();
+            let api_token = token();
+            let want_video = want_video_signal();
+
+            let peers: Vec<String> = match mode {
+                CallMode::P2p => vec![peer_input().trim().to_owned()]
+                    .into_iter()
+                    .filter(|p| !p.is_empty())
+                    .collect(),
+                CallMode::Sfu => participant_list_from_input(&group_input()),
+            };
+
+            let call = if active_call_id().is_empty() {
+                format!("ck:call:{}", crate::operation::uuid_v7())
+            } else {
+                active_call_id()
+            };
+            let (
+                media_dids,
+                focus_id,
+                known_participant_identities,
+                known_participant_devices,
+                realm_mls_snapshot,
+            ) = {
+                let store = state_store.read();
+                let snapshot = store.load();
+                let (media_dids, focus_id) = media_service_selection(&snapshot, &realm_id);
+                (
+                    media_dids,
+                    focus_id,
+                    call_state_participant_identities(&snapshot, &realm_id, &call),
+                    call_state_participant_device_map(&snapshot, &realm_id, &call),
+                    store.mls_snapshot_for(&realm_id),
+                )
+            };
+            active_call_id.set(call.clone());
+            call_seq.set(0);
+            participants.set(build_roster(&actor, &peers));
+            stage.set(CallStage::OutgoingRinging);
+            status.set("placing call".to_owned());
+            last_error.set(String::new());
+            let invite_peers = peers.clone();
+
+            spawn(async move {
+                // 1) Invite signal opens the call (ephemeral `ck.call.signal`).
+                if matches!(mode, CallMode::P2p) {
+                    let invite_data =
+                        json!({ "participants": invite_peers.clone(), "video": want_video });
+                    if let Err(err) = emit_signal(
+                        &base,
+                        &api_token,
+                        &realm_id,
+                        &call,
+                        &actor,
+                        &device,
+                        "invite",
+                        1,
+                        invite_data,
+                    )
+                    .await
+                    {
+                        last_error.set(format!("invite failed: {err}"));
+                    }
+                    call_seq.set(1);
+                }
+
+                // 2) Join the media plane (token + ICE + SFrame key).
+                let join = MediaJoinRequest {
+                    realm_id: realm_id.clone(),
+                    call_id: call.clone(),
+                    actor_id: actor.clone(),
+                    device_id: device.clone(),
+                    focus_id: focus_id.clone(),
+                    epoch_id: 0,
+                    desired_media: if want_video {
+                        DesiredMedia::audio_video()
+                    } else {
+                        DesiredMedia::audio_only()
+                    },
+                    media_service_dids: media_dids,
+                };
+                match join_and_build_transport(
+                    &base,
+                    &api_token,
+                    &join,
+                    &actor,
+                    &device,
+                    realm_mls_snapshot,
+                )
+                .await
+                {
+                    Ok((session, shared, per_sender_keys)) => {
+                        if let Err(err) = install_and_capture(&shared, &session) {
+                            // Transport could not accept the media key (desktop
+                            // is honestly not-ready). Surface it and stay out of
+                            // any "connected" state.
+                            last_error.set(media_error_label(err));
+                            stage.set(CallStage::Ended);
+                            return;
+                        }
+                        match mode {
+                            CallMode::Sfu => {
+                                if let Err(err) = submit_call_state_participant(
+                                    &base,
+                                    &api_token,
+                                    &realm_id,
+                                    &call,
+                                    &actor,
+                                    &device,
+                                    "connecting",
+                                    "sfu",
+                                    &session,
+                                )
+                                .await
+                                {
+                                    last_error.set(format!("call state failed: {err}"));
+                                    stage.set(CallStage::Ended);
+                                    return;
+                                }
+                                let invite_data = json!({ "participants": invite_peers.clone(), "video": want_video });
+                                if let Err(err) = emit_signal(
+                                    &base,
+                                    &api_token,
+                                    &realm_id,
+                                    &call,
+                                    &actor,
+                                    &device,
+                                    "invite",
+                                    1,
+                                    invite_data,
+                                )
+                                .await
+                                {
+                                    last_error.set(format!("invite failed: {err}"));
+                                }
+                                call_seq.set(1);
+                                let expected = expected_participant_set(
+                                    &known_participant_identities,
+                                    &session.participant_identity,
+                                );
+                                // MEDIA-2: seed the durable participant roster so
+                                // the LiveKit `ParticipantConnected` callback can
+                                // cross-check SFU identities fail-closed.
+                                shared.borrow_mut().set_expected_participants(&expected);
+                                // §8.1: hand the per-sender deriver + the durable
+                                // identity→device_id map to the transport so each
+                                // remote sender's frame key is recomputed and
+                                // installed when it connects (receiver decrypt).
+                                shared.borrow_mut().set_remote_key_source(
+                                    per_sender_keys.clone(),
+                                    known_participant_devices.clone(),
+                                );
+                                if let Err(err) = shared.borrow_mut().connect_sfu(&session) {
+                                    last_error.set(media_error_label(err));
+                                    stage.set(CallStage::Ended);
+                                    return;
+                                }
+                                let _ = submit_call_state_participant(
+                                    &base, &api_token, &realm_id, &call, &actor, &device, "active",
+                                    "sfu", &session,
+                                )
+                                .await;
+                                stage.set(CallStage::Active);
+                                status.set(format!("joined SFU room ({})", session.backend_type));
+                            }
+                            CallMode::P2p => {
+                                if let Err(err) = shared.borrow_mut().begin_offer() {
+                                    last_error.set(media_error_label(err));
+                                    stage.set(CallStage::Ended);
+                                    return;
+                                }
+                                relay_local_signals(
+                                    &shared, &base, &api_token, &realm_id, &call, &actor, &device,
+                                    call_seq,
+                                )
+                                .await;
+                                stage.set(CallStage::Connecting);
+                                status.set("offer sent, awaiting answer".to_owned());
+                            }
+                        }
+                        transport_handle.set(Some(shared));
+                    }
+                    Err(err) => {
+                        last_error.set(media_error_label(err));
+                        stage.set(CallStage::Ended);
+                    }
+                }
+            });
+        }
+    };
+
+    rsx! {
+        div { class: "timeline", "data-testid": "call-panel", role: "region", "aria-label": "Calls",
+            div { class: "event",
+                div { class: "event-head",
+                    span { "Calls" }
+                    span {
+                        class: "badge",
+                        "data-testid": "call-stage",
+                        "data-stage": "{stage().as_str()}",
+                        "{stage().as_str()}"
+                    }
+                    span { class: "mono", "data-testid": "call-signal-count", "{observed_signals}" }
+                }
+                div { class: "event-head",
+                    span {
+                        class: "mono",
+                        "data-testid": "call-active-id",
+                        "data-call-id": "{active_call_id}",
+                        if active_call_id().is_empty() { "no active call" } else { "{active_call_id}" }
+                    }
+                    span { class: "mono", title: "{account_did}", "{account_label}" }
+                    span { class: "mono", title: "{device_id}", "{device_label}" }
+                }
+
+                // ── Dialer (idle). ───────────────────────────────────
+                if stage() == CallStage::Idle {
+                    div { class: "event", "data-testid": "call-dialer",
+                        label { "Realm" }
+                        input {
+                            class: "input",
+                            "data-testid": "call-realm-input",
+                            value: "{active_realm}",
+                            oninput: move |e| active_realm.set(e.value()),
+                        }
+                        label { "Peer (1:1)" }
+                        input {
+                            class: "input",
+                            "data-testid": "call-peer-input",
+                            value: "{peer_input}",
+                            placeholder: "did:web:bob.example",
+                            oninput: move |e| peer_input.set(e.value()),
+                        }
+                        label { "Group participants (SFU)" }
+                        textarea {
+                            class: "input",
+                            "data-testid": "call-group-input",
+                            value: "{group_input}",
+                            oninput: move |e| group_input.set(e.value()),
+                        }
+                        div { class: "actions",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "call-want-video-toggle",
+                                "aria-pressed": "{want_video_signal()}",
+                                onclick: move |_| {
+                                    let next = !want_video_signal();
+                                    want_video_signal.set(next);
+                                    camera_on.set(next);
+                                },
+                                if want_video_signal() { "Video: on" } else { "Video: off" }
+                            }
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                "data-testid": "call-start-voice-button",
+                                disabled: active_realm.read().trim().is_empty() || peer_input.read().trim().is_empty(),
+                                onclick: {
+                                    let mut start = start_call.clone();
+                                    move |_| start(CallMode::P2p)
+                                },
+                                "Start 1:1 call"
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "call-start-group-button",
+                                disabled: active_realm.read().trim().is_empty(),
+                                onclick: {
+                                    let mut start = start_call.clone();
+                                    move |_| start(CallMode::Sfu)
+                                },
+                                "Start group call"
+                            }
+                        }
+                    }
+                }
+
+                // ── Outgoing ring. ───────────────────────────────────
+                if stage() == CallStage::OutgoingRinging {
+                    div { class: "event", "data-testid": "call-outgoing-banner",
+                        div { class: "event-head",
+                            span { "Calling" }
+                            span { class: "mono", "{short_protocol_id(&peer_input())}" }
+                        }
+                        div { class: "actions",
+                            Button {
+                                variant: ButtonVariant::Destructive,
+                                "data-testid": "call-cancel-button",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let actor = account_did.clone();
+                                    let device = device_id.clone();
+                                    move |_| {
+                                        end_call(
+                                            &transport, &base, &token(), &active_realm(),
+                                            &active_call_id(), &actor, &device, call_seq,
+                                        );
+                                        stage.set(CallStage::Ended);
+                                        status.set("cancelled".to_owned());
+                                    }
+                                },
+                                "Cancel"
+                            }
+                        }
+                    }
+                }
+
+                // ── Incoming ring. ───────────────────────────────────
+                if stage() == CallStage::IncomingRinging {
+                    div { class: "event", "data-testid": "call-incoming-banner", role: "alert",
+                        div { class: "event-head",
+                            span { "Incoming call" }
+                            span { class: "mono", "{short_protocol_id(&peer_input())}" }
+                        }
+                        div { class: "actions",
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                "data-testid": "call-accept-button",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let actor = account_did.clone();
+                                    let device = device_id.clone();
+                                    move |_| {
+                                        let base = base.clone();
+                                        let actor = actor.clone();
+                                        let device = device.clone();
+                                        let realm_id = active_realm();
+                                        let call = active_call_id();
+                                        let api_token = token();
+                                        let (
+                                            media_dids,
+                                            focus_id,
+                                            known_participant_identities,
+                                            known_participant_devices,
+                                            realm_mls_snapshot,
+                                        ) = {
+                                            let store = state_store.read();
+                                            let snapshot = store.load();
+                                            let (media_dids, focus_id) =
+                                                media_service_selection(&snapshot, &realm_id);
+                                            (
+                                                media_dids,
+                                                focus_id,
+                                                call_state_participant_identities(
+                                                    &snapshot, &realm_id, &call,
+                                                ),
+                                                call_state_participant_device_map(
+                                                    &snapshot, &realm_id, &call,
+                                                ),
+                                                store.mls_snapshot_for(&realm_id),
+                                            )
+                                        };
+                                        let want_video = want_video_signal();
+                                        stage.set(CallStage::Connecting);
+                                        status.set("answering".to_owned());
+                                        spawn(async move {
+                                            let join = MediaJoinRequest {
+                                                realm_id: realm_id.clone(),
+                                                call_id: call.clone(),
+                                                actor_id: actor.clone(),
+                                                device_id: device.clone(),
+                                                focus_id: focus_id.clone(),
+                                                epoch_id: 0,
+                                                desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
+                                                media_service_dids: media_dids,
+                                            };
+                                            match join_and_build_transport(
+                                                &base,
+                                                &api_token,
+                                                &join,
+                                                &actor,
+                                                &device,
+                                                realm_mls_snapshot,
+                                            )
+                                            .await
+                                            {
+                                                Ok((session, shared, per_sender_keys)) => {
+                                                    if let Err(err) = install_and_capture(&shared, &session) {
+                                                        last_error.set(media_error_label(err));
+                                                        stage.set(CallStage::Ended);
+                                                        return;
+                                                    }
+                                                    if let Err(err) = submit_call_state_participant(
+                                                        &base,
+                                                        &api_token,
+                                                        &realm_id,
+                                                        &call,
+                                                        &actor,
+                                                        &device,
+                                                        "connecting",
+                                                        "sfu",
+                                                        &session,
+                                                    )
+                                                    .await
+                                                    {
+                                                        last_error.set(format!(
+                                                            "call state failed: {err}"
+                                                        ));
+                                                        stage.set(CallStage::Ended);
+                                                        return;
+                                                    }
+                                                    // Multi-device: the first device to
+                                                    // emit `answer` wins; the rest stop
+                                                    // ringing on `answered_elsewhere`.
+                                                    let _ = emit_signal(
+                                                        &base,
+                                                        &api_token,
+                                                        &realm_id,
+                                                        &call,
+                                                        &actor,
+                                                        &device,
+                                                        "answer",
+                                                        1,
+                                                        json!({ "accepted": true }),
+                                                    )
+                                                    .await;
+                                                    let expected = expected_participant_set(
+                                                        &known_participant_identities,
+                                                        &session.participant_identity,
+                                                    );
+                                                    shared
+                                                        .borrow_mut()
+                                                        .set_expected_participants(&expected);
+                                                    // §8.1: hand the per-sender deriver +
+                                                    // identity→device_id map so each remote
+                                                    // sender's frame key is recomputed on
+                                                    // connect (receiver decrypt).
+                                                    shared.borrow_mut().set_remote_key_source(
+                                                        per_sender_keys.clone(),
+                                                        known_participant_devices.clone(),
+                                                    );
+                                                    let connect_result =
+                                                        { shared.borrow_mut().connect_sfu(&session) };
+                                                    match connect_result {
+                                                        Ok(()) => {
+                                                            let _ = submit_call_state_participant(
+                                                                &base,
+                                                                &api_token,
+                                                                &realm_id,
+                                                                &call,
+                                                                &actor,
+                                                                &device,
+                                                                "active",
+                                                                "sfu",
+                                                                &session,
+                                                            )
+                                                            .await;
+                                                            transport_handle.set(Some(shared));
+                                                            stage.set(CallStage::Active);
+                                                            status.set("connected".to_owned());
+                                                        }
+                                                        Err(err) => {
+                                                            // Honestly not-ready (desktop) — do not
+                                                            // pretend the call connected.
+                                                            last_error.set(media_error_label(err));
+                                                            stage.set(CallStage::Ended);
+                                                        }
+                                                    }
+                                                }
+                                                Err(err) => {
+                                                    last_error.set(media_error_label(err));
+                                                    stage.set(CallStage::Ended);
+                                                }
+                                            }
+                                        });
+                                    }
+                                },
+                                "Accept"
+                            }
+                            Button {
+                                variant: ButtonVariant::Destructive,
+                                "data-testid": "call-decline-button",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let actor = account_did.clone();
+                                    let device = device_id.clone();
+                                    move |_| {
+                                        let _ = crate::media::rtc::MEDIA_TOKEN_TTL_MAX_SECS;
+                                        spawn_reject(
+                                            base.clone(), token(), active_realm(), active_call_id(),
+                                            actor.clone(), device.clone(),
+                                        );
+                                        stage.set(CallStage::Ended);
+                                        status.set("declined".to_owned());
+                                    }
+                                },
+                                "Decline"
+                            }
+                        }
+                    }
+                }
+
+                // ── Connecting. ──────────────────────────────────────
+                if stage() == CallStage::Connecting {
+                    div { class: "event", "data-testid": "call-connecting-panel",
+                        span { "Connecting" }
+                        span { class: "badge badge-info", "SDP / ICE" }
+                    }
+                }
+
+                // ── Active call grid + controls. ─────────────────────
+                if stage() == CallStage::Active {
+                    div { class: "event", "data-testid": "call-active-panel",
+                        div { class: "event-head",
+                            span { "In call" }
+                            span { class: "badge green", "active" }
+                            span {
+                                class: "badge",
+                                "data-testid": "call-mic-status",
+                                "data-muted": "{mic_muted()}",
+                                if mic_muted() { "mic muted" } else { "mic live" }
+                            }
+                            span {
+                                class: "badge",
+                                "data-testid": "call-screen-status",
+                                "data-state": if screen_sharing() { "sharing" } else { "off" },
+                                if screen_sharing() { "screen sharing" } else { "screen off" }
+                            }
+                            span {
+                                class: "badge",
+                                "data-testid": "call-recording-status",
+                                "data-state": "{recording().as_data_state()}",
+                                "rec: {recording().as_data_state()}"
+                            }
+                        }
+
+                        if recording() == RecordingState::Recording {
+                            div { class: "event", "data-testid": "call-recording-indicator",
+                                span { class: "badge danger", "● recording" }
+                            }
+                        }
+
+                        // Participant grid.
+                        div { class: "call-grid", "data-testid": "call-grid",
+                            for p in participants().iter() {
+                                {
+                                    let did = p.actor_id.clone();
+                                    let name = p.display_name.clone();
+                                    let muted = p.muted;
+                                    let speaking = p.speaking;
+                                    let sharing = p.screen_sharing;
+                                    rsx! {
+                                        div {
+                                            class: if speaking { "call-tile speaking" } else { "call-tile" },
+                                            "data-testid": "call-participant-tile",
+                                            "data-actor-did": "{did}",
+                                            "data-muted": "{muted}",
+                                            "data-speaking": "{speaking}",
+                                            "data-screen-sharing": "{sharing}",
+                                            div { class: "call-tile-name mono", "{name}" }
+                                            div { class: "call-tile-badges",
+                                                if muted { span { class: "badge", "muted" } }
+                                                if speaking { span { class: "badge badge-success", "speaking" } }
+                                                if sharing { span { class: "badge badge-info", "screen" } }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Controls.
+                        div { class: "actions", "data-testid": "call-controls",
+                            Button {
+                                variant: if mic_muted() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                                "data-testid": "call-mute-button",
+                                "aria-pressed": "{mic_muted()}",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let actor = account_did.clone();
+                                    let device = device_id.clone();
+                                    move |_| {
+                                        let next = !mic_muted();
+                                        mic_muted.set(next);
+                                        if let Some(t) = transport() {
+                                            let _ = t.borrow_mut().set_audio_muted(next);
+                                        }
+                                        set_local_state(&mut participants, &actor, next, screen_sharing());
+                                        emit_async(
+                                            &base, &token(), &active_realm(), &active_call_id(),
+                                            &actor, &device, "mute_state",
+                                            json!({ "audio_muted": next, "video_muted": !camera_on(), "by": "self" }),
+                                            call_seq,
+                                        );
+                                    }
+                                },
+                                if mic_muted() { "Unmute" } else { "Mute" }
+                            }
+                            Button {
+                                variant: if camera_on() { ButtonVariant::Secondary } else { ButtonVariant::Primary },
+                                "data-testid": "call-camera-button",
+                                "aria-pressed": "{!camera_on()}",
+                                onclick: move |_| {
+                                    let next = !camera_on();
+                                    camera_on.set(next);
+                                    if let Some(t) = transport() {
+                                        let _ = t.borrow_mut().set_video_muted(!next);
+                                    }
+                                },
+                                if camera_on() { "Camera off" } else { "Camera on" }
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "call-screen-share-button",
+                                "aria-pressed": "{screen_sharing()}",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let actor = account_did.clone();
+                                    let device = device_id.clone();
+                                    move |_| {
+                                        let next = !screen_sharing();
+                                        screen_sharing.set(next);
+                                        if let Some(t) = transport() {
+                                            let _ = t.borrow_mut().set_screen_share(next);
+                                        }
+                                        set_local_state(&mut participants, &actor, mic_muted(), next);
+                                        emit_async(
+                                            &base, &token(), &active_realm(), &active_call_id(),
+                                            &actor, &device, "media_state",
+                                            json!({ "screen": { "enabled": next } }),
+                                            call_seq,
+                                        );
+                                    }
+                                },
+                                if screen_sharing() { "Stop sharing" } else { "Share screen" }
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "call-record-button",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let actor = account_did.clone();
+                                    move |_| {
+                                        if recording() == RecordingState::Recording {
+                                            recording.set(RecordingState::Off);
+                                            status.set("recording stopped".to_owned());
+                                        } else {
+                                            // Two-step consent confirmation before
+                                            // the durable `ck.call.recording.start`.
+                                            status.set("confirm recording…".to_owned());
+                                            let base = base.clone();
+                                            let actor = actor.clone();
+                                            let realm = active_realm();
+                                            let call = active_call_id();
+                                            let api_token = token();
+                                            let consent: Vec<String> = participants().iter().map(|p| p.actor_id.clone()).collect();
+                                            spawn(async move {
+                                                let recording_id = format!("ck:recording:{}", crate::operation::uuid_v7());
+                                                match with_authed_api(&base, api_token, |api| async move {
+                                                    api.submit_call_recording_start(&realm, &actor, &call, &recording_id, consent).await
+                                                }).await {
+                                                    Ok(_) => {
+                                                        recording.set(RecordingState::Recording);
+                                                        status.set("recording started".to_owned());
+                                                    }
+                                                    Err(err) => last_error.set(err.display()),
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                                if recording() == RecordingState::Recording { "Stop recording" } else { "Record" }
+                            }
+                            Button {
+                                variant: ButtonVariant::Destructive,
+                                "data-testid": "call-leave-button",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let actor = account_did.clone();
+                                    let device = device_id.clone();
+                                    move |_| {
+                                        end_call(
+                                            &transport, &base, &token(), &active_realm(),
+                                            &active_call_id(), &actor, &device, call_seq,
+                                        );
+                                        stage.set(CallStage::Ended);
+                                        status.set("left call".to_owned());
+                                    }
+                                },
+                                "Leave"
+                            }
+                        }
+
+                        // Moderator controls.
+                        ModeratorControls {
+                            base_url: base_url.clone(),
+                            token,
+                            realm_id: active_realm(),
+                            call_id: active_call_id(),
+                            actor: account_did.clone(),
+                            device: device_id.clone(),
+                            participants,
+                            call_seq,
+                        }
+                    }
+                }
+
+                if stage() == CallStage::Ended {
+                    div { class: "event", "data-testid": "call-ended-panel",
+                        span { "Call ended" }
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "call-reset-button",
+                            onclick: move |_| {
+                                stage.set(CallStage::Idle);
+                                active_call_id.set(String::new());
+                                participants.set(Vec::new());
+                                transport_handle.set(None);
+                                call_seq.set(0);
+                                status.set(String::new());
+                            },
+                            "New call"
+                        }
+                    }
+                }
+
+                if !status().is_empty() {
+                    div { class: "muted", "data-testid": "call-status", "{status}" }
+                }
+                if !last_error().is_empty() {
+                    div { class: "muted error", "data-testid": "call-error", "{last_error}" }
+                }
+            }
+        }
+    }
+}

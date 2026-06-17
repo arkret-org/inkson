@@ -1,0 +1,348 @@
+use super::*;
+
+impl LocalStateStore {
+    pub fn save_notification_projection(&mut self, notifications: Vec<Value>) {
+        self.ensure_cached_loaded();
+        self.cached.notification_projection = notifications;
+        let _ = self.flush();
+    }
+
+    pub fn notification_projection(&self) -> Vec<Value> {
+        self.load().notification_projection
+    }
+
+    pub fn set_notification_read(&mut self, notification_id: impl Into<String>, read: bool) {
+        self.ensure_cached_loaded();
+        let entry = self
+            .cached
+            .notification_client_state
+            .entry(notification_id.into())
+            .or_default();
+        if entry.read == read {
+            return; // no change — don't dirty the store
+        }
+        entry.read = read;
+        let _ = self.flush();
+    }
+
+    pub fn set_notification_archived(
+        &mut self,
+        notification_id: impl Into<String>,
+        archived: bool,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached
+            .notification_client_state
+            .entry(notification_id.into())
+            .or_default()
+            .archived = archived;
+        let _ = self.flush();
+    }
+
+    pub fn notification_state_for(&self, notification_id: &str) -> NotificationClientState {
+        self.load()
+            .notification_client_state
+            .get(notification_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn save_read_cursor(
+        &mut self,
+        actor: impl Into<String>,
+        device_id: impl Into<String>,
+        realm_id: impl Into<String>,
+        topic_id: Option<String>,
+        event_id: impl Into<String>,
+    ) -> ReadMarkerRecord {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        let device_id = device_id.into();
+        let event_id = event_id.into();
+        let topic_id = topic_id.filter(|topic| !topic.trim().is_empty());
+        let read_scope = read_scope_for_cursor(&realm_id, topic_id.as_deref());
+        let position = ReadCursorPosition {
+            event_id,
+            hlc: Hlc::now(&device_id).to_string(),
+        };
+        let marker = ReadMarkerRecord {
+            marker_type: "ck.read_cursor.advance".to_owned(),
+            body: ReadMarkerBody {
+                id: new_read_cursor_id(),
+                schema: "ck.schema.read_cursor.v1".to_owned(),
+                realm_id: realm_id.clone(),
+                read_scope: read_scope.clone(),
+                position,
+            },
+            actor: actor.into(),
+            device_id,
+            updated_at: Utc::now(),
+        };
+        self.cached
+            .read_cursors
+            .insert(read_cursor_key(&realm_id, &read_scope), marker.clone());
+        let _ = self.flush();
+        marker
+    }
+
+    pub fn read_cursor_for(
+        &self,
+        realm_id: &str,
+        topic_id: Option<&str>,
+    ) -> Option<ReadMarkerRecord> {
+        self.load()
+            .read_cursors
+            .get(&read_cursor_key(
+                realm_id,
+                &read_scope_for_cursor(realm_id, topic_id),
+            ))
+            .cloned()
+    }
+
+    pub fn latest_read_cursor(&self, realm_id: &str) -> Option<ReadMarkerRecord> {
+        self.load()
+            .read_cursors
+            .into_values()
+            .filter(|marker| marker.body.realm_id == realm_id)
+            .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
+    }
+
+    // ── Per-realm watch level (spec push-notifications.md §4.3.2) ──
+    //
+    // A realm with no stored entry resolves to the protocol default
+    // `WatchLevel::MentionsOnly`; only non-default levels are persisted.
+    // Binary "mute" is just the `Muted` end of this scale, so the
+    // `*_muted` helpers below stay as thin wrappers for the notification
+    // drawer / chat sidebar toggles.
+
+    /// Set (or clear) the per-realm watch level. Storing the default
+    /// (`MentionsOnly`) removes the override so the realm follows global
+    /// defaults again.
+    pub fn set_realm_watch_level(&mut self, realm_id: impl Into<String>, level: WatchLevel) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        if level == WatchLevel::default() {
+            self.cached.realm_watch_levels.remove(&realm_id);
+        } else {
+            self.cached.realm_watch_levels.insert(realm_id, level);
+        }
+        let _ = self.flush();
+    }
+
+    /// Effective per-realm watch level (default `MentionsOnly` when unset).
+    pub fn realm_watch_level(&self, realm_id: &str) -> WatchLevel {
+        self.load()
+            .realm_watch_levels
+            .get(realm_id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// All non-default per-realm watch level overrides.
+    pub fn realm_watch_levels(&self) -> BTreeMap<String, WatchLevel> {
+        self.load().realm_watch_levels
+    }
+
+    pub fn set_realm_muted(&mut self, realm_id: impl Into<String>, muted: bool) {
+        let level = if muted {
+            WatchLevel::Muted
+        } else {
+            WatchLevel::default()
+        };
+        self.set_realm_watch_level(realm_id, level);
+    }
+
+    pub fn clear_muted_realms(&mut self) {
+        self.ensure_cached_loaded();
+        self.cached
+            .realm_watch_levels
+            .retain(|_, level| *level != WatchLevel::Muted);
+        let _ = self.flush();
+    }
+
+    pub fn is_realm_muted(&self, realm_id: &str) -> bool {
+        self.realm_watch_level(realm_id) == WatchLevel::Muted
+    }
+
+    pub fn muted_realms(&self) -> Vec<String> {
+        self.load()
+            .realm_watch_levels
+            .into_iter()
+            .filter_map(|(realm_id, level)| (level == WatchLevel::Muted).then_some(realm_id))
+            .collect()
+    }
+
+    // ── Read receipt preferences (spec client-preferences.md §3.6) ─
+
+    pub fn read_receipt_default_send(&self) -> bool {
+        self.load().read_receipt_default_send
+    }
+
+    pub fn set_read_receipt_default_send(&mut self, send: bool) {
+        self.ensure_cached_loaded();
+        self.cached.read_receipt_default_send = send;
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_realm_override(&self, realm_id: &str) -> Option<bool> {
+        self.load()
+            .read_receipt_realm_overrides
+            .get(realm_id)
+            .copied()
+    }
+
+    pub fn set_read_receipt_realm_override(
+        &mut self,
+        realm_id: impl Into<String>,
+        send: Option<bool>,
+    ) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        match send {
+            Some(value) => {
+                self.cached
+                    .read_receipt_realm_overrides
+                    .insert(realm_id, value);
+            }
+            None => {
+                self.cached.read_receipt_realm_overrides.remove(&realm_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_realm_overrides(&self) -> BTreeMap<String, bool> {
+        self.load().read_receipt_realm_overrides
+    }
+
+    pub fn read_receipt_strand_override(&self, strand_id: &str) -> Option<bool> {
+        self.load()
+            .read_receipt_strand_overrides
+            .get(strand_id)
+            .copied()
+    }
+
+    pub fn set_read_receipt_strand_override(
+        &mut self,
+        strand_id: impl Into<String>,
+        send: Option<bool>,
+    ) {
+        self.ensure_cached_loaded();
+        let strand_id = strand_id.into();
+        match send {
+            Some(value) => {
+                self.cached
+                    .read_receipt_strand_overrides
+                    .insert(strand_id, value);
+            }
+            None => {
+                self.cached.read_receipt_strand_overrides.remove(&strand_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_strand_overrides(&self) -> BTreeMap<String, bool> {
+        self.load().read_receipt_strand_overrides
+    }
+
+    // ── Realm remarks (spec client-preferences.md §3.7) ─
+
+    /// Get the server-declared read-receipt policy for a Realm (when known).
+    /// `None` means the client hasn't synced a policy snapshot yet and the
+    /// user's override is still authoritative.
+    pub fn read_receipt_policy_for_realm(
+        &self,
+        realm_id: &str,
+    ) -> Option<ReadReceiptPolicySnapshot> {
+        self.load()
+            .read_receipt_policy_snapshots
+            .get(realm_id)
+            .cloned()
+    }
+
+    /// Replace the server-declared policy snapshot for a Realm. Called from
+    /// the sync path once the Seal view (P0 M3) surfaces
+    /// `ck.component.realm.read_receipt_policy.v1` cell value; tests use
+    /// this to seed lock-state UI behavior.
+    pub fn set_read_receipt_policy_snapshot(
+        &mut self,
+        realm_id: impl Into<String>,
+        snapshot: Option<ReadReceiptPolicySnapshot>,
+    ) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        match snapshot {
+            Some(value) => {
+                self.cached
+                    .read_receipt_policy_snapshots
+                    .insert(realm_id, value);
+            }
+            None => {
+                self.cached.read_receipt_policy_snapshots.remove(&realm_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    /// All known server-declared read-receipt policy snapshots.
+    pub fn read_receipt_policy_snapshots(&self) -> BTreeMap<String, ReadReceiptPolicySnapshot> {
+        self.load().read_receipt_policy_snapshots
+    }
+
+    /// Resolve effective send preference per spec (server policy → strand →
+    /// realm → default). Mirror of
+    /// `cokret_sdk::ReadReceiptPreferences::effective_send` extended with
+    /// server-declared policy lock: when the Realm publishes a
+    /// `ck.realm.read_receipt_policy` with `disclosure="required"` the
+    /// answer is forced `true`; with `disclosure="disabled"` it's forced
+    /// `false`. User-level overrides are ignored in those cases (matching
+    /// the lock UI in settings).
+    pub fn read_receipt_should_send(
+        &self,
+        strand_id: Option<&str>,
+        realm_id: Option<&str>,
+    ) -> bool {
+        let snapshot = self.load();
+        if let Some(rid) = realm_id
+            && let Some(policy) = snapshot.read_receipt_policy_snapshots.get(rid)
+        {
+            match policy.disclosure.as_str() {
+                "required" => return true,
+                "disabled" => return false,
+                _ => {}
+            }
+        }
+        if let Some(fid) = strand_id
+            && let Some(value) = snapshot.read_receipt_strand_overrides.get(fid)
+        {
+            return *value;
+        }
+        if let Some(rid) = realm_id
+            && let Some(value) = snapshot.read_receipt_realm_overrides.get(rid)
+        {
+            return *value;
+        }
+        snapshot.read_receipt_default_send
+    }
+
+    pub fn set_notification_kind_enabled(&mut self, kind: impl Into<String>, enabled: bool) {
+        self.ensure_cached_loaded();
+        self.cached
+            .muted_notification_kinds
+            .insert(kind.into(), enabled);
+        let _ = self.flush();
+    }
+
+    pub fn notification_kind_enabled(&self, kind: &str) -> bool {
+        self.load()
+            .muted_notification_kinds
+            .get(kind)
+            .copied()
+            .unwrap_or(true)
+    }
+
+    pub fn notification_kind_preferences(&self) -> BTreeMap<String, bool> {
+        self.load().muted_notification_kinds
+    }
+}

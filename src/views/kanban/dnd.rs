@@ -1,4 +1,13 @@
 use super::*;
+// Imports the drag-and-drop helpers relied on while they lived in the
+// monolithic `kanban/mod.rs`; re-added here after the structural split since
+// the component-only parent no longer brings them into scope.
+use crate::hlc::Hlc;
+use crate::local_state::MoveSubmissionState;
+use crate::move_builder::{
+    StrandPositionEffect, StrandPositionExpectation, strand_position_cell_id,
+};
+use crate::rank::RankError;
 
 pub(super) fn submit_kanban_operation_event(
     base_url: String,

@@ -1,0 +1,171 @@
+//! Private plaintext sidecar, merge semantics, and encrypted private-data tests.
+
+use super::*;
+
+#[test]
+fn private_plaintext_snapshot_json_round_trips_through_merge() {
+    // X5.3 — write sidecar entries, snapshot to JSON, then merge that JSON
+    // into a FRESH store (the new-browser restore case) and read them back.
+    let path = temp_state_path("private-plaintext-snapshot");
+    let mut store = LocalStateStore::with_path(path);
+    assert!(store.private_plaintext_is_empty());
+    store.save_private_plaintext("ck:realm:s1", "ck:strand:f1", "body", "\"hello body\"");
+    store.save_private_plaintext(
+        "ck:realm:s1",
+        "ck:strand:f1",
+        "synthesis",
+        "\"hello synthesis\"",
+    );
+    store.save_private_plaintext("ck:realm:s2", "ck:strand:f2", "body", "\"other body\"");
+    assert!(!store.private_plaintext_is_empty());
+
+    let json = store.private_plaintext_snapshot_json();
+    let map: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>> =
+        serde_json::from_slice(&json).unwrap();
+
+    // Fresh store (empty) merges the snapshot -> every field reappears.
+    let fresh_path = temp_state_path("private-plaintext-merged");
+    let mut fresh = LocalStateStore::with_path(fresh_path);
+    assert!(fresh.private_plaintext_is_empty());
+    fresh.merge_private_plaintext_map(map);
+    assert_eq!(
+        fresh.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "body"),
+        Some("\"hello body\"".to_owned())
+    );
+    assert_eq!(
+        fresh.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "synthesis"),
+        Some("\"hello synthesis\"".to_owned())
+    );
+    assert_eq!(
+        fresh.private_plaintext_for("ck:realm:s2", "ck:strand:f2", "body"),
+        Some("\"other body\"".to_owned())
+    );
+}
+
+#[test]
+fn merge_private_plaintext_map_keeps_local_value_on_conflict() {
+    // X5.3 merge semantics: incoming only FILLS missing fields; an existing
+    // local value wins on conflict.
+    let path = temp_state_path("private-plaintext-conflict");
+    let mut store = LocalStateStore::with_path(path);
+    store.save_private_plaintext("ck:realm:s1", "ck:strand:f1", "body", "\"local newer\"");
+
+    let mut fields = BTreeMap::new();
+    fields.insert("body".to_owned(), "\"backup older\"".to_owned()); // conflict
+    fields.insert("synthesis".to_owned(), "\"backup synthesis\"".to_owned()); // gap
+    let mut strands = BTreeMap::new();
+    strands.insert("ck:strand:f1".to_owned(), fields);
+    let mut incoming = BTreeMap::new();
+    incoming.insert("ck:realm:s1".to_owned(), strands);
+    store.merge_private_plaintext_map(incoming);
+
+    // Conflict: local value kept.
+    assert_eq!(
+        store.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "body"),
+        Some("\"local newer\"".to_owned())
+    );
+    // Gap: backup fills it.
+    assert_eq!(
+        store.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "synthesis"),
+        Some("\"backup synthesis\"".to_owned())
+    );
+}
+
+#[test]
+fn private_plaintext_sidecar_round_trips_through_store() {
+    // X5.1 — save → reload via a fresh reader → read back. The local
+    // plaintext sidecar must survive a reload (serde-persisted), since
+    // it is the only place the author's own encrypted content lives.
+    let path = temp_state_path("private-plaintext-sidecar");
+    let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
+    let strand = "ck:strand:0196419b-0000-7000-8000-0000000000aa";
+    {
+        let mut store = LocalStateStore::with_path(path.clone());
+        store.save_private_plaintext(realm, strand, "body", "\"author body\"");
+        store.save_private_plaintext(realm, strand, "synthesis", "\"author synthesis\"");
+    }
+    // Fresh reader (simulating a process restart / reload).
+    let reader = LocalStateStore::with_path(path.clone());
+    assert_eq!(
+        reader
+            .private_plaintext_for(realm, strand, "body")
+            .as_deref(),
+        Some("\"author body\"")
+    );
+    assert_eq!(
+        reader
+            .private_plaintext_for(realm, strand, "synthesis")
+            .as_deref(),
+        Some("\"author synthesis\"")
+    );
+    let fields = reader.private_plaintext_fields(realm, strand);
+    assert_eq!(fields.len(), 2);
+    // Missing keys return None.
+    assert!(
+        reader
+            .private_plaintext_for(realm, strand, "content")
+            .is_none()
+    );
+    assert!(
+        reader
+            .private_plaintext_for("ck:realm:other", strand, "body")
+            .is_none()
+    );
+
+    // Clearing a field (empty plaintext) removes it and persists.
+    let mut writer = LocalStateStore::with_path(path.clone());
+    writer.save_private_plaintext(realm, strand, "body", "");
+    let reader = LocalStateStore::with_path(path);
+    assert!(
+        reader
+            .private_plaintext_for(realm, strand, "body")
+            .is_none()
+    );
+    assert_eq!(
+        reader
+            .private_plaintext_for(realm, strand, "synthesis")
+            .as_deref(),
+        Some("\"author synthesis\"")
+    );
+}
+
+#[test]
+fn private_data_store_encrypts_and_persists() {
+    let path = temp_state_path("private");
+    let mut store = LocalStateStore::with_path(path.clone());
+    let account_key = "did:web:alice.example";
+    store.save_private_data(account_key, "theme", "dark");
+    store.save_private_data(account_key, "custom_emoji", "party_parrot");
+
+    assert_eq!(
+        store.load_private_data(account_key, "theme"),
+        Some("dark".to_owned())
+    );
+    assert_eq!(
+        store.load_private_data(account_key, "custom_emoji"),
+        Some("party_parrot".to_owned())
+    );
+    assert!(store.load_private_data(account_key, "missing").is_none());
+    assert_eq!(store.private_data_keys().len(), 2);
+
+    // Verify data is encrypted on disk
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(!raw.contains("dark"));
+    assert!(!raw.contains("party_parrot"));
+
+    // Verify wrong key cannot decrypt
+    assert_ne!(
+        store.load_private_data("wrong-key", "theme"),
+        Some("dark".to_owned())
+    );
+}
+
+#[test]
+fn private_data_remove_works() {
+    let path = temp_state_path("private-remove");
+    let mut store = LocalStateStore::with_path(path);
+    store.save_private_data("key", "temp", "value");
+    assert!(store.load_private_data("key", "temp").is_some());
+    store.remove_private_data("temp");
+    assert!(store.load_private_data("key", "temp").is_none());
+}

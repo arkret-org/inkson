@@ -1,0 +1,551 @@
+.card-rich-editor .toastui-editor-defaultUI-toolbar button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(125,211,252,0.18);
+}
+.card-rich-editor .toastui-editor-mode-switch {
+  height: 34px;
+  padding: 4px 8px;
+  background: var(--editor-bg-soft);
+  border-top: 1px solid var(--editor-line);
+  text-align: right;
+}
+.card-rich-editor .toastui-editor-mode-switch .tab-item {
+  width: auto;
+  min-width: 86px;
+  height: 24px;
+  margin: 0 0 0 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--editor-muted);
+  line-height: 22px;
+}
+.card-rich-editor .toastui-editor-mode-switch .tab-item.active {
+  border-color: var(--editor-line-strong);
+  background: var(--editor-bg-raised);
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-defaultUI .toastui-editor-md-tab-container {
+  height: 38px;
+  background: var(--editor-bg-soft);
+  border-color: var(--editor-line);
+}
+.card-rich-editor .toastui-editor-md-tab-container .toastui-editor-tabs {
+  margin-left: 10px;
+}
+.card-rich-editor .toastui-editor-md-tab-container .tab-item {
+  width: auto;
+  min-width: 72px;
+  height: 28px;
+  margin-top: 10px;
+  border-color: var(--editor-line);
+  border-radius: 6px 6px 0 0;
+  background: color-mix(in srgb, var(--editor-bg-soft) 84%, var(--editor-bg-raised) 16%);
+  color: var(--editor-muted);
+  line-height: 27px;
+}
+.card-rich-editor .toastui-editor-md-tab-container .tab-item.active {
+  border-bottom-color: var(--editor-bg);
+  background: var(--editor-bg);
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-popup,
+.card-rich-editor .toastui-editor-dropdown-toolbar {
+  border-color: var(--editor-line);
+  background: var(--editor-bg-soft);
+  color: var(--editor-ink);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.28);
+}
+.card-rich-editor .toastui-editor-popup-body label,
+.card-rich-editor .toastui-editor-popup-body .toastui-editor-table-description {
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-popup-body input[type="text"],
+.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-file-name {
+  border-color: var(--editor-line);
+  background: var(--editor-bg);
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-popup-body input[type="text"]:focus {
+  outline: 1px solid var(--editor-accent);
+}
+.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item {
+  color: var(--editor-muted);
+  border-bottom-color: var(--editor-line);
+}
+.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item.active {
+  color: var(--editor-accent);
+  border-bottom-color: var(--editor-accent);
+}
+.card-detail-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.card-detail-edit-status {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 42%, var(--border, var(--ck-line)));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning-soft, #fff8e5) 28%, transparent);
+  color: var(--text, var(--ck-ink));
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+/* Card detail forms inherit the shared workflow grid. Keep these actions
+ * compact while preserving the global CTA treatment elsewhere. */
+.card-detail-form-actions .primary,
+.card-detail-form-actions .secondary {
+  min-height: 34px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.card-detail-form-actions .primary:hover {
+  box-shadow: none;
+}
+@media (max-width: 900px) {
+  .card-detail-overlay {
+    padding: 16px 10px;
+  }
+  .card-detail-popup {
+    height: calc(100vh - 32px);
+    max-height: calc(100vh - 32px);
+  }
+  .card-detail-overlay.is-docked {
+    padding: 0;
+  }
+  .card-detail-popup.is-docked {
+    width: 100vw !important;
+    height: 100vh;
+    max-height: 100vh;
+  }
+  .card-detail-layout {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .card-detail-main,
+  .card-detail-sidebar {
+    overflow: visible;
+  }
+  .card-detail-sidebar {
+    border-left: 0;
+    border-top: 1px solid var(--border, var(--ck-line));
+  }
+}
+.chat-message-row {
+  padding: 10px 12px;
+  gap: 8px;
+}
+.chat-message-actions {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.compact-composer {
+  padding: 10px;
+}
+.compact-composer textarea {
+  min-height: 64px;
+}
+.tabs {
+  gap: 6px;
+}
+.tab {
+  border-radius: 999px;
+  background: var(--ck-surface);
+  color: var(--ck-muted);
+}
+.tab.active {
+  border-color: var(--ck-brand);
+  background: var(--ck-brand);
+  color: #fff;
+}
+.settings-shell {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+}
+.settings,
+.settings-sidebar-column,
+.settings-content-column,
+.settings-content-stack {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.settings-nav-cluster {
+  display: grid;
+  gap: 6px;
+}
+.settings-nav-group-label {
+  margin: 0 0 2px 4px;
+  color: var(--text-3, var(--ck-muted));
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.settings-content-title {
+  margin: 0;
+  color: var(--text, var(--ck-ink));
+  line-height: 1.08;
+  font-size: 26px;
+}
+.settings-content-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-content-title-row .help-tip {
+  flex: 0 0 auto;
+}
+.settings-nav-list {
+  display: grid;
+  gap: 8px;
+}
+.settings-nav-divider {
+  height: 1px;
+  margin: 2px 0 4px;
+  background: color-mix(in srgb, var(--border) 82%, transparent);
+}
+.settings-nav-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 0;
+  border-left: 2px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-width: 0 0 0 2px;
+  background: transparent;
+  color: inherit;
+  text-decoration: none;
+  box-shadow: none;
+  transition: border-color 140ms ease, background-color 140ms ease, padding-left 140ms ease;
+}
+.settings-nav-item strong {
+  color: var(--text, var(--ck-ink));
+  font-size: 13px;
+}
+.settings-nav-item:hover {
+  border-left-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 18%, transparent);
+  padding-left: 8px;
+}
+.settings-nav-item.active {
+  border-left-color: color-mix(in srgb, var(--accent) 82%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 26%, transparent);
+  padding-left: 10px;
+}
+.settings-content-hero {
+  padding: 16px 18px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(165, 107, 19, 0.12), transparent 26%),
+    radial-gradient(circle at 0 0, rgba(43, 107, 79, 0.14), transparent 34%),
+    var(--surface, var(--ck-surface));
+}
+.settings-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.settings-content-column > .event,
+.settings-content-column > .settings-content-stack,
+.settings-content-stack > .event,
+.settings-content-stack > .timeline,
+.settings-card-grid > .event,
+.settings-card-grid > details.event {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+.settings-content-stack .data-table,
+.settings-content-column .data-table {
+  width: 100%;
+}
+.settings-account-identity-grid {
+  margin-top: 12px;
+}
+.settings-diagnostics-switcher .actions {
+  align-items: center;
+  gap: 8px;
+}
+.invite-locator-card {
+  gap: 12px;
+}
+.invite-locator-head {
+  align-items: center;
+}
+.invite-locator-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  letter-spacing: 0;
+}
+.invite-locator-expiry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2rem;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.invite-locator-action {
+  letter-spacing: 0;
+}
+.invite-locator-action .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+.invite-locator-panel {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.74fr) minmax(240px, 1.26fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-2) 78%, var(--surface));
+}
+.invite-locator-qr-pane,
+.invite-locator-url-pane {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+}
+.invite-locator-qr-pane {
+  justify-items: stretch;
+  border-right: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+.invite-locator-card .qr-image {
+  justify-self: center;
+  margin: 0;
+  border-color: color-mix(in srgb, var(--border) 78%, transparent);
+}
+.invite-locator-pane-label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.invite-locator-url-field {
+  width: 100%;
+  min-height: 202px;
+  box-sizing: border-box;
+  resize: none;
+  overflow: auto;
+}
+.setup-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 12px;
+  align-items: start;
+}
+.new-space-shell {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+}
+.new-realm-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* Step panels live inside the single stepper card now, so they read as a
+   continuation of the step list rather than separate cards — a top divider
+   separates each active step from the stepper header above it. */
+.setup-step-panel {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  margin-top: 4px;
+  border-top: 1px solid var(--ck-line);
+}
+.new-space-hero {
+  padding: 18px;
+}
+.setup-column {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.setup-review-column {
+  position: sticky;
+  top: 12px;
+}
+.setup-step-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.setup-step-list button {
+  min-width: 0;
+  justify-content: flex-start;
+  text-align: left;
+}
+/* The dxc Button clamps to a single-row height (`[data-size]` → 2.25rem),
+   which squashes these two-line steps (title + subtitle). `[data-size]`
+   raises specificity above that rule so the box can grow to fit. */
+.setup-step-list button[data-size] {
+  height: auto;
+  min-height: 3.5rem;
+  padding: 10px 14px;
+  align-items: center;
+  gap: 10px;
+}
+.setup-step-index {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+.setup-step-label {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.setup-step-label strong,
+.setup-step-label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setup-step-label small {
+  color: inherit;
+  opacity: 0.72;
+  font-size: 11px;
+  font-weight: 600;
+}
+.setup-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.setup-form-grid textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+.setup-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  align-content: start;
+}
+.setup-field label {
+  color: var(--text, var(--ck-ink));
+  font-size: 13px;
+  font-weight: 700;
+}
+.setup-field-span-2 {
+  grid-column: 1 / -1;
+}
+.setup-axis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.setup-summary-list {
+  display: grid;
+  gap: 10px;
+}
+.setup-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.setup-summary-row strong {
+  color: var(--text, var(--ck-ink));
+  font-size: 13px;
+}
+.setup-summary-row span {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.setup-summary-row-stack {
+  display: grid;
+  gap: 8px;
+}
+.setup-summary-row-stack span {
+  text-align: left;
+}
+.setup-chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.setup-action-grid {
+  display: grid;
+  gap: 8px;
+}
+.setup-action-grid .primary,
+.setup-action-grid .secondary {
+  width: 100%;
+}
+.setup-nav-actions {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.settings-card-span-2 {
+  grid-column: 1 / -1;
+}
+@media (max-width: 900px) {
+  .dashboard-layout { grid-template-columns: 1fr; }
+  .board-grid { margin-inline: -4px; padding-inline: 4px; }
+  .board-column { flex-basis: min(82vw, 320px); width: min(82vw, 320px); min-width: min(82vw, 320px); }
+  .home-card-list.compact { grid-template-columns: 1fr; }
+  .settings-shell,
+  .settings-card-grid,
+  .settings-inline-form,
+  .settings-list-row { grid-template-columns: 1fr; }
+  .invite-locator-head {
+    align-items: flex-start;
+  }
+  .invite-locator-head-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+  .invite-locator-panel {
+    grid-template-columns: 1fr;
+  }
+  .invite-locator-qr-pane {
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  }
+  .invite-locator-url-field {
+    min-height: 128px;
+  }
+  .setup-review-column { position: static; }
+}
+@media (max-width: 1100px) {
+  .setup-shell,
+  .setup-form-grid,
+  .setup-axis-grid {
+    grid-template-columns: 1fr;
+  }
+  .setup-step-list { grid-template-columns: 1fr; }
+  .setup-field-span-2 {
+    grid-column: auto;
+  }
+}
+

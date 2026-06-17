@@ -1,0 +1,805 @@
+/* ===== 7. COMMON COMPONENTS ======================================= */
+
+.security-state-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+.security-state-badge .ui-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.security-state-badge-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.security-state-badge--plaintext {
+  color: var(--danger-ink);
+  border-color: color-mix(in srgb, var(--danger) 46%, var(--border));
+  background: color-mix(in srgb, var(--danger-soft) 84%, var(--surface));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.security-state-badge--encrypted {
+  color: var(--success-ink);
+  border-color: color-mix(in srgb, var(--success) 44%, var(--border));
+  background: color-mix(in srgb, var(--success-soft) 82%, var(--surface));
+}
+.security-state-badge--compact {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.security-state-badge--compact .security-state-badge-label {
+  display: none;
+}
+.topbar-context > .security-state-badge {
+  overflow: visible;
+  text-overflow: clip;
+}
+.strand-title-with-security,
+.discussion-track-name-row {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.strand-title-with-security .strand-title-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.discussion-track-name-row {
+  align-items: center;
+}
+.discussion-track-name-row .discussion-track-name {
+  min-width: 0;
+}
+.card-detail-title-row > .security-state-badge--compact,
+.discussion-title-row > .security-state-badge--compact {
+  margin-top: 2px;
+}
+
+/* ----- 7.1 Buttons ----- */
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+  transition: 80ms ease;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn:focus-visible { outline: none; box-shadow: var(--ring); }
+.btn[disabled] { opacity: 0.55; cursor: not-allowed; }
+/* Many buttons use bare `class="primary"`/`class="secondary"` (no `.btn`),
+   so `.btn[disabled]` never matched them and a disabled button looked fully
+   clickable. Give every disabled button — and the bare primary/secondary
+   variants — an unmistakable disabled treatment. `!important` overrides the
+   `.primary`/`.secondary` background + hover so it can't read as enabled. */
+button[disabled],
+button:disabled,
+.primary[disabled],
+.secondary[disabled] {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 82%, var(--surface-inv) 18%),
+    color-mix(in srgb, var(--surface-2) 86%, var(--surface-inv) 14%)
+  ) !important;
+  color: color-mix(in srgb, var(--text-2) 74%, var(--text-3) 26%) !important;
+  opacity: 1 !important;
+  cursor: not-allowed !important;
+  filter: none;
+  box-shadow:
+    inset 0 0 0 1px
+      color-mix(in srgb, var(--border-strong) 78%, var(--surface-inv) 22%),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-inv) 18%, transparent) !important;
+}
+button[disabled]:hover,
+button:disabled:hover,
+.primary[disabled]:hover,
+.secondary[disabled]:hover {
+  /* Neutralise hover so a disabled button never brightens on mouseover. */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 82%, var(--surface-inv) 18%),
+    color-mix(in srgb, var(--surface-2) 86%, var(--surface-inv) 14%)
+  ) !important;
+}
+button[data-style="link"][disabled],
+button[data-style="link"]:disabled,
+button[data-style="link"][disabled]:hover,
+button[data-style="link"]:disabled:hover {
+  background: transparent !important;
+  color: var(--text-3) !important;
+  box-shadow: none !important;
+}
+/* Inline form-validation hint that must NOT read as muted secondary text —
+   used for "passphrase too weak" / mismatch. */
+.form-hint-warn {
+  color: var(--warning-ink);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  /* Server error envelopes carry unbroken DID / device-id strings; without an
+     explicit break rule they force horizontal overflow and clip the dialog's
+     title and action buttons. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.btn.primary {
+  background: var(--accent); color: var(--text-on-accent);
+  border-color: transparent;
+}
+.btn.primary:hover { background: var(--accent-strong); }
+.btn.danger {
+  color: var(--danger); border-color: var(--danger);
+  background: var(--surface);
+}
+.btn.danger:hover { background: var(--danger-soft); }
+.btn.success {
+  color: var(--success); border-color: var(--success);
+}
+.btn.success:hover { background: var(--success-soft); }
+.btn.ghost {
+  background: transparent; border-color: transparent;
+  color: var(--text-2);
+}
+.btn.ghost:hover { background: var(--hover); color: var(--text); }
+.btn.sm { padding: 3px 8px; font-size: 12px; }
+.btn.xs { padding: 1px 6px; font-size: 11px; border-radius: 4px; }
+.btn.icon {
+  padding: 0;
+  width: 28px; height: 28px;
+  justify-content: center;
+}
+.btn.icon.sm { width: 22px; height: 22px; }
+.btn.full { width: 100%; justify-content: center; }
+.btn.lg { padding: 9px 18px; font-size: 14px; }
+
+.btn-group {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.btn-group .btn {
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+}
+.btn-group .btn:last-child { border-right: none; }
+.btn-group .btn.active { background: var(--accent-soft); color: var(--accent-ink); }
+
+/* ----- 7.2 Inputs / Forms ----- */
+
+.input, .select, .textarea {
+  appearance: none;
+  font-family: inherit; font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+  line-height: 1.4;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.textarea { min-height: 80px; resize: vertical; }
+.input:focus, .select:focus, .textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  box-shadow: none;
+}
+.input::placeholder { color: var(--text-3); }
+.input.danger, .select.danger {
+  border-color: var(--danger);
+}
+.input.danger:focus { box-shadow: 0 0 0 3px var(--danger-soft); }
+.input-mono { font-family: var(--font-mono); }
+
+.field {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 14px;
+}
+.field > label {
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.field > label .req { color: var(--danger); }
+.field > label .opt { color: var(--text-3); font-weight: 400; font-size: 11px; }
+.field .hint {
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.field .err {
+  font-size: 11px;
+  color: var(--danger);
+  display: flex; align-items: center; gap: 4px;
+}
+.field .err::before { content: "⚠"; }
+
+/* Switch */
+.switch {
+  width: 32px; height: 18px; border-radius: 999px;
+  background: var(--border-strong);
+  position: relative;
+  cursor: pointer;
+  transition: 120ms;
+}
+.switch::after {
+  content: "";
+  position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: white;
+  box-shadow: var(--shadow-xs);
+  transition: 120ms;
+}
+.switch.on { background: var(--accent); }
+.switch.on::after { left: 16px; }
+
+.checkbox {
+  width: 14px; height: 14px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 3px;
+  display: inline-grid; place-items: center;
+  background: var(--surface);
+}
+.checkbox.checked { background: var(--accent); border-color: var(--accent); color: white; }
+.checkbox.checked::after { content: "✓"; font-size: 10px; }
+
+/* Radio button */
+.radio {
+  width: 14px; height: 14px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--surface);
+  position: relative;
+}
+.radio.checked { border-color: var(--accent); }
+.radio.checked::after {
+  content: "";
+  position: absolute; inset: 3px;
+  border-radius: 50%; background: var(--accent);
+}
+
+/* Settings rows */
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-faint);
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-row .label { font-size: 13px; font-weight: 500; }
+.settings-row .sub { font-size: 12px; color: var(--text-3); margin-top: 2px; line-height: 1.5; }
+.settings-row .control { display: flex; align-items: center; gap: 8px; }
+
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.settings-card .head {
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 600; font-size: 13px;
+}
+.settings-card .head .sub {
+  margin-left: auto;
+  font-size: 11px; font-weight: 400;
+  color: var(--text-3);
+}
+
+.settings-panel[hidden] { display: none !important; }
+.settings-panel h1 {
+  font-size: 22px;
+  margin: 0 0 18px;
+  letter-spacing: -0.01em;
+}
+.settings-panel h3 {
+  font-size: 13px;
+  margin: 22px 0 10px;
+}
+.settings-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.settings-card.compact .settings-row {
+  padding: 10px 12px;
+}
+
+/* ----- 7.3 Pills / Badges ----- */
+
+.pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: var(--text-2);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.pill.dot::before {
+  content: "";
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; opacity: 0.85;
+}
+.pill.success { background: var(--success-soft); color: var(--success-ink); }
+.pill.warning { background: var(--warning-soft); color: var(--warning-ink); }
+.pill.danger  { background: var(--danger-soft);  color: var(--danger-ink); }
+.pill.info    { background: var(--info-soft);    color: var(--info-ink); }
+.pill.accent  { background: var(--accent-soft);  color: var(--accent-ink); }
+.pill.muted   { background: var(--surface-2);    color: var(--text-2); }
+.pill.solid-success { background: var(--success); color: white; }
+.pill.solid-danger  { background: var(--danger);  color: white; }
+.pill.solid-warning { background: var(--warning); color: white; }
+.pill.xs { font-size: 9.5px; padding: 1px 6px; }
+
+.kbd-tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text-2);
+}
+
+.badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px;
+  background: var(--accent); color: white;
+  font-size: 10px; font-weight: 700;
+  border-radius: 999px;
+  padding: 0 5px;
+}
+.badge.dim { background: var(--surface-3); color: var(--text-2); }
+.badge.danger { background: var(--danger); }
+.badge.success { background: var(--success); }
+.badge.warning { background: var(--warning); }
+/* Device-list verification shield: a touch wider so the glyph + label
+   ("Verified" / "Unverified") read as a pill rather than a count bubble. */
+.device-verification-badge { gap: 3px; min-width: 0; }
+
+/* Member visual indicators (A1): agent/bot badge surfaced in member
+   lists, @mention picker rows, and chat sender attribution wherever a
+   DID registered via `ck.agent.endpoint` is rendered. */
+.member-badge { font-weight: 600; letter-spacing: 0.02em; }
+.member-badge-agent {
+  background: var(--accent-2, #6f42c1);
+  color: #fff;
+}
+
+/* Compose drop-zone (A6.2): outlines the composer while a drag is
+   pending and surfaces a translucent overlay with the file-drop hint. */
+.compose-drop-zone { position: relative; }
+.compose-drop-zone.is-dragover {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  background: var(--surface-2);
+}
+.compose-drop-zone-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.compose-upload-progress {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 4px 8px;
+}
+.compose-attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+/* Pinned bar (A6.3): horizontal scrollable strip at the top of a
+   space showing every pinned message. Click a pill to scroll the
+   timeline to that message. */
+.pinned-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--surface-3);
+}
+.pinned-bar-empty {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 6px 8px;
+}
+.pinned-bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pinned-bar-item:hover { border-color: var(--accent); }
+
+/* Right-click context menu for messages (A6.3 Pin/Unpin entry).
+   Absolutely positioned over the message that triggered it. */
+.message-context-menu {
+  position: absolute;
+  z-index: var(--layer-local-popover);
+  background: var(--surface-solid, var(--surface));
+  border: 1px solid var(--surface-3);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 140px;
+}
+.message-context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-1);
+}
+.message-context-menu button:hover { background: var(--surface-2); }
+
+/* ----- 7.4 Avatar ----- */
+
+.avatar {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  display: inline-grid; place-items: center;
+  font-size: 11px; font-weight: 600;
+  color: white;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  flex-shrink: 0;
+}
+.avatar.lg { width: 40px; height: 40px; font-size: 14px; }
+.avatar.xl { width: 56px; height: 56px; font-size: 18px; }
+.avatar.xs { width: 18px; height: 18px; font-size: 9px; }
+.avatar.bot   { background: linear-gradient(135deg, #1f6b4f, #3b8a67); }
+.avatar.org   { background: linear-gradient(135deg, #b67a1f, #8a5a17); border-radius: 6px; }
+.avatar.ghost { background: linear-gradient(135deg, #94a3b8, #475569); }
+.avatar.agent { background: linear-gradient(135deg, #2b6b4f, #4b946a); border-radius: 6px; }
+
+/* Image-backed avatars (uploaded blob / remote URL), distinct from the
+   text-initial `.avatar` above. `.sm`/`.lg` size them; `.placeholder`
+   renders the empty dashed-circle fallback. Replaces the repeated long
+   inline avatar styles in directory.rs / settings/mod.rs. */
+.avatar-img {
+  border-radius: 50%;
+  overflow: hidden;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.avatar-img.sm { width: 36px; height: 36px; }
+.avatar-img.lg { width: 64px; height: 64px; border: 1px solid var(--border-default, #333); }
+.avatar-img.default-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: #fffaf6;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+}
+.avatar-img.default-avatar::after {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: inherit;
+}
+.avatar-img.default-avatar span {
+  position: relative;
+  z-index: 1;
+}
+.avatar-img.default-avatar.tone-1 { background: linear-gradient(135deg, #b45309, #c65b72); }
+.avatar-img.default-avatar.tone-2 { background: linear-gradient(135deg, #1f6b4f, #586fcb); }
+.avatar-img.default-avatar.tone-3 { background: linear-gradient(135deg, #7c3aed, #0f766e); }
+.avatar-img.default-avatar.tone-4 { background: linear-gradient(135deg, #b91c1c, #b97824); }
+.avatar-img.default-avatar.tone-5 { background: linear-gradient(135deg, #334155, #2b6b4f); }
+.avatar-img.default-avatar.tone-6 { background: linear-gradient(135deg, #0f5f78, #a33a50); }
+.avatar-img.placeholder {
+  border: 1px dashed var(--border-default, #333);
+  background: var(--bg-elevated, #1a1d22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted, #888);
+}
+.avatar-uploader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.avatar-uploader-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+/* The "Upload new avatar" control is a <label> bound to a hidden file
+   input. The dioxus-primitives Label ships `.dx-label` (small muted text),
+   which made it read as non-interactive caption text. Style it as a
+   self-contained secondary button so it clearly looks clickable. The
+   `label.` prefix raises specificity above `.dx-label` so the button look
+   wins regardless of stylesheet order. Shared with
+   `components/avatar_uploader.rs`. */
+label.avatar-upload-button,
+.avatar-upload-button {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, transform 80ms ease;
+}
+label.avatar-upload-button:hover,
+.avatar-upload-button:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+label.avatar-upload-button:active,
+.avatar-upload-button:active {
+  transform: translateY(1px);
+}
+.avatar-uploader-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.avatar-crop-editor {
+  display: grid;
+  grid-template-columns: minmax(128px, 180px) minmax(220px, 1fr);
+  gap: 16px;
+  align-items: center;
+  max-width: 600px;
+}
+.avatar-crop-stage {
+  position: relative;
+  width: min(180px, 40vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid var(--border-default, #333);
+  background: var(--bg-elevated, #1a1d22);
+}
+.avatar-crop-controls {
+  display: grid;
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  .avatar-uploader,
+  .avatar-crop-editor {
+    grid-template-columns: 1fr;
+  }
+}
+.avatar.applet{ background: linear-gradient(135deg, #f59e0b, #d946ef); border-radius: 6px; }
+
+.avatar-stack { display: inline-flex; }
+.avatar-stack > * { margin-left: -6px; border: 2px solid var(--surface); }
+.avatar-stack > *:first-child { margin-left: 0; }
+
+.settings-avatar-actions {
+  align-items: center;
+  gap: 16px;
+}
+
+.settings-avatar-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(100%, 220px);
+}
+
+.spinner-inline {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ----- 7.5 Surface containers ----- */
+
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.surface.pad   { padding: 14px 16px; }
+.surface.pad-lg { padding: 20px 24px; }
+/* Card/section header row inside a `.surface`: padded with a divider under
+   it. Replaces the repeated inline
+   `padding: 14px 16px; border-bottom: 1px solid var(--border);`. */
+.surface-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.surface-2 {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.surface-elev {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* ----- 7.6 Callouts ----- */
+
+.callout {
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  display: flex;
+  gap: 10px;
+  border: 1px solid transparent;
+}
+.callout .ico {
+  width: 18px; flex-shrink: 0;
+  display: grid; place-items: start; padding-top: 1px;
+  font-size: 16px;
+}
+.callout .body { flex: 1; min-width: 0; }
+.callout .body strong { font-weight: 600; }
+.callout .actions { display: flex; gap: 6px; margin-top: 8px; }
+
+.callout.info    { background: var(--info-soft);    color: var(--info-ink);    border-color: rgba(3, 105, 161, 0.18); }
+.callout.warn    { background: var(--warning-soft); color: var(--warning-ink); border-color: rgba(180, 83, 9, 0.20); }
+.callout.danger  { background: var(--danger-soft);  color: var(--danger-ink);  border-color: rgba(185, 28, 28, 0.20); }
+.callout.success { background: var(--success-soft); color: var(--success-ink); border-color: rgba(21, 128, 61, 0.18); }
+.callout.neutral { background: var(--surface-2);    color: var(--text-2);      border-color: var(--border); }
+
+.callout.proto {
+  background: var(--proto-bg);
+  color: var(--proto-fg);
+  border-color: transparent;
+}
+.callout.proto code, .callout.proto .mono { color: var(--proto-accent); }
+.callout.proto .ico { color: var(--proto-accent); }
+.callout.proto .body small { color: var(--proto-meta); }
+
+/* ----- 7.7 Utility ----- */
+
+.section-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-3); font-weight: 600;
+  margin: 0 0 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.section-title .ord {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  display: grid; place-items: center; font-size: 10px;
+  font-weight: 700;
+}
+
+.row     { display: flex; align-items: center; gap: 8px; }
+.col     { display: flex; flex-direction: column; gap: 8px; }
+.spread  { display: flex; align-items: center; justify-content: space-between; }
+.muted   { color: var(--text-2); }
+.dim     { color: var(--text-3); }
+.stack   { display: flex; flex-direction: column; gap: 12px; }
+.stack-sm{ display: flex; flex-direction: column; gap: 6px; }
+.stack-lg{ display: flex; flex-direction: column; gap: 20px; }
+.flex    { display: flex; }
+.wrap    { flex-wrap: wrap; }
+.gap-4   { gap: 4px; }
+.gap-6   { gap: 6px; }
+.gap-8   { gap: 8px; }
+.gap-12  { gap: 12px; }
+.gap-16  { gap: 16px; }
+.gap-24  { gap: 24px; }
+.center  { display: grid; place-items: center; }
+.center-row { display: flex; justify-content: center; align-items: center; }
+.grow    { flex: 1; min-width: 0; }
+.mono    { font-family: var(--font-mono); }
+.truncate{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nowrap  { white-space: nowrap; }
+.right   { text-align: right; }
+.center-text { text-align: center; }
+.f-12 { font-size: 12px; } .f-11 { font-size: 11px; } .f-13 { font-size: 13px; }
+.f-14 { font-size: 14px; } .f-16 { font-size: 16px; } .f-18 { font-size: 18px; }
+.w-100 { width: 100%; }
+.mt-0  { margin-top: 0; }
+.mt-4  { margin-top: 4px; }
+.mt-8  { margin-top: 8px; }
+.mt-12 { margin-top: 12px; }
+.mt-16 { margin-top: 16px; }
+.mt-24 { margin-top: 24px; }
+.mt-32 { margin-top: 32px; }
+.mb-0  { margin-bottom: 0; }
+.mb-8  { margin-bottom: 8px; }
+.mb-16 { margin-bottom: 16px; }
+.mb-24 { margin-bottom: 24px; }
+.ml-auto { margin-left: auto; }
+.divider { border-top: 1px solid var(--border); margin: 12px 0; }
+

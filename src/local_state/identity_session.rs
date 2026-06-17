@@ -1,0 +1,458 @@
+use super::*;
+
+impl LocalStateStore {
+    /// Look up the persisted device identity record without generating
+    /// a fresh one. Returns `None` when the device hasn't been initialised
+    /// yet (e.g. fresh install before `ensure_local_identity` has been
+    /// called).
+    pub fn local_identity_record(&self) -> Option<LocalIdentityRecord> {
+        #[cfg(not(test))]
+        {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            if let Some(record) = load_identity_record_from_secure_store(secure_store.as_ref()) {
+                return Some(record);
+            }
+            if !plaintext_identity_seed_fallback_allowed() {
+                return None;
+            }
+        }
+        self.load().local_identity
+    }
+
+    /// Replace (or clear) the persisted device identity record. Used by
+    /// the [`crate::key_store::KeyStore`] trait's `save_identity` impl so
+    /// a future Keychain / Secret-Service backend can hand a different
+    /// record back to the in-memory cache without going through
+    /// `ensure_local_identity` (which would generate a fresh seed if the
+    /// record was missing).
+    pub fn set_local_identity_record(&mut self, record: Option<LocalIdentityRecord>) {
+        self.ensure_cached_loaded();
+        #[cfg(target_arch = "wasm32")]
+        if record.is_some() && !plaintext_identity_seed_fallback_allowed() {
+            tracing::warn!("refusing to persist wasm local identity seed in plaintext local state");
+            self.cached.local_identity = None;
+            let _ = self.flush();
+            return;
+        }
+        self.cached.local_identity = record;
+        let _ = self.flush();
+    }
+
+    /// Read the in-memory device identity. Returns `None` when no record
+    /// is persisted; callers that need a key should call
+    /// [`Self::ensure_local_identity`] which generates + persists on first
+    /// access. Distinct from `ensure_*` so callers that only want to
+    /// **observe** an existing identity (e.g. status UI) don't trigger a
+    /// write.
+    pub fn local_identity(&self) -> Option<LocalIdentity> {
+        self.local_identity_record()
+            .as_ref()
+            .and_then(|record| LocalIdentity::from_record(record).ok())
+    }
+
+    /// Load — or generate + persist — the device identity. First call on
+    /// a fresh install fills `getrandom::fill` 32-byte seed, derives the
+    /// `did:key`, and writes the record to disk. Subsequent calls return
+    /// the persisted identity. If the persisted record is malformed (e.g.
+    /// hand-edited or truncated) this regenerates and overwrites — the
+    /// alternative is bricking the client, and Cokret v1 is pre-release
+    /// so there is no user-facing key recovery story to preserve.
+    pub fn ensure_local_identity(&mut self) -> anyhow::Result<LocalIdentity> {
+        #[cfg(not(test))]
+        {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            self.ensure_local_identity_with_secure_store(secure_store.as_ref())
+        }
+        #[cfg(test)]
+        {
+            self.ensure_local_identity_in_plaintext_state()
+        }
+    }
+
+    pub fn ensure_local_identity_with_secure_store(
+        &mut self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<LocalIdentity> {
+        self.ensure_cached_loaded();
+        if let Some(record) = load_identity_record_from_secure_store(secure_store) {
+            return LocalIdentity::from_record(&record);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        if self.cached.local_identity.is_some() {
+            tracing::warn!("discarding wasm plaintext local identity seed instead of migrating it");
+            self.cached.local_identity = None;
+            let _ = self.flush();
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(record) = self.cached.local_identity.clone() {
+            let identity = LocalIdentity::from_record(&record)?;
+            match store_identity_record_in_secure_store(secure_store, &record) {
+                Ok(()) => {
+                    self.cached.local_identity = None;
+                    let _ = self.flush();
+                    return Ok(identity);
+                }
+                Err(error) if plaintext_identity_seed_fallback_allowed() => {
+                    tracing::warn!(
+                        ?error,
+                        "secure identity handoff failed; using explicit plaintext identity fallback",
+                    );
+                    return Ok(identity);
+                }
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "secure identity handoff failed and plaintext identity fallback is disabled: {error}"
+                    ));
+                }
+            }
+        }
+
+        let identity = LocalIdentity::generate()?;
+        let record = identity.to_record();
+        match store_identity_record_in_secure_store(secure_store, &record) {
+            Ok(()) => {
+                self.cached.local_identity = None;
+                let _ = self.flush();
+                Ok(identity)
+            }
+            Err(error) if plaintext_identity_seed_fallback_allowed() => {
+                tracing::warn!(
+                    ?error,
+                    "secure identity store unavailable; using explicit plaintext identity fallback",
+                );
+                self.cached.local_identity = Some(record);
+                let _ = self.flush();
+                Ok(identity)
+            }
+            Err(error) => Err(anyhow::anyhow!(
+                "secure identity store unavailable and plaintext identity fallback is disabled: {error}"
+            )),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn ensure_local_identity_in_plaintext_state(
+        &mut self,
+    ) -> anyhow::Result<LocalIdentity> {
+        self.ensure_cached_loaded();
+        if let Some(record) = self.cached.local_identity.as_ref() {
+            match LocalIdentity::from_record(record) {
+                Ok(id) => return Ok(id),
+                Err(err) => {
+                    tracing::warn!("local_identity record corrupted ({err}); regenerating");
+                }
+            }
+        }
+        let identity = LocalIdentity::generate()?;
+        self.cached.local_identity = Some(identity.to_record());
+        let _ = self.flush();
+        Ok(identity)
+    }
+
+    /// Persisted OIDC token bundle. Returns `None` when no successful PKCE
+    /// exchange has happened yet.
+    pub fn oidc_tokens(&self) -> Option<OidcTokenBundle> {
+        self.load().oidc_tokens
+    }
+
+    /// Persist a fresh OIDC token bundle (or clear via `None`). Neither
+    /// the refresh credential nor the access token is serialised to
+    /// `state.json` — both are bearer secrets and MUST NOT land in the
+    /// plaintext persistence layer. Callers that know the actor DID
+    /// MUST use [`Self::set_oidc_tokens_with_secure_store`] so the
+    /// tokens land in SecureKeyStore instead; this plain variant only
+    /// keeps the non-secret bundle metadata (expiry, audience, ...).
+    pub fn set_oidc_tokens(&mut self, bundle: Option<OidcTokenBundle>) {
+        self.ensure_cached_loaded();
+        self.cached.oidc_tokens = bundle.map(|mut bundle| {
+            bundle.refresh_token = None;
+            bundle.access_token = String::new();
+            bundle
+        });
+        let _ = self.flush();
+    }
+
+    /// Persist a fresh OIDC token bundle and
+    /// **migrate the refresh_token and access_token fields into the
+    /// supplied `SecureKeyStore`** so the disk-backed `state.json` does
+    /// not hold either bearer credential in plaintext. Returns the
+    /// bundle that ended up serialised (the `refresh_token` field is
+    /// wiped to `None` and `access_token` to the empty string
+    /// post-secure-store-write so a corrupt-restore can't leak).
+    ///
+    /// The secure-store keys are `coauth.refresh_token.<actor_id>` and
+    /// `coauth.access_token.<actor_id>` so a device that has signed in
+    /// as multiple actors keeps them isolated. Callers SHOULD use
+    /// [`load_oidc_tokens_with_secure_store`] to reattach the tokens at
+    /// boot before passing the bundle into the OIDC refresh poller.
+    pub fn set_oidc_tokens_with_secure_store(
+        &mut self,
+        bundle: Option<OidcTokenBundle>,
+        actor_id: &str,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> Option<OidcTokenBundle> {
+        let refresh_key = format!("coauth.refresh_token.{actor_id}");
+        let access_key = format!("coauth.access_token.{actor_id}");
+        let stripped = match bundle {
+            Some(mut bundle) => {
+                if let Some(refresh) = bundle.refresh_token.take()
+                    && let Err(error) = secure_store.store_secret(&refresh_key, &refresh)
+                {
+                    tracing::warn!(
+                        ?error,
+                        actor = actor_id,
+                        "secure_key_store refresh_token write failed; bundle persisted without refresh_token (next refresh poll will fall back to re-login)",
+                    );
+                }
+                if !bundle.access_token.is_empty() {
+                    let access = std::mem::take(&mut bundle.access_token);
+                    if let Err(error) = secure_store.store_secret(&access_key, &access) {
+                        tracing::warn!(
+                            ?error,
+                            actor = actor_id,
+                            "secure_key_store access_token write failed; bundle persisted without access_token (next use will re-mint via refresh)",
+                        );
+                    }
+                }
+                Some(bundle)
+            }
+            None => {
+                if let Err(error) = secure_store.delete_secret(&refresh_key) {
+                    tracing::debug!(
+                        ?error,
+                        actor = actor_id,
+                        "secure_key_store refresh_token delete on bundle-clear failed (likely already missing)",
+                    );
+                }
+                if let Err(error) = secure_store.delete_secret(&access_key) {
+                    tracing::debug!(
+                        ?error,
+                        actor = actor_id,
+                        "secure_key_store access_token delete on bundle-clear failed (likely already missing)",
+                    );
+                }
+                None
+            }
+        };
+        self.ensure_cached_loaded();
+        self.cached.oidc_tokens = stripped.clone();
+        let _ = self.flush();
+        stripped
+    }
+
+    /// Companion to
+    /// [`set_oidc_tokens_with_secure_store`]. Reads the bundle from
+    /// state.json and reattaches the `refresh_token` and
+    /// `access_token` from the secure store under the per-actor keys.
+    /// Returns `None` when no bundle has been persisted yet (same
+    /// shape as [`Self::oidc_tokens`]).
+    pub fn load_oidc_tokens_with_secure_store(
+        &self,
+        actor_id: &str,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> Option<OidcTokenBundle> {
+        let mut bundle = self.oidc_tokens()?;
+        if bundle.refresh_token.is_none() {
+            let key = format!("coauth.refresh_token.{actor_id}");
+            match secure_store.get_secret(&key) {
+                Ok(Some(value)) => bundle.refresh_token = Some(value),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        actor = actor_id,
+                        "secure_key_store refresh_token read failed; bundle returned without refresh_token",
+                    );
+                }
+            }
+        }
+        if bundle.access_token.is_empty() {
+            let key = format!("coauth.access_token.{actor_id}");
+            match secure_store.get_secret(&key) {
+                Ok(Some(value)) => bundle.access_token = value,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        actor = actor_id,
+                        "secure_key_store access_token read failed; bundle returned without access_token",
+                    );
+                }
+            }
+        }
+        Some(bundle)
+    }
+
+    /// Read the persisted coauth `session_grant` if any.
+    pub fn session_grant(&self) -> Option<PersistedSessionGrant> {
+        self.load().session_grant
+    }
+
+    /// Persist (or clear via `None`) the coauth `session_grant`.
+    pub fn set_session_grant(&mut self, grant: Option<PersistedSessionGrant>) {
+        self.ensure_cached_loaded();
+        self.cached.session_grant = grant;
+        let _ = self.flush();
+    }
+
+    /// Update only the `session_expires_at` timestamp on the persisted
+    /// grant — used after a successful re-exchange when the grant body
+    /// itself didn't change but the minted access token's expiry did.
+    pub fn update_session_expires_at(&mut self, session_expires_at: Option<DateTime<Utc>>) {
+        self.ensure_cached_loaded();
+        if let Some(grant) = self.cached.session_grant.as_mut() {
+            grant.session_expires_at = session_expires_at;
+            grant.stored_at = Utc::now();
+            let _ = self.flush();
+        }
+    }
+
+    /// Append a structured user-action log entry to the buffered telemetry
+    /// log. Bounded by [`TELEMETRY_BUFFER_CAP`] - excess entries are
+    /// dropped from the front (oldest-first).
+    pub fn append_telemetry(&mut self, entry: UserActionLogEntry) {
+        self.ensure_cached_loaded();
+        self.cached.telemetry_log.push(entry);
+        let overflow = self
+            .cached
+            .telemetry_log
+            .len()
+            .saturating_sub(TELEMETRY_BUFFER_CAP);
+        if overflow > 0 {
+            self.cached.telemetry_log.drain(0..overflow);
+        }
+        let _ = self.flush();
+    }
+
+    /// Read-only snapshot of the buffered telemetry entries.
+    pub fn telemetry_log(&self) -> Vec<UserActionLogEntry> {
+        self.load().telemetry_log
+    }
+
+    /// Drain the buffered telemetry entries — returns the existing
+    /// entries and clears the on-disk buffer atomically. Called by the
+    /// flush path once a network channel is available.
+    pub fn drain_telemetry(&mut self) -> Vec<UserActionLogEntry> {
+        self.ensure_cached_loaded();
+        let drained = std::mem::take(&mut self.cached.telemetry_log);
+        let _ = self.flush();
+        drained
+    }
+
+    /// Drain the buffered telemetry log and POST each entry to soland's
+    /// audit feed. The endpoint is 404-tolerant: until soland wires
+    /// `ck.audit.user_action.ingest`, the server returns 404 and we
+    /// simply restore the buffer (so the entries survive for the next
+    /// flush attempt). Any other error class drops the affected entry
+    /// — they're best-effort telemetry, not durable audit.
+    ///
+    /// The endpoint shape mirrors sodmin's audit feed: `actor`,
+    /// `action`, `outcome`, optional `note`, `recorded_at`. soland's
+    /// telemetry sink can ingest yougen + sodmin streams without a
+    /// translation layer because both lines share the same wire
+    /// shape.
+    ///
+    /// Returns the number of successfully POSTed entries; the buffer
+    /// is fully drained on success and partially restored on 404.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn flush_telemetry_to_server(&mut self, api: &crate::api::CokretApi) -> usize {
+        let entries = self.drain_telemetry();
+        if entries.is_empty() {
+            return 0;
+        }
+        let mut sent = 0usize;
+        let mut deferred: Vec<UserActionLogEntry> = Vec::new();
+        for entry in entries {
+            let payload = json!({
+                "actor": entry.actor,
+                "action": entry.action,
+                "outcome": entry.outcome,
+                "note": entry.note,
+                "recorded_at": entry.recorded_at,
+            });
+            match api.post_audit_user_action(payload).await {
+                Ok(()) => sent += 1,
+                Err(crate::api::AuditPostError::NotWired) => {
+                    deferred.push(entry);
+                }
+                Err(crate::api::AuditPostError::Other(_)) => {
+                    // Best-effort — drop the entry rather than
+                    // ballooning the buffer when the server is
+                    // misbehaving.
+                }
+            }
+        }
+        // 404-tolerant: re-insert the deferred entries so a later
+        // flush attempt picks them up once the endpoint is wired.
+        if !deferred.is_empty() {
+            self.ensure_cached_loaded();
+            for entry in deferred.into_iter().rev() {
+                self.cached.telemetry_log.insert(0, entry);
+            }
+            // Respect the bounded cap — if the server has been 404
+            // for a long time the cap kicks in and the oldest
+            // entries get dropped.
+            let overflow = self
+                .cached
+                .telemetry_log
+                .len()
+                .saturating_sub(TELEMETRY_BUFFER_CAP);
+            if overflow > 0 {
+                self.cached.telemetry_log.drain(0..overflow);
+            }
+            let _ = self.flush();
+        }
+        sent
+    }
+
+    pub fn push_registration(&self) -> Option<PushRegistrationState> {
+        self.load().push_registration
+    }
+
+    pub fn save_push_registration(&mut self, state: PushRegistrationState) {
+        self.ensure_cached_loaded();
+        self.cached.push_registration = Some(state);
+        let _ = self.flush();
+    }
+
+    pub fn clear_push_registration(&mut self) {
+        self.ensure_cached_loaded();
+        self.cached.push_registration = None;
+        let _ = self.flush();
+    }
+
+    /// Save a private preference encrypted with the account key.
+    /// The account_key is typically the account DID or a derived secret.
+    pub fn save_private_data(
+        &mut self,
+        account_key: &str,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) {
+        self.ensure_cached_loaded();
+        let plaintext = value.into();
+        let encrypted = xor_encrypt(account_key, &plaintext);
+        self.cached.private_data.insert(key.into(), encrypted);
+        let _ = self.flush();
+    }
+
+    /// Load and decrypt a private preference.
+    pub fn load_private_data(&self, account_key: &str, key: &str) -> Option<String> {
+        let encrypted = self.load().private_data.get(key)?.clone();
+        xor_decrypt(account_key, &encrypted)
+    }
+
+    /// Remove a private preference.
+    pub fn remove_private_data(&mut self, key: &str) {
+        self.ensure_cached_loaded();
+        self.cached.private_data.remove(key);
+        let _ = self.flush();
+    }
+
+    /// List all private data keys.
+    pub fn private_data_keys(&self) -> Vec<String> {
+        self.load().private_data.keys().cloned().collect()
+    }
+}

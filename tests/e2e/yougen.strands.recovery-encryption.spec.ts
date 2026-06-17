@@ -1,0 +1,264 @@
+import { expect, test } from "@playwright/test";
+import {
+  registerStrandsBeforeEach,
+  latestTestId,
+  dismissBlockingRecoveryModal,
+  refreshServer,
+  gotoAndDismissRecovery,
+  dismissRecoveryMissingModal,
+  seedLocalRecoveryKeyMetadata,
+} from "./strandsHarness";
+
+registerStrandsBeforeEach();
+
+test("first authenticated session surfaces a single recovery prompt by priority", async ({
+  page,
+}) => {
+  // Single-prompt model (src/account_health.rs): at most one account-health
+  // prompt shows at a time, by priority. The mock account has encrypted
+  // history but no local key/backup, so the highest-priority prompt is the
+  // recovery-missing dialog (RecoverySetupMissing); the lower-priority
+  // recovery-setup banner (RecoverySetupReminder) is suppressed while it shows.
+  const missing = latestTestId(page, "mls-recovery-missing-modal");
+  await expect(missing).toBeVisible();
+  await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
+  await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
+
+  // Dismissing the higher-priority prompt drops to RecoverySetupReminder, which
+  // proactively AUTO-OPENS the 24-word Recovery Key setup modal once (the
+  // one-time new-user nudge — account_health::should_auto_prompt_recovery_setup).
+  await latestTestId(page, "mls-recovery-missing-dismiss").click();
+  const setupModal = latestTestId(page, "recovery-key-setup-modal");
+  await expect(setupModal).toBeVisible();
+
+  // Closing it ("Not now") leaves the passive banner; the persisted flag means
+  // it does NOT auto-pop again, so the banner is the steady-state reminder.
+  await latestTestId(page, "recovery-key-setup-dismiss").click();
+  await expect(setupModal).toBeHidden();
+  const banner = latestTestId(page, "recovery-setup-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("Recovery setup is incomplete");
+  await expect(latestTestId(page, "recovery-setup-open-recovery")).toBeVisible();
+  await expect(latestTestId(page, "recovery-setup-open-encryption")).toBeVisible();
+
+  // Reloading must not re-pop the modal (flag persisted in local state).
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await dismissRecoveryMissingModal(page);
+  await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
+});
+
+test("dialog ignores inside drag release but closes on outside click", async ({ page }) => {
+  await dismissBlockingRecoveryModal(page);
+  await latestTestId(page, "recovery-setup-open-recovery").click();
+  const modal = latestTestId(page, "recovery-key-setup-modal");
+  await expect(modal).toBeVisible();
+  const box = await latestTestId(page, "recovery-key-setup-banner").boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width + 80, box!.y + box!.height + 80);
+  await page.mouse.up();
+  await expect(modal).toBeVisible();
+
+  await page.mouse.click(12, 12);
+  await expect(modal).toBeHidden();
+});
+
+test("settings encryption links key backup diagnostics to recovery", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/settings/encryption");
+  const recovery = latestTestId(page, "settings-mls-recovery");
+  const guidance = latestTestId(page, "key-backup-guidance");
+  await expect(recovery).toBeVisible();
+  await expect(guidance).toBeVisible();
+  await expect(guidance.locator("summary")).toContainText(
+    "Advanced key backup diagnostics",
+  );
+  await expect(guidance).not.toHaveAttribute("open", "");
+  await guidance.locator("summary").click();
+  await expect(guidance).toContainText(
+    "backup id is generated when a backup is created",
+  );
+  await expect(latestTestId(page, "key-backup-open-recovery")).toContainText(
+    "Recovery & backups",
+  );
+  await expect(page.getByTestId("key-backup-open-manual")).toHaveCount(0);
+  await expect(page.getByTestId("key-backup-id-input")).toHaveCount(0);
+  await expect(page.getByTestId("key-backup-passphrase-input")).toHaveCount(0);
+  await expect(page.getByTestId("key-backup-setup")).toHaveCount(0);
+});
+
+test("recovery passkey quick unlock stays additive to the 24-word key", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/settings/recovery");
+  await expect(page.getByTestId("settings-nav-item-recovery")).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("settings-nav-item-security")).toHaveCount(0);
+  const recoveryPanel = latestTestId(page, "recovery-panel");
+  await expect(recoveryPanel).toBeVisible();
+
+  const passkeySection = recoveryPanel.getByTestId("passkey-recovery-section");
+  await expect(passkeySection).toBeVisible();
+  await expect(passkeySection).toContainText("browser-local WebAuthn PRF");
+  await expect(passkeySection).toContainText("Passkey unlock is additive");
+  await expect(recoveryPanel.getByTestId("passkey-wrap-key-form")).toBeVisible();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-key-hint")).toContainText(
+    "paste your existing 24 words",
+  );
+  await expect(recoveryPanel.getByTestId("passkey-wrap-count")).toHaveText("0 saved");
+  await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeDisabled();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-unlock")).toBeDisabled();
+
+  await recoveryPanel.getByTestId("recovery-key-regenerate").click();
+  await expect(recoveryPanel.getByTestId("recovery-key-status")).toContainText(
+    /Recovery Key (generated|saved)/,
+  );
+  const recoveryWords = (await recoveryPanel.getByTestId("recovery-key-current").textContent()) ?? "";
+  expect(recoveryWords.trim().split(/\s+/)).toHaveLength(24);
+  await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeEnabled();
+  await recoveryPanel.getByTestId("recovery-key-clear-live").click();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeDisabled();
+  await recoveryPanel.getByTestId("passkey-wrap-recovery-key").fill(recoveryWords);
+  await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeEnabled();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-key-hint")).toContainText(
+    "Ready to create",
+  );
+  await expect(passkeySection).toContainText("24-word Recovery Key");
+});
+
+test("encrypted Realm creation without recovery is gated, then proceeds on override", async ({
+  page,
+}) => {
+  // S6 (key-management §7.11): creating an e2ee Realm with no recovery path
+  // configured MUST prompt the user to set up the Recovery Key first. The
+  // default mock account has device authorization but no recovery configured.
+  await refreshServer(page);
+
+  await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
+  const setupPanel = page.getByTestId("setup-panel");
+  await expect(setupPanel).toBeVisible();
+  await dismissRecoveryMissingModal(page);
+  await page.getByTestId("realm-title-input").fill("Gated Encrypted Realm");
+  await page.getByTestId("realm-summary-input").fill("Created to verify the recovery gate");
+  await page.getByTestId("new-realm-next-button").click();
+  await page.getByTestId("new-realm-next-button").click();
+
+  // First Create click is intercepted by the recovery gate; no create event yet.
+  let realmCreateRequests = 0;
+  page.on("request", (request) => {
+    if (
+      request.url().endsWith("/_cokret/self/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("ck.realm.create")
+    ) {
+      realmCreateRequests += 1;
+    }
+  });
+  await page.getByTestId("create-realm-button").click();
+
+  const gate = latestTestId(page, "encrypted-realm-recovery-gate");
+  await expect(gate).toBeVisible();
+  await expect(latestTestId(page, "encrypted-realm-recovery-gate-setup")).toBeVisible();
+  await expect(latestTestId(page, "encrypted-realm-recovery-gate-override")).toBeVisible();
+  // Creation was blocked, not submitted.
+  await page.waitForTimeout(250);
+  expect(realmCreateRequests).toBe(0);
+
+  // Override (personal_node accepts the SPOF risk), then re-create.
+  await latestTestId(page, "encrypted-realm-recovery-gate-override").click();
+  await expect(gate).toBeHidden();
+
+  const realmCreateRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/_cokret/self/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("ck.realm.create"),
+  );
+  await page.getByTestId("create-realm-button").click();
+  await realmCreateRequest;
+
+  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+});
+
+test("mls recovery backup generates 24 recovery words", async ({ page }) => {
+  await refreshServer(page);
+
+  await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
+  const setupPanel = page.getByTestId("setup-panel");
+  await expect(setupPanel).toBeVisible();
+  await dismissRecoveryMissingModal(page);
+  await page.getByTestId("realm-title-input").fill("Recovery Words Space");
+  await page.getByTestId("realm-summary-input").fill("Created to verify recovery words");
+  await page.getByTestId("new-realm-next-button").click();
+  await page.getByTestId("new-realm-next-button").click();
+  await page.getByTestId("seed-members-input").fill("did:web:bob.example");
+
+  // No recovery configured in the default mock account, so the S6 gate
+  // intercepts the first Create; accept the override to reach the backup strand.
+  await page.getByTestId("create-realm-button").click();
+  await latestTestId(page, "encrypted-realm-recovery-gate-override").click();
+  await expect(latestTestId(page, "encrypted-realm-recovery-gate")).toBeHidden();
+
+  const realmCreateRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/_cokret/self/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("ck.realm.create"),
+  );
+  await page.getByTestId("create-realm-button").click();
+  await realmCreateRequest;
+
+  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+  const backupModal = latestTestId(page, "mls-backup-modal");
+  await expect(backupModal).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-banner")).toBeVisible();
+  // The dialog semantics live on the Dialog wrapper (mls-backup-modal), not the
+  // inner content div (mls-backup-banner).
+  await expect(backupModal).toHaveAttribute("role", "dialog");
+  await expect(backupModal).toHaveAttribute("aria-modal", "true");
+  await expect(latestTestId(page, "mls-backup-submit")).toBeVisible();
+  await expect(page.getByTestId("mls-backup-passphrase")).toHaveCount(0);
+  await expect(page.getByTestId("mls-backup-confirm")).toHaveCount(0);
+
+  await latestTestId(page, "mls-backup-submit").click();
+  const generatedKeyField = latestTestId(page, "mls-backup-generated-key");
+  await expect(generatedKeyField).toBeVisible();
+  const generatedRecoveryKey = await generatedKeyField.inputValue();
+  expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
+  expect(generatedRecoveryKey).not.toMatch(/[A-Z0-9]{5}-[A-Z0-9]{5}/);
+  await expect(latestTestId(page, "mls-backup-generated-key-warning")).toContainText("Store these words now");
+  await expect(latestTestId(page, "mls-backup-saved")).toBeVisible();
+});
+
+test("encrypted Realm backup uses existing Recovery Key instead of generating another one", async ({
+  page,
+}) => {
+  await seedLocalRecoveryKeyMetadata(page);
+  await refreshServer(page);
+
+  await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
+  const setupPanel = page.getByTestId("setup-panel");
+  await expect(setupPanel).toBeVisible();
+  await dismissRecoveryMissingModal(page);
+  await page.getByTestId("realm-title-input").fill("Existing Recovery Key Space");
+  await page.getByTestId("realm-summary-input").fill("Created after recovery key setup");
+  await page.getByTestId("new-realm-next-button").click();
+  await page.getByTestId("new-realm-next-button").click();
+
+  const realmCreateRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/_cokret/self/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("ck.realm.create"),
+  );
+  await page.getByTestId("create-realm-button").click();
+  // Recovery is already configured, so the S6 gate is bypassed entirely.
+  await expect(page.getByTestId("encrypted-realm-recovery-gate")).toHaveCount(0);
+  await realmCreateRequest;
+
+  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-modal")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-existing-key")).toBeVisible();
+  await expect(page.getByTestId("mls-backup-generated-key")).toHaveCount(0);
+  await expect(latestTestId(page, "mls-backup-submit")).toContainText("Back up with Recovery Key");
+  await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
+});

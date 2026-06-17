@@ -1,0 +1,124 @@
+//! Tests for backup-summary parsing and recovery-state predicates.
+
+use serde_json::json;
+
+use super::backup_summary::{
+    backup_class_counts, backup_inventory_status, parse_backup_list, parse_backup_summary,
+    sorted_backups_latest_first,
+};
+use super::state::recovery_state_has_user_material;
+use super::types::{PasskeyRecoveryWrap, RecoveryState};
+
+#[test]
+fn parse_backup_summary_extracts_visible_metadata() {
+    let row = parse_backup_summary(&json!({
+        "backup_id": "ck:backup:01964137-0000-7000-8000-000000000000",
+        "backup_class": "secret_storage",
+        "backup_version": "kb_1",
+        "created_at": "2026-05-15T00:00:00Z",
+        "ciphertext_digest": "sha256:abc",
+        "encryption": {
+            "recipient_method": "passphrase_kdf",
+            "kdf": { "name": "argon2id", "salt": "U0FMVA" },
+            "aead": { "name": "xchacha20_poly1305", "nonce": "Tk9OQ0U" }
+        },
+        "ciphertext": "Q1Q"
+    }))
+    .unwrap();
+    assert_eq!(
+        row.backup_id,
+        "ck:backup:01964137-0000-7000-8000-000000000000"
+    );
+    assert_eq!(row.backup_class, "secret_storage");
+    assert_eq!(row.created_at, "2026-05-15T00:00:00Z");
+}
+
+#[test]
+fn parse_backup_list_handles_envelope() {
+    let enveloped = json!({"backups": [{"backup_id": "ck:backup:x"}]});
+    assert_eq!(parse_backup_list(&enveloped).len(), 1);
+    assert!(parse_backup_list(&json!([{"backup_id": "ck:backup:y"}])).is_empty());
+}
+
+#[test]
+fn parse_backup_summary_rejects_missing_id() {
+    assert!(parse_backup_summary(&json!({})).is_none());
+}
+
+#[test]
+fn backup_inventory_status_marks_empty_server_as_incomplete() {
+    assert!(backup_inventory_status(&[]).contains("Recovery is incomplete"));
+}
+
+#[test]
+fn backup_inventory_status_counts_classes() {
+    let rows = parse_backup_list(&json!({
+        "backups": [
+            {
+                "backup_id": "ck:backup:a",
+                "backup_class": "did_recovery",
+                "encryption": {"recipient_method": "recovery_public_key"}
+            },
+            {
+                "backup_id": "ck:backup:b",
+                "backup_class": "secret_storage",
+                "encryption": {"recipient_method": "recovery_public_key"}
+            },
+            {
+                "backup_id": "ck:backup:c",
+                "backup_class": "mls_history",
+                "encryption": {"recipient_method": "secret_storage_key"}
+            }
+        ]
+    }));
+    let counts = backup_class_counts(&rows);
+    assert_eq!(counts.did_recovery, 1);
+    assert_eq!(counts.secret_storage, 1);
+    assert_eq!(counts.mls_history, 1);
+    assert!(!backup_inventory_status(&rows).contains("incomplete"));
+}
+
+#[test]
+fn sorted_backups_latest_first_orders_by_created_at() {
+    let rows = parse_backup_list(&json!({
+        "backups": [
+            {
+                "backup_id": "ck:backup:older",
+                "created_at": "2026-05-15T00:00:00Z"
+            },
+            {
+                "backup_id": "ck:backup:newer",
+                "created_at": "2026-05-16T00:00:00Z"
+            }
+        ]
+    }));
+    let sorted = sorted_backups_latest_first(&rows);
+    assert_eq!(sorted.first().unwrap().backup_id, "ck:backup:newer");
+}
+
+#[test]
+fn recovery_state_without_user_material_is_not_configured() {
+    assert!(!recovery_state_has_user_material(&RecoveryState::default()));
+}
+
+#[test]
+fn recovery_state_with_key_is_configured() {
+    let mut keyed = RecoveryState::default();
+    keyed.recovery_key_fingerprint = "sha256:abc".to_owned();
+    assert!(recovery_state_has_user_material(&keyed));
+}
+
+#[test]
+fn recovery_state_with_only_passkey_wrapper_is_not_configured() {
+    let mut state = RecoveryState::default();
+    state.passkey_wraps.push(PasskeyRecoveryWrap {
+        wrap_id: "ck:recovery-wrap:test".to_owned(),
+        credential_id_b64: "Y3JlZA".to_owned(),
+        recovery_key_fingerprint: "sha256:abc".to_owned(),
+        ..PasskeyRecoveryWrap::default()
+    });
+    assert!(
+        !recovery_state_has_user_material(&state),
+        "passkey wrappers are convenience unlocks, not root recovery material"
+    );
+}

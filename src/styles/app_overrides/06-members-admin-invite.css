@@ -1,0 +1,714 @@
+/* Members admin panel ------------------------------------------------- */
+.member-count-badge {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+  min-width: 22px;
+  text-align: center;
+}
+
+.members-invite-hint {
+  margin-top: -2px;
+  font-size: 12px;
+}
+
+.member-list-card .event-head {
+  align-items: center;
+}
+
+/* Right-aligned cluster in the list header: count badge, +invite, refresh. */
+.member-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Self-contained circular icon button for the list header. Deliberately
+   does NOT extend .primary/.secondary — their inline-block + 10px padding
+   stretched the square into an ellipse. */
+/* Visual-only override. Size/layout (inline-flex, centring, 32×32 square,
+   padding) come from the dx Button `size: IconSm`; this class must NOT
+   set width/height/padding or it re-creates the dual-sizing conflict that
+   left the button 30w×36h (the `data-size=default` height + `:has(svg)`
+   .75rem padding won the cascade and squashed the icon). */
+.member-head-icon-btn {
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, filter 0.12s ease;
+}
+
+.member-head-icon-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.member-head-icon-btn .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Accent variant = the primary "invite" action. */
+.member-head-icon-btn-accent {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+}
+
+.member-head-icon-btn-accent:hover {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  filter: brightness(1.06);
+}
+
+/* Inline member search. Full-width, sits between header and rows. */
+.member-search-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.member-load-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.member-load-more button {
+  width: 100%;
+  font-size: 12px;
+}
+
+/* Invite modal reuses the shared .modal system; just a touch narrower. */
+.invite-modal {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.invite-modal .modal-head h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.members-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 16px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.members-empty-icon {
+  line-height: 1;
+  color: var(--text-3);
+  opacity: 0.8;
+}
+
+.members-empty-icon .ui-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.members-empty-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.members-empty-hint {
+  max-width: 320px;
+  font-size: 12px;
+}
+
+.dashboard-two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+  gap: 16px;
+}
+
+.home-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.realm-tree-node-button.home-realm-card {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: block;
+}
+
+.realm-tree-node-button.home-realm-card.active {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+.m-list-item .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.m-list-item .title,
+.m-list-item .sub {
+  display: block;
+}
+
+.error-banner {
+  border-color: rgba(185, 28, 28, 0.2);
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+}
+
+.panel-toggle-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-toggle-label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+}
+
+.shell.app {
+  background:
+    radial-gradient(circle at 12% 0%, var(--page-glow-a), transparent 24%),
+    radial-gradient(circle at 88% 10%, var(--page-glow-b), transparent 24%),
+    linear-gradient(135deg, var(--bg) 0%, var(--bg-elev) 62%, color-mix(in srgb, var(--bg-elev) 92%, var(--accent-2) 8%) 100%);
+}
+
+.sidebar {
+  background: linear-gradient(180deg, var(--nav-bg), var(--nav-bg-2));
+  color: var(--nav-text);
+  border-right: 1px solid var(--nav-border);
+}
+
+.brand::before,
+.avatar.bot,
+.avatar.agent {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  color: var(--text-on-accent);
+}
+
+.brand::before {
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.brand-subtitle,
+.context-label,
+.sidebar-nav-group-title {
+  color: var(--nav-label);
+}
+
+.context-title,
+.sidebar-nav-item {
+  color: var(--nav-text);
+}
+
+.context-meta,
+.sidebar .card-meta,
+.sidebar .muted,
+.mobile-status .muted {
+  color: var(--nav-muted);
+}
+
+.sidebar-context {
+  border-color: var(--nav-border);
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 22%, transparent), transparent 42%),
+    var(--nav-soft);
+}
+
+.status,
+.realm-tree-node-button,
+.sidebar-nav-item {
+  border-color: color-mix(in srgb, var(--nav-border) 74%, rgba(255, 255, 255, 0.06));
+}
+
+.realm-tree-node-button,
+.sidebar-nav-item {
+  color: var(--nav-text);
+  background: var(--nav-soft);
+}
+
+.server-connect input {
+  border-color: var(--nav-input-border);
+  background: var(--nav-input-bg);
+  color: var(--nav-text);
+}
+
+.realm-tree-node-button.active,
+.sidebar-nav-item:hover,
+.sidebar-nav-item.is-active {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 11%, transparent)),
+    var(--nav-soft);
+}
+
+.sidebar-nav-item.is-cross-org,
+.home-realm-card.cross-org {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--accent-2));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--accent-2) 10%, var(--surface))),
+    var(--nav-soft);
+}
+
+.topbar {
+  border-color: color-mix(in srgb, var(--border) 86%, var(--accent) 14%);
+  background: color-mix(in srgb, var(--surface) 94%, white);
+}
+
+.home-hero,
+.directory-axis-card,
+.settings-header-card {
+  background:
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 34%),
+    radial-gradient(circle at 90% 10%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 30%),
+    var(--surface);
+}
+
+.home-realm-card {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white), color-mix(in srgb, var(--surface-2) 92%, var(--accent) 8%));
+}
+
+.nested-card,
+.settings-page-chip {
+  background: color-mix(in srgb, var(--surface-2) 92%, white);
+}
+
+.badge-info,
+.badge.blue {
+  background: var(--info-soft);
+  color: var(--info-ink);
+}
+
+.badge.amber,
+.badge-warning {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+}
+
+.badge.red,
+.badge-error {
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+}
+
+.badge.green,
+.badge-success {
+  background: var(--success-soft);
+  color: var(--success-ink);
+}
+
+.tab.active {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--accent-2));
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  color: var(--text-on-accent);
+}
+
+@media (max-width: 1200px) {
+  .topbar-context-pill.muted {
+    display: none;
+  }
+
+  .topbar-command-search.is-open {
+    width: min(32vw, 300px);
+    min-width: 220px;
+  }
+
+  .topbar-create-button .topbar-new-space-label {
+    display: none;
+  }
+
+  .topbar-create-button {
+    padding-inline: 10px;
+  }
+}
+
+@media (max-width: 860px) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
+  .auth-shell {
+    padding: 16px;
+    align-items: start;
+  }
+
+  .auth-card {
+    width: 100%;
+  }
+
+  .auth-panel {
+    padding: 22px;
+  }
+
+  .auth-mode-grid,
+  .auth-form .actions,
+  .auth-passkey {
+    grid-template-columns: 1fr;
+  }
+
+  .shell.app {
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--topbar-h) auto minmax(0, 1fr);
+    min-height: 100dvh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .mobile-shellbar {
+    height: var(--topbar-h);
+    grid-column: 1;
+    grid-row: 1;
+    position: relative;
+    z-index: var(--layer-chrome);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-solid, var(--surface));
+    box-shadow: var(--shadow-xs);
+    min-width: 0;
+  }
+
+  .mobile-shellbar > * {
+    flex: 0 0 auto;
+  }
+
+  .mobile-shellbar .brand {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .mobile-drawer {
+    position: fixed;
+    inset: var(--topbar-h) 0 auto 0;
+    z-index: var(--layer-global-popover);
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    max-height: calc(100dvh - var(--topbar-h));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-solid, var(--surface));
+    box-shadow: var(--shadow-md);
+  }
+
+  .mobile-drawer.open {
+    display: flex;
+  }
+
+  .notifications-drawer-layer {
+    justify-items: stretch;
+  }
+
+  .notifications-drawer-panel,
+  .shell.rtl .notifications-drawer-panel {
+    width: 100vw;
+    height: 100%;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .notifications-drawer-scrim {
+    background: transparent;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .main.workspace {
+    grid-column: 1;
+    grid-row: 3;
+    height: auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell.app > .workspace,
+  .shell.app.rtl > .workspace {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .shell.app > .recovery-setup-banner {
+    grid-column: 1;
+    grid-row: 2;
+    margin: 8px 12px;
+    max-height: min(28dvh, 220px);
+    overflow: auto;
+    padding: 10px 12px;
+    align-self: start;
+    z-index: var(--layer-sticky);
+  }
+
+  .shell.app > .recovery-setup-banner .actions {
+    flex-direction: row;
+  }
+
+  .shell.app > .recovery-setup-banner .actions > .primary,
+  .shell.app > .recovery-setup-banner .actions > .secondary {
+    width: auto;
+    flex: 1 1 160px;
+  }
+
+  .topbar.workspace-header {
+    display: none;
+  }
+
+  .workspace-body,
+  .workspace-body > .timeline,
+  .workspace-body > .settings,
+  .workspace-body > .workflow-form {
+    min-width: 0;
+  }
+
+  .topbar-context-pill {
+    display: none;
+  }
+
+  .topbar-command-search.is-open {
+    width: min(58vw, 320px);
+    min-width: 0;
+  }
+
+  .workspace-header .actions {
+    gap: 4px;
+  }
+
+  .workspace-body {
+    padding: 14px 12px max(40px, env(safe-area-inset-bottom));
+    overflow-x: hidden;
+  }
+
+  .workspace-body table,
+  .surface table,
+  .event table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) {
+    display: block;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) > .timeline {
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) > .composer[data-testid="composer"] {
+    margin-top: 12px;
+  }
+
+  .dashboard-two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid,
+  .settings-card-grid,
+  .setup-form-grid,
+  .setup-axis-grid,
+  .setup-shell,
+  .setup-step-list,
+  .settings-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .event,
+  .surface,
+  .metric,
+  .m-list-item,
+  .settings-row,
+  .settings-list-row {
+    min-width: 0;
+  }
+
+  .event-head,
+  .section-head,
+  .surface-head,
+  .settings-row,
+  .settings-list-row,
+  .toolbar-row,
+  .section-tools,
+  .icon-actions,
+  .composer-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .settings-inline-form,
+  .workflow-form .actions,
+  .settings .actions,
+  .composer .actions,
+  .event .actions {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .actions > .primary,
+  .actions > .secondary,
+  .actions > button:not(.icon),
+  .actions > a,
+  .settings-inline-form > *,
+  .workflow-form input:not([type="checkbox"]):not([type="radio"]),
+  .workflow-form select,
+  .settings input:not([type="checkbox"]):not([type="radio"]),
+  .settings select,
+  .composer textarea,
+  .composer input:not([type="checkbox"]):not([type="radio"]) {
+    max-width: 100%;
+  }
+
+  .actions > .primary,
+  .actions > .secondary,
+  .settings-inline-form > button,
+  .workflow-form .actions > button:not(.icon),
+  .settings .actions > button:not(.icon),
+  .event .actions > button:not(.icon) {
+    width: 100%;
+  }
+
+  .segmented-control {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .segmented-control .segment {
+    flex: 1 0 auto;
+  }
+
+  .topbar-command-search .command-palette,
+  .command-palette {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+  }
+
+  .workspace-body:has(> .kanban-panel) {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px;
+  }
+
+  .workspace-body > .kanban-panel {
+    overflow: visible;
+  }
+
+  .workspace-body > .timeline.kanban-panel {
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .board-grid {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: 12px;
+  }
+
+  .board-column {
+    flex: 0 0 min(86vw, 340px);
+    width: min(86vw, 340px);
+    min-width: min(86vw, 340px);
+    max-width: min(86vw, 340px);
+  }
+
+  .board-toolbar-main,
+  .board-toolbar-controls,
+  .board-list-compose {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .board-toolbar-controls > *,
+  .board-list-compose > * {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .board-select-menu-host,
+  .board-select-button,
+  .board-list-compose input {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .board-select-menu-panel {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .discussion-shell,
+  .discussion-shell.left-collapsed,
+  .discussion-shell.right-collapsed,
+  .discussion-shell.left-collapsed.right-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 190px) minmax(180px, 28vh) auto;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .discussion-sidebar-panel {
+    max-height: 190px;
+  }
+
+  .discussion-main-panel {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 180px;
+  }
+
+  .discussion-details-panel,
+  .discussion-composer {
+    grid-column: 1;
+  }
+
+  .discussion-composer {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--layer-sticky);
+  }
+
+  .compose-security-grid {
+    grid-template-columns: 1fr;
+  }
+}

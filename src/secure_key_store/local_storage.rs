@@ -1,0 +1,180 @@
+//! wasm32-only AEAD-wrapped `localStorage` [`SecureKeyStore`].
+
+#![cfg(target_arch = "wasm32")]
+
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD;
+
+use super::{
+    SecureKeyStore, SecureKeyStoreError, WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
+    WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED, is_wasm_ed25519_seed_key,
+    is_wasm_indexeddb_required_secret_key, unwrap_secret, wasm_allow_localstorage_secrets,
+    wrap_secret,
+};
+
+/// wasm32-only persistence-backed store
+/// that wraps secrets with ChaCha20-Poly1305 before stashing them in
+/// `localStorage`. The wrapping key is a per-installation random
+/// 32-byte seed that itself lives in `localStorage` under a separate
+/// key — this is the same trust posture as
+/// `MemorySecureKeyStore` against a fully-compromised DOM, but it
+/// keeps secrets out of plaintext if a backup / disk-dump only sees
+/// the localStorage blob (an actual attack the spec calls out in
+/// `crypto-media/secret-storage.md` §3 — the "lukewarm" tier).
+///
+/// This backend is only for non-sensitive first-paint secrets. Ed25519
+/// signing seeds, local identity seeds, account MLS secrets, and bearer
+/// tokens are refused so they cannot land in localStorage. The IndexedDB
+/// + non-extractable SubtleCrypto tier uses the same
+/// `yougen.secret.<service_name>.<key>` namespace after async upgrade.
+pub struct LocalStorageSecureKeyStore {
+    service_name: String,
+    wrapping_key: [u8; 32],
+}
+
+impl LocalStorageSecureKeyStore {
+    const WRAPPING_KEY_STORAGE_KEY_SUFFIX: &'static str = ".wrap_seed.v1";
+
+    /// Initialise the store for the given service namespace. Boot
+    /// reads the wrapping-key seed from `localStorage`, generating a
+    /// fresh one via `getrandom` if none exists yet. The seed is
+    /// base64-encoded so it round-trips through the JS string API.
+    pub fn new(service_name: &str) -> Result<Self, SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        let seed_key = Self::wrapping_seed_key(service_name);
+        let wrapping_key = match storage
+            .get_item(&seed_key)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage get: {err:?}")))?
+        {
+            Some(b64) => {
+                let bytes = STANDARD_NO_PAD.decode(b64.as_bytes()).map_err(|err| {
+                    SecureKeyStoreError::Backend(format!("wrap_seed base64: {err}"))
+                })?;
+                if bytes.len() != 32 {
+                    return Err(SecureKeyStoreError::Backend(format!(
+                        "wrap_seed length {}, expected 32",
+                        bytes.len()
+                    )));
+                }
+                let mut buf = [0u8; 32];
+                buf.copy_from_slice(&bytes);
+                buf
+            }
+            None => {
+                let mut seed = [0u8; 32];
+                getrandom::fill(&mut seed)
+                    .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom: {err}")))?;
+                storage
+                    .set_item(&seed_key, &STANDARD_NO_PAD.encode(seed))
+                    .map_err(|err| {
+                        SecureKeyStoreError::Backend(format!("localStorage set seed: {err:?}"))
+                    })?;
+                seed
+            }
+        };
+        Ok(Self {
+            service_name: service_name.to_owned(),
+            wrapping_key,
+        })
+    }
+
+    // Module-scope visibility so `migrate_localstorage_entries_to_indexeddb`
+    // can reuse the same getter without re-implementing the window /
+    // Storage probe.
+    pub(super) fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
+        let window = web_sys::window().ok_or_else(|| {
+            SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
+        })?;
+        window
+            .local_storage()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage: {err:?}")))?
+            .ok_or_else(|| SecureKeyStoreError::Unsupported("window.localStorage not available"))
+    }
+
+    pub(super) fn wrapping_seed_key(service_name: &str) -> String {
+        format!(
+            "yougen.secret.{service_name}{}",
+            Self::WRAPPING_KEY_STORAGE_KEY_SUFFIX
+        )
+    }
+
+    fn entry_key(&self, key: &str) -> String {
+        format!("yougen.secret.{}.{key}", self.service_name)
+    }
+
+    /// Store a transient AEAD-wrapped mirror used only by the
+    /// IndexedDB backend to survive page-unload races before its async
+    /// write commits. Public LocalStorage reads/writes still reject
+    /// sensitive keys; boot migrates these mirrors into IndexedDB before
+    /// dropping the wrapping seed.
+    pub(super) fn store_unload_race_mirror(
+        &self,
+        key: &str,
+        value: &str,
+    ) -> Result<(), SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        let wrapped = wrap_secret(value, &self.wrapping_key)?;
+        storage
+            .set_item(&self.entry_key(key), &wrapped)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage set: {err:?}")))
+    }
+}
+
+impl std::fmt::Debug for LocalStorageSecureKeyStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalStorageSecureKeyStore")
+            .field("service_name", &self.service_name)
+            .field("wrapping_key", &"<redacted>")
+            .finish()
+    }
+}
+
+impl SecureKeyStore for LocalStorageSecureKeyStore {
+    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        if is_wasm_indexeddb_required_secret_key(key) && !wasm_allow_localstorage_secrets() {
+            return Err(SecureKeyStoreError::Unsupported(
+                if is_wasm_ed25519_seed_key(key) {
+                    WASM_ED25519_SEED_INDEXEDDB_REQUIRED
+                } else {
+                    WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED
+                },
+            ));
+        }
+        let storage = Self::storage()?;
+        let wrapped = wrap_secret(value, &self.wrapping_key)?;
+        storage
+            .set_item(&self.entry_key(key), &wrapped)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage set: {err:?}")))
+    }
+
+    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        if is_wasm_indexeddb_required_secret_key(key) && !wasm_allow_localstorage_secrets() {
+            return Err(SecureKeyStoreError::Unsupported(
+                if is_wasm_ed25519_seed_key(key) {
+                    WASM_ED25519_SEED_INDEXEDDB_REQUIRED
+                } else {
+                    WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED
+                },
+            ));
+        }
+        let storage = Self::storage()?;
+        let Some(wrapped) = storage
+            .get_item(&self.entry_key(key))
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage get: {err:?}")))?
+        else {
+            return Ok(None);
+        };
+        unwrap_secret(&wrapped, &self.wrapping_key)
+    }
+
+    fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        storage
+            .remove_item(&self.entry_key(key))
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage remove: {err:?}")))
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "local_storage_aead"
+    }
+}

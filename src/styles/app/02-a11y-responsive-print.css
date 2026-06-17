@@ -1,0 +1,56 @@
+/* Accessibility: focus styles */
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.18);
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: none;
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .event { border-width: 2px; border-color: #18212f; }
+  .primary { background: #0047b3; }
+  .secondary { border: 2px solid #18212f; }
+  .metric { border-width: 2px; }
+  .badge { border: 1px solid #18212f; }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* Responsive: tablet */
+@media (max-width: 1200px) {
+  .shell { grid-template-columns: 240px minmax(0, 1fr) 280px; }
+  .shell.rtl { grid-template-columns: 280px minmax(0, 1fr) 240px; }
+  .metric-grid { grid-template-columns: 1fr; }
+}
+
+/* Responsive: mobile */
+@media (max-width: 768px) {
+  .shell { grid-template-columns: 1fr; }
+  .shell.rtl { grid-template-columns: 1fr; }
+  .shell.rtl .sidebar, .shell.rtl .main, .shell.rtl .panel { grid-column: auto; }
+  .sidebar { display: none; }
+  .panel { display: none; }
+  .mobile-shellbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; background: #101827; color: white; }
+  .mobile-drawer.open { display: grid; gap: 8px; padding: 12px; background: #172033; max-height: calc(100vh - 60px); overflow-y: auto; }
+  .mobile-realm-tree-filter { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a3a52; background: #0f172a; color: #e5edf7; }
+  .mobile-realm-tree-filter::placeholder { color: #6b7a90; }
+  .mobile-realm-tree-list { display: grid; gap: 6px; max-height: 50vh; overflow-y: auto; padding-right: 4px; }
+  .main { min-height: 100vh; padding: 16px; }
+  .title { font-size: 22px; }
+  .actions { flex-direction: column; }
+  .actions button { width: 100%; }
+  .tabs { flex-wrap: wrap; }
+}
+
+/* Print styles */
+@media print {
+  .sidebar, .panel, .actions, .composer { display: none !important; }
+  .shell { grid-template-columns: 1fr; }
+  .event { break-inside: avoid; }
+}
+

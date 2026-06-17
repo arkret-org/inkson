@@ -1,0 +1,179 @@
+use super::*;
+
+#[test]
+fn card_activity_items_show_local_strand_and_assignment_writes() {
+    let mut card = test_card("ck:strand:activity", "U");
+    card.primary_strand_id = card.id.clone();
+    let received_at = |value: &str| {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    };
+    let raw_operations = vec![
+        RawOperationRecord {
+            operation_id: "op-assignee".to_owned(),
+            realm_id: Some(TEST_REALM_ID.to_owned()),
+            received_at: received_at("2026-06-10T10:00:00Z"),
+            payload: json!({
+                "kind": "ck.relation.tombstone",
+                "operation_id": "op-assignee",
+                "write_state": "accepted",
+                "assignment_strand_id": card.id.clone(),
+                "assignment_actor_id": "did:web:alice.example",
+                "assignment_relation_id": "ck:relation:activity",
+                "activity_summary": "Assignee removed: alice",
+                "body": {
+                    "relation_id": "ck:relation:activity"
+                }
+            }),
+        },
+        RawOperationRecord {
+            operation_id: "op-due".to_owned(),
+            realm_id: Some(TEST_REALM_ID.to_owned()),
+            received_at: received_at("2026-06-10T11:00:00Z"),
+            payload: json!({
+                "kind": "ck.strand.update",
+                "operation_id": "op-due",
+                "write_state": "queued",
+                "activity_summary": "Due date cleared",
+                "body": {
+                    "strand_id": card.id.clone(),
+                    "patch": {
+                        "metadata.fields": {
+                            "$op": "set",
+                            "value": { "labels": [] }
+                        }
+                    }
+                }
+            }),
+        },
+    ];
+
+    let items = card_activity_items(&card, &raw_operations);
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].title, "Due date cleared");
+    assert_eq!(items[0].status, CardActivityStatus::Pending);
+    assert_eq!(items[1].title, "Assignee removed: alice");
+    assert_eq!(items[1].status, CardActivityStatus::Accepted);
+}
+
+#[test]
+fn card_detail_update_patch_uses_strand_update_patch_paths() {
+    let mut current = test_card("ck:strand:f1", "U");
+    current.title = "Old".to_owned();
+    current.description = "old summary".to_owned();
+    current.labels = vec!["old".to_owned()];
+    current.assignee = "did:web:bob.example".to_owned();
+    current.due = "2026-05-19".to_owned();
+    let draft = CardDetailDraft {
+        title: "Launch checklist".to_owned(),
+        description: "Ship blockers only".to_owned(),
+        body: String::new(),
+        synthesis: String::new(),
+        labels: vec!["release".to_owned(), "ops".to_owned()],
+        assignee: "did:web:alice.example".to_owned(),
+        due: "2026-05-20".to_owned(),
+    };
+
+    let patch = card_detail_update_patch(&current, &draft).unwrap();
+    assert_eq!(patch["metadata.title"]["value"], "Launch checklist");
+    assert_eq!(patch["metadata.summary"]["value"], "Ship blockers only");
+    assert_eq!(patch["metadata.fields"]["value"]["labels"][0], "release");
+    assert!(patch["metadata.fields"]["value"].get("assignee").is_none());
+    assert_eq!(patch["metadata.fields"]["value"]["due_at"], "2026-05-20");
+    assert!(patch["metadata.fields"]["value"].get("due").is_none());
+}
+
+#[test]
+fn relation_id_from_event_id_retags_assignment_relation_ids() {
+    assert_eq!(
+        relation_id_from_event_id("ck:event:0196419b-0000-7000-8000-000000000004").as_deref(),
+        Some("ck:relation:0196419b-0000-7000-8000-000000000004")
+    );
+    assert!(relation_id_from_event_id("ck:message:bad").is_none());
+}
+
+#[test]
+fn card_assignment_mutations_create_and_tombstone_relation_events() {
+    let mut current = test_card("ck:strand:0196419b-0000-7000-8000-000000000101", "U");
+    current.assignee = "did:web:bob.example".to_owned();
+    current.assigned_to_relations = vec![CardAssignedToRelation {
+        relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000bb".to_owned(),
+        actor_id: "did:web:bob.example".to_owned(),
+    }];
+    let selected = BTreeSet::from(["did:web:alice.example".to_owned()]);
+
+    let mutations = card_assignment_mutations(
+        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "did:web:owner.example",
+        &current,
+        &selected,
+    )
+    .unwrap();
+
+    assert_eq!(mutations.len(), 2);
+    let create = mutations
+        .iter()
+        .find(|mutation| matches!(mutation, CardAssignmentMutation::Create { .. }))
+        .expect("create mutation");
+    assert_eq!(create.actor_id(), "did:web:alice.example");
+    assert_eq!(create.operation().kind, "ck.relation.create");
+    assert_eq!(create.operation().payload["kind"], json!("assigned_to"));
+    assert_eq!(create.operation().payload["from_ref"], json!(current.id));
+    assert_eq!(
+        create.operation().payload["to_ref"],
+        json!("did:web:alice.example")
+    );
+    assert!(create.operation().payload.get("relation_id").is_none());
+
+    let tombstone = mutations
+        .iter()
+        .find(|mutation| matches!(mutation, CardAssignmentMutation::Tombstone { .. }))
+        .expect("tombstone mutation");
+    assert_eq!(
+        tombstone.relation_id(),
+        "ck:relation:0196419b-0000-7000-8000-0000000000bb"
+    );
+    assert_eq!(tombstone.operation().kind, "ck.relation.tombstone");
+    assert_eq!(
+        tombstone.operation().payload["relation_id"],
+        json!("ck:relation:0196419b-0000-7000-8000-0000000000bb")
+    );
+
+    let after = assignment_relations_after_mutations(&current, &selected, &mutations);
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].actor_id, "did:web:alice.example");
+    assert!(after[0].relation_id.starts_with("ck:relation:"));
+}
+
+#[test]
+fn card_assignment_mutations_clear_all_assignees() {
+    let mut current = test_card("ck:strand:0196419b-0000-7000-8000-000000000101", "U");
+    current.assigned_to_relations = vec![
+        CardAssignedToRelation {
+            relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000aa".to_owned(),
+            actor_id: "did:web:alice.example".to_owned(),
+        },
+        CardAssignedToRelation {
+            relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000bb".to_owned(),
+            actor_id: "did:web:bob.example".to_owned(),
+        },
+    ];
+
+    let selected = BTreeSet::new();
+    let mutations = card_assignment_mutations(
+        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "did:web:owner.example",
+        &current,
+        &selected,
+    )
+    .unwrap();
+
+    assert_eq!(mutations.len(), 2);
+    assert!(
+        mutations
+            .iter()
+            .all(|mutation| matches!(mutation, CardAssignmentMutation::Tombstone { .. }))
+    );
+    assert!(assignment_relations_after_mutations(&current, &selected, &mutations).is_empty());
+}

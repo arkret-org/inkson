@@ -1,0 +1,276 @@
+use dioxus::prelude::*;
+
+use super::card_detail_route_realm_id;
+use super::model::*;
+use crate::local_state::LocalStateStore;
+use crate::views::helpers::short_protocol_id;
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn select_kanban_board(
+    board_id: String,
+    mut selected_board_space_id: Signal<String>,
+    mut board_popover: Signal<BoardToolbarPopover>,
+    mut selected_card: Signal<Option<KanbanCard>>,
+    board_route_realm_id: String,
+    local_realm_id: String,
+    lifecycle_container_projection: Signal<Vec<crate::api::SpaceContainerProjectionView>>,
+    lifecycle_strand_projection: Signal<Vec<crate::api::StrandProjectionView>>,
+    mut columns: Signal<Vec<KanbanColumn>>,
+    mut adding_card_to: Signal<Option<String>>,
+    mut board_status: Signal<String>,
+    mut board_space_options: Signal<Vec<BoardSpaceOption>>,
+    mut projection_source: Signal<BoardProjectionSource>,
+    state_store: Signal<LocalStateStore>,
+    decrypt_actor: String,
+    decrypt_device: String,
+) {
+    selected_board_space_id.set(board_id.clone());
+    board_popover.set(BoardToolbarPopover::None);
+    // Persist the board in the URL so a refresh restores it instead of
+    // falling back to the first board. Closing any open card too: a board
+    // switch should not keep a card from a different board mounted.
+    selected_card.set(None);
+    let containers = lifecycle_container_projection();
+    let strands = lifecycle_strand_projection();
+    if board_id.trim().is_empty() {
+        columns.set(Vec::new());
+        adding_card_to.set(None);
+        board_status.set("Select or create a board before adding lists".to_owned());
+        replace_kanban_board_url(&board_route_realm_id, &board_id);
+        return;
+    }
+    if containers.is_empty() && strands.is_empty() {
+        let raw_operations = state_store.read().load().raw_operations;
+        if raw_operations.is_empty() {
+            board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
+            replace_kanban_board_url(&board_route_realm_id, &board_id);
+            return;
+        }
+        let decrypt_store = state_store.read();
+        let decrypt_ctx = MlsDecryptCtx {
+            state_store: &decrypt_store,
+            realm_id: &board_route_realm_id,
+            actor_id: &decrypt_actor,
+            device_id: &decrypt_device,
+        };
+        let (projected_columns, options, projected_board_id) =
+            columns_from_lifecycle_projection_with_local(
+                &containers,
+                &strands,
+                &board_id,
+                &raw_operations,
+                &local_realm_id,
+                Some(&decrypt_ctx),
+            );
+        if !options.is_empty() {
+            board_space_options.set(options);
+        }
+        if projected_board_id.as_deref() == Some(board_id.as_str()) {
+            let projected_columns = overlay_local_card_creates_with_decrypt(
+                projected_columns,
+                &decrypt_store,
+                &board_id,
+                Some(&decrypt_ctx),
+            );
+            drop(decrypt_store);
+            columns.set(projected_columns);
+            projection_source.set(BoardProjectionSource::ApiDerived);
+            board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
+        } else {
+            columns.set(Vec::new());
+            adding_card_to.set(None);
+            board_status.set(format!(
+                "No list projection available for selected Board · {}",
+                short_protocol_id(&board_id)
+            ));
+        }
+        replace_kanban_board_url(&board_route_realm_id, &board_id);
+        return;
+    }
+    let raw_operations = state_store.read().load().raw_operations;
+    let decrypt_store = state_store.read();
+    let decrypt_ctx = MlsDecryptCtx {
+        state_store: &decrypt_store,
+        realm_id: &board_route_realm_id,
+        actor_id: &decrypt_actor,
+        device_id: &decrypt_device,
+    };
+    let (projected_columns, options, projected_board_id) =
+        columns_from_lifecycle_projection_with_local(
+            &containers,
+            &strands,
+            &board_id,
+            &raw_operations,
+            &local_realm_id,
+            Some(&decrypt_ctx),
+        );
+    if !options.is_empty() {
+        board_space_options.set(options);
+    }
+    if projected_board_id.as_deref() == Some(board_id.as_str()) {
+        let projected_columns = overlay_local_card_creates_with_decrypt(
+            projected_columns,
+            &decrypt_store,
+            &board_id,
+            Some(&decrypt_ctx),
+        );
+        drop(decrypt_store);
+        let list_count = projected_columns.len();
+        let card_count = projected_columns
+            .iter()
+            .map(|column| column.cards.len())
+            .sum::<usize>();
+        columns.set(projected_columns);
+        projection_source.set(BoardProjectionSource::ApiDerived);
+        board_status.set(format!(
+            "Board loaded: {list_count} list(s), {card_count} card(s)"
+        ));
+    } else {
+        columns.set(Vec::new());
+        adding_card_to.set(None);
+        board_status.set(format!(
+            "No list projection available for selected Board · {}",
+            short_protocol_id(&board_id)
+        ));
+    }
+    replace_kanban_board_url(&board_route_realm_id, &board_id);
+}
+
+pub(super) fn replace_kanban_board_url(realm_id: &str, board_id: &str) {
+    let realm_id = card_detail_route_realm_id(realm_id);
+    let board_id = board_id.trim();
+    let path = if board_id.is_empty() {
+        format!("/kanban/{realm_id}")
+    } else {
+        format!("/kanban/{realm_id}/board/{board_id}")
+    };
+    let Ok(encoded_path) = serde_json::to_string(&path) else {
+        return;
+    };
+    let script = format!("window.history.replaceState(null, '', {encoded_path});");
+    let _ = document::eval(&script);
+}
+
+/// Build + sign + submit a `ck.component.strand.position.v1` Move via
+/// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
+/// queue regardless of submit outcome. Used by both list and card create
+/// paths - `subject` is the cell subject (Space-container id or Strand id), `kind` is
+/// the classifier the MoveSubmissionState tracker uses to decorate state
+/// pills (`ck.space.create` / `ck.strand.create`).
+pub(super) fn write_state_samples() -> Vec<CardState> {
+    vec![
+        CardState::Optimistic,
+        CardState::Queued,
+        CardState::Submitted,
+        CardState::Accepted,
+        CardState::SoftFailed,
+        CardState::Quarantined,
+        CardState::Conflict,
+    ]
+}
+
+pub(super) fn seed_columns() -> Vec<KanbanColumn> {
+    vec![
+        KanbanColumn {
+            id: "ck:space:01list-todo000000000000000000".to_owned(),
+            title: "To Do".to_owned(),
+            rank: "U".to_owned(),
+            cards: vec![KanbanCard {
+                id: DEMO_STRAND_LEGAL_REVIEW_ID.to_owned(),
+                // Seed cards seed `cards[i].rank` from the
+                // lexofractional alphabet so the next rank_between
+                // call has well-formed neighbours to work with. "U" is
+                // the alphabet midpoint; subsequent seeds at "f" and
+                // "p" keep them strictly ascending.
+                rank: "U".to_owned(),
+                title: "Legal review for public beta".to_owned(),
+                description: "Finalize external processor wording before launch checklist can move.".to_owned(),
+                body: String::new(),
+                synthesis: String::new(),
+                body_locked: false,
+                synthesis_locked: false,
+                created_by: "did:web:acme.example:users:alice".to_owned(),
+                created_at: "2026-05-08T08:00:00Z".to_owned(),
+                updated_at: String::new(),
+                labels: vec!["legal".to_owned(), "beta".to_owned()],
+                assignee: "Alice".to_owned(),
+                assigned_to_relations: Vec::new(),
+                due: "May 08".to_owned(),
+                primary_strand_id: DEMO_STRAND_REVIEW_DISCUSSION_ID.to_owned(),
+                locked_strand: Some(LockedStrand {
+                    strand_id_hash: "sha256:locked-private-decision".to_owned(),
+                reason: "You can see that a restricted discussion is linked, but not its name or members.".to_owned(),
+                }),
+                external_visibility: "External counsel discussion only".to_owned(),
+                history_visibility: "joined history".to_owned(),
+                security_encrypted: None,
+                state: CardState::Synced,
+                lifecycle: StrandLifecycleState::Active,
+            }],
+            state: SpaceContainerLifecycleState::Active,
+        },
+        KanbanColumn {
+            id: "ck:space:01list-progress00000000000000".to_owned(),
+            title: "In Progress".to_owned(),
+            rank: "f".to_owned(),
+            cards: vec![KanbanCard {
+                id: DEMO_STRAND_ONBOARDING_COPY_ID.to_owned(),
+                rank: "U".to_owned(),
+                title: "Onboarding copy".to_owned(),
+                description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
+                body: String::new(),
+                synthesis: String::new(),
+                body_locked: false,
+                synthesis_locked: false,
+                created_by: "did:web:acme.example:users:bob".to_owned(),
+                created_at: "2026-05-09T09:00:00Z".to_owned(),
+                updated_at: String::new(),
+                labels: vec!["copy".to_owned(), "support".to_owned()],
+                assignee: "Bob".to_owned(),
+                assigned_to_relations: Vec::new(),
+                due: "May 10".to_owned(),
+                primary_strand_id: DEMO_STRAND_SUPPORT_DISCUSSION_ID.to_owned(),
+                locked_strand: None,
+                external_visibility: "No external discussions linked".to_owned(),
+                history_visibility: "shared history".to_owned(),
+                security_encrypted: None,
+                state: CardState::Queued,
+                lifecycle: StrandLifecycleState::Active,
+            }],
+            state: SpaceContainerLifecycleState::Active,
+        },
+        KanbanColumn {
+            id: "ck:space:01list-done00000000000000000".to_owned(),
+            title: "Done".to_owned(),
+            rank: "p".to_owned(),
+            cards: vec![KanbanCard {
+                id: DEMO_STRAND_SECURITY_SIGNOFF_ID.to_owned(),
+                rank: "U".to_owned(),
+                title: "Security sign-off".to_owned(),
+                description: "Projection detected a stale column head after an offline move.".to_owned(),
+                body: String::new(),
+                synthesis: String::new(),
+                body_locked: false,
+                synthesis_locked: false,
+                created_by: "did:web:acme.example:users:carol".to_owned(),
+                created_at: "2026-05-01T10:00:00Z".to_owned(),
+                updated_at: String::new(),
+                labels: vec!["security".to_owned(), "reviewed".to_owned()],
+                assignee: "Carol".to_owned(),
+                assigned_to_relations: Vec::new(),
+                due: "May 01".to_owned(),
+                primary_strand_id: DEMO_STRAND_SECURITY_REVIEW_ID.to_owned(),
+                locked_strand: Some(LockedStrand {
+                    strand_id_hash: "sha256:locked-incident-notes".to_owned(),
+                    reason: "Incident notes require separate discussion capability.".to_owned(),
+                }),
+                external_visibility: "Internal discussions only".to_owned(),
+                history_visibility: "restricted history".to_owned(),
+                security_encrypted: None,
+                state: CardState::Conflict,
+                lifecycle: StrandLifecycleState::Active,
+            }],
+            state: SpaceContainerLifecycleState::Active,
+        },
+    ]
+}
