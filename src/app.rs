@@ -1027,6 +1027,13 @@ pub fn RouterView() -> Element {
     let device_authorization_check_complete = use_signal(|| false);
     let account_has_other_devices = use_signal(|| false);
     let mut recovery_key_setup_prompt = use_signal(|| false);
+    // Session-scoped "Not now" flag for the recommended-encryption-floor modal.
+    // The modal is gated on `active_prompt == RecommendedEncryptionFloor`, which
+    // is re-resolved every render; during Realm creation the prompt churns away
+    // and back as sync flushes new state, remounting `EncryptionFloorPrompt`. A
+    // component-local dismissal would reset on each remount and re-pop, so the
+    // flag lives here and is folded into the render gate below.
+    let encryption_floor_prompt_dismissed = use_signal(|| false);
     // In-memory "already auto-prompted recovery setup this session" guard. The
     // persisted localStorage flag handles across-session suppression, but a
     // session guard makes the one-time auto-open robust against the user
@@ -2648,7 +2655,9 @@ pub fn RouterView() -> Element {
                 device_id,
                 state_store,
             }
-            if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor {
+            if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
+                && !encryption_floor_prompt_dismissed()
+            {
                 crate::components::EncryptionFloorPrompt {
                     token,
                     account_did,
@@ -2660,6 +2669,7 @@ pub fn RouterView() -> Element {
                     needs_mls_backup,
                     recovery_key_setup_prompt,
                     account_recovery_configured,
+                    dismissed: encryption_floor_prompt_dismissed,
                 }
             }
             crate::components::RecoveryKeySetupPrompt {

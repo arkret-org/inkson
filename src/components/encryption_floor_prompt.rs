@@ -23,8 +23,15 @@ pub fn EncryptionFloorPrompt(
     /// `Some(false)` none, `None` unknown/loading). Whether to offer a *new*
     /// Recovery Key setup is an account decision, not a per-device one.
     account_recovery_configured: Signal<Option<bool>>,
+    /// Session-scoped "Not now" flag, owned by the parent shell so it survives
+    /// this component being unmounted/remounted while `active_prompt` churns
+    /// during sync (e.g. a new Realm flushing in). A component-local
+    /// `use_signal` would reset to `false` on every remount, so with the
+    /// underlying `floor_low` condition still true the modal re-popped
+    /// repeatedly during Realm creation. Hoisting it makes "Not now" stick for
+    /// the rest of the session.
+    mut dismissed: Signal<bool>,
 ) -> Element {
-    let mut dismissed = use_signal(|| false);
     let mut status = use_signal(String::new);
 
     let session = token();
