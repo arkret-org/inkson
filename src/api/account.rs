@@ -78,6 +78,11 @@ impl CokretApi {
     ) -> anyhow::Result<cokret_sdk::models::AccountRegisterOutcome> {
         let body = cokret_sdk::models::AccountRegisterRequestBody {
             principal_id: did_for_request_field("principal_id", did)?,
+            // Canonical registration handle is asserted by the Account Authority
+            // on the coauth -> soland register path; this direct client path
+            // leaves it unset (the Principal Server falls back to a synthetic
+            // bootstrap localpart).
+            handle: None,
             display_name: display_name
                 .map(str::trim)
                 .filter(|value| !value.is_empty())

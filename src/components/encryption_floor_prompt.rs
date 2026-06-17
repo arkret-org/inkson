@@ -19,6 +19,10 @@ pub fn EncryptionFloorPrompt(
     needs_mls_unlock: Signal<bool>,
     needs_mls_backup: Signal<bool>,
     recovery_key_setup_prompt: Signal<bool>,
+    /// Account-level recovery state (server truth: `Some(true)` configured,
+    /// `Some(false)` none, `None` unknown/loading). Whether to offer a *new*
+    /// Recovery Key setup is an account decision, not a per-device one.
+    account_recovery_configured: Signal<Option<bool>>,
 ) -> Element {
     let mut dismissed = use_signal(|| false);
     let mut status = use_signal(String::new);
@@ -38,8 +42,20 @@ pub fn EncryptionFloorPrompt(
         return rsx! {};
     }
 
-    let recovery_key_configured =
+    // Whether to offer setting up a *new* 24-word Recovery Key is an
+    // account-level decision, not a per-device one. A second device has no
+    // local recovery material yet the account may already hold a Recovery Key
+    // (server `did_recovery` backup + policy). Reuse the same canonical
+    // predicate as the standing recovery reminder so the floor prompt never
+    // offers a redundant setup when the account is already configured; a device
+    // without the local key still seals the account secret to the account's
+    // recovery public key, so enabling encryption needs no local 24 words.
+    let local_recovery_configured =
         crate::views::recovery::recovery_options_configured(&state_store.read(), &actor);
+    let recovery_key_configured = !crate::app::recovery_setup_prompt_required_for_local_state(
+        account_recovery_configured(),
+        local_recovery_configured,
+    );
     let on_enable = move |_| {
         if recovery_key_configured {
             dismissed.set(true);

@@ -2641,6 +2641,7 @@ pub fn RouterView() -> Element {
                     needs_mls_unlock,
                     needs_mls_backup,
                     recovery_key_setup_prompt,
+                    account_recovery_configured,
                 }
             }
             crate::components::RecoveryKeySetupPrompt {
@@ -6382,7 +6383,10 @@ async fn refresh_oidc_bearer_for_server(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|issuer| {
-                    format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'))
+                    format!(
+                        "{}/.well-known/openid-configuration",
+                        issuer.trim_end_matches('/')
+                    )
                 })
         })
         .ok_or_else(|| anyhow::anyhow!("oidc method published no discovery url"))?;
@@ -6790,8 +6794,9 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 // sender-constrains it. `with_bearer` preserves this field, so all
                 // `api.clone().with_bearer(grant)` sites below inherit the DPoP
                 // device. Falls back to bearer-only if no device key is available.
-                let device_handle =
-                    crate::auth_dpop::load_device_key(&state_store.read()).ok().flatten();
+                let device_handle = crate::auth_dpop::load_device_key(&state_store.read())
+                    .ok()
+                    .flatten();
                 let persisted_grant = state_store.read().session_grant();
                 let api = match device_handle {
                     Some(handle) => {

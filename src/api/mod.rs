@@ -367,10 +367,7 @@ impl fmt::Debug for CokretApi {
                 &self.session_grant_proof.as_ref().map(|_| "<proof>"),
             )
             .field("cancel_token", &self.cancel_token)
-            .field(
-                "dpop_device",
-                &self.dpop_device.as_ref().map(|h| h.jkt()),
-            )
+            .field("dpop_device", &self.dpop_device.as_ref().map(|h| h.jkt()))
             .field(
                 "events_describe_cache",
                 &self
@@ -547,14 +544,13 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 /// codes that all reduce to "this device cannot establish a new account
 /// Recovery Key root":
 ///
-/// - `device_not_authorized` — soland's `ensure_key_backup_writer_device_authorized`
-///   gate (unverified / unpaired device writing the account Recovery Key backup).
-/// - `recovery_policy_device_not_authorized` — the recovery-policy genesis path
-///   falls back to the projected device row's `device_public_key`; a session
-///   device that was never enrolled (no `ck.device.authorize`) has no key there.
-/// - `device_enrollment_authority_not_designated` — the `service_attested`
-///   enrollment path could not anchor an authority for this device
-///   (device-lifecycle.md §5.4).
+/// - `device_not_authorized` — soland's `ensure_key_backup_writer_device_authorized` gate
+///   (unverified / unpaired device writing the account Recovery Key backup).
+/// - `recovery_policy_device_not_authorized` — the recovery-policy genesis path falls back to the
+///   projected device row's `device_public_key`; a session device that was never enrolled (no
+///   `ck.device.authorize`) has no key there.
+/// - `device_enrollment_authority_not_designated` — the `service_attested` enrollment path could
+///   not anchor an authority for this device (device-lifecycle.md §5.4).
 ///
 /// Recovery setup MUST treat all three as fail-closed: a device that cannot pass
 /// the server's verified-device gate must never establish (or locally persist)
@@ -1367,10 +1363,9 @@ impl CokretApi {
         let proof = handle
             .mint_proof(&htm, &htu, ath)
             .map_err(|error| anyhow::anyhow!("mint self-path DPoP proof: {error}"))?;
-        request.headers_mut().insert(
-            "dpop",
-            reqwest::header::HeaderValue::from_str(&proof)?,
-        );
+        request
+            .headers_mut()
+            .insert("dpop", reqwest::header::HeaderValue::from_str(&proof)?);
         // Present the session-grant holder proof so the Principal Server can
         // forward it to coauth's grant introspection (which requires it to
         // confirm possession of the grant's session key).

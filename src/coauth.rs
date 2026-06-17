@@ -755,7 +755,10 @@ impl CoauthApi {
             .send()
             .await?;
         let status = response.status();
-        let text = response.text().await.context("read device-authorize body")?;
+        let text = response
+            .text()
+            .await
+            .context("read device-authorize body")?;
         if !status.is_success() {
             let code = error_envelope_code(&text);
             anyhow::bail!(
@@ -955,10 +958,10 @@ impl AuthorityResolver {
 /// `AuthMetadata` retains for old servers):
 ///
 /// 1. `account_authority.gate_account_base` — canonical.
-/// 2. legacy `auth_server_url` alias — older deployments that ran the whole
-///    Account Authority on the auth origin; derive `{origin}/_cokret/gate/account`.
-/// 3. the Principal Server's own origin — personal deployments where the
-///    Account Authority is co-located.
+/// 2. legacy `auth_server_url` alias — older deployments that ran the whole Account Authority on
+///    the auth origin; derive `{origin}/_cokret/gate/account`.
+/// 3. the Principal Server's own origin — personal deployments where the Account Authority is
+///    co-located.
 fn resolve_gate_account_base(
     principal_server_url: &str,
     metadata: &cokret_sdk::AuthMetadata,
@@ -988,9 +991,9 @@ fn resolve_gate_account_base(
 
 fn gate_account_base_from_origin(origin: &str) -> anyhow::Result<String> {
     let url = validate_server_url(origin)?;
-    let base = url
-        .join("_cokret/gate/account")
-        .map_err(|error| anyhow::anyhow!("invalid gate account base from origin {origin}: {error}"))?;
+    let base = url.join("_cokret/gate/account").map_err(|error| {
+        anyhow::anyhow!("invalid gate account base from origin {origin}: {error}")
+    })?;
     Ok(normalize_gate_account_base(base.as_str()))
 }
 
@@ -1017,7 +1020,12 @@ fn synthesize_oidc_method_from_aliases(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| Some(format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'))));
+        .or_else(|| {
+            Some(format!(
+                "{}/.well-known/openid-configuration",
+                issuer.trim_end_matches('/')
+            ))
+        });
     Some(cokret_sdk::AuthMethod {
         method: cokret_sdk::AuthMethodKind::Oidc,
         issuer: Some(issuer),
@@ -1115,8 +1123,12 @@ fn build_standard_authorize_url(
     nonce: &str,
     code_challenge: &str,
 ) -> anyhow::Result<String> {
-    let mut url = Url::parse(&discovery.authorization_endpoint)
-        .with_context(|| format!("invalid authorization_endpoint: {}", discovery.authorization_endpoint))?;
+    let mut url = Url::parse(&discovery.authorization_endpoint).with_context(|| {
+        format!(
+            "invalid authorization_endpoint: {}",
+            discovery.authorization_endpoint
+        )
+    })?;
     let mut scope_tokens: Vec<String> = vec!["openid".to_owned()];
     for scope in &method.scopes {
         let scope = scope.trim();
@@ -2069,11 +2081,19 @@ mod tests {
         .unwrap();
         let parsed = Url::parse(&bundle.authorize_url).unwrap();
         assert_eq!(
-            parsed.query_pairs().find(|(key, _)| key == "prompt").unwrap().1,
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "prompt")
+                .unwrap()
+                .1,
             "login"
         );
         assert_eq!(
-            parsed.query_pairs().find(|(key, _)| key == "max_age").unwrap().1,
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "max_age")
+                .unwrap()
+                .1,
             "0"
         );
     }
@@ -2124,7 +2144,11 @@ mod tests {
         assert_eq!(bundle.client_id, YOUGEN_OIDC_CLIENT_ID);
         let parsed = Url::parse(&bundle.authorize_url).unwrap();
         assert_eq!(
-            parsed.query_pairs().find(|(key, _)| key == "client_id").unwrap().1,
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "client_id")
+                .unwrap()
+                .1,
             YOUGEN_OIDC_CLIENT_ID
         );
     }

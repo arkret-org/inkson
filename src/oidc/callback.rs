@@ -3,9 +3,9 @@
 //! The lower-level pieces of the PKCE authorization-code strand already
 //! exist:
 //!
-//! * [`crate::coauth::build_oidc_authorize_scaffold`] / [`persist_oidc_scaffold`] mint cryptographic
-//!   `state` / `nonce` / PKCE verifier and stash them in `localStorage` (web) before opening the
-//!   authorize URL.
+//! * [`crate::coauth::build_oidc_authorize_scaffold`] / [`persist_oidc_scaffold`] mint
+//!   cryptographic `state` / `nonce` / PKCE verifier and stash them in `localStorage` (web) before
+//!   opening the authorize URL.
 //! * [`crate::coauth::extract_authorization_code_from_callback`] / [`extract_state_from_callback`]
 //!   / [`extract_error_from_callback`] parse the redirect-URI query string the IdP hands back.
 //! * [`crate::coauth::CoauthApi::exchange_pkce_code_for_tokens`] does the actual
@@ -281,12 +281,11 @@ pub async fn process_callback(
         state_store.set_oidc_tokens(Some(token_bundle.clone()));
     }
 
-    // 6. ②(A+②): there is no audience-grant exchange any more. The held
-    //    credential is the `ck.session.grant` itself, presented per-request as
-    //    `Authorization: Bearer <grant>` + a `DPoP` proof on `/_cokret/self/*`
-    //    (api-conventions.md §3.3). No principal bearer is minted, so
-    //    `audience_session` is always `None`; callers that previously consumed
-    //    the exchanged bearer now keep the grant as the live credential.
+    // 6. ②(A+②): there is no audience-grant exchange any more. The held credential is the
+    //    `ck.session.grant` itself, presented per-request as `Authorization: Bearer <grant>` + a
+    //    `DPoP` proof on `/_cokret/self/*` (api-conventions.md §3.3). No principal bearer is
+    //    minted, so `audience_session` is always `None`; callers that previously consumed the
+    //    exchanged bearer now keep the grant as the live credential.
     let _ = &request.audience_grant;
     let audience_session = None;
 

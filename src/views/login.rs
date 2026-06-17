@@ -379,8 +379,9 @@ pub(crate) async fn start_oidc_strand(
     let method = resolver
         .oidc_method(Some(&description.auth_metadata))
         .map_err(|error| format!("No OIDC sign-in method available: {error}"))?;
-    let discovery_url = oidc_discovery_url(&method)
-        .ok_or_else(|| "OIDC method published neither openid_configuration nor an issuer.".to_owned())?;
+    let discovery_url = oidc_discovery_url(&method).ok_or_else(|| {
+        "OIDC method published neither openid_configuration nor an issuer.".to_owned()
+    })?;
     // Standard OpenID Connect Discovery 1.0 — no Cokret-private OAuth family.
     let discovery = CoauthApi::fetch_oidc_discovery(&discovery_url)
         .await
@@ -426,7 +427,12 @@ fn oidc_discovery_url(method: &cokret_sdk::AuthMethod) -> Option<String> {
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|issuer| format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/')))
+        .map(|issuer| {
+            format!(
+                "{}/.well-known/openid-configuration",
+                issuer.trim_end_matches('/')
+            )
+        })
 }
 
 fn format_sign_in_discovery_error(principal_server_url: &str, error: &anyhow::Error) -> String {
@@ -583,12 +589,9 @@ async fn finish_oidc_callback(
         .with_bearer(session_grant.grant_jwt.clone())
         .with_dpop_device(dpop_handle.clone())
         .with_session_grant_proof(grant_introspection_proof);
-    let account = authed_principal
-        .account_me()
-        .await
-        .map_err(|error| {
-            format!("Principal server did not accept the session grant + DPoP: {error}")
-        })?;
+    let account = authed_principal.account_me().await.map_err(|error| {
+        format!("Principal server did not accept the session grant + DPoP: {error}")
+    })?;
     let canonical_actor = if account.did.trim().is_empty() {
         actor
     } else {

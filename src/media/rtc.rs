@@ -729,13 +729,9 @@ mod tests {
         let store = crate::secure_key_store::MemorySecureKeyStore::new();
         let snapshot = seed_realm_snapshot(&store);
 
-        let exporter = RealmMlsExporter::for_realm(
-            Some(snapshot),
-            &store,
-            EXPORTER_ACTOR,
-            EXPORTER_DEVICE,
-        )
-        .expect("a synced snapshot + account secret must restore the group");
+        let exporter =
+            RealmMlsExporter::for_realm(Some(snapshot), &store, EXPORTER_ACTOR, EXPORTER_DEVICE)
+                .expect("a synced snapshot + account secret must restore the group");
 
         // Derive the SFrame frame key the way join_call_media does. The key is
         // a real RFC 9420 §8 MLS-Exporter output, not a placeholder.
@@ -745,8 +741,8 @@ mod tests {
                 .unwrap(),
             focus_id: "fra-1".to_owned(),
             epoch_id: exporter.epoch(),
-            participant_identity:
-                "ck:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned(),
+            participant_identity: "ck:rtc_participant:00000000-0000-0000-0000-000000000001"
+                .to_owned(),
             device_id: cokret_sdk::DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         };
         let key = derive_frame_key(&exporter, &ctx).expect("frame key derivation");
@@ -773,8 +769,7 @@ mod tests {
         )
         .unwrap();
 
-        let result =
-            RealmMlsExporter::for_realm(None, &store, EXPORTER_ACTOR, EXPORTER_DEVICE);
+        let result = RealmMlsExporter::for_realm(None, &store, EXPORTER_ACTOR, EXPORTER_DEVICE);
         assert!(matches!(
             result.err(),
             Some(RtcClientError::E2eeKeySourceUnauthorised)
@@ -868,7 +863,9 @@ mod tests {
         .unwrap();
         let bob_key_package = bob_identity.key_package_record().unwrap();
 
-        let mut alice_group = alice_identity.create_group(INTEROP_REALM.as_bytes()).unwrap();
+        let mut alice_group = alice_identity
+            .create_group(INTEROP_REALM.as_bytes())
+            .unwrap();
         let add = alice_group.add_member(&bob_key_package).unwrap();
         let bob_group =
             cokret_sdk::CokretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();

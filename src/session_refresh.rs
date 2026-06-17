@@ -277,8 +277,13 @@ async fn rotate_session_grant(
     let dpop_proof = device_handle
         .mint_proof("POST", &htu, Some(&grant.grant_jwt))
         .map_err(|error| anyhow::anyhow!("mint rotation DPoP proof: {error}"))?;
-    let outcome = refresh_session_grant(&auth_server_url, &grant.grant_jwt, Some(&grant.audience), &dpop_proof)
-        .await?;
+    let outcome = refresh_session_grant(
+        &auth_server_url,
+        &grant.grant_jwt,
+        Some(&grant.audience),
+        &dpop_proof,
+    )
+    .await?;
     // The rotated grant binds to the same device key (`cnf.jkt` constant), so
     // the introspection signing key persisted with the grant is this device key.
     let session_private_key_pem = device_handle

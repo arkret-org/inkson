@@ -1180,8 +1180,8 @@ async fn join_via_api(
     // alive past the local-key derivation instead of dropping it.
     let realm_id = cokret_sdk::RealmId::new(join.realm_id.clone())
         .map_err(|_| RtcClientError::FocusMismatch)?;
-    let call_id = cokret_sdk::CallId::new(join.call_id.clone())
-        .map_err(|_| RtcClientError::FocusMismatch)?;
+    let call_id =
+        cokret_sdk::CallId::new(join.call_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
     let per_sender_keys = PerSenderFrameKeys::new(
         exporter,
         realm_id,
@@ -1993,30 +1993,32 @@ mod tests {
     #[test]
     fn call_state_participant_device_map_pairs_identity_and_device() {
         let mut state = crate::local_state::ClientLocalState::default();
-        state.raw_operations.push(crate::local_state::RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "kind": "ck.call.state",
-                "body": {
-                    "call_id": "ck:call:0196441c-0000-7000-8000-000000000000",
-                    "state": "active",
-                    "participants": [
-                        {
-                            "actor_id": "did:web:alice.example",
-                            "device_id": "ck:device:01904100-0000-7000-8000-00000000000a",
-                            "participant_identity": "ck:rtc_participant:alice"
-                        },
-                        {
-                            // Missing device_id -> skipped (cannot derive its key).
-                            "actor_id": "did:web:carol.example",
-                            "participant_identity": "ck:rtc_participant:carol"
-                        }
-                    ]
-                }
-            }),
-        });
+        state
+            .raw_operations
+            .push(crate::local_state::RawOperationRecord {
+                operation_id: "op-1".to_owned(),
+                realm_id: Some("ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "kind": "ck.call.state",
+                    "body": {
+                        "call_id": "ck:call:0196441c-0000-7000-8000-000000000000",
+                        "state": "active",
+                        "participants": [
+                            {
+                                "actor_id": "did:web:alice.example",
+                                "device_id": "ck:device:01904100-0000-7000-8000-00000000000a",
+                                "participant_identity": "ck:rtc_participant:alice"
+                            },
+                            {
+                                // Missing device_id -> skipped (cannot derive its key).
+                                "actor_id": "did:web:carol.example",
+                                "participant_identity": "ck:rtc_participant:carol"
+                            }
+                        ]
+                    }
+                }),
+            });
         let map = call_state_participant_device_map(
             &state,
             "ck:realm:01904100-0000-7000-8000-9b64700c6ee8",

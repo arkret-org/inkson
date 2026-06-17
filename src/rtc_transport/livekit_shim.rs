@@ -26,11 +26,11 @@ use wasm_bindgen::prelude::*;
 /// The shim imports the vendor by a fixed, unhashed path from *outside* Rust code,
 /// so per the manganis contract this asset:
 /// - sets `with_hash_suffix(false)` so dx serves it at exactly `/assets/livekit_vendor.js`;
-/// - is a `#[used] static` (not a referenced value) so the linker keeps it even
-///   though nothing in Rust reads the `Asset` — manganis requires `#[used]` for
-///   externally-referenced fixed-path assets;
-/// - sets `with_module(true)` because the file is an ES module (`export const …`)
-///   and `with_minify(false)` to ship the already-minified UMD bundle verbatim.
+/// - is a `#[used] static` (not a referenced value) so the linker keeps it even though nothing in
+///   Rust reads the `Asset` — manganis requires `#[used]` for externally-referenced fixed-path
+///   assets;
+/// - sets `with_module(true)` because the file is an ES module (`export const …`) and
+///   `with_minify(false)` to ship the already-minified UMD bundle verbatim.
 ///
 /// Refresh the bundle with `scripts/vendor_livekit.sh`.
 #[used]

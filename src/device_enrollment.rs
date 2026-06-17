@@ -6,11 +6,10 @@
 //! three-step orchestration:
 //!
 //! 1. derive this device's `device_public_key` from the persisted signing seed;
-//! 2. read the next `actor_seq` from the principal control stream's actor
-//!    frontier on the Principal Server;
-//! 3. ask the enrollment authority to mint a signed `service_attested`
-//!    `ck.device.authorize` Event, then submit it verbatim to the Principal
-//!    Server's `POST /_cokret/self/events`.
+//! 2. read the next `actor_seq` from the principal control stream's actor frontier on the Principal
+//!    Server;
+//! 3. ask the enrollment authority to mint a signed `service_attested` `ck.device.authorize` Event,
+//!    then submit it verbatim to the Principal Server's `POST /_cokret/self/events`.
 //!
 //! The flow is idempotent at the caller: it is only invoked when the device
 //! is not yet authorized, and a concurrent / already-applied authorization is
@@ -45,8 +44,7 @@ pub struct DeviceEnrollmentRequest {
 
 /// Multibase Ed25519 `device_public_key` for the device described by `material`.
 pub fn device_public_key_multibase(material: &SigningSeedMaterial) -> String {
-    let verifying =
-        ed25519_dalek::SigningKey::from_bytes(&material.seed).verifying_key();
+    let verifying = ed25519_dalek::SigningKey::from_bytes(&material.seed).verifying_key();
     crate::did_key::encode_ed25519_did_key_multibase(&verifying)
 }
 
@@ -114,8 +112,9 @@ pub async fn enroll_current_device(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn signed_device_authorize(device_id: &str) -> serde_json::Value {
         json!({
@@ -165,12 +164,13 @@ mod tests {
     #[test]
     fn rejects_device_id_mismatch() {
         let event = signed_device_authorize("ck:device:01964137-0000-8000-8000-000000000002");
-        let err = parse_signed_device_authorize(
-            &event,
-            "ck:device:01964137-0000-8000-8000-0000000000ff",
-        )
-        .expect_err("mismatch must fail closed");
-        assert!(err.to_string().contains("does not match this session device"));
+        let err =
+            parse_signed_device_authorize(&event, "ck:device:01964137-0000-8000-8000-0000000000ff")
+                .expect_err("mismatch must fail closed");
+        assert!(
+            err.to_string()
+                .contains("does not match this session device")
+        );
     }
 
     #[test]

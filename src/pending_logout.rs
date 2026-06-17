@@ -142,7 +142,10 @@ pub async fn execute_pending_logout(
             LogoutRunOutcome::Completed
         }
         Err(error) => {
-            tracing::warn!(?error, "pending logout: authority logout failed, will retry");
+            tracing::warn!(
+                ?error,
+                "pending logout: authority logout failed, will retry"
+            );
             LogoutRunOutcome::Retain
         }
     }
@@ -175,10 +178,9 @@ async fn hard_logout_at_authority(
     let gate_account_base = match record.gate_account_base.as_deref() {
         Some(base) if !base.trim().is_empty() => base.to_owned(),
         _ => {
-            let principal_server_url = record
-                .principal_server_url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("pending logout missing gate_account_base and principal_server_url"))?;
+            let principal_server_url = record.principal_server_url.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("pending logout missing gate_account_base and principal_server_url")
+            })?;
             crate::coauth::resolve_principal_auth_server_url(principal_server_url)
                 .await
                 .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?

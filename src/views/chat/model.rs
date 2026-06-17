@@ -1496,7 +1496,9 @@ pub(super) fn act_on_behalf_agent_label(
     executed_by: Option<&str>,
     participants: &[SpaceParticipant],
 ) -> Option<String> {
-    let executed_by = executed_by.map(str::trim).filter(|value| !value.is_empty())?;
+    let executed_by = executed_by
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
     if executed_by == sender.trim() {
         return None;
     }

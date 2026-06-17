@@ -147,9 +147,13 @@ impl AgentPermissionPreset {
     pub fn help(self) -> &'static str {
         match self {
             Self::ReadOnly => "Subscribe and read selected objects. No writes.",
-            Self::DraftOnly => "Propose controller-private drafts for your approval before anything is published.",
+            Self::DraftOnly => {
+                "Propose controller-private drafts for your approval before anything is published."
+            }
             Self::ReplyAsAgent => "Post and react as the agent itself, accountable to you.",
-            Self::ActOnBehalf => "Post as you (you stay the actor, the agent is recorded as executor). High risk; each action needs your approval.",
+            Self::ActOnBehalf => {
+                "Post as you (you stay the actor, the agent is recorded as executor). High risk; each action needs your approval."
+            }
             Self::Organizer => "Create and update Strands and relations, plus limited posting.",
         }
     }
@@ -3176,7 +3180,10 @@ mod personal_agent_tests {
         let digest = payload["content_digest"].as_str().unwrap();
         assert!(digest.starts_with("sha256:"));
         // Approving as-is means both digests match.
-        assert_eq!(payload["content_digest"], payload["approved_payload_digest"]);
+        assert_eq!(
+            payload["content_digest"],
+            payload["approved_payload_digest"]
+        );
         // Nonce is a fresh uuid, not empty.
         assert!(!payload["nonce"].as_str().unwrap().is_empty());
     }

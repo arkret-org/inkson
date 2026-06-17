@@ -84,7 +84,12 @@ pub(crate) const WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG: &str =
 pub(crate) fn wasm_allow_localstorage_secrets() -> bool {
     web_sys::window()
         .and_then(|window| window.local_storage().ok().flatten())
-        .and_then(|storage| storage.get_item(WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG).ok().flatten())
+        .and_then(|storage| {
+            storage
+                .get_item(WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG)
+                .ok()
+                .flatten()
+        })
         .map(|value| {
             let value = value.trim();
             value.eq_ignore_ascii_case("1") || value.eq_ignore_ascii_case("true")
