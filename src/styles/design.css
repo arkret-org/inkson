@@ -960,6 +960,11 @@ button[data-style="link"]:disabled:hover {
 }
 .badge.dim { background: var(--surface-3); color: var(--text-2); }
 .badge.danger { background: var(--danger); }
+.badge.success { background: var(--success); }
+.badge.warning { background: var(--warning); }
+/* Device-list verification shield: a touch wider so the glyph + label
+   ("Verified" / "Unverified") read as a pill rather than a count bubble. */
+.device-verification-badge { gap: 3px; min-width: 0; }
 
 /* Member visual indicators (A1): agent/bot badge surfaced in member
    lists, @mention picker rows, and chat sender attribution wherever a

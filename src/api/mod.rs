@@ -189,13 +189,9 @@ pub struct AssignedToRelationProjectionView {
     pub actor_id: String,
 }
 
-/// YOU-01-009 子项 3 — spec-registered collection projection response
-/// (`view.schema.json#/$defs/collection_projection_view`, operation
-/// `ck.self.views.collection_projection.command.materialize`,
-/// `POST /_cokret/self/views/{view_id}/projection`). Defined locally
-/// because the SDK still carries its pre-registration draft DTO
-/// (`CollectionProjectionOutcome`, with `kind`/`group_id`/`discussion`
-/// fields that are not on the registered wire shape).
+/// UI view model for the SDK `CollectionProjectionView` response.
+/// Network decode uses `cokret_sdk::CollectionProjectionView`; this shape
+/// keeps the kanban renderer's lenient `Value` accessors local to the UI.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CollectionProjectionView {
     /// Always the literal `"collection"` per the schema const.
@@ -289,6 +285,81 @@ impl ProjectionItemView {
             .or_else(|| position.get("sort_key"))
             .and_then(Value::as_str)
             .map(ToOwned::to_owned)
+    }
+}
+
+fn sdk_wire_string<T: Serialize>(value: &T) -> Option<String> {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+}
+
+fn non_null_value(value: Value) -> Option<Value> {
+    if value.is_null() { None } else { Some(value) }
+}
+
+impl From<cokret_sdk::StateFrontier> for StateFrontierView {
+    fn from(frontier: cokret_sdk::StateFrontier) -> Self {
+        Self {
+            state_digest: frontier.state_digest.as_str().to_owned(),
+            event_ids: frontier
+                .event_ids
+                .into_iter()
+                .map(|event_id| event_id.as_str().to_owned())
+                .collect(),
+            actor_frontiers: frontier
+                .actor_frontiers
+                .into_iter()
+                .filter_map(|frontier| serde_json::to_value(frontier).ok())
+                .collect(),
+        }
+    }
+}
+
+impl From<cokret_sdk::ProjectionItem> for ProjectionItemView {
+    fn from(item: cokret_sdk::ProjectionItem) -> Self {
+        Self {
+            object: serde_json::to_value(item.object).unwrap_or(Value::Null),
+            render: item.render.as_ref().and_then(sdk_wire_string),
+            display: non_null_value(item.display),
+            position: non_null_value(item.position),
+            state: non_null_value(item.state),
+        }
+    }
+}
+
+impl From<cokret_sdk::CollectionProjectionGroupView> for CollectionProjectionGroupView {
+    fn from(group: cokret_sdk::CollectionProjectionGroupView) -> Self {
+        Self {
+            key: group.key,
+            title: group.title,
+            rank: group.rank,
+            source: group
+                .source
+                .and_then(|source| serde_json::to_value(source).ok()),
+            items: group.items.into_iter().map(Into::into).collect(),
+            next_cursor: group.next_cursor.map(|cursor| cursor.as_str().to_owned()),
+            limited: group.limited,
+            wip_state: group.wip_state.as_ref().and_then(sdk_wire_string),
+            total_estimate: group.total_estimate,
+        }
+    }
+}
+
+impl From<cokret_sdk::CollectionProjectionView> for CollectionProjectionView {
+    fn from(view: cokret_sdk::CollectionProjectionView) -> Self {
+        Self {
+            projection: view.projection,
+            renderer: view.renderer.as_ref().and_then(sdk_wire_string),
+            view_id: view.view_id.as_str().to_owned(),
+            realm_id: view.realm_id.map(|realm_id| realm_id.as_str().to_owned()),
+            frontier: view.frontier.into(),
+            groups: view.groups.into_iter().map(Into::into).collect(),
+            items: view.items.into_iter().map(Into::into).collect(),
+            next_cursor: view.next_cursor.map(|cursor| cursor.as_str().to_owned()),
+            total_estimate: view.total_estimate,
+            stale: view.stale,
+        }
     }
 }
 

@@ -1285,6 +1285,36 @@ impl LocalStateStore {
         self.load().to_device_inbox
     }
 
+    /// Drop a handled same-principal pairing request from the to-device inbox so
+    /// the approval prompt does not nag again after the user approves or rejects
+    /// it. Matches the `ck.key.verification.request` whose
+    /// `content.from_device` and `content.pairing_code` identify the request.
+    /// Returns the number of messages removed.
+    pub fn dismiss_pairing_to_device_message(
+        &mut self,
+        requesting_device_id: &str,
+        pairing_code: &str,
+    ) -> usize {
+        self.ensure_cached_loaded();
+        let before = self.cached.to_device_inbox.len();
+        self.cached.to_device_inbox.retain(|message| {
+            if message.get("kind").and_then(Value::as_str) != Some("ck.key.verification.request") {
+                return true;
+            }
+            let Some(content) = message.get("content") else {
+                return true;
+            };
+            let from_device = content.get("from_device").and_then(Value::as_str);
+            let code = content.get("pairing_code").and_then(Value::as_str);
+            !(from_device == Some(requesting_device_id) && code == Some(pairing_code))
+        });
+        let removed = before - self.cached.to_device_inbox.len();
+        if removed > 0 {
+            let _ = self.flush();
+        }
+        removed
+    }
+
     pub fn append_raw_operation(
         &mut self,
         operation_id: impl Into<String>,

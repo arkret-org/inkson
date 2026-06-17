@@ -828,8 +828,10 @@ impl CokretApi {
         view_id: &str,
     ) -> anyhow::Result<super::CollectionProjectionView> {
         let body = cokret_sdk::models::ViewProjectionRequestBody::default();
-        self.post_json(&format!("_cokret/self/views/{view_id}/projection"), &body)
-            .await
+        let view: cokret_sdk::CollectionProjectionView = self
+            .post_json(&format!("_cokret/self/views/{view_id}/projection"), &body)
+            .await?;
+        Ok(view.into())
     }
 
     // Pull the canonical Space-container / Strand lifecycle state for a Realm so the

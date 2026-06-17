@@ -24,6 +24,8 @@
 //! history restore (server-held `mls_history` backups) is shared with the
 //! recovery strand.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Result, anyhow, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -106,24 +108,33 @@ pub fn new_secret_request() -> Result<SecretShareRequester> {
 }
 
 /// Build `ck.secret.request.content` for the requesting device.
-pub fn build_request_content(req: &SecretShareRequester, requesting_device_id: &str) -> Value {
-    json!({
-        "request_id": req.request_id,
-        "secret_id": SECRET_SHARE_SECRET_ID,
-        "from_device": requesting_device_id,
-        "recipient_hpke_public_key": req.recipient_public_b64,
-    })
+pub fn build_request_content(
+    req: &SecretShareRequester,
+    requesting_device_id: &str,
+) -> Result<Value> {
+    let content = cokret_sdk::events::SecretRequestContent {
+        request_id: req.request_id.clone(),
+        secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
+        from_device: cokret_sdk::DeviceId::new(requesting_device_id.to_owned())
+            .map_err(|err| anyhow!("invalid secret-share requesting device id: {err}"))?,
+        recipient_hpke_public_key: req.recipient_public_b64.clone(),
+        extra: BTreeMap::new(),
+    };
+    serde_json::to_value(content)
+        .map_err(|err| anyhow!("serialize ck.secret.request content: {err}"))
 }
 
 /// Parse and validate an inbound `ck.secret.request.content`.
 pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
-    let request_id = string_field(content, "request_id")?;
-    let secret_id = string_field(content, "secret_id")?;
+    let content: cokret_sdk::events::SecretRequestContent = serde_json::from_value(content.clone())
+        .map_err(|err| anyhow!("decode ck.secret.request.content: {err}"))?;
+    let request_id = content.request_id;
+    let secret_id = content.secret_id;
     if secret_id != SECRET_SHARE_SECRET_ID {
         bail!("ck.secret.request.secret_id {secret_id:?} is not supported");
     }
-    let from_device = string_field(content, "from_device")?;
-    let recipient_hpke_public_key = string_field(content, "recipient_hpke_public_key")?;
+    let from_device = content.from_device.as_str().to_owned();
+    let recipient_hpke_public_key = content.recipient_hpke_public_key;
     Ok(ParsedSecretRequest {
         request_id,
         secret_id,
@@ -163,14 +174,17 @@ pub fn build_send_content(
         expires_at,
     )?;
     let sealed = hpke_backup::hpke_seal(&recipient_pk, SECRET_SHARE_HPKE_INFO, &aad, &plaintext)?;
-    Ok(json!({
-        "request_id": request.request_id,
-        "secret_id": SECRET_SHARE_SECRET_ID,
-        "from_device": self_device_id,
-        "scheme": SECRET_SHARE_SCHEME,
-        "enc": URL_SAFE_NO_PAD.encode(sealed.enc),
-        "ciphertext": URL_SAFE_NO_PAD.encode(sealed.ciphertext),
-    }))
+    let content = cokret_sdk::events::SecretSendContent {
+        request_id: request.request_id.clone(),
+        secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
+        from_device: cokret_sdk::DeviceId::new(self_device_id.to_owned())
+            .map_err(|err| anyhow!("invalid secret-share sending device id: {err}"))?,
+        scheme: SECRET_SHARE_SCHEME.to_owned(),
+        enc: URL_SAFE_NO_PAD.encode(sealed.enc),
+        ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
+        extra: BTreeMap::new(),
+    };
+    serde_json::to_value(content).map_err(|err| anyhow!("serialize ck.secret.send content: {err}"))
 }
 
 /// Open an inbound `ck.secret.send.content` on the requesting (new) device.
@@ -188,23 +202,29 @@ pub fn open_send_content(
     our_device_id: &str,
     expires_at: &str,
 ) -> Result<OpenedSecret> {
-    let outer_request_id = string_field(send_content, "request_id")?;
+    let send_content: cokret_sdk::events::SecretSendContent =
+        serde_json::from_value(send_content.clone())
+            .map_err(|err| anyhow!("decode ck.secret.send.content: {err}"))?;
+    let outer_request_id = send_content.request_id;
     if outer_request_id != requester.request_id {
         bail!("ck.secret.send.request_id does not match a pending request (unsolicited)");
     }
-    let secret_id = string_field(send_content, "secret_id")?;
+    let secret_id = send_content.secret_id;
     if secret_id != SECRET_SHARE_SECRET_ID {
         bail!("ck.secret.send.secret_id {secret_id:?} is not supported");
     }
-    let scheme = string_field(send_content, "scheme")?;
+    if send_content.from_device.as_str() != sender_device_id {
+        bail!("ck.secret.send.from_device does not match envelope sender_device_id");
+    }
+    let scheme = send_content.scheme;
     if scheme != SECRET_SHARE_SCHEME {
         bail!("ck.secret.send.scheme {scheme:?} is not {SECRET_SHARE_SCHEME}");
     }
     let enc = URL_SAFE_NO_PAD
-        .decode(string_field(send_content, "enc")?.as_bytes())
+        .decode(send_content.enc.as_bytes())
         .map_err(|err| anyhow!("decode ck.secret.send.enc: {err}"))?;
     let ciphertext = URL_SAFE_NO_PAD
-        .decode(string_field(send_content, "ciphertext")?.as_bytes())
+        .decode(send_content.ciphertext.as_bytes())
         .map_err(|err| anyhow!("decode ck.secret.send.ciphertext: {err}"))?;
 
     let aad = send_aad(
@@ -269,7 +289,7 @@ pub async fn send_request(
     target_existing_device_id: &str,
     requesting_device_id: &str,
 ) -> Result<()> {
-    let content = build_request_content(requester, requesting_device_id);
+    let content = build_request_content(requester, requesting_device_id)?;
     api.send_device_message_envelope(
         &format!("ck.secret.request:{}", requester.request_id),
         account_did,
@@ -415,7 +435,7 @@ mod tests {
 
     fn drive_happy_path() -> (SecretShareRequester, Value) {
         let requester = new_secret_request().unwrap();
-        let request_content = build_request_content(&requester, NEW_DEVICE);
+        let request_content = build_request_content(&requester, NEW_DEVICE).unwrap();
         let parsed = parse_request_content(&request_content).unwrap();
         assert_eq!(parsed.from_device, NEW_DEVICE);
         let send = build_send_content(&parsed, &stored_secret(), ACCOUNT_DID, OLD_DEVICE, EXPIRES)

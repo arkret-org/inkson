@@ -47,6 +47,7 @@ pub mod cursor;
 pub mod device_directory;
 pub mod device_enrollment;
 pub mod device_name;
+pub mod device_pairing;
 pub mod device_revoke;
 pub mod did_key;
 pub mod did_resolver;

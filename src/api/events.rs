@@ -3,7 +3,9 @@ use super::*;
 impl CokretApi {
     /// Query durable events through the current `/_cokret/self/events` surface.
     pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillView> {
-        self.get_json(&events_query_path(realm_id)).await
+        let outcome: cokret_sdk::EventsQueryOutcome =
+            self.get_json(&events_query_path(realm_id)).await?;
+        Ok(outcome.into())
     }
 
     /// Stream the canonical `/_cokret/self/events/subscribe` NDJSON response and

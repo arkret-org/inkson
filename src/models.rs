@@ -650,17 +650,17 @@ mod tests {
     }
 
     #[test]
-    fn submit_event_outcome_accepts_synthetic_fixture_ids() {
-        // e2e mocks emit ids like `ck:event:e2e` that are not strict UUIDv7
-        // EventIds; the lenient mirror must accept them and fall back to the
-        // duplicate id + "duplicate" status when nothing was newly accepted.
+    fn submit_event_outcome_uses_duplicate_id_when_nothing_accepted() {
         let value = serde_json::json!({
             "status": "duplicate",
             "accepted": [],
-            "duplicate": ["ck:event:e2e"],
+            "duplicate": ["ck:event:0196419b-0000-7000-8000-000000000002"],
         });
         let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
-        assert_eq!(outcome.event_id, "ck:event:e2e");
+        assert_eq!(
+            outcome.event_id,
+            "ck:event:0196419b-0000-7000-8000-000000000002"
+        );
         assert_eq!(outcome.status, "duplicate");
         assert_eq!(outcome.cursor, "");
     }
@@ -813,6 +813,22 @@ pub struct BackfillView {
     // Spec `EventsQueryOutcome.has_more` (was the soland-local `limited`).
     #[serde(default, alias = "limited")]
     pub has_more: bool,
+}
+
+impl From<cokret_sdk::EventsQueryOutcome> for BackfillView {
+    fn from(outcome: cokret_sdk::EventsQueryOutcome) -> Self {
+        Self {
+            events: outcome
+                .events
+                .into_iter()
+                .filter_map(|event| serde_json::to_value(event).ok())
+                .collect(),
+            snapshot_bootstrap: outcome.snapshot_bootstrap,
+            prev_cursor: outcome.prev_cursor,
+            next_cursor: outcome.next_cursor,
+            has_more: outcome.has_more,
+        }
+    }
 }
 
 // `ck.self.snapshot.query.manifest_head` returns the full signed
@@ -1017,7 +1033,7 @@ pub struct VerifyDeviceResult {
 /// realm_frontier, cursor}` (spec
 /// `service-operation-dtos.schema.json#/$defs/EventsSubmitOutcome`,
 /// required: `status`, `accepted`). The yougen-facing flat surface is
-/// folded from it on deserialize via [`EventsSubmitWire`]:
+/// folded from the SDK `EventsSubmitOutcome` on deserialize:
 ///   * `event_id` ← first `accepted` (else first `duplicate`)
 ///   * `cursor`   ← `cursor` (read-your-writes barrier)
 ///   * `status`   ← the `accepted` / `duplicate` / `partial` discriminant
@@ -1026,8 +1042,7 @@ pub struct VerifyDeviceResult {
 /// `{event_id, sync_token, …}` shape is NOT tolerated — mocks must emit
 /// the canonical shape. Ids stay plain `String`s so synthetic fixture ids
 /// do not trip the strict `EventId` validator.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(from = "EventsSubmitWire")]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SubmitEventResult {
     pub event_id: String,
     pub status: String,
@@ -1035,49 +1050,6 @@ pub struct SubmitEventResult {
     pub cursor: String,
     #[serde(default)]
     pub receipt: Value,
-}
-
-/// Deserialization mirror for the canonical `EventsSubmitOutcome` wire
-/// shape. See [`SubmitEventResult`]. `status` and `accepted` are required
-/// per spec; the rest defaults.
-#[derive(Deserialize)]
-struct EventsSubmitWire {
-    status: String,
-    accepted: Vec<String>,
-    #[serde(default)]
-    duplicate: Vec<String>,
-    #[serde(default)]
-    rejected: Vec<Value>,
-    #[serde(default)]
-    actor_frontier: Value,
-    #[serde(default)]
-    realm_frontier: Value,
-    #[serde(default)]
-    cursor: Option<String>,
-}
-
-impl From<EventsSubmitWire> for SubmitEventResult {
-    fn from(wire: EventsSubmitWire) -> Self {
-        let event_id = wire
-            .accepted
-            .first()
-            .cloned()
-            .or_else(|| wire.duplicate.first().cloned())
-            .unwrap_or_default();
-        let receipt = serde_json::json!({
-            "accepted": wire.accepted,
-            "duplicate": wire.duplicate,
-            "rejected": wire.rejected,
-            "actor_frontier": wire.actor_frontier,
-            "realm_frontier": wire.realm_frontier,
-        });
-        Self {
-            event_id,
-            status: wire.status,
-            cursor: wire.cursor.unwrap_or_default(),
-            receipt,
-        }
-    }
 }
 
 impl From<cokret_sdk::EventsSubmitOutcome> for SubmitEventResult {
@@ -1092,21 +1064,45 @@ impl From<cokret_sdk::EventsSubmitOutcome> for SubmitEventResult {
             .into_iter()
             .map(|event_id| event_id.as_str().to_owned())
             .collect();
-        let wire = EventsSubmitWire {
-            status: match outcome.status {
-                cokret_sdk::EventsSubmitStatus::Accepted => "accepted",
-                cokret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
-                cokret_sdk::EventsSubmitStatus::Partial => "partial",
-            }
-            .to_owned(),
-            accepted,
-            duplicate,
-            rejected: outcome.rejected,
-            actor_frontier: outcome.actor_frontier,
-            realm_frontier: outcome.realm_frontier,
-            cursor: outcome.cursor,
-        };
-        wire.into()
+        let event_id = accepted
+            .first()
+            .cloned()
+            .or_else(|| duplicate.first().cloned())
+            .unwrap_or_default();
+        let status = match outcome.status {
+            cokret_sdk::EventsSubmitStatus::Accepted => "accepted",
+            cokret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
+            cokret_sdk::EventsSubmitStatus::Partial => "partial",
+        }
+        .to_owned();
+        let receipt = serde_json::json!({
+            "accepted": accepted,
+            "duplicate": duplicate,
+            "rejected": outcome.rejected,
+            "quarantine": outcome
+                .quarantine
+                .into_iter()
+                .map(|event_id| event_id.as_str().to_owned())
+                .collect::<Vec<_>>(),
+            "actor_frontier": outcome.actor_frontier,
+            "realm_frontier": outcome.realm_frontier,
+        });
+        Self {
+            event_id,
+            status,
+            cursor: outcome.cursor.unwrap_or_default(),
+            receipt,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SubmitEventResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let outcome = cokret_sdk::EventsSubmitOutcome::deserialize(deserializer)?;
+        Ok(outcome.into())
     }
 }
 

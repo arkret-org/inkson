@@ -38,6 +38,9 @@ use serde_json::{Value, json};
 
 use crate::auth_dpop::ensure_device_key;
 use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::device_pairing::{
+    PendingPairingRequest, pairing_request_body, parse_pending_pairing_requests,
+};
 use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::routes::Route;
@@ -54,16 +57,6 @@ struct DeviceRow {
     is_current: bool,
     verification_state: String,
     created_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct PairingRequestRow {
-    request_key: String,
-    requesting_device_id: String,
-    pairing_code: String,
-    display_name: String,
-    expires_at: String,
-    request_payload: Value,
 }
 
 fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
@@ -112,66 +105,6 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
         .unwrap_or_default();
     let current = explicit_current.or_else(|| rows.first().map(|row| row.device_id.clone()));
     (current, rows)
-}
-
-fn parse_pairing_requests_from_inbox(messages: &[Value]) -> Vec<PairingRequestRow> {
-    messages
-        .iter()
-        .filter_map(|message| {
-            if message.get("kind").and_then(Value::as_str) != Some("ck.key.verification.request") {
-                return None;
-            }
-            let content = message.get("content")?;
-            if content.get("purpose").and_then(Value::as_str)
-                != Some("same_principal_device_authorization")
-            {
-                return None;
-            }
-            let requesting_device_id = content.get("from_device").and_then(Value::as_str)?;
-            let pairing_code = content.get("pairing_code").and_then(Value::as_str)?;
-            let new_device_pubkey = content.get("new_device_pubkey")?.clone();
-            let challenge_signature = content.get("challenge_signature").and_then(Value::as_str)?;
-            let device_metadata = content
-                .get("device_metadata")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            let display_name = device_metadata
-                .get("display_name")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned();
-            let expires_at = content
-                .get("expires_at")
-                .or_else(|| message.get("expires_at"))
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned();
-            let request_key = content
-                .get("transaction_id")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("{requesting_device_id}:{pairing_code}"));
-            let mut request_payload = json!({
-                "pairing_code": pairing_code,
-                "new_device_pubkey": new_device_pubkey,
-                "challenge_signature": challenge_signature,
-                "device_metadata": device_metadata,
-            });
-            if !display_name.trim().is_empty()
-                && let Some(object) = request_payload.as_object_mut()
-            {
-                object.insert("display_name".to_owned(), json!(display_name));
-            }
-            Some(PairingRequestRow {
-                request_key,
-                requesting_device_id: requesting_device_id.to_owned(),
-                pairing_code: pairing_code.to_owned(),
-                display_name,
-                expires_at,
-                request_payload,
-            })
-        })
-        .collect()
 }
 
 /// Build the QR / paste payload that an already-authorized device approves.
@@ -262,7 +195,7 @@ pub fn SettingsDevicesPanel(
     // ── Pair (current device side) state ─────────────────────────────
     let pair_payload = use_signal(String::new);
     let pair_status = use_signal(String::new);
-    let mut pending_pair_requests = use_signal(Vec::<PairingRequestRow>::new);
+    let mut pending_pair_requests = use_signal(Vec::<PendingPairingRequest>::new);
     let mut pending_pair_status = use_signal(String::new);
 
     // ── Accept (receiving device side) state ─────────────────────────
@@ -348,9 +281,8 @@ pub fn SettingsDevicesPanel(
             if !pair_mode {
                 return;
             }
-            let rows = parse_pairing_requests_from_inbox(
-                &state_store_for_pending.read().to_device_inbox(),
-            );
+            let rows =
+                parse_pending_pairing_requests(&state_store_for_pending.read().to_device_inbox());
             let count = rows.len();
             pending_pair_requests.set(rows);
             pending_pair_status.set(format!("Loaded {count} to-device request(s)"));
@@ -525,6 +457,30 @@ fn render_device_list(
     }
 }
 
+/// Element-style verification shield for the device list. Maps the
+/// `verification_state` (`device-lifecycle.md` §6) to a colored pill:
+/// verified → green shield, unverified → amber, revoked → red, anything
+/// else → a dim badge carrying the raw state so no information is hidden.
+fn device_verification_badge(state: &str) -> Element {
+    let normalized = state.trim().to_ascii_lowercase();
+    let (class, glyph, label) = match normalized.as_str() {
+        "verified" => ("badge success", "🛡", "Verified".to_owned()),
+        "unverified" => ("badge warning", "⚠", "Unverified".to_owned()),
+        "revoked" => ("badge danger", "⊘", "Revoked".to_owned()),
+        "" => ("badge dim", "•", "Unknown".to_owned()),
+        _ => ("badge dim", "•", state.trim().to_owned()),
+    };
+    rsx! {
+        span {
+            class: "{class} device-verification-badge",
+            "data-testid": "device-verification-badge",
+            "data-verification": "{normalized}",
+            title: "Device verification state: {label}",
+            "{glyph} {label}"
+        }
+    }
+}
+
 fn render_device_row(
     row: DeviceRow,
     server_current: String,
@@ -600,7 +556,7 @@ fn render_device_row(
                     }
                 }
             }
-            td { "{row.verification_state}" }
+            td { {device_verification_badge(&row.verification_state)} }
             td { "{row.created_at}" }
             td {
                 Button {
@@ -942,7 +898,7 @@ fn render_pair_strand(
     mut state_store: Signal<LocalStateStore>,
     mut pair_payload: Signal<String>,
     mut pair_status: Signal<String>,
-    mut pending_pair_requests: Signal<Vec<PairingRequestRow>>,
+    mut pending_pair_requests: Signal<Vec<PendingPairingRequest>>,
     mut pending_pair_status: Signal<String>,
     mut accept_input: Signal<String>,
     mut accept_status: Signal<String>,
@@ -977,9 +933,8 @@ fn render_pair_strand(
     let refresh_pending_requests = {
         let state_store_for_refresh = state_store;
         move |_| {
-            let rows = parse_pairing_requests_from_inbox(
-                &state_store_for_refresh.read().to_device_inbox(),
-            );
+            let rows =
+                parse_pending_pairing_requests(&state_store_for_refresh.read().to_device_inbox());
             let count = rows.len();
             pending_pair_requests.set(rows);
             pending_pair_status.set(format!("Loaded {count} to-device request(s)"));
@@ -987,13 +942,164 @@ fn render_pair_strand(
     };
 
     rsx! {
+        // Role 1 — on an ALREADY-AUTHORIZED device: approve incoming requests.
+        // Listed first because this is the action a signed-in device performs;
+        // a global prompt also surfaces these without visiting this page.
+        div { class: "event", "data-testid": "pending-pairing-requests-card",
+            div { class: "event-head",
+                span { "Approve a device" }
+                span { "{pending_status_value}" }
+            }
+            p { class: "muted",
+                "On a device that is already signed in, approve a request from a device you are adding. Compare the pairing code on both devices before approving."
+            }
+            div { class: "actions",
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    "data-testid": "pending-pairing-refresh-button",
+                    onclick: refresh_pending_requests,
+                    "Refresh requests"
+                }
+            }
+            if pending_rows.is_empty() {
+                div {
+                    class: "muted",
+                    "data-testid": "pending-pairing-empty",
+                    "No pending pairing requests for this account."
+                }
+            } else {
+                div { class: "settings-list", "data-testid": "pending-pairing-list",
+                    for row in pending_rows {
+                        {
+                            let request_key = row.request_key.clone();
+                            let request_key_for_label = request_key.clone();
+                            let approve_payload = row.request_payload.clone();
+                            let approve_device = row.requesting_device_id.clone();
+                            let approve_code = row.pairing_code.clone();
+                            let reject_device = row.requesting_device_id.clone();
+                            let reject_code = row.pairing_code.clone();
+                            let device_label = if row.display_name.trim().is_empty() {
+                                short_protocol_id(&row.requesting_device_id)
+                            } else {
+                                row.display_name.clone()
+                            };
+                            let platform = row.platform.clone();
+                            let code_label = if row.pairing_code.trim().is_empty() {
+                                "(no code)".to_owned()
+                            } else {
+                                row.pairing_code.clone()
+                            };
+                            rsx! {
+                                div {
+                                    class: "metric",
+                                    "data-testid": "pending-pairing-request",
+                                    "data-pairing-request-id": "{request_key_for_label}",
+                                    strong { "{device_label}" }
+                                    span { class: "muted mono", "{short_protocol_id(&row.requesting_device_id)}" }
+                                    if !platform.trim().is_empty() {
+                                        span { class: "muted", "Platform {platform}" }
+                                    }
+                                    span { class: "muted", "Compare this code on both devices" }
+                                    strong {
+                                        class: "device-pair-approval-code mono",
+                                        "data-testid": "pending-pairing-code",
+                                        "{code_label}"
+                                    }
+                                    span { class: "muted", "Expires {row.expires_at}" }
+                                    div { class: "actions",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "reject-pairing-request-button",
+                                            onclick: move |_| {
+                                                state_store
+                                                    .write()
+                                                    .dismiss_pairing_to_device_message(
+                                                        &reject_device,
+                                                        &reject_code,
+                                                    );
+                                                let rows = parse_pending_pairing_requests(
+                                                    &state_store.read().to_device_inbox(),
+                                                );
+                                                let count = rows.len();
+                                                pending_pair_requests.set(rows);
+                                                pending_pair_status.set(format!(
+                                                    "Rejected request. {count} pending."
+                                                ));
+                                            },
+                                            "Reject"
+                                        }
+                                        Button {
+                                            variant: ButtonVariant::Primary,
+                                            "data-testid": "approve-pairing-request-button",
+                                            onclick: move |_| {
+                                                let base = base_url();
+                                                let api_token = token();
+                                                let request_key = request_key.clone();
+                                                let approve_payload = approve_payload.clone();
+                                                let approve_device = approve_device.clone();
+                                                let approve_code = approve_code.clone();
+                                                pending_pair_status.set(format!(
+                                                    "Approving to-device request {request_key}..."
+                                                ));
+                                                spawn(async move {
+                                                    let body = match pairing_request_body(&approve_payload) {
+                                                        Ok(body) => body,
+                                                        Err(err) => {
+                                                            pending_pair_status.set(format!(
+                                                                "Cannot approve: {err}"
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    match with_authed_api(&base, api_token, |api| async move {
+                                                        api.account_device_pair(&body).await
+                                                    })
+                                                    .await
+                                                    {
+                                                        Ok(value) => {
+                                                            state_store
+                                                                .write()
+                                                                .dismiss_pairing_to_device_message(
+                                                                    &approve_device,
+                                                                    &approve_code,
+                                                                );
+                                                            let rows = parse_pending_pairing_requests(
+                                                                &state_store.read().to_device_inbox(),
+                                                            );
+                                                            pending_pair_requests.set(rows);
+                                                            pending_pair_status.set(format!(
+                                                                "To-device pairing request approved. Server response: {value}"
+                                                            ));
+                                                        }
+                                                        Err(err) => {
+                                                            pending_pair_status.set(format!(
+                                                                "Approving to-device pairing request failed: {}",
+                                                                err.display()
+                                                            ));
+                                                        }
+                                                    }
+                                                });
+                                            },
+                                            "Approve"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Role 2 — on the NEW device: create a request, then have an
+        // already-authorized device approve it (above) or scan/paste it.
         div { class: "event", "data-testid": "pair-device-card",
             div { class: "event-head",
                 span { "Pair a new device" }
                 span { "{status_value}" }
             }
             p { class: "muted",
-                "On the browser or device you are adding, create a request here. Then use an already-authorized device to approve the request below, or paste/scan the request there."
+                "On the browser or device you are adding, create a request here. Then approve it on an already-authorized device above, or paste/scan the request there."
             }
             div { class: "actions",
                 Button {
@@ -1170,104 +1276,6 @@ fn render_pair_strand(
             div { class: "muted", "data-testid": "pair-device-status", "{status_value}" }
         }
 
-        div { class: "event", "data-testid": "pending-pairing-requests-card",
-            div { class: "event-head",
-                span { "Requests awaiting this device" }
-                span { "{pending_status_value}" }
-            }
-            p { class: "muted",
-                "On an already-authorized device, approve a request received through account subscribe or the to-device fallback. Compare the pairing code on both devices before approving."
-            }
-            div { class: "actions",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "pending-pairing-refresh-button",
-                    onclick: refresh_pending_requests,
-                    "Refresh requests"
-                }
-            }
-            if pending_rows.is_empty() {
-                div {
-                    class: "muted",
-                    "data-testid": "pending-pairing-empty",
-                    "No pending pairing requests for this account."
-                }
-            } else {
-                div { class: "settings-list", "data-testid": "pending-pairing-list",
-                    for row in pending_rows {
-                        {
-                            let request_key = row.request_key.clone();
-                            let request_key_for_label = request_key.clone();
-                            let request_key_for_click = request_key.clone();
-                            let request_payload = row.request_payload.clone();
-                            let device_label = if row.display_name.trim().is_empty() {
-                                short_protocol_id(&row.requesting_device_id)
-                            } else {
-                                row.display_name.clone()
-                            };
-                            let code_label = if row.pairing_code.trim().is_empty() {
-                                "(no code)".to_owned()
-                            } else {
-                                row.pairing_code.clone()
-                            };
-                            rsx! {
-                                div {
-                                    class: "metric",
-                                    "data-testid": "pending-pairing-request",
-                                    "data-pairing-request-id": "{request_key_for_label}",
-                                    strong { "{device_label}" }
-                                    span { class: "muted mono", "{short_protocol_id(&row.requesting_device_id)}" }
-                                    span { class: "muted", "Code {code_label}" }
-                                    span { class: "muted", "Expires {row.expires_at}" }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Primary,
-                                            "data-testid": "approve-pairing-request-button",
-                                            onclick: move |_| {
-                                                let base = base_url();
-                                                let api_token = token();
-                                                let request_key = request_key_for_click.clone();
-                                                let request_payload = request_payload.clone();
-                                                pending_pair_status.set(format!(
-                                                    "Approving to-device request {request_key}..."
-                                                ));
-                                                spawn(async move {
-                                                    match with_authed_api(&base, api_token, |api| {
-                                                        let request_payload = request_payload.clone();
-                                                        async move {
-                                                            let body: cokret_sdk::AccountDevicePairRequestBody =
-                                                                serde_json::from_value(request_payload)
-                                                                    .map_err(|err| anyhow::anyhow!("invalid device-pair request payload: {err}"))?;
-                                                            api.account_device_pair(&body).await
-                                                        }
-                                                    })
-                                                    .await
-                                                    {
-                                                        Ok(value) => {
-                                                            pending_pair_status.set(format!(
-                                                                "To-device pairing request approved. Server response: {value}"
-                                                            ));
-                                                        }
-                                                        Err(err) => {
-                                                            pending_pair_status.set(format!(
-                                                                "Approving to-device pairing request failed: {}",
-                                                                err.display()
-                                                            ));
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                            "Approve"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Receiving-device input lives on the same panel so the e2e
         // harness can simulate both devices in one process; in real
         // deployments the new device opens the same URL in its own
@@ -1307,60 +1315,17 @@ fn render_pair_strand(
                                 return;
                             }
                         };
-                        let pairing_code = match request_payload
-                            .get("pairing_code")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                        {
-                            Some(value) => value.to_owned(),
-                            None => {
-                                accept_status.set("Pairing payload is missing pairing_code.".to_owned());
+                        let body = match pairing_request_body(&request_payload) {
+                            Ok(body) => body,
+                            Err(err) => {
+                                accept_status.set(format!("Pairing payload is invalid: {err}"));
                                 return;
                             }
                         };
-                        let new_device_pubkey = match request_payload.get("new_device_pubkey") {
-                            Some(Value::Object(_)) => request_payload["new_device_pubkey"].clone(),
-                            _ => {
-                                accept_status.set("Pairing payload is missing new_device_pubkey.".to_owned());
-                                return;
-                            }
-                        };
-                        let challenge_signature = match request_payload
-                            .get("challenge_signature")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                        {
-                            Some(value) => value.to_owned(),
-                            None => {
-                                accept_status.set("Pairing payload is missing challenge_signature.".to_owned());
-                                return;
-                            }
-                        };
-                        let display_name = request_payload
-                            .get("display_name")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(ToOwned::to_owned);
-                        let device_metadata = request_payload
-                            .get("device_metadata")
-                            .cloned()
-                            .unwrap_or_else(|| json!({}));
                         let base = base_url();
                         let api_token = token();
-                        accept_status.set(format!(
-                            "Approving sibling device pairing…"
-                        ));
+                        accept_status.set("Approving sibling device pairing…".to_owned());
                         spawn(async move {
-                            let body = cokret_sdk::AccountDevicePairRequestBody {
-                                pairing_code,
-                                new_device_pubkey,
-                                challenge_signature,
-                                display_name,
-                                device_metadata,
-                            };
                             match with_authed_api(&base, api_token, |api| async move {
                                 api.account_device_pair(&body).await
                             })
@@ -1469,92 +1434,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_pending_pairing_requests() {
-        let rows = parse_pairing_requests_from_inbox(&[
-            json!({
-                "kind": "ck.key.verification.request",
-                "sender_principal_id": "did:web:alice",
-                "sender_device_id": "ck:device:existing",
-                "expires_at": "2026-06-12T12:00:00Z",
-                "content": {
-                    "transaction_id": "txn-1",
-                    "from_device": "ck:device:01904100-0000-7000-8000-000000000001",
-                    "purpose": "same_principal_device_authorization",
-                    "pairing_code": "pairing-code",
-                    "new_device_pubkey": {
-                        "kid": "ck:device:01904100-0000-7000-8000-000000000001",
-                        "alg": "EdDSA",
-                        "public_key": "abc-123"
-                    },
-                    "challenge_signature": "challenge-signature",
-                    "device_metadata": {
-                        "display_name": "New browser"
-                    },
-                    "expires_at": "2026-06-12T12:00:00Z"
-                }
-            }),
-            json!({
-                "kind": "ck.secret.share",
-                "content": {}
-            }),
-        ]);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].request_key, "txn-1");
-        assert_eq!(rows[0].display_name, "New browser");
-        assert_eq!(rows[0].pairing_code, "pairing-code");
-        assert_eq!(
-            rows[0].request_payload,
-            json!({
-                "pairing_code": "pairing-code",
-                "new_device_pubkey": {
-                    "kid": "ck:device:01904100-0000-7000-8000-000000000001",
-                    "alg": "EdDSA",
-                    "public_key": "abc-123"
-                },
-                "challenge_signature": "challenge-signature",
-                "device_metadata": {
-                    "display_name": "New browser"
-                },
-                "display_name": "New browser"
-            })
-        );
-    }
-
-    #[test]
-    fn ignores_incomplete_pairing_requests() {
-        let rows = parse_pairing_requests_from_inbox(&[
-            json!({
-                "kind": "ck.key.verification.request",
-                "content": {
-                    "from_device": "ck:device:new",
-                    "purpose": "same_principal_device_authorization",
-                    "pairing_code": "pairing-code",
-                    "new_device_pubkey": {
-                        "kid": "ck:device:new",
-                        "alg": "EdDSA",
-                        "public_key": "abc-123"
-                    }
-                }
-            }),
-            json!({
-                "kind": "ck.key.verification.request",
-                "content": {
-                    "from_device": "ck:device:new",
-                    "purpose": "device_key_verification",
-                    "pairing_code": "pairing-code",
-                    "new_device_pubkey": {
-                        "kid": "ck:device:new",
-                        "alg": "EdDSA",
-                        "public_key": "abc-123"
-                    },
-                    "challenge_signature": "challenge-signature"
-                }
-            }),
-        ]);
-        assert!(rows.is_empty());
-    }
-
-    #[test]
     fn pairing_verification_content_carries_gate_payload() {
         let request_payload = json!({
             "pairing_code": "pairing-code",
@@ -1583,23 +1462,6 @@ mod tests {
             request_payload["new_device_pubkey"]["public_key"]
         );
         assert!(content["request_canonical_digest"].as_str().is_some());
-    }
-
-    #[test]
-    fn parse_removed_pending_pairing_requests_shape() {
-        let rows = parse_pairing_requests_from_inbox(&[json!({
-            "requests": [
-            {
-                "pairing_request_id": "01970000-0000-7000-8000-000000000020",
-                "requesting_device_id": "ck:device:01904100-0000-7000-8000-000000000001",
-                "pairing_code": "pairing-code",
-                "display_name": "New browser",
-                "state": "pending",
-                "expires_at": "2026-06-12T12:00:00Z"
-            }
-            ]
-        })]);
-        assert!(rows.is_empty());
     }
 
     #[test]
