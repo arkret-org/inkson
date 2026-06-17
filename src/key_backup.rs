@@ -1,6 +1,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use chrono::SecondsFormat;
+use cokret_sdk::models::KeyBackupContentItem;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde_json::{Value, json};
 
@@ -448,12 +449,13 @@ pub fn validate_key_backup_envelope(
     Ok(())
 }
 
-/// One content item for a `passphrase_kdf` backup envelope.
-pub struct BackupItem<'a> {
-    pub item_type: &'a str,
-    pub secret_id: &'a str,
-    /// Extra item fields (e.g. `secret_version`) merged into the content object.
-    pub extra: Vec<(&'a str, Value)>,
+/// Serialize a SDK `KeyBackupContentItem` into the on-wire `contents[]` object.
+/// The content item is the spec-defined type (`ck.schema.key_backup.v1`); the
+/// authoritative shape lives in `cokret_sdk::models::KeyBackupContentItem`, so
+/// neither yougen nor soland redefines it. `skip_serializing_if` keeps absent
+/// optionals (e.g. `secret_version` on share items) out of the canonical bytes.
+fn backup_content_object(item: &KeyBackupContentItem) -> anyhow::Result<Value> {
+    serde_json::to_value(item).map_err(|error| anyhow::anyhow!("key backup content item: {error}"))
 }
 
 /// Spec §7.5 builder: assemble a `passphrase_kdf` backup envelope and seal
@@ -472,20 +474,9 @@ pub fn build_passphrase_kdf_backup_body(
     plaintext: &[u8],
     class: KeyBackupClass,
     subdomain: &str,
-    item: &BackupItem<'_>,
+    item: &KeyBackupContentItem,
 ) -> anyhow::Result<Value> {
-    let mut content = serde_json::Map::new();
-    content.insert(
-        "item_type".to_owned(),
-        Value::String(item.item_type.to_owned()),
-    );
-    content.insert(
-        "secret_id".to_owned(),
-        Value::String(item.secret_id.to_owned()),
-    );
-    for (key, value) in &item.extra {
-        content.insert((*key).to_owned(), value.clone());
-    }
+    let content = backup_content_object(item)?;
     let mut body = json!({
         "backup_id": backup_id,
         "actor_id": actor_id,
@@ -511,7 +502,7 @@ pub fn build_passphrase_kdf_backup_body(
                 "nonce_salt": "",
             }
         },
-        "contents": [Value::Object(content)],
+        "contents": [content],
         "ciphertext": "",
         "ciphertext_digest": "",
     });
@@ -656,10 +647,10 @@ pub fn build_did_recovery_backup_body(
         recovery_key_ref,
         KeyBackupClass::DidRecovery,
         "recovery_policy",
-        &BackupItem {
-            item_type: "recovery_key_share",
-            secret_id: "yougen_did_recovery_share",
-            extra: Vec::new(),
+        &KeyBackupContentItem {
+            item_type: "recovery_key_share".to_owned(),
+            secret_id: Some("yougen_did_recovery_share".to_owned()),
+            ..Default::default()
         },
         plaintext,
         Some((policy_id, policy_version)),
@@ -701,7 +692,7 @@ pub fn build_recovery_public_key_backup_body(
     recovery_key_ref: &str,
     class: KeyBackupClass,
     subdomain: &str,
-    item: &BackupItem<'_>,
+    item: &KeyBackupContentItem,
     plaintext: &[u8],
     // Active recovery policy this backup binds (key-backup.schema.json
     // `recovery_policy_ref`). REQUIRED for `did_recovery`; an optional signed
@@ -709,18 +700,7 @@ pub fn build_recovery_public_key_backup_body(
     // currently accepted recovery policy and rejects on mismatch.
     recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
-    let mut content = serde_json::Map::new();
-    content.insert(
-        "item_type".to_owned(),
-        Value::String(item.item_type.to_owned()),
-    );
-    content.insert(
-        "secret_id".to_owned(),
-        Value::String(item.secret_id.to_owned()),
-    );
-    for (key, value) in &item.extra {
-        content.insert((*key).to_owned(), value.clone());
-    }
+    let content = backup_content_object(item)?;
     let mut body = json!({
         "backup_id": backup_id,
         "actor_id": actor_id,
@@ -736,7 +716,7 @@ pub fn build_recovery_public_key_backup_body(
                 "enc": "",
             }
         },
-        "contents": [Value::Object(content)],
+        "contents": [content],
         "ciphertext": "",
         "ciphertext_digest": "",
     });
@@ -1207,10 +1187,10 @@ mod tests {
             plaintext,
             KeyBackupClass::SecretStorage,
             "recovery_vault",
-            &BackupItem {
-                item_type: "recovery_secret",
-                secret_id: "yougen_recovery_vault_payload",
-                extra: Vec::new(),
+            &KeyBackupContentItem {
+                item_type: "recovery_secret".to_owned(),
+                secret_id: Some("yougen_recovery_vault_payload".to_owned()),
+                ..Default::default()
             },
         )
     }
@@ -1530,10 +1510,10 @@ mod tests {
             "did:web:alice.example#recovery",
             KeyBackupClass::MlsHistory,
             "mls_snapshot",
-            &BackupItem {
-                item_type: "mls_group_state",
-                secret_id: "yougen_mls_snapshot",
-                extra: Vec::new(),
+            &KeyBackupContentItem {
+                item_type: "mls_group_state".to_owned(),
+                secret_id: Some("yougen_mls_snapshot".to_owned()),
+                ..Default::default()
             },
             b"opaque mls snapshot bytes",
             None,

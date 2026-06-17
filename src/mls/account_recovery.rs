@@ -13,10 +13,11 @@
 //! transmitted in clear.
 
 use anyhow::{Result, anyhow};
+use cokret_sdk::models::KeyBackupContentItem;
 use serde_json::{Value, json};
 
 use crate::key_backup::{
-    BackupItem, KeyBackupClass, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
+    KeyBackupClass, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
 };
 use crate::recovery_crypto::{VaultKek, derive_vault_kek};
 
@@ -105,13 +106,11 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
         account_secret.as_bytes(),
         KeyBackupClass::SecretStorage,
         "recovery_vault",
-        &BackupItem {
-            item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE,
-            secret_id: MLS_ACCOUNT_SECRET_SECRET_ID,
-            extra: vec![(
-                "secret_version",
-                Value::Number(serde_json::Number::from(account_secret_version)),
-            )],
+        &KeyBackupContentItem {
+            item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE.to_owned(),
+            secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
+            secret_version: Some(account_secret_version),
+            ..Default::default()
         },
     )
 }
@@ -187,10 +186,10 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
         sidecar_json,
         KeyBackupClass::SecretStorage,
         "recovery_vault",
-        &BackupItem {
-            item_type: MLS_PRIVATE_PLAINTEXT_ITEM_TYPE,
-            secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID,
-            extra: Vec::new(),
+        &KeyBackupContentItem {
+            item_type: MLS_PRIVATE_PLAINTEXT_ITEM_TYPE.to_owned(),
+            secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
+            ..Default::default()
         },
     )
 }
@@ -349,13 +348,11 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
         recovery_key_ref,
         crate::key_backup::KeyBackupClass::SecretStorage,
         "recovery_vault",
-        &crate::key_backup::BackupItem {
-            item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE,
-            secret_id: MLS_ACCOUNT_SECRET_SECRET_ID,
-            extra: vec![(
-                "secret_version",
-                Value::Number(serde_json::Number::from(account_secret_version)),
-            )],
+        &KeyBackupContentItem {
+            item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE.to_owned(),
+            secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
+            secret_version: Some(account_secret_version),
+            ..Default::default()
         },
         account_secret.as_bytes(),
         // secret_storage class — recovery_policy_ref is an optional hint; omitted
