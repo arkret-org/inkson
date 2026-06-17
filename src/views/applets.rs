@@ -53,13 +53,27 @@ pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<Value> {
     }
 }
 
-/// The effective-scope object an install/revoke targets: the admin's currently
-/// selected Realm. soland gates the write on `ck.realm.admin` over this scope.
-pub fn applet_effective_scope(realm_id: &str) -> Result<EffectiveScope, String> {
+/// The effective-scope object an install/revoke targets. A blank `circle_id`
+/// installs the applet Realm-wide; a `ck:circle:…` id scopes it to that Circle
+/// only (spec §4b: a single install carries exactly one `effective_scope`, and a
+/// Circle install MUST NOT widen to a Realm-wide grant). soland gates the write
+/// on `ck.realm.admin` over the resolved scope either way.
+pub fn applet_effective_scope(
+    realm_id: &str,
+    circle_id: Option<&str>,
+) -> Result<EffectiveScope, String> {
     let realm_id = crate::operation::trim_realm_id(realm_id);
-    cokret_sdk::RealmId::new(realm_id.clone())
-        .map(|realm_id| EffectiveScope::Realm { realm_id })
-        .map_err(|err| format!("invalid Realm id {realm_id:?}: {err:?}"))
+    let realm = cokret_sdk::RealmId::new(realm_id.clone())
+        .map_err(|err| format!("invalid Realm id {realm_id:?}: {err:?}"))?;
+    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(EffectiveScope::Realm { realm_id: realm }),
+        Some(circle) => cokret_sdk::CircleId::new(circle.to_owned())
+            .map(|circle_id| EffectiveScope::Circle {
+                realm_id: realm,
+                circle_id,
+            })
+            .map_err(|err| format!("invalid Circle id {circle:?}: {err:?}")),
+    }
 }
 
 /// A conservative default approval request: no ghost / delegated-native actors,
@@ -159,6 +173,9 @@ pub fn AppletsPanel(
     // the resolved approved-scope count surfaced after preview.
     let mut install_plan_digest = use_signal(String::new);
     let mut install_approved_scopes = use_signal(|| 0usize);
+    // Optional Circle scope for the install. Blank = Realm-wide; a `ck:circle:…`
+    // id scopes the install to that Circle only (spec §4b effective_scope).
+    let mut install_circle_id = use_signal(String::new);
     let mut trace_open_for = use_signal(|| Option::<String>::None);
 
     // Pull registry + session rows from the local raw-operation
@@ -498,6 +515,20 @@ pub fn AppletsPanel(
                             },
                             style: "width: 100%; min-height: 60px;",
                         }
+                        // Optional Circle scope. Blank installs Realm-wide; a
+                        // `ck:circle:…` id scopes the applet to that Circle only.
+                        // Changing it invalidates the previewed plan (the digest
+                        // is computed over effective_scope), so re-preview.
+                        Textarea {
+                            "data-testid": "applet-install-circle-input",
+                            placeholder: "optional Circle id (ck:circle:…) — blank = Realm-wide",
+                            value: "{install_circle_id}",
+                            oninput: move |event: FormEvent| {
+                                install_circle_id.set(event.value());
+                                install_verified.set(false);
+                            },
+                            style: "width: 100%; min-height: 32px;",
+                        }
                         // Step 1 — preview: POST the manifest-derived package to
                         // `applet_install_preview`, capturing the canonical
                         // plan_digest the commit MUST echo back (P3 API).
@@ -521,9 +552,13 @@ pub fn AppletsPanel(
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         let api_token = token();
+                                        let circle = install_circle_id();
                                         install_status.set("previewing install plan…".to_owned());
                                         spawn(async move {
-                                            let effective_scope = match applet_effective_scope(&realm) {
+                                            let effective_scope = match applet_effective_scope(
+                                                &realm,
+                                                Some(circle.as_str()),
+                                            ) {
                                                 Ok(scope) => scope,
                                                 Err(err) => {
                                                     install_status.set(err);
@@ -592,6 +627,7 @@ pub fn AppletsPanel(
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         let api_token = token();
+                                        let circle = install_circle_id();
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
                                             let digest_typed = match cokret_sdk::Hash::new(digest.clone()) {
@@ -601,7 +637,10 @@ pub fn AppletsPanel(
                                                     return;
                                                 }
                                             };
-                                            let effective_scope = match applet_effective_scope(&realm) {
+                                            let effective_scope = match applet_effective_scope(
+                                                &realm,
+                                                Some(circle.as_str()),
+                                            ) {
                                                 Ok(scope) => scope,
                                                 Err(err) => {
                                                     install_status.set(err);
@@ -624,15 +663,35 @@ pub fn AppletsPanel(
                                             .await;
                                             match result {
                                                 Ok(outcome) => {
-                                                    install_status.set(format!(
-                                                        "installed: applet_id {} ({:?})",
-                                                        short_protocol_id(&outcome.applet_id),
-                                                        outcome.effective_status,
-                                                    ));
-                                                    install_open.set(false);
-                                                    install_manifest.set(String::new());
-                                                    install_verified.set(false);
-                                                    install_plan_digest.set(String::new());
+                                                    // Surface the three-value effective_status
+                                                    // distinctly: a Rejected outcome is an orphan
+                                                    // registration (registration landed, no active
+                                                    // grant) and grants the applet nothing.
+                                                    use cokret_sdk::models::AppletInstallEffectiveStatus as Status;
+                                                    let aid = short_protocol_id(&outcome.applet_id);
+                                                    let line = match outcome.effective_status {
+                                                        Status::Installed => {
+                                                            format!("✅ installed: applet_id {aid}")
+                                                        }
+                                                        Status::PartiallyInstalled => format!(
+                                                            "⚠ partially installed: applet_id {aid} — {} scope(s) rejected",
+                                                            outcome.rejected.len(),
+                                                        ),
+                                                        Status::Rejected => format!(
+                                                            "⛔ rejected (orphan registration — no active grant): applet_id {aid}"
+                                                        ),
+                                                    };
+                                                    let installed = matches!(outcome.effective_status, Status::Installed);
+                                                    install_status.set(line);
+                                                    // Keep the form open on a rejected / partial
+                                                    // outcome so the admin can adjust and retry.
+                                                    if installed {
+                                                        install_open.set(false);
+                                                        install_manifest.set(String::new());
+                                                        install_circle_id.set(String::new());
+                                                        install_verified.set(false);
+                                                        install_plan_digest.set(String::new());
+                                                    }
                                                 }
                                                 Err(err) => install_status.set(format!(
                                                     "install failed: {}", err.display()
@@ -695,7 +754,10 @@ pub fn AppletsPanel(
                                                     let api_token = token();
                                                     install_status.set("revoking applet…".to_owned());
                                                     spawn(async move {
-                                                        let effective_scope = match applet_effective_scope(&realm) {
+                                                        // Revoke targets the Realm-wide install; a
+                                                        // Circle-scoped revoke would need the row's
+                                                        // installed scope (not surfaced here yet).
+                                                        let effective_scope = match applet_effective_scope(&realm, None) {
                                                             Ok(scope) => scope,
                                                             Err(err) => {
                                                                 install_status.set(err);
@@ -882,11 +944,32 @@ mod tests {
     #[test]
     fn effective_scope_trims_realm_prefix_consistently() {
         let scope =
-            applet_effective_scope("ck:realm:01904100-0000-7000-8000-000000000010").unwrap();
+            applet_effective_scope("ck:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
         assert!(matches!(
             scope,
             cokret_sdk::models::EffectiveScope::Realm { ref realm_id }
                 if realm_id.as_str() == "ck:realm:01904100-0000-7000-8000-000000000010"
+        ));
+    }
+
+    #[test]
+    fn effective_scope_circle_id_targets_circle() {
+        let scope = applet_effective_scope(
+            "ck:realm:01904100-0000-7000-8000-000000000010",
+            Some("ck:circle:01904100-0000-7000-8000-0000000000c1"),
+        )
+        .unwrap();
+        assert!(matches!(
+            scope,
+            cokret_sdk::models::EffectiveScope::Circle { ref realm_id, ref circle_id }
+                if realm_id.as_str() == "ck:realm:01904100-0000-7000-8000-000000000010"
+                    && circle_id.as_str() == "ck:circle:01904100-0000-7000-8000-0000000000c1"
+        ));
+        // Blank circle falls back to a Realm-wide install.
+        assert!(matches!(
+            applet_effective_scope("ck:realm:01904100-0000-7000-8000-000000000010", Some("  "))
+                .unwrap(),
+            cokret_sdk::models::EffectiveScope::Realm { .. }
         ));
     }
 
