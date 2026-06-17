@@ -2528,6 +2528,12 @@ pub fn RouterView() -> Element {
     use crate::account_health::AccountHealthPrompt;
     let show_recovery_setup_prompt =
         active_prompt == AccountHealthPrompt::RecoverySetupReminder && !recovery_key_setup_prompt();
+    // Per-account durable suppression for the advisory encryption-floor modal:
+    // once shown and acknowledged it stays dismissed across navigations and
+    // sessions (the in-session `encryption_floor_prompt_dismissed` signal covers
+    // the same frame before the persisted flag is read back).
+    let encryption_floor_prompt_acknowledged =
+        crate::app::encryption_floor_prompt_acknowledged(&state_store.read(), &account_did());
 
     rsx! {
         style { "{DXC_THEME}" }
@@ -2657,6 +2663,7 @@ pub fn RouterView() -> Element {
             }
             if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
                 && !encryption_floor_prompt_dismissed()
+                && !encryption_floor_prompt_acknowledged
             {
                 crate::components::EncryptionFloorPrompt {
                     token,

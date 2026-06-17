@@ -23,6 +23,14 @@ use crate::local_state::{ClientLocalState, LocalStateStore};
 pub(crate) const RECOVERY_AUTO_PROMPT_SHOWN_KEY: &str = "recovery.auto_prompt_shown.v1";
 pub(crate) const RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY: &str =
     "recovery.auto_prompt_local_only_shown.v1";
+/// Per-account flag: the recommended-encryption-floor modal has been shown and
+/// acknowledged (enabled or "Not now"). The modal is advisory and the
+/// underlying `floor_low` condition stays true until the account actually
+/// ratchets a Realm to the recommended floor, so without this flag it re-pops
+/// on every render/navigation. Mirrors `RECOVERY_AUTO_PROMPT_SHOWN_KEY`: show
+/// at most once per account, then leave the user to manage it from settings.
+pub(crate) const ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY: &str =
+    "encryption.floor_prompt_dismissed.v1";
 
 pub(crate) fn has_bootstrap_refresh_material(
     store: &LocalStateStore,
@@ -163,6 +171,18 @@ pub(crate) fn recovery_auto_prompt_already_prompted(
     }
     store
         .load_private_data(actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY)
+        .is_some()
+}
+
+/// Whether the recommended-encryption-floor modal was already shown and
+/// acknowledged for this account (see [`ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY`]).
+pub(crate) fn encryption_floor_prompt_acknowledged(store: &LocalStateStore, actor: &str) -> bool {
+    let actor = actor.trim();
+    if actor.is_empty() {
+        return false;
+    }
+    store
+        .load_private_data(actor, ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY)
         .is_some()
 }
 

@@ -64,11 +64,10 @@ pub fn EncryptionFloorPrompt(
         local_recovery_configured,
     );
     let on_enable = move |_| {
+        acknowledge_dismissal(dismissed, account_did, state_store);
         if recovery_key_configured {
-            dismissed.set(true);
             status.set(String::new());
         } else {
-            dismissed.set(true);
             recovery_key_setup_prompt.set(true);
         }
     };
@@ -78,7 +77,7 @@ pub fn EncryptionFloorPrompt(
             open: true,
             on_open_change: move |open: bool| {
                 if !open {
-                    dismissed.set(true);
+                    acknowledge_dismissal(dismissed, account_did, state_store);
                 }
             },
             "data-testid": "recommended-encryption-floor-modal",
@@ -123,7 +122,7 @@ pub fn EncryptionFloorPrompt(
                         variant: ButtonVariant::Secondary,
                         "data-testid": "recommended-encryption-floor-dismiss",
                         onclick: move |_| {
-                            dismissed.set(true);
+                            acknowledge_dismissal(dismissed, account_did, state_store);
                             status.set(String::new());
                         },
                         "Not now"
@@ -131,6 +130,29 @@ pub fn EncryptionFloorPrompt(
                 }
             }
         }
+    }
+}
+
+/// Hide the advisory floor modal and remember the choice for this account.
+///
+/// Sets the session-scoped `dismissed` signal (immediate hide, stable across the
+/// component remounting while `active_prompt` churns) and persists a per-account
+/// flag so the modal auto-shows at most once — across navigations and sessions —
+/// instead of re-popping on every render while `floor_low` stays true. Mirrors
+/// the `RecoverySetupReminder` once-per-account suppression.
+fn acknowledge_dismissal(
+    mut dismissed: Signal<bool>,
+    account_did: Signal<String>,
+    mut state_store: Signal<LocalStateStore>,
+) {
+    dismissed.set(true);
+    let actor = account_did();
+    if !actor.trim().is_empty() {
+        state_store.write().save_private_data(
+            &actor,
+            crate::app::ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY,
+            "1".to_owned(),
+        );
     }
 }
 
