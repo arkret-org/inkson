@@ -1827,11 +1827,19 @@ pub fn RouterView() -> Element {
                         Ok(res) => {
                             let handles = display_handles_from_directory_response(&res);
                             if handles.is_empty() {
-                                personal_handles_status.set("No handles published".to_owned());
+                                // Mirror the error branches below: keep any
+                                // account-localpart fallback already derived
+                                // from the account viewer's primary handle
+                                // claim instead of clobbering it with an empty
+                                // directory page.
+                                if personal_handles().is_empty() {
+                                    personal_handles_status
+                                        .set("No handles published".to_owned());
+                                }
                             } else {
                                 personal_handles_status.set(format!("{} handle(s)", handles.len()));
+                                personal_handles.set(handles);
                             }
-                            personal_handles.set(handles);
                         }
                         Err(err) => {
                             tracing::warn!(
