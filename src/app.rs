@@ -4309,7 +4309,7 @@ pub fn RouterView() -> Element {
                                                                 Ok(account) => {
                                                                     let canonical_actor = account.did;
                                                                     if let Some(personal_handle) =
-                                                                        personal_handle_from_account_localpart(&account.handle, &base)
+                                                                        personal_handle_from_account_handle(&account.handle, &base)
                                                                     {
                                                                         personal_handles.set(vec![personal_handle]);
                                                                         personal_handles_status.set("1 handle".to_owned());
@@ -4347,7 +4347,7 @@ pub fn RouterView() -> Element {
                                                                                     .ok()
                                                                                     .and_then(|account| {
                                                                                         if let Some(personal_handle) =
-                                                                                            personal_handle_from_account_localpart(&account.handle, &base)
+                                                                                            personal_handle_from_account_handle(&account.handle, &base)
                                                                                         {
                                                                                             personal_handles.set(vec![personal_handle]);
                                                                                             personal_handles_status
@@ -6183,16 +6183,33 @@ fn display_handles_from_directory_response(
     handles
 }
 
-fn personal_handle_from_account_localpart(
-    account_localpart: &str,
-    server_url: &str,
-) -> Option<String> {
-    let normalized_localpart = account_localpart.trim().trim_start_matches('@').trim();
-    if normalized_localpart.is_empty() {
+/// Build the account's personal **handle** (`<localpart>:<domain>`) from the
+/// `account_me` projection, for the account menu label and the recovery-key
+/// download filename.
+///
+/// `account.handle` (see [`crate::api::account`]'s `primary_handle_from_viewer`)
+/// is the **full canonical handle** carried by the signed primary handle claim
+/// — it is *not* a bare localpart. So when the input already parses as a handle
+/// we return it canonicalised verbatim. Re-appending the server domain to a
+/// value that already has one is exactly what produced the
+/// `alice:local.host:local.host` double-domain bug.
+///
+/// The localpart branch is only a defensive fallback for legacy/synthetic
+/// payloads that carried a bare localpart with no domain: only then do we
+/// synthesise `<localpart>:<server-domain>`.
+fn personal_handle_from_account_handle(account_handle: &str, server_url: &str) -> Option<String> {
+    let trimmed = account_handle.trim().trim_start_matches('@').trim();
+    if trimmed.is_empty() {
         return None;
     }
+    // Already a full canonical handle — never re-append a domain.
+    if let Some(handle) = crate::identity_handle::normalize_user_handle_display(trimmed) {
+        return Some(handle);
+    }
+    // Bare-localpart fallback: synthesise `<localpart>:<server-domain>` and
+    // canonicalise it through the same handle parser.
     let server_host = handle_domain_from_server_url(server_url)?;
-    Some(format!("{normalized_localpart}:{server_host}"))
+    crate::identity_handle::normalize_user_handle_display(&format!("{trimmed}:{server_host}"))
 }
 
 fn handle_domain_from_server_url(server_url: &str) -> Option<String> {
@@ -6959,7 +6976,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 let canonical_actor = match authed.account_me().await {
                     Ok(account) if !account.did.trim().is_empty() => {
                         account_personal_handle =
-                            personal_handle_from_account_localpart(&account.handle, &base);
+                            personal_handle_from_account_handle(&account.handle, &base);
                         account.did
                     }
                     Ok(_) => {
@@ -6976,7 +6993,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             match authed.account_me().await {
                                 Ok(account) if !account.did.trim().is_empty() => {
                                     account_personal_handle =
-                                        personal_handle_from_account_localpart(
+                                        personal_handle_from_account_handle(
                                             &account.handle,
                                             &base,
                                         );

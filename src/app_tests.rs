@@ -1,17 +1,40 @@
 use super::*;
 
 #[test]
-fn personal_handle_from_account_localpart_adds_server_host() {
+fn personal_handle_from_account_handle_keeps_full_handle_verbatim() {
+    // `account.handle` from `account_me` is the FULL canonical handle. It must
+    // be returned as-is — never have the server domain appended again, which
+    // produced the `alice:local.host:local.host` double-domain regression.
     assert_eq!(
-        personal_handle_from_account_localpart("@alice", "https://local.host").as_deref(),
+        personal_handle_from_account_handle("alice:local.host", "https://local.host").as_deref(),
         Some("alice:local.host")
     );
     assert_eq!(
-        personal_handle_from_account_localpart("  ", "https://local.host"),
+        personal_handle_from_account_handle("@alice:local.host", "https://local.host").as_deref(),
+        Some("alice:local.host")
+    );
+    // A handle on a different domain than the active server is preserved, not
+    // rewritten to the server's domain.
+    assert_eq!(
+        personal_handle_from_account_handle("alice:example.com", "https://local.host").as_deref(),
+        Some("alice:example.com")
+    );
+}
+
+#[test]
+fn personal_handle_from_account_handle_synthesises_bare_localpart() {
+    // Defensive fallback: a legacy bare localpart (no domain) gets the active
+    // server's domain appended exactly once.
+    assert_eq!(
+        personal_handle_from_account_handle("@alice", "https://local.host").as_deref(),
+        Some("alice:local.host")
+    );
+    assert_eq!(
+        personal_handle_from_account_handle("  ", "https://local.host"),
         None
     );
     assert_eq!(
-        personal_handle_from_account_localpart("@alice", "not a server URL"),
+        personal_handle_from_account_handle("@alice", "not a server URL"),
         None
     );
 }
