@@ -124,7 +124,7 @@ impl CokretApi {
         room_id: &str,
         request: &cokret_sdk::MimiRoomUpdateRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiRoomUpdateOutcome> {
-        self.put_json(
+        self.post_json(
             &format!("_cokret/open/mimi/strands/{room_id}/update"),
             request,
         )

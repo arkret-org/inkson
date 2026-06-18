@@ -333,26 +333,18 @@ impl CokretApi {
             .await
     }
 
-    pub async fn get_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("_cokret/self/keys/backups/{backup_id}"))
-            .await
-    }
-
     pub async fn get_key_backup_with_unlock_proof(
         &self,
         backup_id: &str,
         unlock_proof: &serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        let proof_header = serde_json::to_string(unlock_proof)?;
-        let request = self
-            .http
-            .get(self.endpoint(&format!("_cokret/self/keys/backups/{backup_id}"))?)
-            .header(
-                crate::key_backup::KEY_BACKUP_UNLOCK_PROOF_HEADER,
-                proof_header,
-            );
-        self.send_json(self.prepare_request(request), Method::GET)
-            .await
+        let proof: cokret_sdk::KeyBackupUnlockProof = serde_json::from_value(unlock_proof.clone())?;
+        let body = cokret_sdk::KeysBackupsUnlockRequestBody { proof };
+        self.post_json(
+            &format!("_cokret/self/keys/backups/{backup_id}/unlock"),
+            &body,
+        )
+        .await
     }
 
     pub async fn delete_key_backup(

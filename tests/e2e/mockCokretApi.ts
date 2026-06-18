@@ -516,7 +516,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/update$/) && route.request().method() === "PUT") {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/update$/) && route.request().method() === "POST") {
       const roomId = decodeURIComponent(url.pathname.split("/")[5]);
       return json(route, {
         ok: true,
@@ -1091,7 +1091,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     // §5: GET/SET carry the bare `cokret_sdk::InviteReceivePolicy` (required
     // `schema` + `subject_id`, typed enums, trust lists) — no `ok` wrapper.
     if (url.pathname === "/_cokret/self/invite-receive-policy") {
-      if (route.request().method() === "POST") {
+      if (route.request().method() === "PUT") {
         // The real soland handler echoes the stored policy back verbatim;
         // mirror that so the client's `trusted_*` lists round-trip intact.
         const body = await route.request().postDataJSON();

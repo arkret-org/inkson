@@ -331,7 +331,7 @@ impl CokretApi {
     /// Persist the actor's `invite_receive_policy` (U4).
     ///
     /// Spec `ck.self.invite_receive_policy.resource.replace`:
-    /// `POST /_cokret/self/invite-receive-policy` with the bare
+    /// `PUT /_cokret/self/invite-receive-policy` with the bare
     /// `cokret_sdk::InviteReceivePolicy` as the body. The handler enforces
     /// `subject_id == session actor` and requires the `schema` constant, so the
     /// caller MUST stamp both before calling (see the U4 view); the server
@@ -340,7 +340,7 @@ impl CokretApi {
         &self,
         policy: &crate::models::InviteReceivePolicy,
     ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-        self.post_json("_cokret/self/invite-receive-policy", policy)
+        self.put_json("_cokret/self/invite-receive-policy", policy)
             .await
     }
 
