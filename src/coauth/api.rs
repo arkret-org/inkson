@@ -516,7 +516,7 @@ impl CoauthApi {
     /// `self` MUST be rooted at the resolved `gate_account_base`. `grant_jwt` is
     /// the active `ck.session.grant`; `dpop_proof` is the device holder proof
     /// bound to the grant's `cnf.jkt`.
-    pub async fn device_authorize_signed_event(
+    pub async fn device_enroll_signed_event(
         &self,
         grant_jwt: &str,
         dpop_proof: &str,
@@ -525,7 +525,7 @@ impl CoauthApi {
         actor_seq: u64,
         not_before: Option<&str>,
     ) -> anyhow::Result<Value> {
-        let endpoint = self.endpoint("device-authorize")?;
+        let endpoint = self.endpoint("device-enroll")?;
         let mut body = json!({
             "device_id": device_id,
             "device_public_key": device_public_key,
@@ -543,14 +543,11 @@ impl CoauthApi {
             .send()
             .await?;
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .context("read device-authorize body")?;
+        let text = response.text().await.context("read device-enroll body")?;
         if !status.is_success() {
             let code = error_envelope_code(&text);
             anyhow::bail!(
-                "device-authorize failed: status={} code={} body={}",
+                "device-enroll failed: status={} code={} body={}",
                 status.as_u16(),
                 code.as_deref().unwrap_or("<none>"),
                 text.chars().take(512).collect::<String>(),
@@ -561,12 +558,11 @@ impl CoauthApi {
         // `event`. Extract it so the caller submits the envelope verbatim (not
         // the outcome wrapper, which has no `kind`/`proofs` and fails the
         // `parse_signed_device_authorize` envelope decode).
-        let outcome: Value =
-            serde_json::from_str(&text).context("parse device-authorize response")?;
+        let outcome: Value = serde_json::from_str(&text).context("parse device-enroll response")?;
         outcome
-            .get("event")
+            .get("authorized_event")
             .cloned()
-            .context("device-authorize response missing `event`")
+            .context("device-enroll response missing `authorized_event`")
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {

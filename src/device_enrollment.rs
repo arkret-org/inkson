@@ -27,7 +27,7 @@ pub struct DeviceEnrollmentRequest {
     /// Active `ck.session.grant` JWT (bearer for the enrollment endpoint).
     pub grant_jwt: String,
     /// Device holder DPoP proof bound to the grant `cnf.jkt`, minted for
-    /// `POST <gate_account_base>/device-authorize`.
+    /// `POST <gate_account_base>/device-enroll`.
     pub dpop_proof: String,
     /// This session's `device_id` (`ck:device:<uuid>`). The enrollment authority
     /// signs the `ck.device.authorize` for exactly this device so the projected
@@ -96,7 +96,7 @@ pub async fn enroll_current_device(
     expected_device_id: &str,
 ) -> anyhow::Result<()> {
     let signed_event = coauth
-        .device_authorize_signed_event(
+        .device_enroll_signed_event(
             &request.grant_jwt,
             &request.dpop_proof,
             &request.device_id,

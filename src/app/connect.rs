@@ -309,10 +309,10 @@ async fn enroll_current_session_device(
         crate::auth_dpop::ensure_device_key(&mut store)
             .map_err(|error| anyhow::anyhow!("load device holder key: {error}"))?
     };
-    let htu = coauth.endpoint_url("device-authorize")?;
+    let htu = coauth.endpoint_url("device-enroll")?;
     let dpop_proof = device_key
         .mint_proof("POST", &htu, Some(&grant.grant_jwt))
-        .map_err(|error| anyhow::anyhow!("mint device-authorize DPoP proof: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("mint device-enroll DPoP proof: {error}"))?;
 
     // Next control-stream sequence for this principal = highest accepted + 1.
     // `actor_seq` is 1-indexed on the Principal Server (soland rejects 0 with

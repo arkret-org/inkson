@@ -50,15 +50,15 @@ impl CokretApi {
         let binding = describe
             .supported_bindings
             .iter()
-            .find(|binding| binding.get("kind").and_then(Value::as_str) == Some("tus"))?;
-        if let Some(operations) = binding.get("operations").and_then(Value::as_array)
+            .find(|binding| binding.kind == "tus")?;
+        if let Some(operations) = binding.extra.get("operations").and_then(Value::as_array)
             && !operations
                 .iter()
                 .any(|op| op.as_str() == Some("ck.self.blob.upload.create"))
         {
             return None;
         }
-        let base_url = binding.get("base_url").and_then(Value::as_str)?;
+        let base_url = binding.base_url.as_deref()?;
         Url::parse(base_url).ok()
     }
 

@@ -361,9 +361,9 @@ impl ServerDescriptionExt for ServerDescription {
             missing.push("protocol_version=1.0");
         }
         missing.extend(self.missing_event_envelope_write_requirements());
-        if self.plaintext_visibility.is_null() {
-            missing.push("plaintext_visibility");
-        }
+        // `plaintext_visibility` is a required, strongly-typed field of the v1
+        // ServiceDescribe: a describe that omits it fails to deserialize before
+        // reaching here, so its presence is structurally guaranteed.
         missing
     }
 
@@ -376,7 +376,10 @@ impl ServerDescriptionExt for ServerDescription {
     }
 
     fn is_plaintext_visibility_untrusted(&self) -> bool {
-        self.plaintext_visibility.is_null()
+        // Vacuous (all-default) declaration carries no usable plaintext-boundary
+        // signal — treat as untrusted / fail-closed, matching the v1 receiver
+        // rule for an absent value.
+        self.plaintext_visibility == cokret_sdk::PlaintextVisibility::none()
     }
 }
 
