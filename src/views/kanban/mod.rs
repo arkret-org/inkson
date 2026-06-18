@@ -854,10 +854,9 @@ pub fn KanbanPanel(
                             err.display()
                         ));
                     } else {
-                        columns.set(Vec::new());
                         projection_source.set(BoardProjectionSource::Unavailable);
                         board_status.set(format!(
-                            "Board data unavailable on mount: {}; sample fallback disabled",
+                            "Board view unavailable on mount: {}; keeping lifecycle projection",
                             err.display()
                         ));
                     }
@@ -1866,10 +1865,9 @@ pub fn KanbanPanel(
                                                                     err.display()
                                                                 ));
                                                             } else {
-                                                                columns.set(Vec::new());
                                                                 projection_source.set(BoardProjectionSource::Unavailable);
                                                                 board_status.set(format!(
-                                                                    "Board data unavailable: {}; sample fallback disabled",
+                                                                    "Board view unavailable: {}; keeping lifecycle projection",
                                                                     err.display()
                                                                 ));
                                                             }
@@ -2452,7 +2450,7 @@ pub fn KanbanPanel(
                                                     strand_id.clone(),
                                                     title.clone(),
                                                     rank.clone(),
-                                                    LOCAL_PENDING_CARD_DESCRIPTION.to_owned(),
+                                                    String::new(),
                                                     CardState::Queued,
                                                 );
                                                 if let Some(col) = columns.write().iter_mut().find(|c| c.id == col_id) {

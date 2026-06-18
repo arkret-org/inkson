@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) const DEMO_BOARD_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-00000000b0a0";
 
 /// Maximum number of times a CAS-conflicted Move is automatically
@@ -46,8 +44,6 @@ pub(crate) fn actor_is_current_account(actor_id: &str, account_did: &str) -> boo
     !account.is_empty() && actor_id.trim() == account
 }
 
-pub(crate) const LOCAL_PENDING_CARD_DESCRIPTION: &str =
-    "New local card waiting for reducer receipt.";
 pub(crate) const DEMO_STRAND_LEGAL_REVIEW_ID: &str =
     "ck:strand:0196419b-0000-7000-8000-000000000101";
 pub(crate) const DEMO_STRAND_ONBOARDING_COPY_ID: &str =

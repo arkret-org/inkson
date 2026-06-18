@@ -530,6 +530,7 @@ fn local_strand_create_overlay_restores_card_until_projection_catches_up() {
     assert_eq!(overlaid[0].cards.len(), 1);
     assert_eq!(overlaid[0].cards[0].id, strand_id);
     assert_eq!(overlaid[0].cards[0].title, "Refresh-surviving card");
+    assert_eq!(overlaid[0].cards[0].description, "");
     assert_eq!(overlaid[0].cards[0].state, CardState::Queued);
 
     let overlaid_again =

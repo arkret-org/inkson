@@ -664,7 +664,7 @@ pub(crate) fn local_card_create_from_raw_operation(
         .or_else(|| json_path_string(effect, &["summary"]))
         .or_else(|| json_path_string(body, &["object", "summary"]))
         .or_else(|| json_path_string(body, &["summary"]))
-        .unwrap_or_else(|| LOCAL_PENDING_CARD_DESCRIPTION.to_owned());
+        .unwrap_or_default();
 
     Some(LocalCardCreate {
         board_space_id,
