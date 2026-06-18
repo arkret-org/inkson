@@ -232,7 +232,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.no_realms", "暂无 Realm");
     dict.set("dashboard.no_realms_help", "服务器尚未返回 Realm 列表。");
     dict.set("dashboard.no_session_help", "客户端不会展示占位 Realm。");
-    // F-I18N-CLEAN-1: 与 en dict 同步的新 keys。
+    // F-I18N-CLEAN-1: new keys synced with the en dict.
     dict.set("dashboard.no_notifications", "暂无通知");
     dict.set("dashboard.notifications_signin", "登录后加载通知");
     dict.set(
@@ -242,7 +242,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.empty_discussions", "暂无可用讨论 track。");
     dict.set("chat.empty_messages", "尚无消息。");
     dict.set("chat.loading_messages", "正在加载讨论...");
-    // F-CHAT-DEAD-UI-1: 与 en dict 同步的讨论设置面板文案。
+    // F-CHAT-DEAD-UI-1: discussion settings panel copy synced with the en dict.
     dict.set("chat.settings.mute_notifications", "静音通知");
     dict.set("chat.settings.read_receipts", "已读回执");
     dict.set("chat.settings.shared_history", "共享历史");
@@ -268,7 +268,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.archived", "显示已归档");
     dict.set("notifications.mark_all_read", "全部标记已读");
     dict.set("notifications.empty_state", "暂无通知。");
-    // F-NOTIF-VLIST-1: 与 en dict 同步的分页按钮文案。
+    // F-NOTIF-VLIST-1: pagination button copy synced with the en dict.
     dict.set("notifications.showing", "已显示");
     dict.set("notifications.load_more", "加载更多");
     dict.set("directory.loading_more", "加载中…");
@@ -355,7 +355,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.store_backup", "存储备份");
     dict.set("settings.register_push", "注册推送");
     dict.set("settings.unregister_push", "注销推送");
-    // T1.3 — 事件签名 / proof mode 状态显示。
+    // T1.3 - event signature / proof mode status display.
     dict.set("settings.proof_mode.label", "事件签名");
     dict.set(
         "settings.proof_mode.hint",
@@ -452,7 +452,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("mls_recovery_missing.button_dismiss", "关闭");
 
-    // 一次性账号 MLS secret 备份提示（mls_unlock 的镜像）。
+    // One-time account MLS secret backup prompt, mirroring mls_unlock.
     dict.set("mls_backup.aria_label", "备份加密历史");
     dict.set("mls_backup.title", "保护你的加密历史");
     dict.set("mls_backup.subtitle", "24 个恢复词");
@@ -507,7 +507,7 @@ pub fn chinese_translations() -> TranslationDict {
         "请输入完整的 24 词恢复密钥。",
     );
 
-    // X11.1 — 持久化的 MLS 恢复密钥设置区。
+    // X11.1 - persisted MLS recovery key setup section.
     dict.set("settings.mls_recovery.title", "加密历史恢复");
     dict.set("settings.mls_recovery.status.loading", "正在检查备份状态…");
     dict.set(
@@ -543,7 +543,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("common.remove", "移除");
     dict.set("chat.call.voice", "发起语音通话");
     dict.set("chat.call.video", "发起视频通话");
-    // T7.2 watch level 快捷切换
+    // T7.2 watch-level quick switch
     dict.set("chat.watch_level.prefix", "关注");
     dict.set("chat.watch_level.tooltip", "选择此 Strand 的通知频率。");
     dict.set("chat.watch_level.mentions_only", "仅 @ 我");
@@ -556,7 +556,7 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.watch_level.failed",
         "watch level 更新失败（已回滚）。",
     );
-    // T7.3 handle 重新分配上下文
+    // T7.3 handle reassignment context
     dict.set("chat.handle_reassigned.badge", "handle 已被重新分配");
     dict.set(
         "chat.handle_reassigned.tooltip",
@@ -564,7 +564,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("chat.binding_context.separator", " @ ");
     dict.set("chat.binding_context.details", "显示服务绑定");
-    // T7.4 E2EE 状态
+    // T7.4 E2EE state
     dict.set("chat.crypto.decrypting", "解密中…");
     dict.set("chat.crypto.decrypt_failed", "解密失败");
     dict.set("chat.crypto.decrypt_failed_action", "前往恢复");
@@ -577,7 +577,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.mls.epoch", "MLS epoch");
     dict.set("chat.mls.key_package", "Key package");
     dict.set("chat.mls.welcome", "Welcome");
-    // T7.5 布局调整
+    // T7.5 layout adjustments
     dict.set("chat.tabs.settings", "设置");
     dict.set("chat.tabs.members", "成员");
     dict.set("chat.tabs.notifications", "通知");
@@ -586,16 +586,16 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.button.react", "回应");
     dict.set("chat.button.redact", "撤回");
     dict.set("chat.you_badge", "我");
-    // 成员视觉标识 (member.badge.*)
+    // Member visual identity (member.badge.*)
     dict.set("member.badge.agent", "智能体");
-    // 撰写区拖拽附件 (A6.2)
+    // Composer drag-and-drop attachments (A6.2)
     dict.set(
         "compose.drop_zone.hint",
         "将文件拖放到此处以附加,或点击「附加」",
     );
     dict.set("compose.upload_progress", "上传中…");
     dict.set("compose.upload_error", "上传失败");
-    // 消息钉选 (A6.3)
+    // Message pinning (A6.3)
     dict.set("message.pin", "钉选");
     dict.set("message.unpin", "取消钉选");
     dict.set("pinned_bar.title", "钉选消息");
@@ -645,7 +645,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("verify_device.start_sas", "开始 SAS 验证");
     dict.set("verify_device.short_auth_string", "短认证串");
 
-    // A6.4 — keyboard shortcut help overlay。
+    // A6.4 - keyboard shortcut help overlay.
     dict.set("shortcuts.title", "键盘快捷键");
     dict.set("shortcuts.dismiss", "关闭");
     dict.set("shortcuts.list.help", "显示此快捷键面板");
@@ -676,13 +676,13 @@ pub fn chinese_translations() -> TranslationDict {
         "settings.privacy.blocked_users.did_required",
         "请先输入 DID。",
     );
-    // F-BLOCKLIST-VALID-1: 与 en dict 同步的实时格式校验提示。
+    // F-BLOCKLIST-VALID-1: live format validation hints synced with the en dict.
     dict.set(
         "settings.privacy.blocked_users.did_invalid",
         "DID 必须以 did: 开头（如 did:web:alice.example）。",
     );
     dict.set("settings.privacy.unblock", "取消屏蔽");
-    // A4b — 头像上传相关。
+    // A4b - avatar upload.
     dict.set("settings.avatar.title", "头像");
     dict.set("settings.avatar.upload", "上传新头像");
     dict.set("settings.avatar.clear", "清除头像");
@@ -696,7 +696,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.avatar.pan_x", "水平");
     dict.set("settings.avatar.pan_y", "垂直");
     dict.set("settings.avatar.error", "头像上传失败");
-    // A6.1 — 全局跨空间消息搜索。
+    // A6.1 - global cross-space message search.
     dict.set("search.title", "搜索消息");
     dict.set("search.placeholder", "在所有空间中搜索消息…");
     dict.set("search.results.empty", "输入查询以在所有空间中搜索。");
@@ -716,14 +716,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("timeline.blocked_user", "[已屏蔽用户]");
     dict.set("timeline.show_anyway", "仍要查看");
 
-    // A3 (round 28): 富内容渲染器字符串。
+    // A3 (round 28): rich content renderer strings.
     dict.set("content.code.copy", "复制");
     dict.set("content.image.broken", "图片不可用");
     dict.set("content.video.unsupported", "您的浏览器不支持内嵌视频。");
     dict.set("content.audio.unsupported", "您的浏览器不支持内嵌音频。");
     dict.set("content.attachment.download", "下载");
 
-    // T7.1 — 友好产品语言术语（中文）。
+    // T7.1 - friendly product terminology for Chinese.
     dict.set(
         "friendly.identifier.placeholder",
         "john:example.com 或 did:web:...",
@@ -753,7 +753,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("friendly.sync.pending", "同步中…");
     dict.set("friendly.sync.frontier", "同步状态");
 
-    // Realm 是安全边界（成员/策略/联邦/E2EE），Space 是容器（导航/看板/列表）。
+    // Realm is the security boundary (members / policy / federation / E2EE);
+    // Space is the container (navigation / boards / lists).
     dict.set("friendly.realm", "Realm");
     dict.set("friendly.realm.short", "Realm");
     dict.set(

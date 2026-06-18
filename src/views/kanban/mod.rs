@@ -19,7 +19,8 @@ use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 mod dnd;
-// YOU-07-001:卡片到期日历纯计算 helper 外迁至 `due_calendar`(仅移动)。
+// YOU-07-001: card due-calendar pure calculation helpers moved to `due_calendar`
+// (move-only).
 mod due_calendar;
 /// Board Space id used only when the explicit demo seed fallback is
 /// enabled. Normal kanban routes render server projections instead of
@@ -2369,7 +2370,7 @@ pub fn KanbanPanel(
 
                         // R11: `redacted` clears Strand content but retains the
                         // envelope/audit trail (strand.schema.json terminal). The
-                        // UI MUST surface a "[消息已撤回]" placeholder rather than
+                        // UI MUST surface a withdrawn-message placeholder rather than
                         // hiding the Strand, so the card stays visible without
                         // leaking its (now-cleared) title/body.
                         for redacted_card in column

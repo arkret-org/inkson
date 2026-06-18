@@ -419,38 +419,41 @@ async fn fetch_did_webvh_document(
     ))
 }
 
-/// Y1:以缓存为先的 authority 解析辅助。
+/// Y1: cache-first authority resolution helper.
 ///
-/// 这是 authority 调用点(`verify_principal` 之前)应当走的入口:
-/// 1. 先查 `cache`:命中且 [`Freshness::Fresh`] —— 直接返回缓存文档, 跳过 resolver
-///    链(省掉重复网络/链上解析)。
-/// 2. miss 或 `Stale` —— 调 [`verify_principal`] 走完整 resolver 链 (内含 policy 校验 + 文档 id
-///    比对),成功后按 policy 的 `ttl` 回填 `cache` 再返回。
+/// Authority call sites should enter here before `verify_principal`:
+/// 1. Check `cache` first. A [`Freshness::Fresh`] hit returns the cached document directly and
+///    skips the resolver chain, avoiding repeated network / chain lookups.
+/// 2. On miss or `Stale`, call [`verify_principal`] through the full resolver chain, including
+///    policy validation and document id comparison, then write back to `cache` with the policy
+///    `ttl`.
 ///
-/// 注意边界:
-/// - 缓存命中**不重做** policy 校验。这是有意为之 —— 能进缓存的条目 必然是此前 `verify_principal`
-///   成功(policy 已通过 + id 已比对) 的产物;`invalidate` / `clear`(Y2 失效钩子)负责在密钥轮换 /
-///   撤销时把陈旧条目清掉,使下一次解析重新走链。
-/// - policy 未配置 `ttl` 时退化为一个保守的 15 分钟默认,与 `policy_for`
-///   的取值一致,避免把无限期文档塞进缓存。
+/// Boundary notes:
+/// - A cache hit does not rerun policy validation. This is intentional: entries can only enter the
+///   cache after a previous successful `verify_principal` result with policy already passed and id
+///   already compared. `invalidate` / `clear` (the Y2 invalidation hook) removes stale entries
+///   after key rotation or revocation so the next resolution walks the chain again.
+/// - If policy has no `ttl`, fall back to the conservative 15-minute default used by `policy_for`
+///   so indefinitely live documents are not cached.
 ///
-/// TRUST-AUTHORITY:本函数仍是 authority 面 —— 缓存只是省去重复解析,
-/// 不改变 "server 断言的 binding_state 仅作提示" 这一原则。展示面的
-/// `cached` / `stale` 降级在 `components::verify_badges` /
-/// `views::contacts`(TRUST-CACHE)单独处理,不复用此路径。
+/// TRUST-AUTHORITY: this function is still on the authority path. The cache only
+/// removes duplicate resolution work and does not change the rule that
+/// server-asserted `binding_state` is only a hint. Display-path `cached` /
+/// `stale` degradation is handled separately in `components::verify_badges` and
+/// `views::contacts` (TRUST-CACHE), without reusing this path.
 pub fn resolve_with_cache(
     resolver: &CompositeDidResolver,
     cache: &mut DidResolutionCache,
     principal: &Did,
     now: DateTime<Utc>,
 ) -> Result<DidDocument, VerifyError> {
-    // 1) 缓存命中且未过期 —— 直接复用。`get` 会顺带惰性淘汰过期项。
+    // 1) Fresh cache hit: reuse directly. `get` also lazily evicts expired entries.
     if let Some(doc) = cache.get(principal, now) {
         return Ok(doc);
     }
-    // 2) miss / 过期 —— 走完整 resolver 链(policy 校验 + id 比对)。
+    // 2) Miss / expired entry: walk the full resolver chain (policy validation + id check).
     let doc = verify_principal(resolver, principal)?;
-    // 3) 回填缓存,TTL 取 policy 配置,缺省回落到 15 分钟。
+    // 3) Write back to cache. TTL comes from policy, with a 15-minute default.
     let ttl = resolver
         .policy()
         .ttl
@@ -491,13 +494,13 @@ pub struct CachedDidEntry {
     pub expires_at: DateTime<Utc>,
 }
 
-/// Y1:缓存条目相对某个 `now` 的新鲜度。
+/// Y1: freshness of a cache entry relative to `now`.
 ///
-/// 本仓库内自定义,**刻意不引入任何 SDK 新符号**(SDK 正被并发修改)。
-/// 仅区分两态:
-/// - `Fresh`:`now < expires_at`,缓存命中可直接复用。
-/// - `Stale`:`now >= expires_at`,已过期 —— 展示层据此降级到 `stale` 标记,authority
-///   解析路径据此放弃缓存改走 resolver 链。
+/// Defined locally on purpose, without adding SDK symbols while the SDK is being
+/// modified concurrently. It has two states:
+/// - `Fresh`: `now < expires_at`; the cache hit can be reused directly.
+/// - `Stale`: `now >= expires_at`; display code can degrade to the `stale` badge and the authority
+///   path abandons the cache and walks the resolver chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Freshness {
     Fresh,
@@ -505,8 +508,9 @@ pub enum Freshness {
 }
 
 impl CachedDidEntry {
-    /// 返回该条目在 `now` 时刻的新鲜度。过期点(`expires_at`)本身视为已过期,
-    /// 与 [`DidResolutionCache::get`] 的 `expires_at > now` 判定保持一致。
+    /// Return this entry's freshness at `now`. The expiration instant
+    /// (`expires_at`) itself is considered expired, matching
+    /// [`DidResolutionCache::get`] and its `expires_at > now` check.
     pub fn freshness(&self, now: DateTime<Utc>) -> Freshness {
         if self.expires_at > now {
             Freshness::Fresh
@@ -576,12 +580,13 @@ impl DidResolutionCache {
         self.entries.insert(key, entry);
     }
 
-    /// Y3:只读探查缓存条目,**不触发任何过期淘汰**。展示层(verify_badges /
-    /// contacts)用它来读取 `binding_state` 与 [`Freshness`],从而渲染
-    /// `cached` / `stale` / `degraded` 标记。与 `get` 不同:`get` 是
-    /// authority 解析路径用的、会惰性淘汰过期项的可变借用;`peek` 是
-    /// 纯 UX 面、对过期项也照常返回(返回值里带 `Freshness::Stale`),
-    /// 这样 UI 才能区分 "miss" 与 "stale"。
+    /// Y3: read-only cache entry probe that does not evict expired entries.
+    /// Display code (verify_badges / contacts) uses it to read `binding_state`
+    /// and [`Freshness`] and render `cached` / `stale` / `degraded` badges.
+    /// Unlike `get`, which is a mutable borrow for the authority path and
+    /// lazily evicts expired entries, `peek` is pure UX-side access and still
+    /// returns expired entries with `Freshness::Stale`, letting UI distinguish
+    /// "miss" from "stale".
     pub fn peek<'a>(&'a self, did: &Did) -> Option<&'a CachedDidEntry> {
         self.entries.get(did.as_str())
     }
@@ -750,7 +755,8 @@ mod tests {
             entry.freshness(t0 + Duration::seconds(30)),
             Freshness::Fresh
         );
-        // 过期点本身即视为 Stale,与 get 的 `expires_at > now` 判定一致。
+        // The expiration instant itself is Stale, matching `get` and its
+        // `expires_at > now` check.
         assert_eq!(
             entry.freshness(t0 + Duration::seconds(60)),
             Freshness::Stale
@@ -763,8 +769,9 @@ mod tests {
 
     #[test]
     fn resolve_with_cache_returns_fresh_cached_document_without_resolver() {
-        // 预填一条新鲜缓存:resolve_with_cache 应直接命中,不去碰 resolver
-        // (resolver 没有任何证据,若真去解析必然 Unresolved)。
+        // Preload a fresh cache entry: resolve_with_cache should hit it directly
+        // and not touch the resolver. The resolver has no evidence, so a real
+        // resolution attempt would be Unresolved.
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
         let mut cache = DidResolutionCache::new(8);
         let (did, doc) = sample_document("did:web:alice.example");
@@ -778,7 +785,8 @@ mod tests {
 
     #[test]
     fn resolve_with_cache_miss_falls_through_to_resolver_and_fails_closed() {
-        // 缓存为空 + resolver 无证据 -> 走链解析 -> Unresolved(fail-closed)。
+        // Empty cache + resolver with no evidence -> chain resolution ->
+        // Unresolved (fail-closed).
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
         let mut cache = DidResolutionCache::new(8);
         let did = parse("did:web:alice.example");
@@ -787,13 +795,15 @@ mod tests {
             Err(VerifyError::Unresolved(_)) => {}
             other => panic!("expected Unresolved on cache miss, got {other:?}"),
         }
-        // 解析失败不应回填缓存。
+        // Resolution failure must not write back to cache.
         assert_eq!(cache.len(), 0);
     }
 
     #[test]
     fn resolve_with_cache_treats_expired_entry_as_miss() {
-        // 过期条目应被当作 miss:get 惰性淘汰后走 resolver(无证据 -> Unresolved)。
+        // Expired entries should be treated as misses: `get` lazily evicts them,
+        // then resolver fallback runs and returns Unresolved because there is no
+        // evidence.
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
         let mut cache = DidResolutionCache::new(8);
         let (did, doc) = sample_document("did:web:alice.example");

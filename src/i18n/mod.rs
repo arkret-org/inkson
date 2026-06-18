@@ -205,7 +205,7 @@ pub fn format_datetime(locale: Locale, timestamp: DateTime<Utc>) -> String {
         Locale::Ar => timestamp.format("%Y/%m/%d %H:%M UTC").to_string(),
         // Phase D.2 #8 locale extensions:
         //   * Spanish uses day-first DD/MM/YYYY (DM ordering matches ES/MX/AR conventions).
-        //   * Japanese uses Y年M月D日 like Chinese.
+        //   * Japanese uses year/month/day separators like Chinese.
         //   * French uses DD/MM/YYYY (matches FR/CA conventions).
         Locale::Es => timestamp.format("%d/%m/%Y %H:%M UTC").to_string(),
         Locale::Ja => timestamp.format("%Y年%m月%d日 %H:%M UTC").to_string(),

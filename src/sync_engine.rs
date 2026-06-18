@@ -4,7 +4,7 @@
 //! aligned with `/_cokret/self/account/subscribe` instead of refreshing only on
 //! app boot, the Refresh button, or a server switch.
 //!
-//! Design contract (matches the "正经做法" laid out in the design
+//! Design contract (matches the intended approach laid out in the design
 //! discussion):
 //!
 //! * **Cursor lives in `LocalStateStore.sync_cursor`** — the engine reads it on every iteration and
@@ -62,8 +62,8 @@ const MIN_BACKOFF_SECS: u64 = 1;
 ///
 /// Yougen currently folds each NDJSON response with `Response::bytes()`,
 /// so it cannot yet keep the spec's long-lived account stream open
-/// (YOU-01-010 残留:wasm 需要 web-sys ReadableStream 帧读取器才能
-/// 改造为常驻流)。Every frame of each response IS consumed and the
+/// (YOU-01-010 residual: wasm needs a web-sys ReadableStream frame reader
+/// before this can become a resident stream). Every frame of each response IS consumed and the
 /// cursor advances to the response's last cursor-bearing frame, so the
 /// poll only bounds realtime latency, not catchup correctness. Keep the
 /// fallback poll interval human-scale until the client switches to a
@@ -118,11 +118,12 @@ pub struct SyncEngineContext {
     /// the engine kept syncing under the prior profile while the UI
     /// already rendered the new one.
     pub profiles: Signal<MultiProfileConfig>,
-    /// Y1/Y2 —— 会话级 DID 解析缓存句柄(由 `app.rs` 经
-    /// `use_context_provider` 提供,见那里的注释)。摄入投影时,Y2
-    /// 失效钩子用它在 `ck.cross_signing.reset` / `ck.device.revoke`
-    /// 到达时对相关 actor DID 调 `invalidate`,在 logout / trust-bundle
-    /// reset 时调 `clear`。`Signal<T>` 是 `Copy`,放进这里零成本。
+    /// Y1/Y2 - session-scoped DID resolution cache handle, provided by
+    /// `app.rs` via `use_context_provider` as documented there. While ingesting
+    /// projections, the Y2 invalidation hook uses it to call `invalidate` for
+    /// related actor DIDs when `ck.cross_signing.reset` / `ck.device.revoke`
+    /// arrive, and `clear` on logout / trust-bundle reset. `Signal<T>` is
+    /// `Copy`, so storing it here is zero-cost.
     pub did_cache: Signal<crate::did_resolver::DidResolutionCache>,
     /// Receive side of `ck.call.signal`. The engine routes inbound
     /// call-signal envelopes from each incremental sync body into this hub
@@ -698,12 +699,12 @@ pub fn apply_response(
     let mut did_cache = ctx.did_cache;
     let account_did = ctx.account_did.read().clone();
 
-    // Y2 失效钩子:在写入投影之前先扫描本次响应里的身份事件,遇到
-    // `ck.cross_signing.reset` / `ck.device.revoke` 就对相关 actor DID
-    // 调 `invalidate`,使下一次 authority 解析(`resolve_with_cache`)
-    // 重新走 resolver 链,而不是被陈旧缓存(旧密钥集)蒙蔽。
-    // 单独成一段、不在 `state_store.write()` 借用期内动 `did_cache`,
-    // 避免两个 Signal 的借用相互纠缠。
+    // Y2 invalidation hook: scan identity events in this response before writing
+    // projections. On `ck.cross_signing.reset` / `ck.device.revoke`, invalidate
+    // the related actor DID so the next authority resolution (`resolve_with_cache`)
+    // walks the resolver chain instead of trusting a stale cache entry (old key
+    // set). Keep this separate from the `state_store.write()` borrow so the two
+    // Signal borrows do not overlap.
     {
         let mut cache = did_cache.write();
         for body in response.realms.values() {
@@ -994,26 +995,27 @@ fn ingest_member_identity_events_from_projection(
     }
 }
 
-/// Y2 失效钩子的核心扫描器。
+/// Core scanner for the Y2 invalidation hook.
 ///
-/// 在一个 Realm 投影 `body` 里找出 `ck.cross_signing.reset` /
-/// `ck.device.revoke` 事件,对其关联的 actor DID 调
-/// [`crate::did_resolver::DidResolutionCache::invalidate`]。事件可能出现在:
-/// - 每个 member roster 条目的内联 `identity_events[]`;
-/// - 投影顶层的 `state.events[]` / `events[]` 事件日志。
+/// Finds `ck.cross_signing.reset` / `ck.device.revoke` events in one Realm
+/// projection `body`, then calls
+/// [`crate::did_resolver::DidResolutionCache::invalidate`] for the related actor
+/// DID. Events may appear in:
+/// - inline `identity_events[]` on each member roster entry;
+/// - top-level projection event logs at `state.events[]` / `events[]`.
 ///
 /// Actor DID is read from the event `actor_id` / `did`, falling back to the
 /// roster entry `actor_id` / `did`. Forbidden `actor` / `sender` fields are
 /// ignored. The value is validated via `Did::new`; invalid DID syntax is
 /// skipped because this best-effort invalidation hook must not panic.
 ///
-/// TRUST-CACHE 边界说明:这里只清缓存(让下次解析重新走 authority 链),
-/// 并不替代任何 authority 校验本身。
+/// TRUST-CACHE boundary: this only clears cache entries so the next resolution
+/// walks the authority chain again; it does not replace authority validation.
 fn invalidate_cache_for_revocation_events(
     cache: &mut crate::did_resolver::DidResolutionCache,
     body: &Value,
 ) {
-    /// 判断事件 kind 是否为撤销/重置类(reset / revoke)。
+    /// Return whether the event kind is reset / revoke.
     fn is_revocation_kind(event: &Value) -> bool {
         let kind = event
             .get("kind")
@@ -1023,7 +1025,7 @@ fn invalidate_cache_for_revocation_events(
         kind == "ck.cross_signing.reset" || kind == "ck.device.revoke"
     }
 
-    /// 从事件(可回落到 roster 条目)里取 actor DID 字符串。
+    /// Read the actor DID string from the event, falling back to the roster entry.
     fn actor_id_str<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
         let from = |v: &'a Value| {
             v.get("actor_id")
@@ -1033,7 +1035,7 @@ fn invalidate_cache_for_revocation_events(
         from(event).or_else(|| fallback.and_then(from))
     }
 
-    /// 对一组事件做失效:命中撤销/重置 kind 且能解析出合法 DID 就 invalidate。
+    /// Invalidate for a batch of events when kind matches and DID syntax is valid.
     fn invalidate_from_events(
         cache: &mut crate::did_resolver::DidResolutionCache,
         events: &[Value],
@@ -1051,7 +1053,7 @@ fn invalidate_cache_for_revocation_events(
         }
     }
 
-    // 顶层事件日志:`state.events[]` 与 `events[]` 两种形态都扫。
+    // Scan both top-level event log shapes: `state.events[]` and `events[]`.
     for events in [
         body.get("state").and_then(|s| s.get("events")),
         body.get("events"),
@@ -1064,7 +1066,7 @@ fn invalidate_cache_for_revocation_events(
         }
     }
 
-    // 每个 member roster 条目的内联 `identity_events[]`。
+    // Inline `identity_events[]` on each member roster entry.
     for source in [
         body.get("members"),
         body.get("summary").and_then(|s| s.get("members")),
@@ -1318,9 +1320,10 @@ mod tests {
         store.save_draft("ck:space:b", "draft-b");
 
         let mut response = empty_response("sx:43");
-        // 预存笔误修正:被遗忘的投影 id 必须与上面 save 的 `ck:space:b`
-        // 对齐(`forget_realm_tree_projection` 按精确 id 删除,不做前缀
-        // 归一),否则断言 `!contains_key("ck:space:b")` 恒为假。
+        // Fixture typo fix: the forgotten projection id must match the
+        // `ck:space:b` saved above. `forget_realm_tree_projection` deletes by
+        // exact id, without prefix normalization, so otherwise the
+        // `!contains_key("ck:space:b")` assertion would always be false.
         response.left_realms = vec!["ck:space:b".to_owned()];
 
         // Mirror the engine's left_realms step.
@@ -1334,7 +1337,7 @@ mod tests {
         assert!(!state.drafts.contains_key("ck:space:b"));
     }
 
-    // ── Y2 失效钩子 ──────────────────────────────────────────────────
+    // ── Y2 invalidation hook ──────────────────────────────────────────
 
     use cokret_sdk::{Did, DidDocument};
 
@@ -1405,7 +1408,7 @@ mod tests {
 
     #[test]
     fn non_revocation_events_do_not_invalidate() {
-        // 普通身份更新事件不应清缓存。
+        // Ordinary identity update events must not clear the cache.
         let (mut cache, did) = seed_cache("did:web:carol.example");
         let body = json!({
             "members": [{
@@ -1424,7 +1427,8 @@ mod tests {
 
     #[test]
     fn revocation_for_other_actor_leaves_unrelated_entry() {
-        // alice 被缓存,但事件是针对 mallory 的撤销 -> alice 不应受影响。
+        // Alice is cached, but the revocation targets Mallory, so Alice should
+        // not be affected.
         let (mut cache, alice) = seed_cache("did:web:alice.example");
         let body = json!({
             "members": [{

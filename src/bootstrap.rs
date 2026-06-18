@@ -1,14 +1,16 @@
-//! 登录后 / 启动检测 effects 的纯函数与小型数据类型。
+//! Pure functions and small data types for post-login / startup-check effects.
 //!
-//! YOU-07-001:从 `app.rs` 机械外迁——仅移动,不改逻辑/签名/canonical 字节。
-//! 这里聚集三组关注点:
-//!   - 开发态 session 续期可行性判定(`has_bootstrap_refresh_material` 等);
-//!   - 设备授权状态投影(`*_device_authorization_*`);
-//!   - MLS 备份/解锁双检测与 device-message Welcome bootstrap (`mls_recovery_setup_missing` /
-//!     `mls_welcome_bootstrap_key` / `bootstrap_mls_welcome_for_realm`)。
+//! YOU-07-001: mechanically moved from `app.rs`; move-only, with no changes to
+//! logic, signatures, or canonical bytes.
+//! This module groups three concerns:
+//!   - development session refresh feasibility checks (`has_bootstrap_refresh_material`, etc.);
+//!   - device authorization state projections (`*_device_authorization_*`);
+//!   - MLS backup/unlock dual checks and device-message Welcome bootstrap
+//!     (`mls_recovery_setup_missing` / `mls_welcome_bootstrap_key` /
+//!     `bootstrap_mls_welcome_for_realm`).
 //!
-//! `app.rs` 通过 `pub(crate) use bootstrap::*;` 重导出,原有调用点与
-//! `app_tests.rs` 的 `use super::*` 解析路径均不变。
+//! `app.rs` re-exports with `pub(crate) use bootstrap::*;`, preserving existing
+//! call sites and `app_tests.rs` `use super::*` resolution paths.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

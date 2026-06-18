@@ -229,11 +229,12 @@ impl Drop for LocalIdentityRecord {
 /// here and the `<redacted>` Debug formatting below is preserved.
 #[derive(Clone)]
 pub struct LocalIdentity {
-    /// `did:key:z<multibase>` 编码的本地签名公钥。这是设备本地 ed25519
-    /// 签名密钥的自描述编码,**不是设备 DID、也不是 actor 身份**——
-    /// 设备不是独立 DID 主体。事件 `actor_id` 必须用 account/principal
-    /// DID(见 spec models/actor.md §2),本字段只用于本地签名 / key
-    /// store 索引。
+    /// Local signing public key encoded as `did:key:z<multibase>`. This is a
+    /// self-describing encoding of the device-local ed25519 signing key, not a
+    /// device DID or actor identity; devices are not independent DID subjects.
+    /// Event `actor_id` must use the account/principal DID (see spec
+    /// models/actor.md §2). This field is only used for local signing / key
+    /// store indexing.
     pub local_signing_did: String,
     pub signing_key: SigningKey,
 }
@@ -614,7 +615,7 @@ pub struct ClientLocalState {
     /// YOU-02-004 — local-only decrypted-plaintext cache for REMOTE members'
     /// MLS application messages, keyed `realm_id -> payload_digest ->
     /// base64url(plaintext)`. The receive chain is persisted forward on every
-    /// successful decrypt (`encryption-and-audit.md` §5.6 "第一义务是接收链持久化"),
+    /// successful decrypt (`encryption-and-audit.md` §5.6 first duty: persist the receive chain),
     /// which deliberately consumes the per-message ratchet key — re-rendering
     /// the same ciphertext (timeline scroll, board re-projection, restart)
     /// MUST therefore be served from this cache instead of replaying the

@@ -39,9 +39,10 @@ use crate::views::ConnectionState;
 use crate::views::helpers::{persist_config, short_protocol_id};
 use crate::views::timeline::TimelineEvent;
 
-// YOU-07-001:登录后 / 启动检测 effects 的纯函数与小型类型外迁到
-// `crate::app::bootstrap`(仅移动,逻辑/签名/字节不变)。重导出使 app.rs
-// 内既有调用点与 `app_tests.rs` 的 `use super::*` 解析路径均不变。
+// YOU-07-001: post-login / startup-check effects and small types moved to
+// `crate::app::bootstrap` (move-only; logic, signatures, and bytes unchanged).
+// The re-export keeps existing app.rs call sites and `app_tests.rs`
+// `use super::*` resolution paths unchanged.
 #[path = "../bootstrap.rs"]
 mod bootstrap;
 pub(crate) use bootstrap::*;
@@ -126,14 +127,17 @@ const APP_OVERRIDES: &str = concat!(
     include_str!("../styles/app_overrides/06-members-admin-invite.css"),
 );
 
-/// C3:yoface 共享组件的设计令牌(第一层 shadcn 语义令牌
-/// `--primary/--background/--foreground/...` + 第二层 dioxus-components 兼容
-/// 别名 `--primary-color-N/--focused-border-color/...`),供 `yoface::ui::*`
-/// 的 `#[css_module]` 样式引用。色值即 yougen 绿色调色板(yoface tokens.css
-/// 取值「参照 yougen design.css」),故沿用 `var(--dark,…) var(--light,…)`
-/// 与 `[data-theme]` 开关,直接保留 yougen 现有绿色观感。替换了原 vendored
-/// `assets/dx-components-theme.css`(黑白默认色)。注入顺序排在三段现有样式
-/// 之前,令牌可被后续 design.css/app_overrides 覆盖。
+/// C3: yoface shared-component design tokens. The first layer is shadcn
+/// semantic tokens (`--primary/--background/--foreground/...`); the second
+/// layer is dioxus-components compatibility aliases
+/// (`--primary-color-N/--focused-border-color/...`) used by `yoface::ui::*`
+/// `#[css_module]` styles. Values come from the yougen green palette (yoface
+/// tokens.css matches yougen design.css), so this keeps the existing
+/// `var(--dark,...)` / `var(--light,...)` and `[data-theme]` switches and the
+/// current yougen green appearance. This replaces the vendored
+/// `assets/dx-components-theme.css` black/white defaults. Injection order stays
+/// before the three existing style blocks so later design.css/app_overrides can
+/// override these tokens.
 const DXC_THEME: &str = yoface::TOKENS_CSS;
 
 #[component]
@@ -384,18 +388,18 @@ pub fn RouterView() -> Element {
     use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
         Signal::new(crate::capability::CapabilityEngine::new())
     });
-    // Y1 —— 会话级 DID 解析缓存句柄。
+    // Y1 - session-scoped DID resolution cache handle.
     //
-    // 挂载点说明:yougen 的 app 态是一堆分散的 `use_signal`,没有单一
-    // 聚合 struct,因此选择与上面的 `CapabilityEngine` 完全相同的最小
-    // 侵入模式 —— 用 `use_context_provider` 提供一个共享
-    // `Signal<DidResolutionCache>`。这样:
-    //   * authority 解析点可经 `use_context::<Signal<DidResolutionCache>>()` 取用,配合
-    //     `did_resolver::resolve_with_cache` 走缓存优先解析;
-    //   * 同一句柄被复制进下面的 `SyncEngineContext.did_cache`,让 Y2 失效钩子在摄入投影时能
-    //     `invalidate` / `clear`。
-    // 缓存是纯内存态(非持久化),只活在单个登录会话里,语义与
-    // `DidResolutionCache` 的文档一致。
+    // Mount point note: yougen app state is a set of scattered `use_signal`
+    // handles rather than one aggregate struct, so this follows the same
+    // minimal-intrusion pattern as `CapabilityEngine`: provide a shared
+    // `Signal<DidResolutionCache>` with `use_context_provider`.
+    //   * Authority resolution sites can fetch it via `use_context::<Signal<DidResolutionCache>>()`
+    //     and use `did_resolver::resolve_with_cache` for cache-first resolution.
+    //   * The same handle is copied into `SyncEngineContext.did_cache` below so the Y2 invalidation
+    //     hook can `invalidate` / `clear` while ingesting projections.
+    // The cache is pure in-memory state, is not persisted, and only lives for a
+    // single login session, matching the `DidResolutionCache` docs.
     let mut did_cache =
         use_context_provider(|| Signal::new(crate::did_resolver::DidResolutionCache::default()));
     let mut theme = use_signal(move || initial_theme);
@@ -932,8 +936,9 @@ pub fn RouterView() -> Element {
             device_id,
             selected_realm_id,
             profiles: profiles_signal,
-            // Y1/Y2 —— 把上面 provide 的会话级缓存句柄交给同步引擎,
-            // 供 Y2 失效钩子在摄入投影时 invalidate/clear。
+            // Y1/Y2 - pass the session-scoped cache handle provided above into
+            // the sync engine so the Y2 invalidation hook can invalidate/clear
+            // entries while ingesting projections.
             did_cache,
             // Receive side of `ck.call.signal`: the engine routes inbound
             // call-signal envelopes from every incremental sync body into
@@ -3969,10 +3974,12 @@ pub fn RouterView() -> Element {
                                                 sync_cursor.set("-".to_owned());
                                                 selected_realm_id.set(String::new());
                                                 device_queue.set(0);
-                                                // Y2 —— logout 属于 trust-bundle 全清场景:
-                                                // 整盘清空会话级 DID 解析缓存,确保下一位
-                                                // 在本浏览器登录的用户不会命中上一会话的
-                                                // 解析结果(陈旧文档 / 旧密钥集)。
+                                                // Y2 - logout is a full trust-bundle reset:
+                                                // clear the entire session-scoped DID
+                                                // resolution cache so the next user in this
+                                                // browser cannot hit the previous session's
+                                                // resolution results (stale documents / old key
+                                                // sets).
                                                 did_cache.write().clear();
                                                 personal_handles.set(Vec::new());
                                                 personal_handles_status.set("Not published".to_owned());

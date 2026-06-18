@@ -42,7 +42,7 @@ pub(crate) async fn run_device_revoke_from_snapshot(
 /// af1dce3 (2026-05, inside an unrelated feature commit) — the MLS Remove
 /// machinery (`crate::device_revoke::execute_mls_remove_from_snapshot`)
 /// is kept headless until the operator surface is re-wired alongside the
-/// durable `ck.device.revoke` strand (YOU-01-008 MLS Remove/Epoch 联动).
+/// durable `ck.device.revoke` strand (YOU-01-008 MLS Remove/Epoch coupling).
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
 pub(crate) async fn run_device_revoke_from_snapshot(

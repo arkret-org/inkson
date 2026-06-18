@@ -1,10 +1,11 @@
-//! 领域事件 / 信封构造器(`build_*_event` / `build_*_envelope`)。
+//! Realm event / envelope builders (`build_*_event` / `build_*_envelope`).
 //!
-//! YOU-07-001:从 `api/mod.rs` 机械外迁的连续块——realm / space / member /
-//! device 事件构造器及其私有 parse / notary / 派生 helper。仅移动,不改逻辑、
-//! 签名与 canonical 字节。`mod.rs` 通过 `pub use builders::*;` 重导出,使
-//! `crate::api::build_*` 等既有调用点与兄弟子模块的 `use super::*` 解析路径
-//! 均保持不变。
+//! YOU-07-001: mechanically moved from `api/mod.rs` as one contiguous block:
+//! realm / space / member / device event builders plus their private parse,
+//! notary, and derived helpers. This is move-only: logic, signatures, and
+//! canonical bytes are unchanged. `mod.rs` re-exports via `pub use builders::*;`,
+//! preserving existing `crate::api::build_*` call sites and sibling submodule
+//! `use super::*` resolution paths.
 
 use std::collections::BTreeMap;
 

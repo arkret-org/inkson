@@ -817,7 +817,7 @@ impl CokretApi {
         self.submit_event_envelope(&envelope).await
     }
 
-    // ── Views — collection projection (T20 / YOU-01-009 子项 3) ──────
+    // ── Views — collection projection (T20 / YOU-01-009 subtask 3) ──────
     //
     // Spec-registered operation `ck.self.views.collection_projection.command.materialize`
     // (`POST /_cokret/self/views/{view_id}/projection`, spec commit

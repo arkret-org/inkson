@@ -1,7 +1,7 @@
 //! Friendly device naming.
 //!
 //! Derives a per-device default `display_name` (so each device gets a
-//! meaningful name like `Chrome · Windows` at login instead of a shared
+//! meaningful browser-plus-OS name at login instead of a shared
 //! constant) and produces a short `device_id` fragment used to tell
 //! same-named devices apart in the UI.
 //!
@@ -49,7 +49,7 @@ fn native_host_label() -> Option<String> {
         .filter(|host| !host.is_empty())
 }
 
-/// Build a `<browser> · <os>` label out of a `navigator.userAgent`
+/// Build a `<browser>` plus `<os>` label out of a `navigator.userAgent`
 /// string. Pure so it is unit-testable on every target.
 pub fn name_from_user_agent(ua: &str) -> String {
     match (browser_from_user_agent(ua), os_from_user_agent(ua)) {

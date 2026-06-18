@@ -293,7 +293,7 @@ impl CokretApi {
 
     /// Tombstone a contact relationship via `contacts/tombstone`. When
     /// `block_peer` is true the protocol additionally records a block so the
-    /// peer can no longer re-request — this is the "拉黑" path (U5).
+    /// peer can no longer re-request; this is the block path (U5).
     ///
     /// Protocol contract (soland in-flight): `contacts/tombstone` body carries
     /// `peer` and an optional `block_peer: true`.
@@ -313,7 +313,7 @@ impl CokretApi {
             .await
     }
 
-    /// Read the actor's `invite_receive_policy` ("谁可以邀请我", U4).
+    /// Read the actor's `invite_receive_policy` ("who can invite me", U4).
     ///
     /// Spec `invite-addressing.md` §5 / OpenAPI
     /// `ck.self.invite_receive_policy.resource.get`: served from the self plane at

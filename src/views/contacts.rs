@@ -51,12 +51,14 @@ pub fn ContactNewPanel(
     #[props(default)] on_submitted: Option<EventHandler<()>>,
 ) -> Element {
     let mut target = use_signal(String::new);
-    // "普通好友" 预设:成为好友默认既能私聊、也默认允许对方拉我入群(微信式)。
-    // 两个 scope 默认都勾选;用户可取消其一做高级细选。
+    // "Ordinary friend" preset: accepted contacts can direct-message by default
+    // and can also invite this user into groups by default. Both scopes start
+    // checked; users can opt out of either for finer control.
     let mut scope_direct_message = use_signal(|| true);
     let mut scope_invite = use_signal(|| true);
-    // 跨 PS 寻址:对方所在 Principal Server 的 service DID。v1 DID 不内嵌 home PS,
-    // 跨服务器添加时必填,同服务器留空。
+    // Cross-PS addressing: service DID of the recipient's Principal Server. v1
+    // DIDs do not embed the home PS, so cross-server adds require it and
+    // same-server adds leave it empty.
     let mut recipient_service = use_signal(String::new);
     let mut message = use_signal(String::new);
     let mut status = use_signal(String::new);
@@ -223,8 +225,9 @@ fn ContactRow(
 
     let peer = contact.peer.clone();
     let state = contact.state.clone();
-    // 跨 PS 来源:若后端已在 list row 暴露发起方所在 PS,respond 时透传
-    // requester_service_did 以反向投递;暂无则为 None,走同 PS 逻辑。
+    // Cross-PS source: if the backend exposed the requester's PS in the list
+    // row, pass `requester_service_did` through on respond for reverse
+    // delivery. Otherwise use None and follow same-PS behavior.
     let peer_service_did = contact
         .peer_service_did
         .clone()
@@ -261,9 +264,10 @@ fn ContactRow(
             div { class: "event-head",
                 span { "{state_label}" }
                 span { class: "mono", title: "{peer}", "{peer_label}" }
-                // Y3 TRUST-CACHE:根据 peer DID 在会话级解析缓存里的状态,
-                // 展示 cached / stale / degraded 标记。仅 UX 提示,不替代
-                // authority 校验(见文件顶部 TRUST-CACHE 注释)。
+                // Y3 TRUST-CACHE: show cached / stale / degraded based on the
+                // peer DID's state in the session-scoped resolution cache. UX
+                // hint only; it does not replace authority validation (see the
+                // TRUST-CACHE comment at the top of the file).
                 TrustCacheBadge { peer: peer.clone() }
             }
             if !contact.bidirectional_scopes.is_empty() {
@@ -588,7 +592,7 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
     let mut error = use_signal(|| Option::<String>::None);
     let mut reload = use_signal(|| 0_u32);
     let mut loaded_generation = use_signal(|| u32::MAX);
-    // M0.2 — "添加联系人" is a popup modal, not a standalone /contacts/new page.
+    // M0.2 - "Add Contact" is a popup modal, not a standalone /contacts/new page.
     let mut add_modal_open = use_signal(|| false);
 
     {

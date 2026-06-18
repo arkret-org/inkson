@@ -71,7 +71,7 @@ pub(crate) struct KanbanCard {
     /// `common-fields.md §5.1`. Active cards render in the column;
     /// Archived cards move to the archived-cards drawer. Redacted is the
     /// irreversible terminal (content cleared, envelope/audit retained); UI
-    /// never emits it but renders a "[消息已撤回]" placeholder for it.
+    /// never emits it but renders a withdrawn-message placeholder for it.
     pub(crate) lifecycle: StrandLifecycleState,
 }
 
@@ -165,7 +165,7 @@ pub(crate) enum StrandLifecycleState {
     /// Irreversible terminal per the wire enum (`strand.schema.json` state =
     /// {`active`,`archived`,`redacted`}). `redacted` clears content but
     /// retains the envelope/audit trail, so the UI renders a
-    /// "[消息已撤回]" placeholder rather than hiding the Strand. There is NO
+    /// withdrawn-message placeholder rather than hiding the Strand. There is NO
     /// `deleted` terminal in the spec; `strand_lifecycle_from_wire` downgrades
     /// any stray `"deleted"` wire value (logging a warning) instead of
     /// treating it as terminal.

@@ -97,16 +97,18 @@ pub fn RealmClassBadge(class: RealmClass) -> Element {
     }
 }
 
-/// Y3 —— TRUST-CACHE 展示降级状态。
+/// Y3 - TRUST-CACHE display degradation state.
 ///
-/// 这是**纯 UX 面**:它只反映本地 DID 解析缓存里那条 actor 记录的
-/// 可用性,绝不替代 authority 校验(authority 面走
-/// `crate::did_resolver::resolve_with_cache` / `verify_principal`)。
-/// 渲染时三态对应三个标记:
-/// - `Cached`:缓存命中且新鲜 —— 展示 `cached`(可放心用缓存身份)。
-/// - `Stale`:缓存命中但已过期(超过 policy TTL)—— 展示 `stale` (身份可能已变,authority 重解析在途)。
-/// - `Degraded`:缓存未命中 —— 展示 `degraded`(本地无任何缓存证据, 降级到 "未验证" 语义,trust
-///   决策必须走 authority)。
+/// This is pure UX state: it only reflects whether the local DID resolution
+/// cache has a usable actor record, and never replaces authority validation
+/// (the authority path uses
+/// `crate::did_resolver::resolve_with_cache` / `verify_principal`).
+/// The three render states map to three badges:
+/// - `Cached`: fresh cache hit; display `cached`, meaning the cached identity is usable.
+/// - `Stale`: cache hit past policy TTL; display `stale`, meaning identity may have changed and
+///   authority re-resolution is in progress.
+/// - `Degraded`: cache miss; display `degraded`, meaning there is no local cache evidence and trust
+///   decisions must go through authority validation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrustCacheState {
     Cached,
@@ -115,7 +117,7 @@ pub enum TrustCacheState {
 }
 
 impl TrustCacheState {
-    /// 该状态对应的 `data-trust-cache` 属性值 / CSS 修饰类后缀。
+    /// `data-trust-cache` attribute value and CSS modifier suffix for this state.
     pub fn token(self) -> &'static str {
         match self {
             Self::Cached => "cached",
@@ -125,11 +127,11 @@ impl TrustCacheState {
     }
 }
 
-/// Y3 核心映射(纯函数,便于单测):根据缓存条目在 `now` 时刻的状态,
-/// 推导 [`TrustCacheState`]。
-/// - `None`(cache miss)→ `Degraded`。
-/// - `Some` 且 [`Freshness::Fresh`] → `Cached`。
-/// - `Some` 且 [`Freshness::Stale`] → `Stale`。
+/// Y3 core mapping, kept pure for unit tests: derive [`TrustCacheState`] from a
+/// cache entry's state at `now`.
+/// - `None` (cache miss) -> `Degraded`.
+/// - `Some` with [`Freshness::Fresh`] -> `Cached`.
+/// - `Some` with [`Freshness::Stale`] -> `Stale`.
 pub fn trust_cache_state(entry: Option<&CachedDidEntry>, now: DateTime<Utc>) -> TrustCacheState {
     match entry {
         None => TrustCacheState::Degraded,
@@ -140,14 +142,14 @@ pub fn trust_cache_state(entry: Option<&CachedDidEntry>, now: DateTime<Utc>) -> 
     }
 }
 
-/// Y3 展示组件:根据 `peer` DID 在会话级 DID 解析缓存里的状态,渲染一个
-/// `cached` / `stale` / `degraded` 小标记。
+/// Y3 display component: render a `cached` / `stale` / `degraded` badge based
+/// on the `peer` DID's state in the session-scoped DID resolution cache.
 ///
-/// 经 `use_context::<Signal<DidResolutionCache>>()` 读取缓存(由 `app.rs`
-/// 提供),用只读 `peek` 探查(不触发过期淘汰)。`peer` 不是合法 DID 语法
-/// 时按 `Degraded` 渲染。
+/// Reads the cache through `use_context::<Signal<DidResolutionCache>>()`
+/// provided by `app.rs`, then probes with read-only `peek` so expired entries
+/// are not evicted. If `peer` is not valid DID syntax, render `Degraded`.
 ///
-/// TRUST-CACHE:此标记仅供 UX 提示,**不构成 trust 依据**。
+/// TRUST-CACHE: this badge is a UX hint only and is not trust evidence.
 #[component]
 pub fn TrustCacheBadge(peer: String) -> Element {
     let cache = use_context::<Signal<crate::did_resolver::DidResolutionCache>>();
@@ -202,7 +204,7 @@ mod tests {
         assert_eq!(RealmClass::from_wire(""), RealmClass::Unknown);
     }
 
-    // ── Y3 TRUST-CACHE 展示降级 ──────────────────────────────────────
+    // ── Y3 TRUST-CACHE display degradation ───────────────────────────
 
     fn sample_entry(ttl_secs: i64, now: DateTime<Utc>) -> CachedDidEntry {
         let did = Did::new("did:web:alice.example".to_owned()).expect("valid did");

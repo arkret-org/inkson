@@ -44,7 +44,7 @@ fn invitee_resolution(
 /// `did:webvh:<scid>:<domain>:users:<localpart>`) the hosting principal server
 /// is `did:web:<domain>`, which is what `parse_user_handle` already computes.
 /// For other DID shapes we cannot infer the server, so this returns `None` and
-/// the caller surfaces "暂不可用" for that contact.
+/// the caller surfaces a temporarily unavailable state for that contact.
 fn contact_recipient_service_did(contact_did: &str) -> Option<String> {
     let display = crate::views::helpers::handle_display_from_did(contact_did)?;
     crate::identity_handle::parse_user_handle(&display).map(|handle| handle.principal_server_did)

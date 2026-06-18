@@ -369,7 +369,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(device_send.ok);
 
-    // SDK 形:to-device 队列字段为 `messages`(非旧 `events`)。
+    // SDK shape: the to-device queue field is `messages`, not the old `events`.
     let device_receive: yougen::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
         "messages": [],
         "next_cursor": "ck:cursor:device-messages",
@@ -406,7 +406,8 @@ fn yougen_accepts_server_contract_payloads() {
         format!("sha256:{}", "ab".repeat(32))
     );
 
-    // SDK spec 形:status `submitted`、routed_to 为纯 DID 数组(无 fragment)。
+    // SDK spec shape: status is `submitted`, and routed_to is a pure DID array
+    // without fragments.
     let report: yougen::models::ModerationReportOutcome = serde_json::from_value(json!({
         "report_id": "ck:report:1760000000000",
         "status": "submitted",

@@ -1,4 +1,4 @@
-//! Personal Agent admin panel (CKP-0008 / CKP-0009 · B-A · P3-A).
+//! Personal Agent admin panel (CKP-0008 / CKP-0009 / B-A / P3-A).
 //!
 //! Surfaces the soland personal-agent HTTP operations as a single admin
 //! view: provision (with §4.7 permission presets + pairing guide), list /
@@ -67,7 +67,7 @@ fn open_url_in_new_tab(url: &str) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// CKP-0008 / CKP-0009 — Personal Agent admin panel (B-A · P3-A).
+// CKP-0008 / CKP-0009 - Personal Agent admin panel (B-A / P3-A).
 //
 // Surfaces the 11 soland personal-agent HTTP operations as a single
 // admin view. Each soland endpoint has a matching reqwest call below

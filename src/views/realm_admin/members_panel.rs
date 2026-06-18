@@ -46,7 +46,7 @@ pub fn RealmMembersPanel(
     // actually mount so a 10k-member Realm doesn't render 10k DOM nodes.
     let mut member_filter = use_signal(String::new);
     let mut member_visible = use_signal(|| MEMBER_PAGE_SIZE);
-    // U3 — "从联系人添加" picker state. `invite_contacts` holds the user's
+    // U3 - "Add from contacts" picker state. `invite_contacts` holds the user's
     // accepted contacts (lazily loaded when the modal opens); `selected_contacts`
     // is the multi-select set of DIDs to invite via the consent-grant path.
     let mut invite_contacts = use_signal(Vec::<crate::models::ContactListRow>::new);

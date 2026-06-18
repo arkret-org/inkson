@@ -55,7 +55,7 @@ pub fn force_epoch_rotation_commit(
 /// YOU-02-004 (`encryption-and-audit.md` §5.6, normative) — decrypt a remote
 /// member's MLS application message AND persist the advanced receive chain.
 ///
-/// "第一义务是接收链持久化": after a successful decrypt the advanced group
+/// "first duty: persist the receive chain": after a successful decrypt the advanced group
 /// state (including OpenMLS's bounded skipped-message-key cache) MUST be
 /// persisted so the next decrypt never replays the ratchet from an earlier
 /// snapshot. Because persisting consumes the per-message ratchet key, the
@@ -74,14 +74,14 @@ pub fn force_epoch_rotation_commit(
 /// undecryptable payload) return `None` and leave persisted state untouched.
 /// `encryption-and-audit.md` §5.6 — deterministic per-member jitter window
 /// (whole hours) over which a large group spreads its self-preservation
-/// commits. The spec's example is "按成员序 hash 排延迟": each eligible
+/// commits. The spec's example is "hash by member order to assign delay": each eligible
 /// committer maps to a stable slot in `[0, JITTER_SLOTS)` derived from
 /// `hash(group_id, base_epoch, own_principal_did)`; a member only emits its
 /// idle self-update once the epoch has aged past `slot` extra hours beyond the
 /// §5.6 trigger floor. With pending-commit suppression (normative) the first
 /// member to land its commit advances the epoch and resets every other
-/// member's counter/timer, so later slots almost never fire — exactly the
-/// "避免大群在阈值同时到达时齐发 commit" goal.
+/// member's counter/timer, so later slots almost never fire — exactly the goal
+/// of preventing large groups from emitting commits simultaneously at the threshold.
 pub const SELF_PRESERVATION_JITTER_SLOTS: u64 = 24;
 
 /// §5.6 deterministic jitter — has THIS member's slot opened yet?
@@ -96,7 +96,7 @@ pub const SELF_PRESERVATION_JITTER_SLOTS: u64 = 24;
 /// idle pass re-evaluate). Binding `base_epoch` means the slot reshuffles every
 /// epoch, so the same member doesn't always draw the long straw. Member order
 /// (the principal-DID set) is read from the live group, matching the spec's
-/// "成员序".
+/// "member order".
 pub fn idle_self_update_jitter_passed(
     group_id: &str,
     base_epoch: u64,
@@ -209,11 +209,11 @@ pub fn build_idle_self_update_commit(
 }
 
 /// `encryption-and-audit.md` §5.6 — normal-Realm self-preservation commit
-/// SHOULD trigger: epoch 内已观测 application message 数 ≥ 1000(实现 MAY 声明
-/// 更小阈值)。
+/// SHOULD trigger: epoch has observed at least 1000 application messages
+/// (implementations MAY declare a lower threshold).
 pub const SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES: u64 = 1000;
-/// §5.6 — normal-Realm self-preservation commit SHOULD trigger: epoch 存活
-/// 时长 ≥ 7 天(实现 MAY 声明更短)。
+/// §5.6 — normal-Realm self-preservation commit SHOULD trigger: epoch age is
+/// at least 7 days (implementations MAY declare a shorter threshold).
 pub const SELF_PRESERVATION_MAX_EPOCH_AGE_DAYS: i64 = 7;
 
 /// SEC-08 (§2.9) + YOU-02-004 (§5.6) — pure committer decision: should a
@@ -226,7 +226,7 @@ pub const SELF_PRESERVATION_MAX_EPOCH_AGE_DAYS: i64 = 7;
 ///
 /// For a normal Realm this implements the §5.6 self-preservation SHOULD: a
 /// self-update Commit is due once the current epoch has observed ≥ 1000
-/// application messages OR has lived ≥ 7 days. §5.6 重复 commit 抑制
+/// application messages OR has lived ≥ 7 days. §5.6 duplicate commit suppression
 /// (normative): when a pending `ck.mls.commit` for this scope is already in
 /// flight (`has_pending_commit`), a new self-preservation commit MUST NOT be
 /// initiated — the pending commit will achieve the same epoch advance.

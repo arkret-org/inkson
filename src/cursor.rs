@@ -20,7 +20,7 @@ pub use cokret_sdk::cursor::{
 /// Compact label for a [`RealmPosition`] used by the timeline jump-to
 /// indicator and the kanban move arrow. Returns a string of the form
 /// `"@<hlc-short> ⇢ <frontier-count> tip(s)"`, optionally suffixed
-/// with `" · last read <rfc3339>"` when the caller supplies the
+/// with a middle-dot separator before `last read <rfc3339>` when the caller supplies the
 /// `last_read_at` value.
 ///
 /// `last_read_at` is sourced from the raw account-subscribe projection

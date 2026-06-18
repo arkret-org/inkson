@@ -9,7 +9,7 @@
 pub mod blocklist;
 pub mod capabilities;
 pub mod devices;
-/// U4 — "谁可以邀请我" invite_receive_policy editor.
+/// U4 - "who can invite me" invite_receive_policy editor.
 pub mod invite_policy;
 pub mod mls_recovery;
 

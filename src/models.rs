@@ -189,7 +189,7 @@ fn direct_conversation_binding_state_wire(
     }
 }
 
-/// U4 — actor `invite_receive_policy` ("谁可以邀请我").
+/// U4 - actor `invite_receive_policy` ("who can invite me").
 ///
 /// YOU-01-006: this used to be a bespoke local mirror with all-`String`
 /// enum fields and **no** `schema`/`subject_id` — which made the SET body

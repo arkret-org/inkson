@@ -120,11 +120,12 @@ pub mod session_refresh;
 pub mod snapshot;
 pub mod sync_engine;
 pub mod telemetry;
-/// C3:共享 UI 组件层。原本地 `src/ui/` 已原样迁入 `yoface` crate(13 个
-/// `#[css_module]` 封装 + 后台实用控件);此处 re-export 使全仓既有的
-/// `crate::ui::button::Button` 等引用路径保持不变,组件颜色走第一层语义
-/// 令牌(`--primary/--background/...`),由 `yoface::TOKENS_CSS` 提供(绿色
-/// 调色板,注入见 `app.rs`)。
+/// C3: shared UI component layer. The former local `src/ui/` moved unchanged
+/// into the `yoface` crate (13 `#[css_module]` wrappers plus background utility
+/// controls); this re-export keeps existing `crate::ui::button::Button`-style
+/// paths working across the repo. Component colors use first-layer semantic
+/// tokens (`--primary/--background/...`) provided by `yoface::TOKENS_CSS` (the
+/// green palette injected in `app.rs`).
 pub use yoface::ui;
 pub mod views;
 pub mod webrtc;

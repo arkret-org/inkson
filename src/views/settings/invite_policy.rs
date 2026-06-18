@@ -1,4 +1,4 @@
-//! U4 — "谁可以邀请我" 接收策略设置 (`/settings/invite-policy`).
+//! U4 - "who can invite me" receive-policy settings (`/settings/invite-policy`).
 //!
 //! Edits the actor `invite_receive_policy` (spec `invite-addressing.md` §5,
 //! authoritative `cokret_sdk::InviteReceivePolicy`):

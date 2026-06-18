@@ -130,8 +130,8 @@ pub struct MlsSnapshotEnvelope {
     /// YOU-02-004 (`encryption-and-audit.md` §5.6) — number of MLS
     /// application messages observed (sent OR successfully decrypted) on
     /// this device within the CURRENT epoch. Drives the spec's
-    /// self-preservation commit SHOULD trigger ("epoch 内已观测 application
-    /// message 数 ≥ 1000"). Resets to the in-flight message count whenever
+    /// self-preservation commit SHOULD trigger ("epoch has observed at least
+    /// 1000 application messages"). Resets to the in-flight message count whenever
     /// the epoch advances; carried forward (and bumped) by epoch-preserving
     /// re-snapshots. Like [`Self::epoch_started_at`] it is a local
     /// scheduling hint, not a confidentiality boundary, so it is not bound

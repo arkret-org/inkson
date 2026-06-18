@@ -1,13 +1,15 @@
-//! 看板卡片到期日历(due calendar)纯计算 helper 与单元格类型。
+//! Pure calculation helpers and cell types for the kanban due calendar.
 //!
-//! YOU-07-001:从 `views/kanban/mod.rs` 机械外迁的连续块——仅移动,不改
-//! 逻辑 / 签名 / canonical 字节。可见性从模块私有抬升为 `pub(super)`,使
-//! `mod.rs` 通过 `use due_calendar::*;` 重导出后,`KanbanPanel` 与
-//! `tests.rs`(`use super::*`)的解析路径均保持不变。
+//! YOU-07-001: mechanically moved from `views/kanban/mod.rs` as one contiguous
+//! block. This is move-only: logic, signatures, and canonical bytes are
+//! unchanged. Visibility was raised from module-private to `pub(super)`, so
+//! after `mod.rs` re-exports with `use due_calendar::*;`, `KanbanPanel` and
+//! `tests.rs` (`use super::*`) resolution paths remain unchanged.
 
-// `NaiveDate` 通过本模块再导出回 kanban 根:`mod.rs` 的 `use due_calendar::*`
-// 使其重新出现在父作用域,`tests.rs`(`use super::*`)的既有未限定引用因此
-// 仍能解析,无需改动测试。
+// Re-export `NaiveDate` through this module back to the kanban root. The
+// `use due_calendar::*` in `mod.rs` makes it appear in the parent scope again,
+// so existing unqualified references in `tests.rs` (`use super::*`) still
+// resolve without changing tests.
 pub(super) use chrono::NaiveDate;
 use chrono::{Datelike, Duration};
 

@@ -221,7 +221,7 @@ pub(crate) fn containers_with_local_space_creates(
     merged
 }
 
-/// T20 / YOU-01-009 子项 3 — Map a spec-registered
+/// T20 / YOU-01-009 subtask 3 - Map a spec-registered
 /// [`crate::api::CollectionProjectionView`]
 /// (`view.schema.json#/$defs/collection_projection_view`) into the yougen
 /// renderer's [`Vec<KanbanColumn>`] shape.

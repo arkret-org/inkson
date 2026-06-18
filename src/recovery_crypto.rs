@@ -71,8 +71,8 @@ pub const PASSKEY_WRAP_SALT_LEN: usize = 32;
 /// XChaCha20-Poly1305 nonce length for the local passkey wrapper.
 pub const PASSKEY_WRAP_NONCE_LEN: usize = 24;
 
-/// Length of the producer-generated `nonce_salt` (key-management.md §7.5: "至少
-/// 128-bit 随机值"). Mixed into the deterministic nonce transcript so duplicate
+/// Length of the producer-generated `nonce_salt` (key-management.md §7.5: "at
+/// least 128 bits of randomness"). Mixed into the deterministic nonce transcript so duplicate
 /// business-metadata tuples cannot collide nonces.
 pub const VAULT_NONCE_SALT_LEN: usize = 16;
 

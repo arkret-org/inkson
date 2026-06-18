@@ -234,7 +234,7 @@ pub(super) fn sidebar_authz_allowed(value: &Value) -> bool {
 ///
 /// Triggered when a sidebar row's kebab menu opens, so at most two authz
 /// requests are issued for the single Realm whose menu is open — never the
-/// `2·N` that eager per-row probing on every sidebar render would cost.
+/// `2*N` that eager per-row probing on every sidebar render would cost.
 /// Fail-closed: a transport error or a non-allow body both leave the write
 /// actions hidden, and we still cache that verdict so we don't re-probe a
 /// Realm the actor plainly cannot manage on every menu open.

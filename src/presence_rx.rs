@@ -93,8 +93,9 @@ pub struct ReadMarkerEvent {
     pub position: ReadCursorPositionEvent,
 }
 
-/// 同构,待合并(05-5):与 `local_state::ReadScope`、
-/// `discovery::ReadMarkerScope`字段一致,后续应收敛为单一 read_scope 类型。
+/// Isomorphic and pending merge (05-5): fields match
+/// `local_state::ReadScope` and `discovery::ReadMarkerScope`; this should later
+/// converge to a single read_scope type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadScopeEvent {

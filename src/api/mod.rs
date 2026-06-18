@@ -255,8 +255,9 @@ mod agent;
 mod applet;
 mod blob;
 mod blob_resumable;
-// YOU-07-001:领域事件 / 信封构造器从本文件外迁至 `builders`(仅移动)。
-// 重导出维持 `crate::api::build_*` 与兄弟子模块 `use super::*` 的解析路径。
+// YOU-07-001: realm event / envelope builders moved out to `builders`.
+// Re-exports preserve `crate::api::build_*` and sibling submodule `use super::*`
+// resolution paths.
 mod builders;
 mod directory;
 // Structural split: server error-envelope classifiers, account-subscribe gate /
