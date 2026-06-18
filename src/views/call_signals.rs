@@ -171,12 +171,10 @@ pub struct DecodedCallSignal {
 /// `ephemeral[]` array and decode each into a [`DecodedCallSignal`].
 ///
 /// Receiver-side proof verification (spec §5 — the receiver MUST verify the
-/// envelope's `proof`) is NOT performed here: yougen has no standalone
-/// `ck.call.signal` envelope-verify helper wired to this path yet, so this
-/// does structural validation only (kind / required payload fields present).
-/// The unverified-but-structurally-sound envelope is routed so the FSM can be
-/// exercised end to end; cryptographic receiver verification is a follow-up
-/// and is deliberately NOT faked here.
+/// envelope's `proof`) is intentionally not performed in this structural
+/// decoder. [`route_realm_call_signals`] is the only public receive entrypoint
+/// used by sync apply; it verifies each decoded envelope fail-closed before any
+/// ring or inbox side effect.
 pub fn decode_realm_call_signals(realm_id: &str, body: &Value) -> Vec<DecodedCallSignal> {
     let mut out = Vec::new();
     let Some(ephemeral) = body.get("ephemeral").and_then(Value::as_array) else {
