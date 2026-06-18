@@ -136,7 +136,10 @@ test("setup, onboarding, and space timeline strand works", async ({ page }) => {
   await expect(latestTestId(page, "mls-backup-modal")).toBeVisible();
   await expect(latestTestId(page, "mls-backup-banner")).toBeVisible();
   await latestTestId(page, "mls-backup-submit").click();
-  await expect(latestTestId(page, "mls-backup-generated-key")).toBeVisible();
+  const generatedKeyField = latestTestId(page, "mls-backup-generated-key");
+  await expect(generatedKeyField).toBeVisible();
+  const generatedRecoveryKey = await generatedKeyField.inputValue();
+  await latestTestId(page, "mls-backup-confirm-key").fill(generatedRecoveryKey);
   await latestTestId(page, "mls-backup-saved").click();
   await expect(page.getByTestId("mls-backup-modal")).toHaveCount(0);
   await expect(page.getByTestId("realm-lifecycle-strand").getByTestId("selected-realm-id")).toContainText("ck:realm:");

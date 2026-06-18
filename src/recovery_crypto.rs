@@ -386,6 +386,14 @@ pub fn normalize_recovery_key_input(input: &str) -> Option<String> {
     Some(mnemonic.words().collect::<Vec<_>>().join(" "))
 }
 
+/// Check that a user re-entered the same canonical 24-word Recovery Key.
+pub fn recovery_key_confirmation_matches(recovery_key: &str, confirmation: &str) -> bool {
+    let Some(expected) = normalize_recovery_key_input(recovery_key) else {
+        return false;
+    };
+    normalize_recovery_key_input(confirmation).as_deref() == Some(expected.as_str())
+}
+
 /// SHA-256 the recovery key (UTF-8) and return `"sha256:<hex>"`. We only
 /// persist the digest on disk so the plaintext is gone the moment the
 /// user dismisses the "copy / print" affordance.
@@ -816,6 +824,26 @@ mod tests {
             None,
             "shorter BIP-39 mnemonics are not accepted as recovery keys"
         );
+    }
+
+    #[test]
+    fn recovery_key_confirmation_accepts_canonical_equivalent_input() {
+        let phrase = format_recovery_key(&[0x00u8; RECOVERY_KEY_BYTES]);
+        let noisy = phrase
+            .split_whitespace()
+            .map(str::to_ascii_uppercase)
+            .collect::<Vec<_>>()
+            .join("   ");
+        assert!(recovery_key_confirmation_matches(&phrase, &noisy));
+    }
+
+    #[test]
+    fn recovery_key_confirmation_rejects_wrong_or_malformed_input() {
+        let phrase = format_recovery_key(&[0x00u8; RECOVERY_KEY_BYTES]);
+        let other = format_recovery_key(&[0x01u8; RECOVERY_KEY_BYTES]);
+        assert!(!recovery_key_confirmation_matches(&phrase, &other));
+        assert!(!recovery_key_confirmation_matches(&phrase, "not the key"));
+        assert!(!recovery_key_confirmation_matches("not the key", &phrase));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use dioxus_router::hooks::use_navigator;
 
 use crate::local_state::LocalStateStore;
-use crate::recovery_crypto::generate_recovery_key;
+use crate::recovery_crypto::{generate_recovery_key, recovery_key_confirmation_matches};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
@@ -33,6 +33,7 @@ fn begin_recovery_key_setup(
     device_id: Signal<String>,
     state_store: Signal<LocalStateStore>,
     mut generated_recovery_key: Signal<String>,
+    mut confirmation_input: Signal<String>,
     mut status: Signal<String>,
     mut copied: Signal<bool>,
     mut device_unauthorized: Signal<bool>,
@@ -50,6 +51,7 @@ fn begin_recovery_key_setup(
         return;
     }
     copied.set(false);
+    confirmation_input.set(String::new());
     device_unauthorized.set(false);
     generated_recovery_key.set(String::new());
     status.set("Authorizing this device and publishing the recovery backup…".to_owned());
@@ -96,6 +98,7 @@ pub fn RecoveryKeySetupPrompt(
     let mut generated_recovery_key = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut copied = use_signal(|| false);
+    let mut confirmation_input = use_signal(String::new);
     let mut auto_generate_started = use_signal(|| false);
     let mut device_unauthorized = use_signal(|| false);
     let navigator = use_navigator();
@@ -104,6 +107,7 @@ pub fn RecoveryKeySetupPrompt(
         if !open() {
             auto_generate_started.set(false);
             generated_recovery_key.set(String::new());
+            confirmation_input.set(String::new());
             status.set(String::new());
             copied.set(false);
             device_unauthorized.set(false);
@@ -124,6 +128,7 @@ pub fn RecoveryKeySetupPrompt(
             device_id,
             state_store,
             generated_recovery_key,
+            confirmation_input,
             status,
             copied,
             device_unauthorized,
@@ -136,6 +141,7 @@ pub fn RecoveryKeySetupPrompt(
     }
 
     let generated_now = generated_recovery_key();
+    let confirmation_now = confirmation_input();
     let current_status = status();
     let is_device_unauthorized = device_unauthorized();
     let generation_failed = !is_device_unauthorized
@@ -248,6 +254,20 @@ pub fn RecoveryKeySetupPrompt(
                             div { class: "form-hint-warn", "data-testid": "recovery-key-setup-generated-key-warning",
                                 "Store these words now. The plaintext Recovery Key is not uploaded and will not be shown again after you close this prompt."
                             }
+                            Label { html_for: "recovery-key-setup-confirm-key",
+                                "Re-enter the saved Recovery Key"
+                            }
+                            Textarea {
+                                id: "recovery-key-setup-confirm-key",
+                                "data-testid": "recovery-key-setup-confirm-key",
+                                rows: "3",
+                                value: "{confirmation_now}",
+                                placeholder: "Type or paste the 24 words you saved",
+                                oninput: move |event: FormEvent| confirmation_input.set(event.value()),
+                            }
+                            div { class: "muted", "data-testid": "recovery-key-setup-confirm-hint",
+                                "You can continue only after the saved copy matches exactly. If the copy is wrong, generate a new key and save that one instead."
+                            }
                         }
                     }
                     if !current_status.is_empty() {
@@ -286,6 +306,7 @@ pub fn RecoveryKeySetupPrompt(
                                         device_id,
                                         state_store,
                                         generated_recovery_key,
+                                        confirmation_input,
                                         status,
                                         copied,
                                         device_unauthorized,
@@ -310,11 +331,44 @@ pub fn RecoveryKeySetupPrompt(
                         }
                     } else {
                         Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "recovery-key-setup-regenerate",
+                            onclick: move |_| {
+                                auto_generate_started.set(true);
+                                status.set("Generating a replacement Recovery Key...".to_owned());
+                                begin_recovery_key_setup(
+                                    base_url,
+                                    token,
+                                    account_did,
+                                    device_id,
+                                    state_store,
+                                    generated_recovery_key,
+                                    confirmation_input,
+                                    status,
+                                    copied,
+                                    device_unauthorized,
+                                    on_server_configured,
+                                );
+                            },
+                            "Generate a new key"
+                        }
+                        Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "recovery-key-setup-saved",
+                            disabled: confirmation_now.trim().is_empty(),
                             onclick: {
                                 let saved_recovery_key = generated_now.clone();
                                 move |_| {
+                                    if !recovery_key_confirmation_matches(
+                                        &saved_recovery_key,
+                                        &confirmation_input(),
+                                    ) {
+                                        status.set(
+                                            "The entered words do not match this Recovery Key. Check your saved copy, or generate a new key and save that one instead."
+                                                .to_owned(),
+                                        );
+                                        return;
+                                    }
                                     let actor = account_did();
                                     if !actor.trim().is_empty()
                                         && !saved_recovery_key.trim().is_empty()
@@ -336,10 +390,11 @@ pub fn RecoveryKeySetupPrompt(
                                         );
                                     }
                                     generated_recovery_key.set(String::new());
+                                    confirmation_input.set(String::new());
                                     open.set(false);
                                 }
                             },
-                            "I saved these 24 words"
+                            "Confirm saved key"
                         }
                     }
                 }

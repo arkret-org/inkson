@@ -15,7 +15,9 @@
 use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
-use crate::recovery_crypto::{generate_recovery_key, normalize_recovery_key_input};
+use crate::recovery_crypto::{
+    generate_recovery_key, normalize_recovery_key_input, recovery_key_confirmation_matches,
+};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
@@ -71,6 +73,105 @@ fn resolve_status(server_backup: bool, local_secret: bool) -> MlsRecoveryStatus 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn start_recovery_key_generation(
+    base_url: Signal<String>,
+    token: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
+    mut state_store: Signal<LocalStateStore>,
+    mut generated_recovery_key: Signal<String>,
+    mut generated_recovery_key_confirm: Signal<String>,
+    mut action_status: Signal<String>,
+    mut busy: Signal<bool>,
+    mut copied: Signal<bool>,
+    mut status: Signal<MlsRecoveryStatus>,
+) {
+    if busy() {
+        return;
+    }
+    let recovery_key = match generate_recovery_key() {
+        Ok(key) => key,
+        Err(err) => {
+            action_status.set(format!(
+                "{} {err}",
+                crate::i18n::tr("mls_backup.status.generate_failed")
+            ));
+            return;
+        }
+    };
+    let recovery_secret = normalize_recovery_key_input(&recovery_key)
+        .expect("generated recovery key is valid BIP-39");
+    let base = base_url();
+    let session = token();
+    let actor = account_did();
+    let device = device_id();
+    let sidecar_json = if state_store.read().private_plaintext_is_empty() {
+        None
+    } else {
+        Some(state_store.read().private_plaintext_snapshot_json())
+    };
+    busy.set(true);
+    copied.set(false);
+    generated_recovery_key_confirm.set(String::new());
+    action_status.set(crate::i18n::tr("mls_backup.status.uploading"));
+    spawn(async move {
+        let recovery_key_for_display = recovery_key.clone();
+        let actor_for_sidecar = actor.clone();
+        let device_for_sidecar = device.clone();
+        let base_for_sidecar = base.clone();
+        let session_for_sidecar = session.clone();
+        let result = with_authed_api(&base, session, |api| async move {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
+                &api,
+                secure_store.as_ref(),
+                &actor,
+                &device,
+                &recovery_secret,
+            )
+            .await
+        })
+        .await;
+        busy.set(false);
+        match result {
+            Ok(backup_id) => {
+                crate::components::mark_mls_recovery_backup_configured(
+                    &mut state_store.write(),
+                    &actor_for_sidecar,
+                    &backup_id,
+                );
+                if let Some(sidecar_json) = sidecar_json {
+                    let actor = actor_for_sidecar;
+                    let device = device_for_sidecar;
+                    let outcome =
+                        with_authed_api(&base_for_sidecar, session_for_sidecar, |api| async move {
+                            let secure_store =
+                                crate::secure_key_store::default_secure_key_store("yougen");
+                            crate::mls::account_recovery::upload_mls_private_plaintext_backup(
+                                &api,
+                                secure_store.as_ref(),
+                                &actor,
+                                &device,
+                                &sidecar_json,
+                            )
+                            .await
+                        })
+                        .await;
+                    let _ = outcome;
+                }
+                generated_recovery_key.set(recovery_key_for_display);
+                generated_recovery_key_confirm.set(String::new());
+                action_status.set(crate::i18n::tr("mls_backup.status.created"));
+                status.set(MlsRecoveryStatus::BackedUp);
+            }
+            Err(err) => {
+                action_status.set(err.display());
+            }
+        }
+    });
+}
+
 #[component]
 pub fn SettingsMlsRecoveryPanel(
     base_url: Signal<String>,
@@ -85,8 +186,9 @@ pub fn SettingsMlsRecoveryPanel(
 ) -> Element {
     let mut status = use_signal(|| MlsRecoveryStatus::Loading);
     let mut generated_recovery_key = use_signal(String::new);
+    let mut generated_recovery_key_confirm = use_signal(String::new);
     let mut action_status = use_signal(String::new);
-    let mut busy = use_signal(|| false);
+    let busy = use_signal(|| false);
     let mut copied = use_signal(|| false);
 
     let has_session = !token().trim().is_empty();
@@ -154,96 +256,39 @@ pub fn SettingsMlsRecoveryPanel(
     // Submit: mirror `MlsBackupPrompt` — upload the account secret, then
     // best-effort upload the encrypted private-plaintext sidecar.
     let on_submit = move |_| {
-        if busy() {
-            return;
-        }
-        let recovery_key = match generate_recovery_key() {
-            Ok(key) => key,
-            Err(err) => {
-                action_status.set(format!(
-                    "{} {err}",
-                    crate::i18n::tr("mls_backup.status.generate_failed")
-                ));
-                return;
-            }
-        };
-        let recovery_secret = normalize_recovery_key_input(&recovery_key)
-            .expect("generated recovery key is valid BIP-39");
-        let base = base_url();
-        let session = token();
-        let actor = account_did();
-        let device = device_id();
-        // Snapshot the sidecar synchronously before any await (don't borrow the
-        // store across the network calls).
-        let sidecar_json = if state_store.read().private_plaintext_is_empty() {
-            None
-        } else {
-            Some(state_store.read().private_plaintext_snapshot_json())
-        };
-        busy.set(true);
-        action_status.set(crate::i18n::tr("mls_backup.status.uploading"));
-        spawn(async move {
-            let recovery_key_for_display = recovery_key.clone();
-            let actor_for_sidecar = actor.clone();
-            let device_for_sidecar = device.clone();
-            let base_for_sidecar = base.clone();
-            let session_for_sidecar = session.clone();
-            let result = with_authed_api(&base, session, |api| async move {
-                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
-                    &api,
-                    secure_store.as_ref(),
-                    &actor,
-                    &device,
-                    &recovery_secret,
-                )
-                .await
-            })
-            .await;
-            busy.set(false);
-            match result {
-                Ok(backup_id) => {
-                    crate::components::mark_mls_recovery_backup_configured(
-                        &mut state_store.write(),
-                        &actor_for_sidecar,
-                        &backup_id,
-                    );
-                    // Best-effort sidecar upload (account secret already
-                    // succeeded; sidecar failure must not block success).
-                    if let Some(sidecar_json) = sidecar_json {
-                        let actor = actor_for_sidecar;
-                        let device = device_for_sidecar;
-                        let outcome = with_authed_api(
-                            &base_for_sidecar,
-                            session_for_sidecar,
-                            |api| async move {
-                                let secure_store =
-                                    crate::secure_key_store::default_secure_key_store("yougen");
-                                crate::mls::account_recovery::upload_mls_private_plaintext_backup(
-                                    &api,
-                                    secure_store.as_ref(),
-                                    &actor,
-                                    &device,
-                                    &sidecar_json,
-                                )
-                                .await
-                            },
-                        )
-                        .await;
-                        let _ = outcome;
-                    }
-                    generated_recovery_key.set(recovery_key_for_display);
-                    action_status.set(crate::i18n::tr("mls_backup.status.created"));
-                    status.set(MlsRecoveryStatus::BackedUp);
-                }
-                Err(err) => {
-                    action_status.set(err.display());
-                }
-            }
-        });
+        start_recovery_key_generation(
+            base_url,
+            token,
+            account_did,
+            device_id,
+            state_store,
+            generated_recovery_key,
+            generated_recovery_key_confirm,
+            action_status,
+            busy,
+            copied,
+            status,
+        );
+    };
+
+    let on_regenerate = move |_| {
+        start_recovery_key_generation(
+            base_url,
+            token,
+            account_did,
+            device_id,
+            state_store,
+            generated_recovery_key,
+            generated_recovery_key_confirm,
+            action_status,
+            busy,
+            copied,
+            status,
+        );
     };
 
     let generated_now = generated_recovery_key();
+    let generated_confirm_now = generated_recovery_key_confirm();
 
     rsx! {
         div { class: "event", "data-testid": "settings-mls-recovery",
@@ -314,20 +359,52 @@ pub fn SettingsMlsRecoveryPanel(
                         div { class: "form-hint-warn", "data-testid": "settings-mls-recovery-generated-key-warning",
                             {crate::i18n::tr("mls_backup.generated_key_warning")}
                         }
+                        Label { html_for: "settings-mls-recovery-confirm-key",
+                            {crate::i18n::tr("mls_backup.confirm_key_label")}
+                        }
+                        Textarea {
+                            id: "settings-mls-recovery-confirm-key",
+                            "data-testid": "settings-mls-recovery-confirm-key",
+                            rows: "3",
+                            value: "{generated_confirm_now}",
+                            placeholder: crate::i18n::tr("mls_backup.confirm_key_placeholder"),
+                            oninput: move |event: FormEvent| generated_recovery_key_confirm.set(event.value()),
+                        }
+                        div { class: "muted", "data-testid": "settings-mls-recovery-confirm-key-hint",
+                            {crate::i18n::tr("mls_backup.confirm_key_hint")}
+                        }
                     }
                 }
                 div { class: "workflow-form",
                     div { class: "actions",
                         if !generated_now.trim().is_empty() {
                             Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "settings-mls-recovery-regenerate",
+                                disabled: busy(),
+                                onclick: on_regenerate,
+                                {crate::i18n::tr("mls_backup.button_regenerate")}
+                            }
+                            Button {
                                 variant: ButtonVariant::Primary,
                                 "data-testid": "settings-mls-recovery-saved",
+                                disabled: generated_confirm_now.trim().is_empty(),
                                 onclick: move |_| {
+                                    if !recovery_key_confirmation_matches(
+                                        &generated_recovery_key(),
+                                        &generated_recovery_key_confirm(),
+                                    ) {
+                                        action_status.set(
+                                            crate::i18n::tr("mls_backup.status.confirm_mismatch"),
+                                        );
+                                        return;
+                                    }
                                     generated_recovery_key.set(String::new());
+                                    generated_recovery_key_confirm.set(String::new());
                                     action_status.set(String::new());
                                     copied.set(false);
                                 },
-                                {crate::i18n::tr("mls_backup.button_saved")}
+                                {crate::i18n::tr("mls_backup.button_confirm_saved")}
                             }
                         } else {
                             Button {

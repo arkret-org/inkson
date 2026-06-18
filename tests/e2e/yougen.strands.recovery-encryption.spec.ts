@@ -115,6 +115,7 @@ test("recovery passkey quick unlock stays additive to the 24-word key", async ({
   const recoveryWords = (await recoveryPanel.getByTestId("recovery-key-current").textContent()) ?? "";
   expect(recoveryWords.trim().split(/\s+/)).toHaveLength(24);
   await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeEnabled();
+  await recoveryPanel.getByTestId("recovery-key-confirm-input").fill(recoveryWords);
   await recoveryPanel.getByTestId("recovery-key-clear-live").click();
   await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeDisabled();
   await recoveryPanel.getByTestId("passkey-wrap-recovery-key").fill(recoveryWords);
@@ -226,7 +227,14 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
   expect(generatedRecoveryKey).not.toMatch(/[A-Z0-9]{5}-[A-Z0-9]{5}/);
   await expect(latestTestId(page, "mls-backup-generated-key-warning")).toContainText("Store these words now");
+  await latestTestId(page, "mls-backup-confirm-key").fill("not the saved key");
+  await latestTestId(page, "mls-backup-saved").click();
+  await expect(latestTestId(page, "mls-backup-status")).toContainText("do not match");
+  await expect(backupModal).toBeVisible();
+  await latestTestId(page, "mls-backup-confirm-key").fill(generatedRecoveryKey);
   await expect(latestTestId(page, "mls-backup-saved")).toBeVisible();
+  await latestTestId(page, "mls-backup-saved").click();
+  await expect(page.getByTestId("mls-backup-modal")).toHaveCount(0);
 });
 
 test("encrypted Realm backup uses existing Recovery Key instead of generating another one", async ({

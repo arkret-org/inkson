@@ -469,6 +469,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_backup.button_busy", "Backing up...");
     dict.set("mls_backup.button_dismiss", "Remind me later");
     dict.set("mls_backup.button_saved", "I saved the key");
+    dict.set("mls_backup.button_confirm_saved", "Confirm saved key");
+    dict.set("mls_backup.button_regenerate", "Generate a new key");
     dict.set("mls_backup.button_done", "Done");
     dict.set("mls_backup.copy_key", "Copy");
     dict.set("mls_backup.copy_key_done", "Copied ✓");
@@ -491,6 +493,18 @@ pub fn english_translations() -> TranslationDict {
         "Store these words now. They will disappear when you close this prompt.",
     );
     dict.set(
+        "mls_backup.confirm_key_label",
+        "Re-enter the saved Recovery Key",
+    );
+    dict.set(
+        "mls_backup.confirm_key_placeholder",
+        "Type or paste the 24 words you saved",
+    );
+    dict.set(
+        "mls_backup.confirm_key_hint",
+        "You can finish only after the saved copy matches exactly. If the copy is wrong, generate a new key and save that one instead.",
+    );
+    dict.set(
         "mls_backup.status.uploading",
         "Encrypting and uploading backup...",
     );
@@ -505,6 +519,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set(
         "mls_backup.status.invalid_recovery_key",
         "Enter the full 24-word Recovery Key.",
+    );
+    dict.set(
+        "mls_backup.status.confirm_mismatch",
+        "The entered words do not match this Recovery Key. Check your saved copy, or generate a new key and save that one instead.",
     );
 
     // X11.1 — persistent MLS recovery-key settings section.

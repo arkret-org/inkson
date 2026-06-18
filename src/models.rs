@@ -1076,6 +1076,7 @@ impl From<cokret_sdk::EventsSubmitOutcome> for SubmitEventResult {
             cokret_sdk::EventsSubmitStatus::Accepted => "accepted",
             cokret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
             cokret_sdk::EventsSubmitStatus::Partial => "partial",
+            cokret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
         }
         .to_owned();
         let receipt = serde_json::json!({

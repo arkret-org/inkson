@@ -20,11 +20,12 @@ use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
     fingerprint_recovery_key, generate_passkey_wrap_salt, generate_recovery_key,
     normalize_recovery_key_input, open_recovery_key_with_passkey_prf,
-    seal_recovery_key_with_passkey_prf,
+    recovery_key_confirmation_matches, seal_recovery_key_with_passkey_prf,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
@@ -48,6 +49,7 @@ pub fn RecoveryPanel(
     let mut passkey_wraps = use_signal(|| initial.passkey_wraps.clone());
     let mut passkey_status = use_signal(String::new);
     let mut passkey_recovery_key_input = use_signal(String::new);
+    let mut recovery_key_confirm_input = use_signal(String::new);
 
     // Social recovery state
     let mut threshold = use_signal(|| initial.sss_threshold);
@@ -182,7 +184,21 @@ pub fn RecoveryPanel(
                     div { class: "callout warn", "data-testid": "recovery-key-live-warning",
                         div { class: "body",
                             strong { "Write these 24 words down now." }
-                            " Plaintext is only shown until you navigate away or generate a new one."
+                            " Re-enter the saved words below before clearing them from this screen."
+                        }
+                    }
+                    div { class: "workflow-form", "data-testid": "recovery-key-confirm-form",
+                        Label { html_for: "recovery-key-confirm-input", "Re-enter the saved Recovery Key" }
+                        Textarea {
+                            id: "recovery-key-confirm-input",
+                            "data-testid": "recovery-key-confirm-input",
+                            rows: "3",
+                            value: "{recovery_key_confirm_input}",
+                            placeholder: "Type or paste the 24 words you saved",
+                            oninput: move |event: FormEvent| recovery_key_confirm_input.set(event.value()),
+                        }
+                        div { class: "muted", "data-testid": "recovery-key-confirm-hint",
+                            "The words must match before the plaintext is cleared. If your saved copy is wrong, regenerate and save the new key."
                         }
                     }
                 } else if !recovery_key_fp().is_empty() {
@@ -242,6 +258,7 @@ pub fn RecoveryPanel(
                                         // leaves a divergent Recovery Key root behind, and the
                                         // status line routes the user to authorize / restore.
                                         live_recovery_key.set(key.clone());
+                                        recovery_key_confirm_input.set(String::new());
                                         passkey_status.set(String::new());
                                         recovery_key_status.set(
                                             "Recovery Key generated. Setting it up on the server — copy the words now; they are only displayed once.".to_owned()
@@ -281,12 +298,24 @@ pub fn RecoveryPanel(
                         variant: ButtonVariant::Secondary,
                         "data-testid": "recovery-key-clear-live",
                         disabled: live_recovery_key().is_empty(),
-                        title: "Drop the plaintext from memory. The fingerprint stays in local state.",
+                        title: "Re-enter the saved 24 words before dropping the plaintext from memory.",
                         onclick: move |_| {
+                            let current_key = live_recovery_key();
+                            if !recovery_key_confirmation_matches(
+                                &current_key,
+                                &recovery_key_confirm_input(),
+                            ) {
+                                recovery_key_status.set(
+                                    "The entered words do not match the displayed Recovery Key. Check your saved copy, or regenerate a new key and save that instead."
+                                        .to_owned(),
+                                );
+                                return;
+                            }
                             live_recovery_key.set(String::new());
-                            recovery_key_status.set("Plaintext cleared from memory.".to_owned());
+                            recovery_key_confirm_input.set(String::new());
+                            recovery_key_status.set("Recovery Key confirmed; plaintext cleared from memory.".to_owned());
                         },
-                        "Clear from screen"
+                        "Confirm and clear"
                     }
                 }
             }
