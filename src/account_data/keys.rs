@@ -137,15 +137,28 @@ pub fn build_private_account_data_set(
     key: &str,
     encrypted_payload: Value,
 ) -> anyhow::Result<OperationBuilder> {
+    build_private_account_data_set_with_cas(realm_id, actor, key, encrypted_payload, None)
+}
+
+pub fn build_private_account_data_set_with_cas(
+    realm_id: &str,
+    actor: &str,
+    key: &str,
+    encrypted_payload: Value,
+    expected_state_digest: Option<&str>,
+) -> anyhow::Result<OperationBuilder> {
     validate_private_account_data_key(key)?;
-    Ok(
-        OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(serde_json::json!({
-            "key": key,
-            "owner": actor,
-            "encrypted_payload": encrypted_payload,
-            "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        })),
-    )
+    let mut payload = serde_json::json!({
+        "key": key,
+        "owner": actor,
+        "encrypted_payload": encrypted_payload,
+        "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    });
+    if let Some(expected_state_digest) = expected_state_digest {
+        validate_sha256_digest(expected_state_digest)?;
+        payload["expected_state_digest"] = Value::String(expected_state_digest.to_owned());
+    }
+    Ok(OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(payload))
 }
 
 pub fn build_private_account_data_tombstone(
@@ -162,4 +175,21 @@ pub fn build_private_account_data_tombstone(
             "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         })),
     )
+}
+
+fn validate_sha256_digest(value: &str) -> anyhow::Result<()> {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        anyhow::bail!("expected_state_digest must use sha256:<hex>");
+    };
+    if hex.len() != 64 || !hex.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+        anyhow::bail!("expected_state_digest must be a sha256 digest");
+    }
+    if !hex
+        .as_bytes()
+        .iter()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    {
+        anyhow::bail!("expected_state_digest hex must be lowercase");
+    }
+    Ok(())
 }

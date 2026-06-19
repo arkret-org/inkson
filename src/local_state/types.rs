@@ -477,6 +477,16 @@ pub struct ClientLocalState {
     pub realm_tree_projections: BTreeMap<String, Value>,
     #[serde(default)]
     pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
+    /// Migrated principal-private draft account-data values, keyed by
+    /// `ck.draft.v1:<kind>:<target_key>:<slot_key>`. The older `drafts`
+    /// map remains a local UI cache; this map is the cross-device sync
+    /// staging area created by explicit migration.
+    #[serde(default)]
+    pub draft_account_data: BTreeMap<String, Value>,
+    /// Migrated principal-private saved-item account-data values, keyed by
+    /// `ck.saved.v1:<collection_key>:<target_key>`.
+    #[serde(default)]
+    pub saved_account_data: BTreeMap<String, Value>,
     pub drafts: BTreeMap<String, String>,
     pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
     #[serde(default)]
@@ -845,6 +855,8 @@ impl Default for ClientLocalState {
             realm_lifecycle_state: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
             snapshot_sync: BTreeMap::new(),
+            draft_account_data: BTreeMap::new(),
+            saved_account_data: BTreeMap::new(),
             drafts: BTreeMap::new(),
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),

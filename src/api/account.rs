@@ -421,6 +421,54 @@ impl CokretApi {
         }
     }
 
+    /// Submit a private account-data value with an optional CAS guard. Callers
+    /// pass already-encrypted account-data material; plaintext draft/saved
+    /// content must not cross this API boundary.
+    pub async fn set_private_account_data_with_cas(
+        &self,
+        type_key: &str,
+        encrypted_payload: Value,
+        expected_state_digest: Option<&str>,
+    ) -> anyhow::Result<AccountDataSetResult> {
+        let (actor, principal_realm_id) = match self.account_data_actor_scope().await {
+            Ok(scope) => scope,
+            Err(error) => {
+                if let Some(status) = unsupported_status(&error) {
+                    tracing::warn!(
+                        "principal-realm lookup for private account_data returned {status}; \
+                         keeping local state authoritative"
+                    );
+                    return Ok(AccountDataSetResult::Unsupported { status });
+                }
+                return Err(error);
+            }
+        };
+        let event = crate::account_data::build_private_account_data_set_with_cas(
+            &principal_realm_id,
+            &actor,
+            type_key,
+            encrypted_payload,
+            expected_state_digest,
+        )?
+        .build("yougen-private-account-data");
+        let result = self.submit_event_envelope(&event).await;
+        match result {
+            Ok(value) => Ok(AccountDataSetResult::Stored {
+                response: serde_json::to_value(value)?,
+            }),
+            Err(error) => {
+                if let Some(status) = unsupported_status(&error) {
+                    tracing::warn!(
+                        "ck.account_data.set submit for private {type_key} returned {status}; \
+                         keeping local state authoritative"
+                    );
+                    return Ok(AccountDataSetResult::Unsupported { status });
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Tombstone an account_data entry by submitting `ck.account_data.set` with
     /// `tombstone: true`. Same graceful-degradation contract as
     /// [`Self::set_account_data`].

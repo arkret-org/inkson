@@ -75,6 +75,78 @@ fn local_state_store_persists_to_disk_between_instances() {
 }
 
 #[test]
+fn local_state_migrates_local_only_drafts_to_account_data_staging() {
+    let path = temp_state_path("draft-account-data-migration");
+    let mut store = LocalStateStore::with_path(path.clone());
+    store.save_draft(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "draft survives migration",
+    );
+
+    let migrated = store
+        .migrate_local_only_drafts_to_account_data(
+            b"yougen-account-data-test-key",
+            "ck:device:01904100-0000-7000-8000-000000000001",
+            "01970e589d21-0000-a13f9c2e",
+            "2026-06-07T00:00:00Z",
+        )
+        .unwrap();
+    assert_eq!(migrated.len(), 1);
+    assert!(!migrated[0].account_data_key.contains("ck:realm:"));
+
+    let reader = LocalStateStore::with_path(path);
+    let entries = reader.draft_account_data_entries();
+    let value = entries
+        .get(&migrated[0].account_data_key)
+        .expect("migrated draft persisted");
+    assert_eq!(value["content"]["body"], "draft survives migration");
+    assert_eq!(
+        value["origin_device_id"],
+        "ck:device:01904100-0000-7000-8000-000000000001"
+    );
+    assert_eq!(
+        reader
+            .load()
+            .drafts
+            .get("ck:realm:01904100-0000-7000-8000-000000000001")
+            .map(String::as_str),
+        Some("draft survives migration")
+    );
+}
+
+#[test]
+fn local_state_stages_saved_items_as_private_account_data() {
+    let path = temp_state_path("saved-account-data-migration");
+    let mut store = LocalStateStore::with_path(path.clone());
+    let migrated = store
+        .migrate_local_only_saved_items_to_account_data(
+            b"yougen-account-data-test-key",
+            &[crate::account_data::LegacySavedItem {
+                collection_title: "Focus".to_owned(),
+                target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
+                note: Some("read later".to_owned()),
+            }],
+            "01970e589d21-0000-a13f9c2e",
+        )
+        .unwrap();
+    assert_eq!(migrated.len(), 1);
+    assert!(!migrated[0].account_data_key.contains("Focus"));
+    assert!(!migrated[0].account_data_key.contains("ck:message:"));
+
+    let reader = LocalStateStore::with_path(path);
+    let entries = reader.saved_account_data_entries();
+    let value = entries
+        .get(&migrated[0].account_data_key)
+        .expect("migrated saved item persisted");
+    assert_eq!(value["kind"], "saved_item");
+    assert_eq!(value["collection_title"], "Focus");
+    assert_eq!(
+        value["target_ref"],
+        "ck:message:01904100-0000-7000-8000-000000000001"
+    );
+}
+
+#[test]
 fn local_state_store_persists_notifications_and_mute_preferences() {
     let path = temp_state_path("notifications");
     let mut store = LocalStateStore::with_path(path.clone());
@@ -370,6 +442,25 @@ fn clear_account_scoped_preserves_device_level_and_token_state() {
     store.save_realm_tree_projection("ck:space:a", serde_json::json!({}));
     store.save_draft("ck:space:a", "draft");
     store.save_private_data("did:web:tester.example", "theme", "night");
+    store
+        .migrate_local_only_drafts_to_account_data(
+            b"yougen-account-data-test-key",
+            "ck:device:01904100-0000-7000-8000-000000000001",
+            "01970e589d21-0000-a13f9c2e",
+            "2026-06-07T00:00:00Z",
+        )
+        .unwrap();
+    store
+        .migrate_local_only_saved_items_to_account_data(
+            b"yougen-account-data-test-key",
+            &[crate::account_data::LegacySavedItem {
+                collection_title: "Focus".to_owned(),
+                target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
+                note: None,
+            }],
+            "01970e589d21-0000-a13f9c2e",
+        )
+        .unwrap();
     // Device-level state that MUST survive. ensure_local_identity
     // generates a fresh seed + DID and persists the record under
     // local_identity — the canonical device-level field this helper
@@ -399,6 +490,14 @@ fn clear_account_scoped_preserves_device_level_and_token_state() {
         "projections should be wiped"
     );
     assert!(state.drafts.is_empty(), "drafts should be wiped");
+    assert!(
+        state.draft_account_data.is_empty(),
+        "draft account_data staging should be wiped"
+    );
+    assert!(
+        state.saved_account_data.is_empty(),
+        "saved account_data staging should be wiped"
+    );
     assert!(
         state.private_data.is_empty(),
         "private_data is account-scoped and should be wiped"

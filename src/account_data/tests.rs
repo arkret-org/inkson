@@ -682,8 +682,13 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
     let target_ref = "ck:strand:01904100-0000-7000-8000-000000000001";
     let snooze = snooze_account_data_key(ns, target_ref).unwrap();
     let saved = saved_account_data_key(ns, "Focus", target_ref).unwrap();
-    let draft =
-        draft_account_data_key(ns, cokret_sdk::DraftKind::Message, target_ref, "main").unwrap();
+    let draft = draft_account_data_key(
+        ns,
+        cokret_sdk::DraftKind::Message,
+        target_ref,
+        DRAFT_MESSAGE_SLOT,
+    )
+    .unwrap();
     let manifest =
         search_index_manifest_account_data_key(ns, "ck:realm:01904100-0000-7000-8000-000000000001")
             .unwrap();
@@ -759,6 +764,42 @@ fn private_account_data_builders_emit_encrypted_payload() {
 }
 
 #[test]
+fn private_account_data_builder_can_emit_cas_guard() {
+    let key = draft_account_data_key(
+        b"yougen-account-data-test-key",
+        cokret_sdk::DraftKind::Message,
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        DRAFT_MESSAGE_SLOT,
+    )
+    .unwrap();
+    let expected = format!("sha256:{}", "12".repeat(32));
+    let op = build_private_account_data_set_with_cas(
+        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "did:web:alice",
+        &key,
+        json!({"ciphertext": "opaque"}),
+        Some(&expected),
+    )
+    .unwrap()
+    .build("node");
+    assert_eq!(op.kind, "ck.account_data.set");
+    assert_eq!(op.payload["expected_state_digest"], expected);
+    assert!(op.payload.get("body").is_none());
+    assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
+
+    assert!(
+        build_private_account_data_set_with_cas(
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice",
+            &key,
+            json!({"ciphertext": "opaque"}),
+            Some("sha256:ABC")
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn generic_builder_does_not_put_private_values_under_body() {
     let key = AccountDataKey::Custom(
         "ck.scheduled_send.v1:ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
@@ -787,4 +828,154 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     assert_eq!(op.payload["owner"], "did:web:alice");
     assert_eq!(op.payload["tombstone"], true);
     assert!(op.payload["updated_at"].is_string());
+}
+
+#[test]
+fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
+    let missing_origin = json!({
+        "target_ref": "ck:realm:01904100-0000-7000-8000-000000000001",
+        "kind": "message",
+        "draft_slot": "compose",
+        "content": {"body": "draft"},
+        "updated_hlc": "01970e589d21-0000-a13f9c2e",
+        "retention_expires_at": "2026-06-07T00:00:00Z"
+    });
+    assert!(draft_sync_value_from_account_data(&missing_origin).is_err());
+
+    let bad_slot = build_message_draft_sync_value(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        json!({"body": "draft"}),
+        "01970e589d21-0000-a13f9c2e",
+        "ck:device:01904100-0000-7000-8000-000000000001",
+        "2026-06-07T00:00:00Z",
+    )
+    .map(|mut value| {
+        value.draft_slot = "main".to_owned();
+        value
+    })
+    .unwrap();
+    assert!(validate_draft_sync_value(&bad_slot).is_err());
+
+    let field_slot = draft_slot_for_strand_field_path(&json!("metadata.title")).unwrap();
+    assert!(field_slot.starts_with("field_"));
+    assert_eq!(field_slot.len(), "field_".len() + 64);
+    assert!(validate_draft_slot(cokret_sdk::DraftKind::StrandField, &field_slot).is_ok());
+}
+
+#[test]
+fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
+    let local = build_message_draft_sync_value(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        json!({"body": "local"}),
+        "01970e589d21-0000-a13f9c2e",
+        "ck:device:01904100-0000-7000-8000-000000000001",
+        "2026-06-07T00:00:00Z",
+    )
+    .unwrap();
+    let newer_remote = build_message_draft_sync_value(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        json!({"body": "remote"}),
+        "01970e589d22-0000-a13f9c2e",
+        "ck:device:01904100-0000-7000-8000-000000000002",
+        "2026-06-07T00:00:00Z",
+    )
+    .unwrap();
+    let merged = merge_draft_values(Some(&local), newer_remote).unwrap();
+    assert_eq!(merged.choice, AccountDataMergeChoice::Remote);
+    assert_eq!(merged.winner.content["body"], "remote");
+    assert_eq!(merged.conflict_copy.unwrap().content["body"], "local");
+
+    let same_hlc_higher_device = build_message_draft_sync_value(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        json!({"body": "device wins"}),
+        "01970e589d21-0000-a13f9c2e",
+        "ck:device:01904100-0000-7000-8000-000000000002",
+        "2026-06-07T00:00:00Z",
+    )
+    .unwrap();
+    let merged = merge_draft_values(Some(&local), same_hlc_higher_device).unwrap();
+    assert_eq!(merged.choice, AccountDataMergeChoice::Remote);
+    assert_eq!(merged.winner.content["body"], "device wins");
+}
+
+#[test]
+fn draft_merge_fails_closed_for_same_hlc_and_device_with_different_content() {
+    let local = build_message_draft_sync_value(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        json!({"body": "a"}),
+        "01970e589d21-0000-a13f9c2e",
+        "ck:device:01904100-0000-7000-8000-000000000001",
+        "2026-06-07T00:00:00Z",
+    )
+    .unwrap();
+    let remote = build_message_draft_sync_value(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        json!({"body": "b"}),
+        "01970e589d21-0000-a13f9c2e",
+        "ck:device:01904100-0000-7000-8000-000000000001",
+        "2026-06-07T00:00:00Z",
+    )
+    .unwrap();
+    assert!(merge_draft_values(Some(&local), remote).is_err());
+}
+
+#[test]
+fn legacy_local_drafts_migrate_to_private_draft_account_data() {
+    let mut drafts = BTreeMap::new();
+    drafts.insert(
+        "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+        " draft text ".to_owned(),
+    );
+    drafts.insert(
+        "ck:realm:01904100-0000-7000-8000-000000000002".to_owned(),
+        "   ".to_owned(),
+    );
+    let migrated = migrate_legacy_local_drafts(
+        b"yougen-account-data-test-key",
+        &drafts,
+        "ck:device:01904100-0000-7000-8000-000000000001",
+        "01970e589d21-0000-a13f9c2e",
+        "2026-06-07T00:00:00Z",
+    )
+    .unwrap();
+    assert_eq!(migrated.len(), 1);
+    let item = &migrated[0];
+    assert!(item.account_data_key.starts_with("ck.draft.v1:message:"));
+    assert!(item.account_data_key.ends_with(":compose"));
+    assert!(!item.account_data_key.contains("ck:realm:"));
+    assert_eq!(item.value.content["body"], "draft text");
+    assert_eq!(
+        item.value.origin_device_id.to_string(),
+        "ck:device:01904100-0000-7000-8000-000000000001"
+    );
+    assert!(item.state_digest.starts_with("sha256:"));
+}
+
+#[test]
+fn legacy_saved_items_migrate_to_independent_private_values() {
+    let migrated = migrate_legacy_saved_items(
+        b"yougen-account-data-test-key",
+        &[LegacySavedItem {
+            collection_title: "Focus".to_owned(),
+            target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
+            note: Some(" read later ".to_owned()),
+        }],
+        "01970e589d21-0000-a13f9c2e",
+    )
+    .unwrap();
+    assert_eq!(migrated.len(), 1);
+    assert!(migrated[0].account_data_key.starts_with("ck.saved.v1:"));
+    assert!(!migrated[0].account_data_key.contains("Focus"));
+    assert!(!migrated[0].account_data_key.contains("ck:message:"));
+    assert_eq!(migrated[0].value.collection_title, "Focus");
+    assert_eq!(migrated[0].value.note.as_deref(), Some("read later"));
+
+    let wire = saved_item_account_data_value(&migrated[0].value).unwrap();
+    assert_eq!(wire["kind"], "saved_item");
+    assert_eq!(
+        saved_item_value_from_account_data(&wire)
+            .unwrap()
+            .collection_title,
+        "Focus"
+    );
 }

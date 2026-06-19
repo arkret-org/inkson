@@ -16,11 +16,13 @@ use crate::canonical::canonical_sha256;
 mod blocklist;
 mod client_ui;
 mod keys;
+mod productivity;
 mod remark;
 
 pub use blocklist::*;
 pub use client_ui::*;
 pub use keys::*;
+pub use productivity::*;
 pub use remark::*;
 
 /// Canonical account_data namespace keys.

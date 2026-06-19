@@ -177,6 +177,62 @@ impl LocalStateStore {
         load_dpop_device_key_from_secure_store(secure_store)
     }
 
+    pub fn migrate_local_only_drafts_to_account_data(
+        &mut self,
+        namespace_key: &[u8],
+        origin_device_id: &str,
+        updated_hlc: &str,
+        retention_expires_at: &str,
+    ) -> anyhow::Result<Vec<crate::account_data::DraftAccountDataItem>> {
+        self.ensure_cached_loaded();
+        let migrated = crate::account_data::migrate_legacy_local_drafts(
+            namespace_key,
+            &self.cached.drafts,
+            origin_device_id,
+            updated_hlc,
+            retention_expires_at,
+        )?;
+        for item in &migrated {
+            self.cached.draft_account_data.insert(
+                item.account_data_key.clone(),
+                serde_json::to_value(&item.value)?,
+            );
+        }
+        if !migrated.is_empty() {
+            let _ = self.flush();
+        }
+        Ok(migrated)
+    }
+
+    pub fn migrate_local_only_saved_items_to_account_data(
+        &mut self,
+        namespace_key: &[u8],
+        items: &[crate::account_data::LegacySavedItem],
+        updated_hlc: &str,
+    ) -> anyhow::Result<Vec<crate::account_data::SavedAccountDataItem>> {
+        self.ensure_cached_loaded();
+        let migrated =
+            crate::account_data::migrate_legacy_saved_items(namespace_key, items, updated_hlc)?;
+        for item in &migrated {
+            self.cached.saved_account_data.insert(
+                item.account_data_key.clone(),
+                crate::account_data::saved_item_account_data_value(&item.value)?,
+            );
+        }
+        if !migrated.is_empty() {
+            let _ = self.flush();
+        }
+        Ok(migrated)
+    }
+
+    pub fn draft_account_data_entries(&self) -> BTreeMap<String, Value> {
+        self.load().draft_account_data
+    }
+
+    pub fn saved_account_data_entries(&self) -> BTreeMap<String, Value> {
+        self.load().saved_account_data
+    }
+
     pub fn save_draft(&mut self, draft_scope_id: impl Into<String>, draft: impl Into<String>) {
         self.ensure_cached_loaded();
         let draft_scope_id = draft_scope_id.into();
