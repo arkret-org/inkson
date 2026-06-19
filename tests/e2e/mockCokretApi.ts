@@ -201,7 +201,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return route.continue();
     }
 
-    if (url.pathname === "/_cokret/describe") {
+    if (url.pathname === "/_cokret/describe" && route.request().method() === "GET") {
       if (url.hostname === "auth.local.host") {
         return json(route, {
           service_did: "did:web:auth.local.host",
@@ -270,40 +270,70 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           "events.submit",
         ],
         supported_operations: [
+          "ck.server.query.describe",
           "ck.self.account.stream.subscribe",
+          "ck.self.account.query.describe",
+          "ck.self.account.query.viewer",
+          "ck.self.account.command.update_profile",
           "ck.self.events.query.scan",
           "ck.self.events.stream.subscribe",
+          "ck.self.events.query.describe",
+          "ck.self.events.command.submit",
+          "ck.self.projection.spaces.query.list",
+          "ck.self.projection.strands.query.list",
           "ck.find.directory.query.search_realms",
           "ck.find.directory.query.resolve_realm",
+          "ck.find.directory.query.describe",
+          "ck.find.directory.query.search_organizations",
+          "ck.find.directory.query.search_actors",
+          "ck.find.directory.query.resolve_handle",
           ...(advertiseListHandlesForSubject
             ? ["ck.find.directory.query.list_handles_for_subject"]
             : []),
           "ck.self.authz.query.check",
-          "ck.realm.create",
-          "ck.space.create",
-          "ck.member.state",
-          "ck.invite.create",
-          "ck.invite.accept",
-          "ck.invite.cancel",
-          "ck.self.events.command.submit",
-          "ck.message.create",
-          "ck.message.revise",
-          "ck.message.redact",
-          "ck.reaction.add",
+          "ck.self.authz.grants.query.effective",
+          "ck.self.authz.invites.query.list",
+          "ck.root.identity.registry.query.describe",
+          "ck.root.identity.query.resolve",
+          "ck.root.identity.recovery_policy.resource.get",
+          "ck.root.identity.recovery_policy.command.publish",
+          "ck.gate.account.command.register",
+          "ck.gate.account.command.pair_device",
+          "ck.gate.account.command.revoke_session",
+          "ck.self.contact.query.list",
+          "ck.self.contact.command.request",
+          "ck.self.contact.command.respond",
+          "ck.self.contact.command.tombstone",
+          "ck.self.invite_receive_policy.resource.get",
+          "ck.self.invite_receive_policy.resource.replace",
+          "ck.self.direct_conversation.command.resolve",
           "ck.self.keys.upload.create",
           "ck.self.keys.query.lookup",
           "ck.self.keys.command.claim",
           "ck.self.keys.backups.query.list",
           "ck.self.keys.backups.resource.replace",
-          "ck.root.identity.recovery_policy.resource.get",
-          "ck.root.identity.recovery_policy.command.publish",
           "ck.self.device_messages.query.list",
           "ck.self.device_messages.command.send",
           "ck.self.device_messages.command.ack",
           "ck.edge.push.command.register_device",
+          "ck.edge.push.command.unregister_device",
+          "ck.self.blob.upload.create",
+          "ck.self.blob.resource.get",
+          "ck.self.media.query.ice_config",
+          "ck.self.moderation.command.report",
           "ck.open.mimi.query.provider_directory",
-          "ck.self.events.query.describe",
-          "ck.self.events.command.submit",
+          "ck.open.mimi.exchange.request_key_material",
+          "ck.open.mimi.query.group_info",
+          "ck.open.mimi.command.update_room",
+          "ck.open.mimi.command.notify",
+          "ck.open.mimi.command.submit_message",
+          "ck.open.mimi.command.request_consent",
+          "ck.open.mimi.command.update_consent",
+          "ck.open.mimi.query.identifiers",
+          "ck.open.mimi.command.report_abuse",
+          "ck.open.mimi.command.proxy_download",
+          "ck.open.invite_locator.query.resolve",
+          "ck.self.ephemeral.command.send",
         ],
         supported_schema_profiles: ["ck.schema.core.v1"],
         supported_reducer_profiles: ["ck.reducer.v1"],
@@ -328,7 +358,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/projection/spaces") {
+    if (url.pathname === "/_cokret/self/projection/spaces" && route.request().method() === "GET") {
       const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
       return json(route, {
         realm_id: realmId,
@@ -337,7 +367,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/projection/strands") {
+    if (url.pathname === "/_cokret/self/projection/strands" && route.request().method() === "GET") {
       const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
       return json(route, {
         realm_id: realmId,
@@ -346,7 +376,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/events/describe") {
+    if (url.pathname === "/_cokret/self/events/describe" && route.request().method() === "GET") {
       // Spec ck.self.events.query.describe -> canonical ServiceDescribe shape
       // (17 required fields; yougen decodes the SDK ServerDescription).
       return json(route, {
@@ -504,11 +534,11 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/open/mimi/provider-directory") {
+    if (url.pathname === "/_cokret/open/mimi/provider-directory" && route.request().method() === "GET") {
       return json(route, mimiProviderDirectory());
     }
 
-    if (url.pathname === "/_cokret/open/mimi/key-material") {
+    if (url.pathname === "/_cokret/open/mimi/key-material" && route.request().method() === "POST") {
       return json(route, {
         ok: true,
         key_packages: [{ key_package_ref: "mimi:key-package:e2e", target: "mimi://remote.example/alice" }],
@@ -525,7 +555,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/notify$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/notify$/) && route.request().method() === "POST") {
       return json(route, {
         ok: true,
         accepted: ["did:web:remote.example"],
@@ -533,7 +563,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/messages$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/messages$/) && route.request().method() === "POST") {
       return json(route, {
         event_ref: "ck:event:01964137-0000-7000-8000-00000000d0aa",
         delivery: {
@@ -550,7 +580,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/group-info$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/group-info$/) && route.request().method() === "GET") {
       return json(route, {
         group_info: { epoch: 7, mls_group_id: "mls-group-01", policy_root: "sha256:e2e-policy-root" },
         room_binding_ref: "ck:event:01964137-0000-7000-8000-00000000d0ab",
@@ -558,7 +588,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/open/mimi/consent/request") {
+    if (url.pathname === "/_cokret/open/mimi/consent/request" && route.request().method() === "POST") {
       return json(route, {
         ok: true,
         consent_id: "ck:mimi-consent:e2e",
@@ -567,7 +597,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/open/mimi/consent/update") {
+    if (url.pathname === "/_cokret/open/mimi/consent/update" && route.request().method() === "POST") {
       return json(route, {
         ok: true,
         consent_id: "ck:mimi-consent:e2e",
@@ -576,7 +606,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/open/mimi/identifiers/query") {
+    if (url.pathname === "/_cokret/open/mimi/identifiers/query" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       return json(route, {
         matches: [
@@ -592,7 +622,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/open/mimi/report-abuse") {
+    if (url.pathname === "/_cokret/open/mimi/report-abuse" && route.request().method() === "POST") {
       return json(route, {
         ok: true,
         report_id: "ck:report:mimi-e2e",
@@ -601,7 +631,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/open/mimi/proxy-download") {
+    if (url.pathname === "/_cokret/open/mimi/proxy-download" && route.request().method() === "POST") {
       return json(route, {
         download_ref: `https://mimi.example.com/proxy/${DEMO_BLOB_REF}`,
         headers: { "content-type": "application/octet-stream" },
@@ -609,7 +639,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/gate/account/register") {
+    if (url.pathname === "/_cokret/gate/account/register" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       return json(route, {
         principal_id: body.principal_id,
@@ -637,7 +667,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       }, 201);
     }
 
-    if (url.pathname === "/_cokret/self/account/profile") {
+    if (url.pathname === "/_cokret/self/account/profile" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       const patch = body.patch ?? {};
       const displayName = typeof patch.display_name === "string" ? patch.display_name : "yougen";
@@ -660,11 +690,11 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/gate/account/session-grants/revoke") {
+    if (url.pathname === "/_cokret/gate/account/session-grants/revoke" && route.request().method() === "POST") {
       return json(route, { revoked_count: 1, revoked_grant_ids: [] });
     }
 
-    if (url.pathname === "/_cokret/self/account/subscribe") {
+    if (url.pathname === "/_cokret/self/account/subscribe" && route.request().method() === "GET") {
       const demoTimelineEvents = timelineEvents.filter((event) => eventRealmId(event) === DEMO_REALM);
       const notificationEvents = [
         {
@@ -763,7 +793,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/find/directory/search-realms") {
+    if (url.pathname === "/_cokret/find/directory/search-realms" && route.request().method() === "POST") {
       return json(route, {
         realms: [realmPreview()],
         next_cursor: null,
@@ -771,7 +801,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/find/directory/search-organizations") {
+    if (url.pathname === "/_cokret/find/directory/search-organizations" && route.request().method() === "POST") {
       return json(route, {
         organizations: [
           {
@@ -795,7 +825,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/find/directory/search-actors") {
+    if (url.pathname === "/_cokret/find/directory/search-actors" && route.request().method() === "POST") {
       return json(route, {
         actors: [
           {
@@ -813,7 +843,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/open/invite-locators/resolve") {
+    if (url.pathname === "/_cokret/open/invite-locators/resolve" && route.request().method() === "POST") {
       expect(url.search).toBe("");
       const body = await route.request().postDataJSON();
       expect(body.locator_token).toBeTruthy();
@@ -840,7 +870,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/find/directory/resolve-handle") {
+    if (url.pathname === "/_cokret/find/directory/resolve-handle" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       const audience =
         body.audience ?? body.realm_id ?? body.requester ?? "did:web:server.local";
@@ -870,7 +900,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/find/directory/list-handles-for-subject") {
+    if (url.pathname === "/_cokret/find/directory/list-handles-for-subject" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       const subject = body.subject ?? "did:web:alice.example";
       return json(route, {
@@ -896,7 +926,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/find/directory/resolve-realm") {
+    if (url.pathname === "/_cokret/find/directory/resolve-realm" && route.request().method() === "POST") {
       return json(route, {
         realm_preview: realmPreview(),
         stripped_state: [],
@@ -905,7 +935,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/find/directory/describe") {
+    if (url.pathname === "/_cokret/find/directory/describe" && route.request().method() === "GET") {
       return json(route, {
         service_did: "did:web:server.local",
         resource_types: ["space", "organization", "actor"],
@@ -922,7 +952,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       const events = requestedRealms.length
         ? timelineEvents.filter((event) => requestedRealms.includes(eventRealmId(event)))
         : timelineEvents;
-      return json(route, { events, next_cursor: null, frontier: {} });
+      return json(route, { events, next_cursor: null, has_more: false });
     }
 
     // NB: no `/_cokret/self/snapshot/head` route. The mock's describe does
@@ -931,7 +961,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     // full signed `ck.schema.snapshot.v1` manifest (self-id field `id`); the
     // removed `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
     // reintroduced here.
-    if (url.pathname === "/_cokret/root/identity/describe") {
+    if (url.pathname === "/_cokret/root/identity/describe" && route.request().method() === "GET") {
       return json(route, {
         service_did: "did:web:server.local",
         registry_mode: "development_local",
@@ -941,7 +971,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/root/identity/resolve") {
+    if (url.pathname === "/_cokret/root/identity/resolve" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       return json(route, {
         did_document: { id: body.did },
@@ -952,7 +982,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/account/describe") {
+    if (url.pathname === "/_cokret/self/account/describe" && route.request().method() === "GET") {
       return json(route, {
         service_did: "did:web:server.local",
         supported_sync_profiles: ["initial", "incremental"],
@@ -961,7 +991,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/authz/check") {
+    if (url.pathname === "/_cokret/self/authz/check" && route.request().method() === "POST") {
       return json(route, {
         allowed: true,
         reason_code: "frontier_current",
@@ -970,7 +1000,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/authz/effective-grants") {
+    if (url.pathname === "/_cokret/self/authz/effective-grants" && route.request().method() === "GET") {
       return json(route, {
         grants: [
           {
@@ -994,7 +1024,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/authz/invites") {
+    if (url.pathname === "/_cokret/self/authz/invites" && route.request().method() === "GET") {
       return json(route, { invites: [], next_cursor: null });
     }
 
@@ -1090,13 +1120,13 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     // U4 — invite_receive_policy ("谁可以邀请我"). Spec invite-addressing.md
     // §5: GET/SET carry the bare `cokret_sdk::InviteReceivePolicy` (required
     // `schema` + `subject_id`, typed enums, trust lists) — no `ok` wrapper.
-    if (url.pathname === "/_cokret/self/invite-receive-policy") {
-      if (route.request().method() === "PUT") {
-        // The real soland handler echoes the stored policy back verbatim;
-        // mirror that so the client's `trusted_*` lists round-trip intact.
-        const body = await route.request().postDataJSON();
-        return json(route, body);
-      }
+    if (url.pathname === "/_cokret/self/invite-receive-policy" && route.request().method() === "PUT") {
+      // The real soland handler echoes the stored policy back verbatim;
+      // mirror that so the client's `trusted_*` lists round-trip intact.
+      const body = await route.request().postDataJSON();
+      return json(route, body);
+    }
+    if (url.pathname === "/_cokret/self/invite-receive-policy" && route.request().method() === "GET") {
       return json(route, {
         schema: "ck.schema.invite_receive_policy.v1",
         subject_id: "did:web:alice.example",
@@ -1108,7 +1138,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/direct-conversations/resolve") {
+    if (url.pathname === "/_cokret/self/direct-conversations/resolve" && route.request().method() === "POST") {
       return json(route, {
         state: "found",
         realm_id: DIRECT_BOB_REALM,
@@ -1118,15 +1148,15 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/keys/upload") {
+    if (url.pathname === "/_cokret/self/keys/upload" && route.request().method() === "POST") {
       return json(route, { one_time_key_counts: { signed_curve25519: 1 }, fallback_keys: {} });
     }
 
-    if (url.pathname === "/_cokret/self/keys/query") {
+    if (url.pathname === "/_cokret/self/keys/query" && route.request().method() === "POST") {
       return json(route, { device_keys: {}, failures: {} });
     }
 
-    if (url.pathname === "/_cokret/self/keys/claim") {
+    if (url.pathname === "/_cokret/self/keys/claim" && route.request().method() === "POST") {
       return json(route, { one_time_keys: {}, failures: {} });
     }
 
@@ -1181,7 +1211,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, { ok: true, pruned_count: 0 });
     }
 
-    if (url.pathname === "/_cokret/self/ephemeral") {
+    if (url.pathname === "/_cokret/self/ephemeral" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       if (!["ck.receipt.read", "ck.typing", "ck.presence", "ck.call.signal"].includes(body.kind)) {
         return json(route, {
@@ -1197,15 +1227,15 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/edge/push/register-device") {
+    if (url.pathname === "/_cokret/edge/push/register-device" && route.request().method() === "POST") {
       return json(route, { ok: true, registration_id: "ck:push:e2e", expires_at: null });
     }
 
-    if (url.pathname === "/_cokret/edge/push/unregister-device") {
+    if (url.pathname === "/_cokret/edge/push/unregister-device" && route.request().method() === "POST") {
       return json(route, { ok: true });
     }
 
-    if (url.pathname === "/_cokret/self/blob/upload") {
+    if (url.pathname === "/_cokret/self/blob/upload" && route.request().method() === "POST") {
       return json(route, {
         blob_ref: DEMO_BLOB_REF,
         size_bytes: 22,
@@ -1215,7 +1245,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/rtc/ice-config") {
+    if (url.pathname === "/_cokret/self/rtc/ice-config" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       return json(route, {
         realm_id: body.realm_id ?? DEMO_REALM,
@@ -1241,11 +1271,11 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    if (url.pathname === "/_cokret/self/blob/get") {
+    if (url.pathname === "/_cokret/self/blob/get" && route.request().method() === "GET") {
       return route.fulfill({ status: 200, contentType: "application/octet-stream", body: "yougen encrypted bytes" });
     }
 
-    if (url.pathname === "/_cokret/self/moderation/report") {
+    if (url.pathname === "/_cokret/self/moderation/report" && route.request().method() === "POST") {
       return json(route, { report_id: "ck:report:e2e", status: "queued", routed_to: ["did:web:server.local#moderation"] });
     }
 
@@ -1295,20 +1325,13 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
             : "sha256:e2e",
         });
       }
-      if (route.request().method() === "GET") {
-        return json(route, keyBackups.get(keyBackupMatch[1]) ?? {
-          backup_id: keyBackupMatch[1],
-          status: "stored",
-          ciphertext: "BASE64URL_OPAQUE_BLOB",
-        });
-      }
     }
-    if (url.pathname === "/_cokret/self/keys/backups") {
+    if (url.pathname === "/_cokret/self/keys/backups" && route.request().method() === "GET") {
       const backupClass = url.searchParams.get("backup_class");
       const backups = Array.from(keyBackups.values()).filter((backup) =>
         backupClass ? backup.backup_class === backupClass : true,
       );
-      return json(route, { backups });
+      return json(route, { backups, has_more: false });
     }
 
     const contractResponse = mockCokretContract({

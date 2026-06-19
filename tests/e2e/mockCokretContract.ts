@@ -26,11 +26,12 @@ export function mockCokretContract(req) {
       ],
       supported_features: ["sync.client_sync", "directory.search_realms", "events.submit"],
       supported_operations: [
+        "ck.server.query.describe",
         "ck.self.events.command.submit",
         "ck.self.events.query.scan",
         "ck.find.directory.query.search_realms",
         "ck.self.keys.backups.query.list",
-        "ck.ephemeral.broadcast",
+        "ck.self.ephemeral.command.send",
       ],
       limits: {},
     });
@@ -52,7 +53,7 @@ export function mockCokretContract(req) {
   }
 
   if (method === "GET" && path === "/_cokret/self/events") {
-    return json({ events: [], next_cursor: null });
+    return json({ events: [], next_cursor: null, has_more: false });
   }
 
   if (method === "GET" && path === "/_cokret/self/account/viewer") {
@@ -99,6 +100,7 @@ export function mockCokretContract(req) {
       backups: backupClass
         ? backups.filter((backup) => backup.backup_class === backupClass)
         : backups,
+      has_more: false,
     });
   }
 
@@ -116,6 +118,9 @@ export function mockCokretContract(req) {
       authorized_event_ref: "ck:event:01964137-0000-7000-8000-00000000d001",
       device_grant: {
         status: "active",
+        authorized_by_device_id: req.account?.device_id,
+        authorized_at: "2026-04-28T12:00:00Z",
+        display_name: body.display_name ?? null,
       },
       key_backup_hint: {},
     });
