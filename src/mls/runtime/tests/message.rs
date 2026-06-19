@@ -470,3 +470,52 @@ fn malformed_welcome_is_counted_not_swallowed() {
     assert_eq!(outcome.failed, 1);
     assert!(outcome.first_error.is_some());
 }
+
+#[test]
+fn durable_welcome_payload_without_claim_envelope_fails_closed() {
+    let mut state = temp_state_store("welcome-claim-envelope");
+    let store = MemorySecureKeyStore::new();
+    let messages = json!({
+        "messages": [
+            {
+                "kind": "ck.mls.welcome",
+                "content": {
+                    "mls_group_id": "mls-group-a",
+                    "epoch": 1,
+                    "recipient_principal_id": "did:web:alice.example",
+                    "recipient_device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+                    "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                    "keypackage_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "claim_id": "claim-1",
+                    "claim_ref": {
+                        "claim_id": "claim-1",
+                        "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                        "keypackage_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "capabilities_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "ssk_generation": 1
+                    },
+                    "ciphertext": "AQID",
+                    "expires_at": "2100-01-01T00:00:00Z"
+                }
+            }
+        ]
+    });
+    let outcome = apply_welcome_messages_with_device_snapshot(
+        &mut state,
+        &store,
+        "ck:realm:welcome-claim-envelope",
+        "did:web:alice.example",
+        "ck:device:01904100-0000-7000-8000-000000000001",
+        &messages,
+    )
+    .unwrap();
+    assert_eq!(outcome.applied, 0);
+    assert_eq!(outcome.failed, 1);
+    assert!(
+        outcome
+            .first_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains(cokret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
+    );
+}

@@ -137,6 +137,18 @@ pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Val
     welcomes
 }
 
+fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<&'static str> {
+    let looks_like_durable_payload = value.get("claim_ref").is_some()
+        || value.get("claim_id").is_some()
+        || value.get("keypackage_digest").is_some()
+        || value.get("keypackage_ref").is_some();
+    if !looks_like_durable_payload {
+        return None;
+    }
+    let _ = serde_json::from_value::<cokret_sdk::MlsWelcomePayload>(value.clone());
+    Some(cokret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
+}
+
 pub fn apply_welcome_messages_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -164,6 +176,10 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // success without failing the whole boot.
     let mut outcome = WelcomeApplyOutcome::default();
     for welcome_value in welcome_entries {
+        if let Some(reason) = durable_welcome_payload_reject_reason(&welcome_value) {
+            outcome.record_failure(format!("welcome claim envelope: {reason}"));
+            continue;
+        }
         let welcome = match serde_json::from_value::<cokret_sdk::MlsWelcomeEnvelope>(welcome_value)
         {
             Ok(welcome) => welcome,
