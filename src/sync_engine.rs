@@ -719,9 +719,9 @@ pub fn apply_response(
         // data — each setter used to flush the *entire* `ClientLocalState` to
         // disk/localStorage. Wrap the whole apply in one batch so it persists
         // exactly once.
+        let cursor_can_advance =
+            to_device_batch_allows_cursor_advance(&response.to_device, response.to_device_limited);
         store.batch(|store| {
-            store.save_sync_cursor(response.cursor.clone());
-
             if is_full_sync {
                 // Server-authoritative for top-level Realm membership:
                 // drop projections the server didn't include, except local
@@ -762,6 +762,9 @@ pub fn apply_response(
             apply_notification_projection(store, response, invite_notifications);
             store.save_presence_projection(response.presence.clone());
             store.ingest_to_device_messages(&response.to_device);
+            if cursor_can_advance {
+                store.save_sync_cursor(response.cursor.clone());
+            }
         }); // store.batch — single coalesced flush happens here
     }
 
@@ -826,7 +829,15 @@ pub fn apply_response(
     timeline.set(next_timeline);
 
     device_queue.set(state_store.read().load().to_device_inbox.len());
-    sync_cursor.set(response.cursor.clone());
+    if to_device_batch_allows_cursor_advance(&response.to_device, response.to_device_limited) {
+        sync_cursor.set(response.cursor.clone());
+    } else {
+        tracing::debug!(
+            cursor = %response.cursor,
+            to_device_count = response.to_device.len(),
+            "sync engine: deferred cursor advancement until to-device key material is durable"
+        );
+    }
 }
 
 /// R3.1 MID-2 — walk a Realm projection's `members[]` roster looking
@@ -841,7 +852,8 @@ async fn process_to_device_delivery(
     response: &ClientSyncOutcome,
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<()> {
-    let mut ack_safe_prefix = to_device_batch_all_ack_safe(&response.to_device);
+    let mut ack_safe_prefix = to_device_batch_all_ack_safe(&response.to_device)
+        && ctx.state_store.read().persist_error().is_none();
     if ack_safe_prefix
         && !response.to_device.is_empty()
         && let Some(ack_token) = response.to_device_ack_token.as_deref()
@@ -866,11 +878,12 @@ async fn process_to_device_delivery(
             .receive_device_messages_page(Some(&cursor), Some(TO_DEVICE_PAGE_LIMIT))
             .await?;
         let messages = device_messages_get_values(&page)?;
-        {
+        let persisted = {
             let mut state_store = ctx.state_store;
             state_store.write().ingest_to_device_messages(&messages);
-        }
-        if !to_device_batch_all_ack_safe(&messages) {
+            state_store.read().persist_error().is_none()
+        };
+        if !persisted || !to_device_batch_all_ack_safe(&messages) {
             ack_safe_prefix = false;
         }
         if ack_safe_prefix
@@ -901,12 +914,18 @@ fn device_messages_get_values(page: &DeviceMessagesGetOutcome) -> anyhow::Result
 
 fn to_device_batch_all_ack_safe(messages: &[Value]) -> bool {
     messages.iter().all(|message| {
-        message
+        let kind = message
             .get("kind")
             .or_else(|| message.get("type"))
             .and_then(Value::as_str)
-            .is_some_and(|kind| kind.starts_with("ck.key.verification."))
+            .unwrap_or_default();
+        kind.starts_with("ck.key.verification.")
+            || kind == crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST
     })
+}
+
+fn to_device_batch_allows_cursor_advance(messages: &[Value], limited: bool) -> bool {
+    !limited && to_device_batch_all_ack_safe(messages)
 }
 
 fn ingest_member_identity_events_from_projection(
@@ -1234,6 +1253,43 @@ mod tests {
                 .as_nanos(),
         ));
         LocalStateStore::with_path(path)
+    }
+
+    fn to_device_message(kind: &str) -> Value {
+        json!({
+            "kind": kind,
+            "content": {
+                "transaction_id": "txn-1",
+                "request_id": "request-1"
+            }
+        })
+    }
+
+    #[test]
+    fn to_device_ack_safe_batches_exclude_key_material() {
+        assert!(to_device_batch_all_ack_safe(&[]));
+        assert!(to_device_batch_all_ack_safe(&[
+            to_device_message("ck.key.verification.request"),
+            to_device_message(crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST),
+        ]));
+        assert!(to_device_batch_allows_cursor_advance(
+            &[to_device_message("ck.key.verification.request")],
+            false,
+        ));
+        assert!(!to_device_batch_allows_cursor_advance(
+            &[to_device_message("ck.key.verification.request")],
+            true,
+        ));
+
+        assert!(!to_device_batch_all_ack_safe(&[to_device_message(
+            "ck.mls.welcome"
+        )]));
+        assert!(!to_device_batch_all_ack_safe(&[to_device_message(
+            crate::mls::secret_share::SECRET_SHARE_KIND_SEND,
+        )]));
+        assert!(!to_device_batch_all_ack_safe(&[to_device_message(
+            "ck.future.secret.material"
+        )]));
     }
 
     #[test]

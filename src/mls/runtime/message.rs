@@ -116,11 +116,19 @@ pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Val
     // (`DeviceMessagesGetOutcome` / `DeviceMessageEnvelope`); the discriminator
     // is `kind` and the payload lives under `content`.
     let mut welcomes = Vec::new();
-    let Some(messages) = value.get("messages").and_then(|v| v.as_array()) else {
+    let Some(messages) = value
+        .get("messages")
+        .or_else(|| value.get("events"))
+        .and_then(|v| v.as_array())
+    else {
         return welcomes;
     };
     for entry in messages {
-        if entry.get("kind").and_then(|t| t.as_str()) == Some("ck.mls.welcome")
+        if entry
+            .get("kind")
+            .or_else(|| entry.get("type"))
+            .and_then(|t| t.as_str())
+            == Some("ck.mls.welcome")
             && let Some(content) = entry.get("content")
         {
             welcomes.push(content.clone());

@@ -392,6 +392,19 @@ pub(crate) struct MlsWelcomeBootstrapOutcome {
     pub(crate) backup_id: Option<String>,
 }
 
+fn should_ack_mls_welcome_batch(
+    can_ack_welcome_batch: bool,
+    welcome_outcome: &crate::mls::runtime::WelcomeApplyOutcome,
+    backup_uploaded: bool,
+    persist_error: Option<&str>,
+) -> bool {
+    can_ack_welcome_batch
+        && welcome_outcome.failed == 0
+        && (welcome_outcome.applied > 0 || welcome_outcome.skipped_stale > 0)
+        && backup_uploaded
+        && persist_error.is_none()
+}
+
 pub(crate) async fn bootstrap_mls_welcome_for_realm(
     base_url: String,
     session_token: String,
@@ -452,50 +465,41 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             "some MLS welcome(s) failed to apply"
         );
     }
-    if can_ack_welcome_batch
-        && welcome_outcome.failed == 0
-        && (welcome_outcome.applied > 0 || welcome_outcome.skipped_stale > 0)
-        && let Some(ack_token) = ack_token
-    {
-        if let Err(error) = crate::views::helpers::with_authed_api(
-            &base_url,
-            session_token.clone(),
-            |api| async move { api.ack_device_messages(&ack_token).await },
-        )
-        .await
-        {
-            tracing::debug!(?error, "failed to ack applied MLS welcome device messages");
-        }
-    }
 
     let applied = welcome_outcome.applied;
-    if applied == 0 {
+    if applied == 0 && welcome_outcome.skipped_stale == 0 {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
+    if let Some(error) = state_store.read().persist_error() {
+        return Err(format!(
+            "local state was not durably persisted after MLS Welcome: {error}"
+        ));
+    }
 
-    // Applying a Welcome creates/imports the local account MLS secret before
-    // the user necessarily sends an encrypted message. Prompt for the recovery
-    // passphrase now if the account secret still lacks a server backup.
-    crate::components::maybe_flag_mls_backup_after_encrypted_write(
-        base_url.clone(),
-        session_token.clone(),
-        actor_id.clone(),
-        needs_mls_backup,
-    )
-    .await;
+    if applied > 0 {
+        // Applying a Welcome creates/imports the local account MLS secret before
+        // the user necessarily sends an encrypted message. Prompt for the recovery
+        // passphrase now if the account secret still lacks a server backup.
+        crate::components::maybe_flag_mls_backup_after_encrypted_write(
+            base_url.clone(),
+            session_token.clone(),
+            actor_id.clone(),
+            needs_mls_backup,
+        )
+        .await;
+    }
 
     let Some(snapshot) = state_store.read().mls_snapshot_for(&realm_id) else {
-        return Ok(MlsWelcomeBootstrapOutcome {
-            applied,
-            backup_id: None,
-        });
+        return Err("MLS Welcome batch had no durable local MLS snapshot".to_owned());
     };
     let base_for_backup = base_url.clone();
     let actor_for_backup = actor_id.clone();
     let device_for_backup = device_id.clone();
     let realm_for_backup = realm_id.clone();
-    let backup_id =
-        crate::views::helpers::with_authed_api(&base_url, session_token, |api| async move {
+    let backup_id = crate::views::helpers::with_authed_api(
+        &base_url,
+        session_token.clone(),
+        |api| async move {
             // §7.10: applying a Welcome lands a fresh epoch — chain the upload
             // onto the Realm's existing mls_history series (successor
             // envelope) instead of minting a new genesis series per Welcome.
@@ -508,12 +512,78 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 &snapshot,
             )
             .await
-        })
+        },
+    )
+    .await
+    .map_err(|error| error.display())?;
+
+    let persist_error = state_store.read().persist_error();
+    if should_ack_mls_welcome_batch(
+        can_ack_welcome_batch,
+        &welcome_outcome,
+        true,
+        persist_error.as_deref(),
+    ) && let Some(ack_token) = ack_token
+    {
+        if let Err(error) = crate::views::helpers::with_authed_api(
+            &base_url,
+            session_token.clone(),
+            |api| async move { api.ack_device_messages(&ack_token).await },
+        )
         .await
-        .map_err(|error| error.display())?;
+        {
+            tracing::debug!(?error, "failed to ack durable MLS welcome device messages");
+        }
+    }
 
     Ok(MlsWelcomeBootstrapOutcome {
         applied,
         backup_id: Some(backup_id),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn welcome_outcome(
+        applied: usize,
+        failed: usize,
+        skipped_stale: usize,
+    ) -> crate::mls::runtime::WelcomeApplyOutcome {
+        crate::mls::runtime::WelcomeApplyOutcome {
+            applied,
+            failed,
+            skipped_stale,
+            first_error: None,
+        }
+    }
+
+    #[test]
+    fn mls_welcome_ack_requires_backup_upload_and_clean_persist() {
+        let outcome = welcome_outcome(1, 0, 0);
+
+        assert!(!should_ack_mls_welcome_batch(true, &outcome, false, None));
+        assert!(should_ack_mls_welcome_batch(true, &outcome, true, None));
+        assert!(!should_ack_mls_welcome_batch(
+            true,
+            &outcome,
+            true,
+            Some("state write failed"),
+        ));
+        assert!(!should_ack_mls_welcome_batch(false, &outcome, true, None));
+    }
+
+    #[test]
+    fn mls_welcome_ack_rejects_failed_or_unbacked_stale_replay() {
+        let failed = welcome_outcome(1, 1, 0);
+        assert!(!should_ack_mls_welcome_batch(true, &failed, true, None));
+
+        let stale = welcome_outcome(0, 0, 1);
+        assert!(!should_ack_mls_welcome_batch(true, &stale, false, None));
+        assert!(should_ack_mls_welcome_batch(true, &stale, true, None));
+
+        let empty = welcome_outcome(0, 0, 0);
+        assert!(!should_ack_mls_welcome_batch(true, &empty, true, None));
+    }
 }
