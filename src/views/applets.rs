@@ -26,15 +26,20 @@
 //! server-side soland validation), per-session cancellation. Those
 //! follow once the bridge layer is implemented in a companion crate.
 
+use std::collections::BTreeSet;
+
 use cokret_sdk::models::{
-    AppletApprovalRequest, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
-    AppletRevokeMode, AppletRevokeRequestBody, EffectiveScope,
+    AppletActorPolicy, AppletApprovalRequest, AppletBotMembership, AppletGhostActorMode,
+    AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletRevokeMode,
+    AppletRevokeRequestBody, EffectiveScope, ScopeGrant,
 };
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
@@ -79,21 +84,34 @@ pub fn applet_effective_scope(
 /// A conservative default approval request: no ghost / delegated-native actors,
 /// no e2ee join, no widget — only the explicitly requested non-actor scopes.
 /// The admin escalates these in the wizard's approval step before commit.
-fn default_approval_request() -> AppletApprovalRequest {
+fn approval_request(
+    approve_actions: Vec<String>,
+    allow_ghost_actors: bool,
+) -> AppletApprovalRequest {
     AppletApprovalRequest {
-        approve_actions: Vec::new(),
-        allow_ghost_actors: false,
+        approve_actions,
+        allow_ghost_actors,
         allow_delegated_native_actors: false,
         allow_e2ee_join: false,
         allow_widget: false,
     }
 }
 
+pub fn parse_applet_approval_actions(raw: &str) -> Vec<String> {
+    raw.split(|ch: char| ch.is_ascii_whitespace() || ch == ',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 /// Pull `plan_digest` + `approved_scopes` out of the canonical InstallPlan the
 /// preview returns. `applet-install-plan.schema.json` makes both required, so a
 /// missing `plan_digest` is a hard error the caller surfaces rather than
 /// committing a digest-less (always-rejected) install.
-pub fn parse_install_plan(plan: &Value) -> Result<(String, Vec<Value>), String> {
+pub fn parse_install_plan(plan: &Value) -> Result<(String, Vec<ScopeGrant>), String> {
     let plan_digest = plan
         .get("plan_digest")
         .and_then(Value::as_str)
@@ -104,6 +122,8 @@ pub fn parse_install_plan(plan: &Value) -> Result<(String, Vec<Value>), String> 
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let approved_scopes = serde_json::from_value::<Vec<ScopeGrant>>(Value::Array(approved_scopes))
+        .map_err(|err| format!("preview approved_scopes invalid: {err}"))?;
     Ok((plan_digest, approved_scopes))
 }
 
@@ -173,6 +193,9 @@ pub fn AppletsPanel(
     // the resolved approved-scope count surfaced after preview.
     let mut install_plan_digest = use_signal(String::new);
     let mut install_approved_scopes = use_signal(|| 0usize);
+    let mut install_approved_scope_values = use_signal(Vec::<ScopeGrant>::new);
+    let mut install_approve_actions = use_signal(String::new);
+    let mut install_allow_ghost_actors = use_signal(|| false);
     // Optional Circle scope for the install. Blank = Realm-wide; a `ck:circle:…`
     // id scopes the install to that Circle only (spec §4b effective_scope).
     let mut install_circle_id = use_signal(String::new);
@@ -512,6 +535,9 @@ pub fn AppletsPanel(
                             oninput: move |event: FormEvent| {
                                 install_manifest.set(event.value());
                                 install_verified.set(false);
+                                install_plan_digest.set(String::new());
+                                install_approved_scope_values.set(Vec::new());
+                                install_approved_scopes.set(0);
                             },
                             style: "width: 100%; min-height: 60px;",
                         }
@@ -526,8 +552,38 @@ pub fn AppletsPanel(
                             oninput: move |event: FormEvent| {
                                 install_circle_id.set(event.value());
                                 install_verified.set(false);
+                                install_plan_digest.set(String::new());
+                                install_approved_scope_values.set(Vec::new());
+                                install_approved_scopes.set(0);
                             },
                             style: "width: 100%; min-height: 32px;",
+                        }
+                        Textarea {
+                            "data-testid": "applet-install-approve-actions-input",
+                            placeholder: "approved actions, comma or newline separated",
+                            value: "{install_approve_actions}",
+                            oninput: move |event: FormEvent| {
+                                install_approve_actions.set(event.value());
+                                install_verified.set(false);
+                                install_plan_digest.set(String::new());
+                                install_approved_scope_values.set(Vec::new());
+                                install_approved_scopes.set(0);
+                            },
+                            style: "width: 100%; min-height: 48px;",
+                        }
+                        label { class: "metric", "data-testid": "applet-install-ghost-row",
+                            Checkbox {
+                                "data-testid": "applet-install-allow-ghost",
+                                checked: if install_allow_ghost_actors() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: move |state: CheckboxState| {
+                                    install_allow_ghost_actors.set(bool::from(state));
+                                    install_verified.set(false);
+                                    install_plan_digest.set(String::new());
+                                    install_approved_scope_values.set(Vec::new());
+                                    install_approved_scopes.set(0);
+                                },
+                            }
+                            span { "allow Applet-managed Ghost Actors" }
                         }
                         // Step 1 — preview: POST the manifest-derived package to
                         // `applet_install_preview`, capturing the canonical
@@ -553,6 +609,8 @@ pub fn AppletsPanel(
                                         let realm = realm.clone();
                                         let api_token = token();
                                         let circle = install_circle_id();
+                                        let approve_actions = install_approve_actions();
+                                        let allow_ghost_actors = install_allow_ghost_actors();
                                         install_status.set("previewing install plan…".to_owned());
                                         spawn(async move {
                                             let effective_scope = match applet_effective_scope(
@@ -568,7 +626,10 @@ pub fn AppletsPanel(
                                             let body = AppletInstallPreviewRequestBody {
                                                 applet_package: package,
                                                 effective_scope,
-                                                approval_request: default_approval_request(),
+                                                approval_request: approval_request(
+                                                    parse_applet_approval_actions(&approve_actions),
+                                                    allow_ghost_actors,
+                                                ),
                                             };
                                             let result = with_authed_api(&base, api_token, |api| async move {
                                                 api.applet_install_preview(&body).await
@@ -577,12 +638,14 @@ pub fn AppletsPanel(
                                             match result {
                                                 Ok(plan) => match parse_install_plan(&plan) {
                                                     Ok((digest, scopes)) => {
+                                                        let scope_count = scopes.len();
                                                         install_plan_digest.set(digest.clone());
-                                                        install_approved_scopes.set(scopes.len());
+                                                        install_approved_scopes.set(scope_count);
+                                                        install_approved_scope_values.set(scopes);
                                                         install_verified.set(true);
                                                         install_status.set(format!(
                                                             "plan ready ({} scope(s)); digest {}",
-                                                            install_approved_scopes(),
+                                                            scope_count,
                                                             short_protocol_id(&digest),
                                                         ));
                                                     }
@@ -628,6 +691,8 @@ pub fn AppletsPanel(
                                         let realm = realm.clone();
                                         let api_token = token();
                                         let circle = install_circle_id();
+                                        let approved_scopes = install_approved_scope_values();
+                                        let allow_ghost_actors = install_allow_ghost_actors();
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
                                             let digest_typed = match cokret_sdk::Hash::new(digest.clone()) {
@@ -651,8 +716,15 @@ pub fn AppletsPanel(
                                                 plan_digest: digest_typed,
                                                 applet_package: package,
                                                 effective_scope,
-                                                approved_scopes: Vec::new(),
-                                                actor_policy: None,
+                                                approved_scopes,
+                                                actor_policy: Some(AppletActorPolicy {
+                                                    bot_membership: Some(AppletBotMembership::Join),
+                                                    ghost_actor_mode: Some(if allow_ghost_actors {
+                                                        AppletGhostActorMode::PolicyDeclared
+                                                    } else {
+                                                        AppletGhostActorMode::Disallowed
+                                                    }),
+                                                }),
                                                 e2ee_policy: None,
                                                 widget_policy: None,
                                             };
@@ -689,8 +761,12 @@ pub fn AppletsPanel(
                                                         install_open.set(false);
                                                         install_manifest.set(String::new());
                                                         install_circle_id.set(String::new());
+                                                        install_approve_actions.set(String::new());
+                                                        install_allow_ghost_actors.set(false);
                                                         install_verified.set(false);
                                                         install_plan_digest.set(String::new());
+                                                        install_approved_scope_values.set(Vec::new());
+                                                        install_approved_scopes.set(0);
                                                     }
                                                 }
                                                 Err(err) => install_status.set(format!(
@@ -926,7 +1002,10 @@ mod tests {
 
     // ── P3 install wizard helpers ───────────────────────────────
 
-    use super::{applet_effective_scope, applet_package_from_manifest, parse_install_plan};
+    use super::{
+        applet_effective_scope, applet_package_from_manifest, parse_applet_approval_actions,
+        parse_install_plan,
+    };
 
     #[test]
     fn applet_package_maps_json_and_url_kinds() {
@@ -977,16 +1056,34 @@ mod tests {
     fn parse_install_plan_requires_plan_digest() {
         let plan = serde_json::json!({
             "plan_digest": "sha256:deadbeef",
-            "approved_scopes": [{"scope": "read"}, {"scope": "write"}],
+            "approved_scopes": [{
+                "actions": ["ck.message.create", "ck.applet.ghost.provision"],
+                "realm_ids": ["ck:realm:01904100-0000-7000-8000-000000000010"],
+                "constraints": []
+            }],
         });
         let (digest, scopes) = parse_install_plan(&plan).unwrap();
         assert_eq!(digest, "sha256:deadbeef");
-        assert_eq!(scopes.len(), 2);
+        assert_eq!(scopes.len(), 1);
+        assert_eq!(scopes[0].actions[0], "ck.message.create");
 
         // Missing plan_digest is a hard error (never commit a digest-less
         // install — soland would reject it with applet_install_plan_mismatch).
         let bad = serde_json::json!({ "approved_scopes": [] });
         assert!(parse_install_plan(&bad).is_err());
+    }
+
+    #[test]
+    fn parse_applet_approval_actions_splits_and_dedupes() {
+        assert_eq!(
+            parse_applet_approval_actions(
+                "ck.message.create, ck.applet.ghost.provision\nck.message.create"
+            ),
+            vec![
+                "ck.applet.ghost.provision".to_owned(),
+                "ck.message.create".to_owned()
+            ]
+        );
     }
 
     #[test]
