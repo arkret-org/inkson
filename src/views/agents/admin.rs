@@ -21,7 +21,8 @@ use serde_json::{Value, json};
 use super::components::{ActorKindBadge, DraftApprovalPanel, SidecarExposureDisclosure};
 use super::model::{
     AgentPermissionPreset, agent_pair_url, agent_state_badge_class, agent_state_label,
-    agent_view_from_directory_row, expand_preset_grant, requested_scope_for_presets,
+    agent_view_from_directory_row, expand_preset_grant, is_pairing_request_expired,
+    requested_scope_for_presets,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -511,17 +512,34 @@ pub fn PersonalAgentAdminPanel(
                         let pairing_code = outcome.pairing_code.clone();
                         let expires_at = outcome.expires_at.to_rfc3339();
                         let pair_url = agent_pair_url(&base_url, &request_id);
+                        let pairing_expired =
+                            is_pairing_request_expired(&expires_at, &crate::clock::now_rfc3339_secs());
+                        let pairing_state = if pairing_expired { "expired" } else { "pending" };
+                        let pairing_badge = if pairing_expired { "badge red" } else { "badge green" };
+                        let pairing_label = if pairing_expired {
+                            "expired"
+                        } else {
+                            "pending_runtime_key"
+                        };
                         rsx! {
                             div {
                                 class: "event",
                                 "data-testid": "agent-admin-pairing-card",
                                 "data-pairing-request-id": "{request_id}",
+                                "data-pairing-state": "{pairing_state}",
                                 div { class: "event-head",
                                     span { "Pair the runtime" }
-                                    span { class: "badge green", "pending_runtime_key" }
+                                    span { class: "{pairing_badge}", "{pairing_label}" }
                                 }
                                 div { class: "muted",
                                     "Hand these one-time, short-lived values to your agent runtime so it can pair its key and come online. They are not a session token and cannot be reused after pairing."
+                                }
+                                if pairing_expired {
+                                    div {
+                                        class: "badge red",
+                                        "data-testid": "agent-admin-pairing-expired",
+                                        "Pairing request expired. Provision again to mint a fresh code and link."
+                                    }
                                 }
                                 div { class: "metric-grid",
                                     div { class: "metric",
@@ -546,6 +564,7 @@ pub fn PersonalAgentAdminPanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "agent-admin-pairing-open-button",
+                                        disabled: pairing_expired,
                                         onclick: {
                                             let pair_url = pair_url.clone();
                                             move |_| open_url_in_new_tab(&pair_url)
@@ -555,6 +574,7 @@ pub fn PersonalAgentAdminPanel(
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "agent-admin-pairing-copy-url-button",
+                                        disabled: pairing_expired,
                                         onclick: {
                                             let pair_url = pair_url.clone();
                                             move |_| copy_text_to_clipboard(&pair_url)
@@ -565,6 +585,7 @@ pub fn PersonalAgentAdminPanel(
                                         Button {
                                             variant: ButtonVariant::Secondary,
                                             "data-testid": "agent-admin-pairing-copy-code-button",
+                                            disabled: pairing_expired,
                                             onclick: move |_| copy_text_to_clipboard(&code),
                                             "Copy code"
                                         }

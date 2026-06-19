@@ -116,6 +116,22 @@ mod personal_agent_tests {
     }
 
     #[test]
+    fn pairing_request_expiry_parses_rfc3339_offsets() {
+        assert!(is_pairing_request_expired(
+            "2026-06-26T00:00:00+00:00",
+            "2026-06-26T00:00:01Z"
+        ));
+        assert!(!is_pairing_request_expired(
+            "2026-06-26T00:00:00+00:00",
+            "2026-06-26T00:00:00Z"
+        ));
+        assert!(!is_pairing_request_expired(
+            "not-a-timestamp",
+            "2026-06-26T00:00:01Z"
+        ));
+    }
+
+    #[test]
     fn build_action_approve_payload_binds_draft_digest_and_nonce() {
         let draft = serde_json::json!({
             "type": "ck.agent.draft.v1",

@@ -160,6 +160,20 @@ pub fn agent_pair_url(base_url: &str, pairing_request_id: &str) -> String {
     format!("{base}/auth/account/agent-pair?request={pairing_request_id}")
 }
 
+pub fn is_pairing_request_expired(expires_at: &str, now: &str) -> bool {
+    let Ok(expires_at) =
+        chrono::DateTime::parse_from_rfc3339(expires_at).map(|dt| dt.with_timezone(&chrono::Utc))
+    else {
+        return false;
+    };
+    let Ok(now) =
+        chrono::DateTime::parse_from_rfc3339(now).map(|dt| dt.with_timezone(&chrono::Utc))
+    else {
+        return false;
+    };
+    now > expires_at
+}
+
 /// Combine the `requested_scope` (`AgentKeyScope`) for the provision
 /// call from the selected presets. The widest implied key scope wins:
 /// `Realm` ⊃ `Limited`. Returns `None` when no preset is selected so the
