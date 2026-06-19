@@ -42,6 +42,22 @@ impl RecordingState {
     }
 }
 
+/// Transcript capture marker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranscriptionState {
+    Off,
+    Transcribing,
+}
+
+impl TranscriptionState {
+    pub fn as_data_state(self) -> &'static str {
+        match self {
+            TranscriptionState::Off => "off",
+            TranscriptionState::Transcribing => "transcribing",
+        }
+    }
+}
+
 /// Roster entry for the participant grid.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallParticipant {

@@ -13,7 +13,9 @@ use super::projection::{
 use super::signaling::{
     apply_inbox_items, emit_async, emit_signal, end_call, relay_local_signals, spawn_reject,
 };
-use super::types::{CallMode, CallParticipant, CallStage, RecordingState, SharedTransport};
+use super::types::{
+    CallMode, CallParticipant, CallStage, RecordingState, SharedTransport, TranscriptionState,
+};
 use crate::local_state::LocalStateStore;
 use crate::media::rtc::{DesiredMedia, MediaJoinRequest};
 use crate::ui::button::{Button, ButtonVariant};
@@ -58,6 +60,8 @@ pub fn CallPanel(
     let mut camera_on = use_signal(|| want_video);
     let mut screen_sharing = use_signal(|| false);
     let mut recording = use_signal(|| RecordingState::Off);
+    let mut transcription = use_signal(|| TranscriptionState::Off);
+    let mut pending_capture = use_signal(|| Option::<String>::None);
     let mut participants = use_signal(Vec::<CallParticipant>::new);
     let mut active_call_id = use_signal(|| call_id.clone());
     let mut call_seq = use_signal(|| 0_u64);
@@ -362,6 +366,78 @@ pub fn CallPanel(
                     }
                 }
             });
+        }
+    };
+
+    let start_confirmed_capture = {
+        let base = base_url.clone();
+        let actor = account_did.clone();
+        move |capture_kind: String| {
+            let base = base.clone();
+            let actor = actor.clone();
+            let realm = active_realm();
+            let call = active_call_id();
+            let api_token = token();
+            let mode = if camera_on() {
+                cokret_sdk::RecordingMode::AudioVideo
+            } else {
+                cokret_sdk::RecordingMode::AudioOnly
+            };
+            pending_capture.set(None);
+            match capture_kind.as_str() {
+                "recording" => {
+                    status.set("starting recording".to_owned());
+                    spawn(async move {
+                        let recording_id = format!("rtc-recording-{}", crate::operation::uuid_v7());
+                        match with_authed_api(&base, api_token, |api| async move {
+                            api.submit_call_recording_start(
+                                &realm,
+                                &actor,
+                                &call,
+                                &recording_id,
+                                mode,
+                            )
+                            .await
+                        })
+                        .await
+                        {
+                            Ok(_) => {
+                                recording.set(RecordingState::Recording);
+                                status.set("recording started".to_owned());
+                            }
+                            Err(err) => last_error.set(err.display()),
+                        }
+                    });
+                }
+                "transcript" => {
+                    status.set("starting transcription".to_owned());
+                    spawn(async move {
+                        let transcript_id =
+                            format!("rtc-transcript-{}", crate::operation::uuid_v7());
+                        match with_authed_api(&base, api_token, |api| async move {
+                            api.submit_call_transcription_start(
+                                &realm,
+                                &actor,
+                                &call,
+                                &transcript_id,
+                                mode,
+                            )
+                            .await
+                        })
+                        .await
+                        {
+                            Ok(_) => {
+                                transcription.set(TranscriptionState::Transcribing);
+                                status.set("transcription started".to_owned());
+                            }
+                            Err(err) => last_error.set(err.display()),
+                        }
+                    });
+                }
+                _ => {
+                    status.set("capture cancelled".to_owned());
+                }
+            }
         }
     };
 
@@ -697,11 +773,22 @@ pub fn CallPanel(
                                 "data-state": "{recording().as_data_state()}",
                                 "rec: {recording().as_data_state()}"
                             }
+                            span {
+                                class: "badge",
+                                "data-testid": "call-transcription-status",
+                                "data-state": "{transcription().as_data_state()}",
+                                "tx: {transcription().as_data_state()}"
+                            }
                         }
 
                         if recording() == RecordingState::Recording {
                             div { class: "event", "data-testid": "call-recording-indicator",
                                 span { class: "badge danger", "● recording" }
+                            }
+                        }
+                        if transcription() == TranscriptionState::Transcribing {
+                            div { class: "event", "data-testid": "call-transcription-indicator",
+                                span { class: "badge danger", "transcribing" }
                             }
                         }
 
@@ -803,38 +890,31 @@ pub fn CallPanel(
                                 variant: ButtonVariant::Secondary,
                                 "data-testid": "call-record-button",
                                 onclick: {
-                                    let base = base_url.clone();
-                                    let actor = account_did.clone();
                                     move |_| {
                                         if recording() == RecordingState::Recording {
                                             recording.set(RecordingState::Off);
                                             status.set("recording stopped".to_owned());
                                         } else {
-                                            // Two-step consent confirmation before
-                                            // the durable `ck.call.recording.start`.
-                                            status.set("confirm recording…".to_owned());
-                                            let base = base.clone();
-                                            let actor = actor.clone();
-                                            let realm = active_realm();
-                                            let call = active_call_id();
-                                            let api_token = token();
-                                            let consent: Vec<String> = participants().iter().map(|p| p.actor_id.clone()).collect();
-                                            spawn(async move {
-                                                let recording_id = format!("ck:recording:{}", crate::operation::uuid_v7());
-                                                match with_authed_api(&base, api_token, |api| async move {
-                                                    api.submit_call_recording_start(&realm, &actor, &call, &recording_id, consent).await
-                                                }).await {
-                                                    Ok(_) => {
-                                                        recording.set(RecordingState::Recording);
-                                                        status.set("recording started".to_owned());
-                                                    }
-                                                    Err(err) => last_error.set(err.display()),
-                                                }
-                                            });
+                                            pending_capture.set(Some("recording".to_owned()));
+                                            status.set("confirm recording".to_owned());
                                         }
                                     }
                                 },
                                 if recording() == RecordingState::Recording { "Stop recording" } else { "Record" }
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "call-transcribe-button",
+                                onclick: move |_| {
+                                    if transcription() == TranscriptionState::Transcribing {
+                                        transcription.set(TranscriptionState::Off);
+                                        status.set("transcription stopped".to_owned());
+                                    } else {
+                                        pending_capture.set(Some("transcript".to_owned()));
+                                        status.set("confirm transcription".to_owned());
+                                    }
+                                },
+                                if transcription() == TranscriptionState::Transcribing { "Stop transcribing" } else { "Transcribe" }
                             }
                             Button {
                                 variant: ButtonVariant::Destructive,
@@ -849,10 +929,52 @@ pub fn CallPanel(
                                             &active_call_id(), &actor, &device, call_seq,
                                         );
                                         stage.set(CallStage::Ended);
+                                        recording.set(RecordingState::Off);
+                                        transcription.set(TranscriptionState::Off);
+                                        pending_capture.set(None);
                                         status.set("left call".to_owned());
                                     }
                                 },
                                 "Leave"
+                            }
+                        }
+
+                        if let Some(capture_kind) = pending_capture() {
+                            div {
+                                class: "event",
+                                "data-testid": "call-capture-confirmation",
+                                "data-capture-kind": "{capture_kind}",
+                                div { class: "event-head",
+                                    span {
+                                        if capture_kind == "recording" {
+                                            "Confirm recording"
+                                        } else {
+                                            "Confirm transcription"
+                                        }
+                                    }
+                                    span { class: "badge danger", "capture" }
+                                }
+                                div { class: "actions",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        "data-testid": "call-capture-confirm-button",
+                                        onclick: {
+                                            let mut start_confirmed_capture = start_confirmed_capture.clone();
+                                            let capture_kind = capture_kind.clone();
+                                            move |_| start_confirmed_capture(capture_kind.clone())
+                                        },
+                                        "Confirm"
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "call-capture-cancel-button",
+                                        onclick: move |_| {
+                                            pending_capture.set(None);
+                                            status.set("capture cancelled".to_owned());
+                                        },
+                                        "Cancel"
+                                    }
+                                }
                             }
                         }
 
@@ -881,6 +1003,9 @@ pub fn CallPanel(
                                 active_call_id.set(String::new());
                                 participants.set(Vec::new());
                                 transport_handle.set(None);
+                                recording.set(RecordingState::Off);
+                                transcription.set(TranscriptionState::Off);
+                                pending_capture.set(None);
                                 call_seq.set(0);
                                 status.set(String::new());
                             },

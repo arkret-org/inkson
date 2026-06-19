@@ -163,14 +163,19 @@ pub fn build_call_recording_start(
     actor: &str,
     call_id: &str,
     recording_id: &str,
-    consent_actors: Vec<String>,
+    capture_kind: cokret_sdk::RecordingCaptureKind,
+    mode: cokret_sdk::RecordingMode,
+    visible_notice: bool,
 ) -> OperationBuilder {
     OperationBuilder::new(realm_id, actor, "ck.call.recording.start")
         .target_ref(call_id)
         .body(json!({
             "call_id": call_id,
             "recording_id": recording_id,
-            "consent_actors": consent_actors,
+            "recording_agent": actor,
+            "capture_kind": capture_kind,
+            "mode": mode,
+            "visible_notice": visible_notice,
         }))
 }
 
@@ -211,17 +216,40 @@ mod tests {
     }
 
     #[test]
-    fn call_recording_start_lists_consents() {
+    fn call_recording_start_uses_current_schema() {
         let op = build_call_recording_start(
             "ck:realm:s1",
             "did:web:alice",
             "ck:call:c1",
-            "ck:recording:r1",
-            vec!["did:web:alice".into(), "did:web:bob".into()],
+            "rtc-recording-r1",
+            cokret_sdk::RecordingCaptureKind::Recording,
+            cokret_sdk::RecordingMode::AudioVideo,
+            true,
         )
         .build("node");
         assert_eq!(op.kind, "ck.call.recording.start");
-        assert_eq!(op.payload["consent_actors"][1], "did:web:bob");
+        assert_eq!(op.payload["recording_agent"], "did:web:alice");
+        assert_eq!(op.payload["capture_kind"], "recording");
+        assert_eq!(op.payload["mode"], "audio_video");
+        assert_eq!(op.payload["visible_notice"], true);
+        assert!(op.payload.get("consent_actors").is_none());
+    }
+
+    #[test]
+    fn call_recording_start_supports_transcript_capture_kind() {
+        let op = build_call_recording_start(
+            "ck:realm:s1",
+            "did:web:alice",
+            "ck:call:c1",
+            "rtc-transcript-t1",
+            cokret_sdk::RecordingCaptureKind::Transcript,
+            cokret_sdk::RecordingMode::AudioOnly,
+            true,
+        )
+        .build("node");
+        assert_eq!(op.kind, "ck.call.recording.start");
+        assert_eq!(op.payload["capture_kind"], "transcript");
+        assert_eq!(op.payload["mode"], "audio");
     }
 
     fn make_v1_envelope(seq: u64, signal_type: &str) -> cokret_sdk::EphemeralEnvelope {

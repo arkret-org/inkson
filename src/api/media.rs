@@ -93,14 +93,58 @@ impl CokretApi {
         actor_id: &str,
         call_id: &str,
         recording_id: &str,
-        consent_actors: Vec<String>,
+        mode: cokret_sdk::RecordingMode,
+    ) -> anyhow::Result<SubmitEventResult> {
+        self.submit_call_capture_start(
+            realm_id,
+            actor_id,
+            call_id,
+            recording_id,
+            cokret_sdk::RecordingCaptureKind::Recording,
+            mode,
+        )
+        .await
+    }
+
+    /// Submit the transcript branch of `ck.call.recording.start`
+    /// (`capture_kind=transcript`). The resulting transcript lifecycle is
+    /// then projected through `ck.call.state.transcript_state`.
+    pub async fn submit_call_transcription_start(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        call_id: &str,
+        transcript_id: &str,
+        mode: cokret_sdk::RecordingMode,
+    ) -> anyhow::Result<SubmitEventResult> {
+        self.submit_call_capture_start(
+            realm_id,
+            actor_id,
+            call_id,
+            transcript_id,
+            cokret_sdk::RecordingCaptureKind::Transcript,
+            mode,
+        )
+        .await
+    }
+
+    async fn submit_call_capture_start(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        call_id: &str,
+        recording_id: &str,
+        capture_kind: cokret_sdk::RecordingCaptureKind,
+        mode: cokret_sdk::RecordingMode,
     ) -> anyhow::Result<SubmitEventResult> {
         let op = crate::webrtc::build_call_recording_start(
             realm_id,
             actor_id,
             call_id,
             recording_id,
-            consent_actors,
+            capture_kind,
+            mode,
+            true,
         )
         .build("yougen");
         self.submit_event_envelope(&op).await
