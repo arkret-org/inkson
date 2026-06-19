@@ -13,6 +13,55 @@ pub(super) fn operation_body(payload: &Value) -> &Value {
         .unwrap_or(payload)
 }
 
+fn call_state_recording_artifact_boundary(
+    body: &Value,
+) -> Result<(), crate::media::rtc::RtcClientError> {
+    if !body_mentions_recording_artifact(body) {
+        return Ok(());
+    }
+    if let Some(result) = body.get("recording_result")
+        && value_has_backend_direct_recording_ref(result)
+    {
+        return Err(crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed);
+    }
+    let payload: cokret_sdk::CallStatePayload = serde_json::from_value(body.clone())
+        .map_err(|_| crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed)?;
+    payload
+        .validate_recording_result_artifact()
+        .map_err(|_| crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed)
+}
+
+fn body_mentions_recording_artifact(body: &Value) -> bool {
+    body.get("recording_result").is_some()
+        || matches!(
+            body.get("recording_state").and_then(Value::as_str),
+            Some("ready" | "failed")
+        )
+}
+
+fn value_has_backend_direct_recording_ref(value: &Value) -> bool {
+    match value {
+        Value::String(value) => {
+            let lower = value.to_ascii_lowercase();
+            lower.contains("http://")
+                || lower.contains("https://")
+                || lower.contains("s3://")
+                || lower.contains("gs://")
+                || lower.contains("s3.amazonaws.com")
+                || lower.contains("storage.googleapis.com")
+                || lower.contains("livekit")
+        }
+        Value::Array(values) => values.iter().any(value_has_backend_direct_recording_ref),
+        Value::Object(object) => object.iter().any(|(key, value)| {
+            matches!(
+                key.as_str(),
+                "url" | "download_url" | "recording_url" | "destination" | "external_url"
+            ) || value_has_backend_direct_recording_ref(value)
+        }),
+        _ => false,
+    }
+}
+
 /// Derive the realm's anchored media-service DIDs and preferred focus from
 /// the local `ck.realm.media_service` projection.
 pub(super) fn media_service_selection(
@@ -91,6 +140,9 @@ pub(super) fn call_state_participant_identities(
             continue;
         }
         let body = operation_body(&record.payload);
+        if call_state_recording_artifact_boundary(body).is_err() {
+            continue;
+        }
         if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
             continue;
         }
@@ -134,6 +186,9 @@ pub(super) fn call_state_participant_device_map(
             continue;
         }
         let body = operation_body(&record.payload);
+        if call_state_recording_artifact_boundary(body).is_err() {
+            continue;
+        }
         if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
             continue;
         }
@@ -348,6 +403,132 @@ mod tests {
         );
         // The participant with no device_id is fail-closed: not in the map.
         assert!(!map.contains_key("ck:rtc_participant:carol"));
+    }
+
+    #[test]
+    fn recording_artifact_boundary_rejects_backend_url() {
+        let body = json!({
+            "call_id": "ck:call:019a7360-0000-7000-8000-000000000001",
+            "state": "ended",
+            "recording_state": "ready",
+            "recording_result": {
+                "recording_start_event_id": "ck:event:019a7360-0000-7000-8000-000000000003",
+                "recording_url": "https://s3.amazonaws.com/bucket/recording.mp4"
+            }
+        });
+        assert_eq!(
+            call_state_recording_artifact_boundary(&body),
+            Err(crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed)
+        );
+    }
+
+    #[test]
+    fn recording_artifact_boundary_accepts_cokret_blob_artifact() {
+        assert!(call_state_recording_artifact_boundary(&valid_recording_call_state()).is_ok());
+    }
+
+    #[test]
+    fn call_state_projection_skips_backend_recording_result() {
+        let mut state = crate::local_state::ClientLocalState::default();
+        state.raw_operations.push(crate::local_state::RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ck:realm:019a7360-0000-7000-8000-000000000000".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ck.call.state",
+                "body": {
+                    "call_id": "ck:call:019a7360-0000-7000-8000-000000000001",
+                    "state": "ended",
+                    "recording_state": "ready",
+                    "recording_result": {
+                        "recording_start_event_id": "ck:event:019a7360-0000-7000-8000-000000000003",
+                        "recording_url": "https://backend.example/egress/out.mp4"
+                    },
+                    "participants": [
+                        {
+                            "actor_id": "did:web:alice.example",
+                            "device_id": "ck:device:019a7360-0000-7000-8000-000000000008",
+                            "participant_identity": "ck:rtc_participant:alice"
+                        }
+                    ]
+                }
+            }),
+        });
+        let identities = call_state_participant_identities(
+            &state,
+            "ck:realm:019a7360-0000-7000-8000-000000000000",
+            "ck:call:019a7360-0000-7000-8000-000000000001",
+        );
+        assert!(identities.is_empty());
+    }
+
+    fn valid_recording_call_state() -> serde_json::Value {
+        let realm_id = "ck:realm:019a7360-0000-7000-8000-000000000000";
+        let call_id = "ck:call:019a7360-0000-7000-8000-000000000001";
+        let recording_id = "rtc-recording-019a7360-0000-7000-8000-000000000002";
+        let start_event_id = "ck:event:019a7360-0000-7000-8000-000000000003";
+        let content_digest =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let ciphertext_digest =
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let retention = json!({
+            "retention_expires_at": "2026-06-20T00:00:00Z",
+            "deletion_trigger": "retention_expiry",
+            "audit_lock": false,
+            "consent_confirmed": true
+        });
+        json!({
+            "call_id": call_id,
+            "state": "ended",
+            "recording_state": "ready",
+            "recording_result": {
+                "content_digest": content_digest,
+                "duration_ms": 42000,
+                "media_type": "video/mp4",
+                "retention_policy_id": "ck:policy:019a7360-0000-7000-8000-000000000005",
+                "retention": retention,
+                "recording_start_event_id": start_event_id,
+                "artifact": {
+                    "schema": "ck.schema.call_recording_artifact.v1",
+                    "realm_id": realm_id,
+                    "call_id": call_id,
+                    "recording_id": recording_id,
+                    "recording_start_event_id": start_event_id,
+                    "artifact_kind": "recording",
+                    "blob_ref": "ck:blob:019a7360-0000-7000-8000-000000000004",
+                    "content_digest": content_digest,
+                    "ciphertext_digest": ciphertext_digest,
+                    "size_bytes": 1048576,
+                    "duration_ms": 42000,
+                    "media_type": "video/mp4",
+                    "encryption": {
+                        "alg": "mls_exporter_aead_xchacha20poly1305_stream",
+                        "exporter_label": "ck-rtc-recording-key/v1",
+                        "context": {
+                            "realm_id": realm_id,
+                            "call_id": call_id,
+                            "focus_id": "fra-1",
+                            "recording_id": recording_id,
+                            "media_service_did": "did:web:recorder.example",
+                            "recording_start_event_id": start_event_id
+                        },
+                        "ciphertext_digest": ciphertext_digest
+                    },
+                    "retention_policy_id": "ck:policy:019a7360-0000-7000-8000-000000000005",
+                    "retention": retention,
+                    "produced_by": "did:web:recorder.example",
+                    "recording_initiator_capability_ref": "ck:grant:019a7360-0000-7000-8000-000000000006",
+                    "created_at": "2026-06-19T00:00:00Z",
+                    "deletion_audit": {
+                        "trigger": "retention_expiry",
+                        "outcome": "completed",
+                        "requested_at": "2026-06-20T00:00:00Z",
+                        "completed_at": "2026-06-20T00:00:01Z",
+                        "erasure_receipt_ref": "ck:receipt:019a7360-0000-7000-8000-000000000007"
+                    }
+                }
+            }
+        })
     }
 
     #[test]
