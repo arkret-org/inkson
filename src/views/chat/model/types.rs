@@ -75,6 +75,7 @@ impl MessageCryptoState {
 pub(crate) struct ChatMessage {
     pub(crate) realm_id: String,
     pub(crate) id: String,
+    pub(crate) protocol_message_id: Option<String>,
     pub(crate) sender: String,
     /// CKP-0008 §4.10 — envelope-level `executed_by`. Present only for
     /// act-on-behalf events: `sender` (actor_id) is the controller and
@@ -98,6 +99,23 @@ pub(crate) struct ChatMessage {
     /// `Plaintext`; messages with `content.encrypted_content` start at
     /// `Decrypting` until the audit-emitter future resolves them.
     pub(crate) crypto_state: MessageCryptoState,
+}
+
+impl ChatMessage {
+    pub(crate) fn pin_saved_target_ref(&self) -> &str {
+        self.protocol_message_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(self.id.as_str())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SharedMessagePin {
+    pub(crate) pin_scope_id: String,
+    pub(crate) target_ref: String,
+    pub(crate) rank: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

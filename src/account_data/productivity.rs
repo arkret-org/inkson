@@ -3,14 +3,22 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::Sha256;
 
 use crate::canonical::{canonical_sha256, validate_timestamp_canonical};
 use crate::hlc::Hlc;
 
 pub const DRAFT_MESSAGE_SLOT: &str = "compose";
 pub const DRAFT_STRAND_FIELD_SLOT_PREFIX: &str = "field_";
+pub const PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_KEY_LEN: usize = 32;
+
+const PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_INFO: &[u8] =
+    b"cokret-personal-productivity-account-data-key-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccountDataMergeChoice {
@@ -48,6 +56,20 @@ pub struct SavedAccountDataItem {
     pub account_data_key: String,
     pub value: cokret_sdk::SavedItemValue,
     pub state_digest: String,
+}
+
+pub fn productivity_account_data_namespace_key(
+    account_secret: &str,
+) -> anyhow::Result<[u8; PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_KEY_LEN]> {
+    let ikm = match URL_SAFE_NO_PAD.decode(account_secret.trim()) {
+        Ok(bytes) if !bytes.is_empty() => bytes,
+        _ => account_secret.as_bytes().to_vec(),
+    };
+    let hk = Hkdf::<Sha256>::new(None, &ikm);
+    let mut out = [0u8; PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_KEY_LEN];
+    hk.expand(PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_INFO, &mut out)
+        .map_err(|_| anyhow::anyhow!("productivity account-data namespace HKDF expand failed"))?;
+    Ok(out)
 }
 
 pub fn draft_slot_for_strand_field_path(field_path: &Value) -> anyhow::Result<String> {

@@ -7,9 +7,12 @@ import {
   openTimeline,
   openDiscussion,
   createDiscussion,
+  dismissMlsBackupModal,
 } from "./strandsHarness";
 
 registerStrandsBeforeEach();
+
+const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
 
 test("chat reloads sent messages and keeps actor sequence increasing", async ({ page }) => {
   await refreshServer(page);
@@ -176,6 +179,63 @@ test("chat retries plaintext sends after granting current service visibility", a
   await expect(page.getByTestId("chat-status")).toContainText("Message sent");
   await expect(page.getByTestId("chat-message").last()).not.toHaveClass(/is-failed/);
   expect(attempts).toBe(2);
+});
+
+test("chat separates shared pins from private saved account-data", async ({ page }) => {
+  await refreshServer(page);
+  await gotoAndDismissRecovery(page, `/chat/${DEMO_REALM}`);
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  await createDiscussion(page, "Pin Saved Separation Discussion");
+  await dismissMlsBackupModal(page);
+
+  await page.getByTestId("chat-input").fill("pin and save boundaries");
+  await page.getByTestId("send-chat-button").click();
+  const message = page.getByTestId("chat-message").last();
+  await expect(message).toContainText("pin and save boundaries");
+
+  await message.evaluate((element) => {
+    element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, buttons: 2 }));
+  });
+  await expect(page.getByTestId("message-context-menu")).toBeVisible();
+  const sharedPinRequest = page.waitForRequest((request) => {
+    if (!request.url().endsWith("/_cokret/self/events") || request.method() !== "POST") {
+      return false;
+    }
+    return request.postDataJSON().kind === "ck.pin.add";
+  });
+  await page.getByTestId("message-shared-pin-button").click();
+  const sharedPinBody = await sharedPinRequest.then((request) => request.postDataJSON());
+
+  expect(sharedPinBody.payload.pin_scope.kind).toBe("strand");
+  expect(sharedPinBody.payload.target_ref).toMatch(/^ck:message:/);
+  expect(sharedPinBody.payload.key).toBeUndefined();
+  expect(sharedPinBody.payload.encrypted_payload).toBeUndefined();
+  await expect(page.getByTestId("pinned-bar")).toHaveAttribute("data-source", "shared-event");
+  await expect(page.getByTestId("pinned-bar-item").last()).toHaveAttribute("data-source", "shared-event");
+
+  await message.evaluate((element) => {
+    element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, buttons: 2 }));
+  });
+  await expect(page.getByTestId("message-context-menu")).toBeVisible();
+  const savedRequest = page.waitForRequest((request) => {
+    if (!request.url().endsWith("/_cokret/self/events") || request.method() !== "POST") {
+      return false;
+    }
+    const body = request.postDataJSON();
+    return body.kind === "ck.account_data.set" && String(body.payload?.key ?? "").startsWith("ck.saved.v1:");
+  });
+  await page.getByTestId("message-private-save-button").click();
+  const savedBody = await savedRequest.then((request) => request.postDataJSON());
+
+  expect(savedBody.payload.key).toMatch(/^ck\.saved\.v1:/);
+  expect(savedBody.payload.encrypted_payload.kind).toBe("saved_item");
+  expect(savedBody.payload.encrypted_payload.target_ref).toMatch(/^ck:message:/);
+  expect(savedBody.payload.body).toBeUndefined();
+  expect(savedBody.payload.pin_scope).toBeUndefined();
+  await expect(page.getByTestId("message-private-saved-indicator").last()).toHaveAttribute(
+    "data-source",
+    "private-account-data",
+  );
 });
 
 test("plaintext compose keeps request ids, revision chains, tombstones, and local MLS entries", async ({ page }) => {

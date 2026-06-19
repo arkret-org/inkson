@@ -225,6 +225,43 @@ impl LocalStateStore {
         Ok(migrated)
     }
 
+    pub fn stage_saved_account_data_item(
+        &mut self,
+        item: &crate::account_data::SavedAccountDataItem,
+    ) -> anyhow::Result<()> {
+        self.ensure_cached_loaded();
+        self.cached.saved_account_data.insert(
+            item.account_data_key.clone(),
+            crate::account_data::saved_item_account_data_value(&item.value)?,
+        );
+        let _ = self.flush();
+        Ok(())
+    }
+
+    pub fn stage_saved_account_data_entry(
+        &mut self,
+        account_data_key: impl Into<String>,
+        value: Value,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached
+            .saved_account_data
+            .insert(account_data_key.into(), value);
+        let _ = self.flush();
+    }
+
+    pub fn remove_saved_account_data_entry(&mut self, account_data_key: &str) {
+        self.ensure_cached_loaded();
+        if self
+            .cached
+            .saved_account_data
+            .remove(account_data_key)
+            .is_some()
+        {
+            let _ = self.flush();
+        }
+    }
+
     pub fn draft_account_data_entries(&self) -> BTreeMap<String, Value> {
         self.load().draft_account_data
     }

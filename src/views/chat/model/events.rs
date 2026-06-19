@@ -384,6 +384,10 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .or_else(|| first_string_in_candidates(&candidates, &["event_id", "message_id", "id"]))
         .unwrap_or("event:unknown")
         .to_owned();
+    let protocol_message_id = first_string_in_candidates(&candidates, &["message_id"])
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
     let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])
         .or_else(|| {
             event
@@ -456,6 +460,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             .unwrap_or(realm_id)
             .to_owned(),
         id: event_id,
+        protocol_message_id,
         sender: message_actor_from_candidates(&candidates)
             .unwrap_or("did:web:unknown")
             .to_owned(),
@@ -548,6 +553,85 @@ pub(crate) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
         }
     }
     cards
+}
+
+pub(crate) fn shared_message_pins_from_raw_operations(
+    records: &[crate::local_state::RawOperationRecord],
+    active_strand_id: &str,
+) -> Vec<SharedMessagePin> {
+    let mut pins = Vec::<SharedMessagePin>::new();
+    for record in records {
+        apply_shared_pin_event(&mut pins, &record.payload, active_strand_id);
+    }
+    pins.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then_with(|| left.target_ref.cmp(&right.target_ref))
+    });
+    pins
+}
+
+pub(crate) fn apply_shared_pin_event(
+    pins: &mut Vec<SharedMessagePin>,
+    event: &Value,
+    active_strand_id: &str,
+) {
+    let Some(kind) = event.get("kind").and_then(Value::as_str) else {
+        return;
+    };
+    if !matches!(kind, "ck.pin.add" | "ck.pin.remove" | "ck.pin.reorder") {
+        return;
+    }
+    let payload = event.get("payload").unwrap_or(event);
+    let Some(pin_scope) = payload.get("pin_scope") else {
+        return;
+    };
+    if pin_scope.get("kind").and_then(Value::as_str) != Some("strand") {
+        return;
+    }
+    let Some(scope_id) = pin_scope.get("id").and_then(Value::as_str) else {
+        return;
+    };
+    if scope_id != active_strand_id {
+        return;
+    }
+    let Some(target_ref) = payload.get("target_ref").and_then(Value::as_str) else {
+        return;
+    };
+    match kind {
+        "ck.pin.add" => {
+            let rank = payload
+                .get("rank")
+                .and_then(Value::as_str)
+                .unwrap_or("U")
+                .to_owned();
+            if let Some(existing) = pins
+                .iter_mut()
+                .find(|pin| pin.pin_scope_id == scope_id && pin.target_ref == target_ref)
+            {
+                existing.rank = rank;
+            } else {
+                pins.push(SharedMessagePin {
+                    pin_scope_id: scope_id.to_owned(),
+                    target_ref: target_ref.to_owned(),
+                    rank,
+                });
+            }
+        }
+        "ck.pin.remove" => {
+            pins.retain(|pin| !(pin.pin_scope_id == scope_id && pin.target_ref == target_ref));
+        }
+        "ck.pin.reorder" => {
+            if let Some(rank) = payload.get("rank").and_then(Value::as_str)
+                && let Some(existing) = pins
+                    .iter_mut()
+                    .find(|pin| pin.pin_scope_id == scope_id && pin.target_ref == target_ref)
+            {
+                existing.rank = rank.to_owned();
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(crate) fn chat_messages_from_sync_realms_with_sidecar(

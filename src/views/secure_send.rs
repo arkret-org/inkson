@@ -278,6 +278,8 @@ pub(crate) fn build_secure_send(
                 mls_commit_epoch,
                 mls_membership_frontier(seal_view, &commit_event_id_typed),
                 policy_root,
+                cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+                cokret_sdk::CORE_REDUCER_PROFILE,
             )
             .map_err(|err| format!("MLS governance binding failed: {err}"))?;
             let mls_commit_payload = cokret_sdk::MlsCommitPayload::new(

@@ -171,7 +171,8 @@
 
 .pinned-bar-head svg,
 .pinned-bar-item svg,
-.message-pin-indicator svg {
+.message-pin-indicator svg,
+.message-private-saved-indicator svg {
   width: 14px;
   height: 14px;
 }
@@ -326,9 +327,24 @@
   box-shadow: none;
 }
 
+.message-private-saved-indicator {
+  position: absolute;
+  top: 7px;
+  right: 39px;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--success) 36%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 84%, var(--success-soft));
+  color: var(--success-ink, var(--text));
+}
+
 .message-pin-indicator:hover,
 .message-pin-indicator:focus-visible {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
 }
-

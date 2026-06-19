@@ -17,8 +17,17 @@ fn genesis_governance_binding(group_id: &str) -> cokret_sdk::MlsGovernanceBindin
     )
     .unwrap();
     // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
-    cokret_sdk::MlsGovernanceBindingPayload::realm(realm_id, group_id, 0, 0, frontier, policy_root)
-        .unwrap()
+    cokret_sdk::MlsGovernanceBindingPayload::realm(
+        realm_id,
+        group_id,
+        0,
+        0,
+        frontier,
+        policy_root,
+        cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+        cokret_sdk::CORE_REDUCER_PROFILE,
+    )
+    .unwrap()
 }
 
 #[test]

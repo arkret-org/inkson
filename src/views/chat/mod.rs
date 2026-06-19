@@ -140,16 +140,10 @@ pub fn ChatPanel(
     // string for the most recent drop or hidden-input upload.
     let mut compose_dragover = use_signal(|| false);
     let mut compose_upload_status = use_signal(String::new);
-    // A6.3 message pinning. Local-only scaffolding: the spec does not
-    // yet define a `ck.message.pin` event_kind, so we keep pin state in
-    // a per-realm Signal and surface it at the top of the discussion.
-    // When soland exposes the pin endpoint (see TODO below) we'll
-    // replace this with a real API call + projection sync.
-    //
-    // TODO(soland): replace `pinned_messages` with the canonical
-    // `ck.message.pin` event family per spec
-    // `strand-and-message.md §8.6` once soland ships it.
-    let mut pinned_messages = use_signal(Vec::<String>::new);
+    let mut shared_pins = use_signal(Vec::<SharedMessagePin>::new);
+    let mut private_saved_targets = use_signal(std::collections::BTreeSet::<String>::new);
+    let mut private_saved_account_data =
+        use_signal(std::collections::BTreeMap::<String, Value>::new);
     // Currently-open context menu (right-click on a message). Stores
     // the message id whose menu is open; None means no menu visible.
     let mut message_context_menu = use_signal(|| Option::<String>::None);
@@ -209,6 +203,32 @@ pub fn ChatPanel(
     // reveal opt-ins so the user can peek at an otherwise-hidden body
     // without clearing the block.
     let mut blocked_show_anyway = use_signal(std::collections::BTreeSet::<String>::new);
+
+    {
+        let mut shared_pins_for_sync = shared_pins;
+        let mut private_saved_targets_for_sync = private_saved_targets;
+        let mut private_saved_account_data_for_sync = private_saved_account_data;
+        use_effect(move || {
+            let active_strand = selected_channel();
+            let snapshot = state_store.read().load();
+            let next_shared =
+                shared_message_pins_from_raw_operations(&snapshot.raw_operations, &active_strand);
+            if *shared_pins_for_sync.peek() != next_shared {
+                shared_pins_for_sync.set(next_shared);
+            }
+            let saved_entries = snapshot.saved_account_data;
+            let next_saved_targets = private_saved_targets_from_account_data(
+                &saved_entries,
+                CHAT_PRIVATE_SAVED_COLLECTION_TITLE,
+            );
+            if *private_saved_targets_for_sync.peek() != next_saved_targets {
+                private_saved_targets_for_sync.set(next_saved_targets);
+            }
+            if *private_saved_account_data_for_sync.peek() != saved_entries {
+                private_saved_account_data_for_sync.set(saved_entries);
+            }
+        });
+    }
     let blocked_did_set: std::collections::BTreeSet<String> = state_store
         .read()
         .client_blocklist()
@@ -1127,23 +1147,21 @@ pub fn ChatPanel(
                     }
                 }
 
-                // A6.3 pinned bar (above the chat feed). Lists every
-                // pinned message id with a short body preview. Clicking
-                // an item scrolls (well, focuses) the corresponding
-                // message via its `data-testid` seal.
-                //
-                // Local-only scaffolding — see TODO at `pinned_messages`
-                // signal declaration. Replace with the soland pinning
-                // projection when the spec lands.
+                // Shared pin bar. Source is the `ck.pin.*` shared event
+                // projection only; holder-private `ck.saved.v1:*`
+                // account-data is rendered on message rows instead.
                 {
-                    let pinned_now = pinned_messages();
-                    let pinned_view: Vec<(String, String)> = pinned_now
+                    let shared_pins_now = shared_pins();
+                    let pinned_view: Vec<(String, String, String)> = shared_pins_now
                         .iter()
-                        .filter_map(|id| {
+                        .filter_map(|pin| {
                             messages_for_reply_lookup
                                 .iter()
-                                .find(|m| m.id == *id)
-                                .map(|m| (m.id.clone(), m.body.clone()))
+                                .find(|m| {
+                                    m.pin_saved_target_ref() == pin.target_ref
+                                        || m.id == pin.target_ref
+                                })
+                                .map(|m| (m.id.clone(), pin.target_ref.clone(), m.body.clone()))
                         })
                         .collect();
                     rsx! {
@@ -1151,6 +1169,8 @@ pub fn ChatPanel(
                             div {
                                 class: "pinned-bar",
                                 "data-testid": "pinned-bar",
+                                "data-source": "shared-event",
+                                "data-permission": "ck.pin.add ck.pin.remove",
                                 if pinned_view.is_empty() {
                                     span {
                                         class: "pinned-bar-empty",
@@ -1163,7 +1183,7 @@ pub fn ChatPanel(
                                         span { {crate::i18n::tr("pinned_bar.title")} }
                                     }
                                     div { class: "pinned-bar-list",
-                                        for (id, body) in pinned_view {
+                                        for (id, target_ref, body) in pinned_view {
                                             {
                                                 let id_for_click = id.clone();
                                                 let preview = if body.chars().count() > 40 {
@@ -1180,6 +1200,8 @@ pub fn ChatPanel(
                                                         r#type: "button",
                                                         class: "pinned-bar-item",
                                                         "data-testid": "pinned-bar-item",
+                                                        "data-source": "shared-event",
+                                                        "data-target-ref": "{target_ref}",
                                                         title: crate::i18n::tr("pinned_bar.scroll_to"),
                                                         onclick: move |_| {
                                                             // Best-effort scroll: emit
@@ -1262,9 +1284,12 @@ pub fn ChatPanel(
                                 .as_ref()
                                 .map(|c| c.circle_id.clone())
                                 .unwrap_or_default();
-                            let message_is_pinned = pinned_messages()
+                            let message_target_ref = msg.pin_saved_target_ref().to_owned();
+                            let message_is_pinned = shared_pins()
                                 .iter()
-                                .any(|id| id == &msg.id);
+                                .any(|pin| pin.target_ref == message_target_ref || pin.target_ref == msg.id);
+                            let message_is_saved_private =
+                                private_saved_targets().contains(&message_target_ref);
                             let sender_is_own =
                                 is_own_message_sender(&msg.sender, &account_did);
                             rsx! {
@@ -1297,8 +1322,8 @@ pub fn ChatPanel(
                                 MessageCryptoState::KeyMissing => "key_missing",
                                 MessageCryptoState::NeedsVerification => "needs_verification",
                             },
-                            // A6.3: right-click toggles a tiny context
-                            // menu offering Pin/Unpin for this message.
+                            // Right-click toggles a context menu with separate
+                            // shared pin and holder-private saved actions.
                             // prevent_default suppresses the browser's
                             // native context menu so ours surfaces alone.
                             oncontextmenu: {
@@ -1333,7 +1358,9 @@ pub fn ChatPanel(
                                     "aria-label": "This message is part of the Circle named {circle.title}",
                                 }
                             }
-                            // Tiny pop-out menu — Pin / Unpin / Cancel.
+                            // Tiny pop-out menu. Shared pin writes durable
+                            // `ck.pin.*`; private save writes `ck.saved.v1:*`
+                            // through holder-private account-data.
                             // The render condition checks per-message
                             // so only one menu is visible at a time.
                             if message_context_menu().as_deref() == Some(msg.id.as_str()) {
@@ -1341,45 +1368,241 @@ pub fn ChatPanel(
                                     class: "message-context-menu",
                                     "data-testid": "message-context-menu",
                                     {
-                                        let is_pinned = pinned_messages()
+                                        let target_ref = msg.pin_saved_target_ref().to_owned();
+                                        let is_pinned = shared_pins()
                                             .iter()
-                                            .any(|id| id == &msg.id);
-                                        let msg_id = msg.id.clone();
-                                        let msg_id_for_label = msg.id.clone();
+                                            .any(|pin| pin.target_ref == target_ref || pin.target_ref == msg.id);
+                                        let is_saved_private =
+                                            private_saved_targets().contains(&target_ref);
+                                        let realm_for_pin = msg.realm_id.clone();
+                                        let strand_for_pin = msg.strand_id.clone();
+                                        let actor_for_pin = account_did.clone();
+                                        let base_for_pin = base_url.clone();
+                                        let target_for_pin = target_ref.clone();
+                                        let existing_pin = shared_pins()
+                                            .into_iter()
+                                            .find(|pin| pin.target_ref == target_for_pin || pin.target_ref == msg.id);
+                                        let actor_for_saved = account_did.clone();
+                                        let device_for_saved = device_id.clone();
+                                        let base_for_saved = base_url.clone();
+                                        let target_for_saved = target_ref.clone();
                                         rsx! {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 r#type: "button",
-                                                "data-testid": "message-pin-button",
+                                                "data-testid": "message-shared-pin-button",
+                                                "data-source": "shared-event",
+                                                "data-permission": if is_pinned { "ck.pin.remove" } else { "ck.pin.add" },
                                                 onclick: move |_| {
-                                                    let mut current = pinned_messages();
-                                                    if let Some(idx) = current
-                                                        .iter()
-                                                        .position(|id| id == &msg_id)
-                                                    {
-                                                        current.remove(idx);
+                                                    let rank = existing_pin
+                                                        .as_ref()
+                                                        .map(|pin| pin.rank.clone())
+                                                        .unwrap_or_else(next_shared_pin_rank);
+                                                    let op = if is_pinned {
+                                                        shared_message_pin_remove_operation(
+                                                            &realm_for_pin,
+                                                            &actor_for_pin,
+                                                            &strand_for_pin,
+                                                            &target_for_pin,
+                                                        )
                                                     } else {
-                                                        current.push(msg_id.clone());
+                                                        shared_message_pin_add_operation(
+                                                            &realm_for_pin,
+                                                            &actor_for_pin,
+                                                            &strand_for_pin,
+                                                            &target_for_pin,
+                                                            &rank,
+                                                        )
+                                                    };
+                                                    let op = match op {
+                                                        Ok(op) => op,
+                                                        Err(error) => {
+                                                            status_msg.set(format!("Shared pin failed: {error:#}"));
+                                                            message_context_menu.set(None);
+                                                            return;
+                                                        }
+                                                    };
+                                                    if is_pinned {
+                                                        shared_pins.write().retain(|pin| {
+                                                            !(pin.pin_scope_id == strand_for_pin
+                                                                && pin.target_ref == target_for_pin)
+                                                        });
+                                                    } else if !shared_pins().iter().any(|pin| {
+                                                        pin.pin_scope_id == strand_for_pin
+                                                            && pin.target_ref == target_for_pin
+                                                    }) {
+                                                        shared_pins.write().push(SharedMessagePin {
+                                                            pin_scope_id: strand_for_pin.clone(),
+                                                            target_ref: target_for_pin.clone(),
+                                                            rank: rank.clone(),
+                                                        });
                                                     }
-                                                    pinned_messages.set(current);
                                                     message_context_menu.set(None);
-                                                    // TODO(soland): replace
-                                                    // the local-only Signal
-                                                    // with the canonical
-                                                    // pinning event projection
-                                                    // once the reducer lands.
+                                                    status_msg.set(if is_pinned {
+                                                        crate::i18n::tr("message.shared_unpin_pending")
+                                                    } else {
+                                                        crate::i18n::tr("message.shared_pin_pending")
+                                                    });
+                                                    let base = base_for_pin.clone();
+                                                    let api_token = token();
+                                                    let wait_for = active_sync_token(sync_cursor());
+                                                    let realm_for_store = realm_for_pin.clone();
+                                                    let strand_for_store = strand_for_pin.clone();
+                                                    let target_for_store = target_for_pin.clone();
+                                                    let existing_for_rollback = existing_pin.clone();
+                                                    spawn(async move {
+                                                        match authed_api_with_sync(&base, api_token, wait_for) {
+                                                            Ok(api) => match api.submit_event_envelope(&op).await {
+                                                                Ok(submitted) => {
+                                                                    {
+                                                                        let mut store = state_store.write();
+                                                                        store.append_raw_operation(
+                                                                            op.local_operation_id().to_owned(),
+                                                                            Some(realm_for_store),
+                                                                            json!({
+                                                                                "event_id": submitted.event_id.clone(),
+                                                                                "kind": op.kind.clone(),
+                                                                                "payload": op.payload.clone(),
+                                                                            }),
+                                                                        );
+                                                                    }
+                                                                    frontier_state.set(submitted.event_id);
+                                                                    status_msg.set(if is_pinned {
+                                                                        crate::i18n::tr("message.shared_unpinned")
+                                                                    } else {
+                                                                        crate::i18n::tr("message.shared_pinned")
+                                                                    });
+                                                                }
+                                                                Err(error) => {
+                                                                    if is_pinned {
+                                                                        if let Some(pin) = existing_for_rollback {
+                                                                            shared_pins.write().push(pin);
+                                                                        }
+                                                                    } else {
+                                                                        shared_pins.write().retain(|pin| {
+                                                                            !(pin.pin_scope_id == strand_for_store
+                                                                                && pin.target_ref == target_for_store)
+                                                                        });
+                                                                    }
+                                                                    status_msg.set(format!("Shared pin failed: {error}"));
+                                                                }
+                                                            },
+                                                            Err(error) => {
+                                                                if is_pinned {
+                                                                    if let Some(pin) = existing_for_rollback {
+                                                                        shared_pins.write().push(pin);
+                                                                    }
+                                                                } else {
+                                                                    shared_pins.write().retain(|pin| {
+                                                                        !(pin.pin_scope_id == strand_for_store
+                                                                            && pin.target_ref == target_for_store)
+                                                                    });
+                                                                }
+                                                                status_msg.set(format!("Shared pin failed: {error}"));
+                                                            }
+                                                        }
+                                                    });
                                                 },
                                                 if is_pinned {
-                                                    {crate::i18n::tr("message.unpin")}
+                                                    {crate::i18n::tr("message.shared_unpin")}
                                                 } else {
-                                                    {crate::i18n::tr("message.pin")}
+                                                    {crate::i18n::tr("message.shared_pin")}
+                                                }
+                                            }
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                r#type: "button",
+                                                disabled: is_saved_private,
+                                                "data-testid": "message-private-save-button",
+                                                "data-source": "private-account-data",
+                                                "data-account-data-prefix": "ck.saved.v1",
+                                                onclick: move |_| {
+                                                    if is_saved_private {
+                                                        message_context_menu.set(None);
+                                                        return;
+                                                    }
+                                                    let namespace_key = match load_chat_productivity_namespace_key(
+                                                        &actor_for_saved,
+                                                        &device_for_saved,
+                                                    ) {
+                                                        Ok(key) => key,
+                                                        Err(error) => {
+                                                            status_msg.set(format!("Private save failed: {error:#}"));
+                                                            message_context_menu.set(None);
+                                                            return;
+                                                        }
+                                                    };
+                                                    let updated_hlc = Hlc::now("yougen").encode();
+                                                    let item = match chat_saved_account_data_item(
+                                                        &namespace_key,
+                                                        &target_for_saved,
+                                                        &updated_hlc,
+                                                    ) {
+                                                        Ok(item) => item,
+                                                        Err(error) => {
+                                                            status_msg.set(format!("Private save failed: {error:#}"));
+                                                            message_context_menu.set(None);
+                                                            return;
+                                                        }
+                                                    };
+                                                    let account_data_value =
+                                                        match crate::account_data::saved_item_account_data_value(&item.value) {
+                                                            Ok(value) => value,
+                                                            Err(error) => {
+                                                                status_msg.set(format!("Private save failed: {error:#}"));
+                                                                message_context_menu.set(None);
+                                                                return;
+                                                            }
+                                                        };
+                                                    {
+                                                        let mut store = state_store.write();
+                                                        if let Err(error) = store.stage_saved_account_data_item(&item) {
+                                                            status_msg.set(format!("Private save failed: {error:#}"));
+                                                            message_context_menu.set(None);
+                                                            return;
+                                                        }
+                                                    }
+                                                    private_saved_targets.write().insert(target_for_saved.clone());
+                                                    private_saved_account_data.write().insert(
+                                                        item.account_data_key.clone(),
+                                                        account_data_value.clone(),
+                                                    );
+                                                    message_context_menu.set(None);
+                                                    status_msg.set(crate::i18n::tr("message.private_saved"));
+                                                    let base = base_for_saved.clone();
+                                                    let api_token = token();
+                                                    let wait_for = active_sync_token(sync_cursor());
+                                                    let key_for_submit = item.account_data_key.clone();
+                                                    spawn(async move {
+                                                        match authed_api_with_sync(&base, api_token, wait_for) {
+                                                            Ok(api) => {
+                                                                if let Err(error) = api
+                                                                    .set_private_account_data_with_cas(
+                                                                        &key_for_submit,
+                                                                        account_data_value,
+                                                                        None,
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    status_msg.set(format!("Private save stayed local: {error}"));
+                                                                }
+                                                            }
+                                                            Err(error) => {
+                                                                status_msg.set(format!("Private save stayed local: {error}"));
+                                                            }
+                                                        }
+                                                    });
+                                                },
+                                                if is_saved_private {
+                                                    {crate::i18n::tr("message.private_saved")}
+                                                } else {
+                                                    {crate::i18n::tr("message.private_save")}
                                                 }
                                             }
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 r#type: "button",
                                                 onclick: move |_| {
-                                                    let _ = msg_id_for_label.clone();
                                                     message_context_menu.set(None);
                                                 },
                                                 "Cancel"
@@ -1395,17 +1618,28 @@ pub fn ChatPanel(
                                         r#type: "button",
                                         class: "message-pin-indicator",
                                         "data-testid": "message-pinned-button",
-                                        "aria-label": crate::i18n::tr("message.unpin"),
-                                        title: crate::i18n::tr("message.unpin"),
+                                        "data-source": "shared-event",
+                                        "data-target-ref": "{message_target_ref}",
+                                        "aria-label": crate::i18n::tr("message.shared_pin"),
+                                        title: crate::i18n::tr("message.shared_pin"),
                                         onclick: {
                                             let msg_id = msg.id.clone();
                                             move |_| {
-                                                let mut current = pinned_messages();
-                                                current.retain(|id| id != &msg_id);
-                                                pinned_messages.set(current);
+                                                message_context_menu.set(Some(msg_id.clone()));
                                             }
                                         },
                                         UiIcon { name: "pin" }
+                                    }
+                                }
+                                if message_is_saved_private {
+                                    span {
+                                        class: "message-private-saved-indicator",
+                                        "data-testid": "message-private-saved-indicator",
+                                        "data-source": "private-account-data",
+                                        "data-account-data-prefix": "ck.saved.v1",
+                                        "data-target-ref": "{message_target_ref}",
+                                        title: crate::i18n::tr("message.private_saved"),
+                                        UiIcon { name: "check" }
                                     }
                                 }
                                 div { class: "msg-head",
@@ -1604,6 +1838,8 @@ pub fn ChatPanel(
                                                         .find(|candidate| candidate.id == local_id)
                                                     {
                                                         found.id = retry_message_id.clone();
+                                                        found.protocol_message_id =
+                                                            Some(retry_message_id.clone());
                                                         found.pending = true;
                                                         found.failed = false;
                                                         found.error = None;
@@ -3194,6 +3430,7 @@ pub fn ChatPanel(
                                         messages.write().push(ChatMessage {
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
+                                            protocol_message_id: None,
                                             sender: actor.clone(),
                                             executed_by: None,
                                             body: format!("[poll] {}", draft_snapshot.question),
@@ -3288,6 +3525,7 @@ pub fn ChatPanel(
                                         messages.write().push(ChatMessage {
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
+                                            protocol_message_id: None,
                                             sender: actor.clone(),
                                             executed_by: None,
                                             body: format!("[poll] {}", draft_snapshot.question),
@@ -3440,6 +3678,7 @@ pub fn ChatPanel(
                                 messages.write().push(ChatMessage {
                                     realm_id: realm.clone(),
                                     id: local_id.clone(),
+                                    protocol_message_id: Some(local_id.clone()),
                                     sender: actor.clone(),
                                     executed_by: None,
                                     body: body.clone(),
@@ -3684,6 +3923,7 @@ pub fn ChatPanel(
                                 messages.write().push(ChatMessage {
                                     realm_id: realm.clone(),
                                     id: message_id.clone(),
+                                    protocol_message_id: Some(message_id.clone()),
                                     sender: actor.clone(),
                                     executed_by: None,
                                     body: body.clone(),

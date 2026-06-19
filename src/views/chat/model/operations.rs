@@ -1,5 +1,7 @@
 use super::*;
 
+pub(crate) const CHAT_PRIVATE_SAVED_COLLECTION_TITLE: &str = "Saved";
+
 pub(crate) fn fail_optimistic_chat_send(
     mut messages: Signal<Vec<ChatMessage>>,
     mut chat_draft: Signal<String>,
@@ -30,6 +32,104 @@ pub(crate) fn fail_optimistic_chat_send(
 // `secure_send::build_secure_send` / `secure_send::submit_secure_send`
 // directly; the former local `run_local_mls_encrypt` / `chat_mls_*` helpers
 // moved there verbatim.
+
+pub(crate) fn next_shared_pin_rank() -> String {
+    format!("r{}", chrono::Utc::now().timestamp_millis())
+}
+
+pub(crate) fn shared_message_pin_add_operation(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    target_ref: &str,
+    rank: &str,
+) -> anyhow::Result<crate::operation::EventEnvelope> {
+    let payload = cokret_sdk::PinAddPayload {
+        pin_scope: cokret_sdk::PinScope::Strand {
+            id: cokret_sdk::StrandId::new(strand_id.to_owned())
+                .map_err(|error| anyhow::anyhow!("invalid pin strand scope: {error:?}"))?,
+        },
+        target_ref: target_ref.to_owned(),
+        rank: rank.to_owned(),
+        note: None,
+    };
+    let payload = serde_json::to_value(payload)?;
+    validate_pin_payload("ck.pin.add", &payload)?;
+    Ok(OperationBuilder::new(realm_id, actor, "ck.pin.add")
+        .target_ref(target_ref)
+        .body(payload)
+        .build("yougen"))
+}
+
+pub(crate) fn shared_message_pin_remove_operation(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    target_ref: &str,
+) -> anyhow::Result<crate::operation::EventEnvelope> {
+    let payload = cokret_sdk::PinRemovePayload {
+        pin_scope: cokret_sdk::PinScope::Strand {
+            id: cokret_sdk::StrandId::new(strand_id.to_owned())
+                .map_err(|error| anyhow::anyhow!("invalid pin strand scope: {error:?}"))?,
+        },
+        target_ref: target_ref.to_owned(),
+        expected_rank: None,
+    };
+    let payload = serde_json::to_value(payload)?;
+    validate_pin_payload("ck.pin.remove", &payload)?;
+    Ok(OperationBuilder::new(realm_id, actor, "ck.pin.remove")
+        .target_ref(target_ref)
+        .body(payload)
+        .build("yougen"))
+}
+
+fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .validate_payload(kind, payload)
+        .map_err(|error| anyhow::anyhow!("{kind} payload is not schema-valid: {error}"))
+}
+
+pub(crate) fn load_chat_productivity_namespace_key(
+    actor_id: &str,
+    device_id: &str,
+) -> anyhow::Result<[u8; crate::account_data::PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_KEY_LEN]> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let account_secret = crate::mls::runtime::load_or_create_account_mls_secret(
+        secure_store.as_ref(),
+        actor_id,
+        device_id,
+    )
+    .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?;
+    crate::account_data::productivity_account_data_namespace_key(&account_secret)
+}
+
+pub(crate) fn chat_saved_account_data_item(
+    namespace_key: &[u8],
+    target_ref: &str,
+    updated_hlc: &str,
+) -> anyhow::Result<crate::account_data::SavedAccountDataItem> {
+    crate::account_data::saved_account_data_item(
+        namespace_key,
+        cokret_sdk::SavedItemValue {
+            collection_title: CHAT_PRIVATE_SAVED_COLLECTION_TITLE.to_owned(),
+            target_ref: target_ref.to_owned(),
+            note: None,
+            updated_hlc: updated_hlc.to_owned(),
+        },
+    )
+}
+
+pub(crate) fn private_saved_targets_from_account_data(
+    entries: &std::collections::BTreeMap<String, Value>,
+    collection_title: &str,
+) -> std::collections::BTreeSet<String> {
+    entries
+        .values()
+        .filter_map(|value| crate::account_data::saved_item_value_from_account_data(value).ok())
+        .filter(|value| value.collection_title == collection_title)
+        .map(|value| value.target_ref)
+        .collect()
+}
 
 pub(crate) fn chat_message_revise_operation(
     realm_id: &str,

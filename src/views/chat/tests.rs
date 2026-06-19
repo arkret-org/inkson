@@ -241,6 +241,160 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
 }
 
 #[test]
+fn shared_pin_operations_use_pin_events_not_account_data() {
+    let strand_id = "ck:strand:01904100-0000-7000-8000-000000000001";
+    let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
+    let add = shared_message_pin_add_operation(
+        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        strand_id,
+        target_ref,
+        "r100",
+    )
+    .expect("shared pin add builds");
+
+    assert_eq!(add.kind, "ck.pin.add");
+    assert_eq!(add.payload["pin_scope"]["kind"], "strand");
+    assert_eq!(add.payload["pin_scope"]["id"], strand_id);
+    assert_eq!(add.payload["target_ref"], target_ref);
+    assert_eq!(add.payload["rank"], "r100");
+    assert!(add.payload.get("key").is_none());
+    assert!(add.payload.get("encrypted_payload").is_none());
+    assert!(add.payload.get("body").is_none());
+
+    let remove = shared_message_pin_remove_operation(
+        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        strand_id,
+        target_ref,
+    )
+    .expect("shared pin remove builds");
+    assert_eq!(remove.kind, "ck.pin.remove");
+    assert_eq!(remove.payload["target_ref"], target_ref);
+    assert!(remove.payload.get("key").is_none());
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .validate_payload(&add.kind, &add.payload)
+        .unwrap();
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .validate_payload(&remove.kind, &remove.payload)
+        .unwrap();
+}
+
+#[test]
+fn private_saved_item_uses_saved_account_data_not_pin_event() {
+    let namespace_key =
+        crate::account_data::productivity_account_data_namespace_key("test-account-secret")
+            .expect("namespace key");
+    let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
+    let item =
+        chat_saved_account_data_item(&namespace_key, target_ref, "01970e589d21-0000-a13f9c2e")
+            .expect("saved item");
+
+    assert!(item.account_data_key.starts_with("ck.saved.v1:"));
+    assert!(!item.account_data_key.contains(target_ref));
+    assert!(
+        !item
+            .account_data_key
+            .contains(CHAT_PRIVATE_SAVED_COLLECTION_TITLE)
+    );
+    assert_eq!(item.value.target_ref, target_ref);
+    let wire = crate::account_data::saved_item_account_data_value(&item.value).unwrap();
+    assert_eq!(wire["kind"], "saved_item");
+
+    let op = crate::account_data::build_private_account_data_set(
+        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        &item.account_data_key,
+        wire,
+    )
+    .unwrap()
+    .build("yougen");
+    assert_eq!(op.kind, "ck.account_data.set");
+    assert_eq!(op.payload["key"], item.account_data_key);
+    assert_eq!(op.payload["encrypted_payload"]["kind"], "saved_item");
+    assert!(op.payload.get("body").is_none());
+    assert_ne!(op.kind, "ck.pin.add");
+}
+
+#[test]
+fn shared_pin_projection_ignores_private_saved_account_data() {
+    use chrono::Utc;
+
+    let strand_id = "ck:strand:01904100-0000-7000-8000-000000000001";
+    let other_strand_id = "ck:strand:01904100-0000-7000-8000-000000000099";
+    let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
+    let other_target = "ck:message:01904100-0000-7000-8000-000000000003";
+    let records = vec![
+        crate::local_state::RawOperationRecord {
+            operation_id: "ck:operation:pin-add".to_owned(),
+            realm_id: Some("ck:realm:demo".to_owned()),
+            received_at: Utc::now(),
+            payload: json!({
+                "kind": "ck.pin.add",
+                "payload": {
+                    "pin_scope": {"kind": "strand", "id": strand_id},
+                    "target_ref": target_ref,
+                    "rank": "r200"
+                }
+            }),
+        },
+        crate::local_state::RawOperationRecord {
+            operation_id: "ck:operation:saved-private".to_owned(),
+            realm_id: Some("ck:realm:demo".to_owned()),
+            received_at: Utc::now(),
+            payload: json!({
+                "kind": "ck.account_data.set",
+                "payload": {
+                    "key": "ck.saved.v1:collection:target",
+                    "encrypted_payload": {
+                        "kind": "saved_item",
+                        "collection_title": "Saved",
+                        "target_ref": other_target,
+                        "updated_hlc": "01970e589d21-0000-a13f9c2e"
+                    }
+                }
+            }),
+        },
+        crate::local_state::RawOperationRecord {
+            operation_id: "ck:operation:other-pin".to_owned(),
+            realm_id: Some("ck:realm:demo".to_owned()),
+            received_at: Utc::now(),
+            payload: json!({
+                "kind": "ck.pin.add",
+                "payload": {
+                    "pin_scope": {"kind": "strand", "id": other_strand_id},
+                    "target_ref": other_target,
+                    "rank": "r100"
+                }
+            }),
+        },
+        crate::local_state::RawOperationRecord {
+            operation_id: "ck:operation:pin-reorder".to_owned(),
+            realm_id: Some("ck:realm:demo".to_owned()),
+            received_at: Utc::now(),
+            payload: json!({
+                "kind": "ck.pin.reorder",
+                "payload": {
+                    "pin_scope": {"kind": "strand", "id": strand_id},
+                    "target_ref": target_ref,
+                    "rank": "r050"
+                }
+            }),
+        },
+    ];
+
+    let pins = shared_message_pins_from_raw_operations(&records, strand_id);
+    assert_eq!(
+        pins,
+        vec![SharedMessagePin {
+            pin_scope_id: strand_id.to_owned(),
+            target_ref: target_ref.to_owned(),
+            rank: "r050".to_owned(),
+        }]
+    );
+}
+
+#[test]
 fn chat_message_ids_use_schema_prefix() {
     let id = new_chat_message_id();
 
@@ -796,6 +950,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
     let messages = vec![ChatMessage {
         realm_id: "ck:realm:demo".to_owned(),
         id: "ck:event:1".to_owned(),
+        protocol_message_id: Some("ck:message:01964137-0000-7000-8000-000000000001".to_owned()),
         sender: "did:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "@alice:example.com/summary".to_owned(),

@@ -257,6 +257,8 @@ fn mls_commit_builder_matches_registered_payload_schema() {
             "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
         )
         .unwrap(),
+        cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+        cokret_sdk::CORE_REDUCER_PROFILE,
     )
     .unwrap();
     let payload = cokret_sdk::MlsCommitPayload::new(

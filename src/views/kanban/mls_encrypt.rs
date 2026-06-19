@@ -210,6 +210,8 @@ pub(crate) fn build_creator_mls_genesis_event(
         0,
         kanban_mls_membership_frontier(&seal_view, &event_id_typed),
         kanban_mls_policy_root(&seal_view, realm_id)?,
+        cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+        cokret_sdk::CORE_REDUCER_PROFILE,
     )
     .map_err(|err| format!("MLS genesis governance binding failed: {err}"))?;
     let payload = crate::mls::runtime::build_mls_genesis_payload(
@@ -262,6 +264,8 @@ pub(crate) fn kanban_mls_commit_event_from_store(
         commit_envelope.epoch,
         kanban_mls_membership_frontier(&seal_view, &event_id_typed),
         kanban_mls_policy_root(&seal_view, realm_id)?,
+        cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+        cokret_sdk::CORE_REDUCER_PROFILE,
     )
     .map_err(|err| format!("MLS governance binding failed: {err}"))?;
     let payload = cokret_sdk::MlsCommitPayload::new(

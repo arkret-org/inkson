@@ -628,10 +628,18 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("compose.upload_progress", "Uploading…");
     dict.set("compose.upload_error", "Upload failed");
-    // Message pinning (A6.3).
+    // Message shared pin and holder-private saved item actions.
     dict.set("message.pin", "Pin");
     dict.set("message.unpin", "Unpin");
-    dict.set("pinned_bar.title", "Pinned messages");
+    dict.set("message.shared_pin", "Pin for everyone");
+    dict.set("message.shared_unpin", "Unpin for everyone");
+    dict.set("message.shared_pin_pending", "Sharing pin...");
+    dict.set("message.shared_unpin_pending", "Removing shared pin...");
+    dict.set("message.shared_pinned", "Shared pin updated.");
+    dict.set("message.shared_unpinned", "Shared pin removed.");
+    dict.set("message.private_save", "Save for me");
+    dict.set("message.private_saved", "Saved for me");
+    dict.set("pinned_bar.title", "Shared pinned messages");
     dict.set("pinned_bar.empty", "No pinned messages.");
     dict.set("pinned_bar.scroll_to", "Jump to message");
     // Actor-private Realm list pinning.

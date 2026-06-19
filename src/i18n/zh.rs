@@ -595,10 +595,18 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("compose.upload_progress", "上传中…");
     dict.set("compose.upload_error", "上传失败");
-    // Message pinning (A6.3)
+    // Message shared pin and holder-private saved item actions.
     dict.set("message.pin", "钉选");
     dict.set("message.unpin", "取消钉选");
-    dict.set("pinned_bar.title", "钉选消息");
+    dict.set("message.shared_pin", "共享钉选");
+    dict.set("message.shared_unpin", "取消共享钉选");
+    dict.set("message.shared_pin_pending", "正在共享钉选…");
+    dict.set("message.shared_unpin_pending", "正在移除共享钉选…");
+    dict.set("message.shared_pinned", "共享钉选已更新。");
+    dict.set("message.shared_unpinned", "共享钉选已移除。");
+    dict.set("message.private_save", "仅为我保存");
+    dict.set("message.private_saved", "已为我保存");
+    dict.set("pinned_bar.title", "共享钉选消息");
     dict.set("pinned_bar.empty", "暂无钉选消息。");
     dict.set("pinned_bar.scroll_to", "跳转到消息");
     // Actor-private Realm list pinning.

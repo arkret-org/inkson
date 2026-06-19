@@ -967,6 +967,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
+                                if crate::account_data::private_account_data_key_prefix(data_type)
+                                    == Some(cokret_sdk::ACCOUNT_DATA_TYPE_SAVED)
+                                {
+                                    if let Some(content) = entry
+                                        .get("content")
+                                        .or_else(|| entry.get("encrypted_payload"))
+                                        .cloned()
+                                    {
+                                        store.stage_saved_account_data_entry(data_type, content);
+                                    }
+                                    continue;
+                                }
                                 if let Some(actor_id) =
                                     crate::account_data::actor_id_from_contact_remark_key(data_type)
                                 {
