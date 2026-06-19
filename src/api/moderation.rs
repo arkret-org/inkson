@@ -14,11 +14,14 @@ impl CokretApi {
             .map_err(|err| anyhow::anyhow!("invalid reporter `{reporter}`: {err}"))?;
         let body = cokret_sdk::models::ModerationReportRequestBody {
             realm_id: realm,
+            effective_scope: None,
             target_ref: target_ref.to_owned(),
             report_reason_code: report_reason_code.to_owned(),
             description: None,
             reporter: reporter_did,
             evidence_refs: Vec::new(),
+            evidence_package: Value::Null,
+            franking_proof: Value::Null,
         };
         self.post_json("_cokret/self/moderation/report", &body)
             .await
