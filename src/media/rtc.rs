@@ -68,6 +68,8 @@ pub enum RtcClientError {
     /// Egress destination is not a Cokret-authenticated blob upload.
     /// Recording is refused.
     RecordingArtifactPipelineBypassed,
+    /// Transcription artifact was produced outside the Cokret blob pipeline.
+    TranscriptionArtifactPipelineBypassed,
     /// Desktop (native) build has no real media transport: this milestone
     /// ships without a bundled libwebrtc / LiveKit-Rust stack, so there is
     /// no RTP path. The call surface MUST surface this as "desktop calling
@@ -89,6 +91,9 @@ impl RtcClientError {
             Self::ParticipantIdentityUnrecognised => "participant_identity_unrecognised",
             Self::E2eeKeySourceUnauthorised => "e2ee_key_source_unauthorised",
             Self::RecordingArtifactPipelineBypassed => "recording_artifact_pipeline_bypassed",
+            Self::TranscriptionArtifactPipelineBypassed => {
+                "transcription_artifact_pipeline_bypassed"
+            }
             Self::DesktopMediaUnavailable => "desktop_media_unavailable",
         }
     }
@@ -105,6 +110,9 @@ impl RtcClientError {
             Self::E2eeKeySourceUnauthorised => "error.call.e2ee_key_source_unauthorised",
             Self::RecordingArtifactPipelineBypassed => {
                 "error.call.recording_artifact_pipeline_bypassed"
+            }
+            Self::TranscriptionArtifactPipelineBypassed => {
+                "error.call.transcription_artifact_pipeline_bypassed"
             }
             Self::DesktopMediaUnavailable => "error.call.desktop_media_unavailable",
         }
@@ -123,6 +131,9 @@ impl RtcClientError {
             "participant_identity_unrecognised" => Self::ParticipantIdentityUnrecognised,
             "e2ee_key_source_unauthorised" => Self::E2eeKeySourceUnauthorised,
             "recording_artifact_pipeline_bypassed" => Self::RecordingArtifactPipelineBypassed,
+            "transcription_artifact_pipeline_bypassed" => {
+                Self::TranscriptionArtifactPipelineBypassed
+            }
             "desktop_media_unavailable" => Self::DesktopMediaUnavailable,
             _ => return None,
         })
@@ -629,6 +640,7 @@ mod tests {
             RtcClientError::ParticipantIdentityUnrecognised,
             RtcClientError::E2eeKeySourceUnauthorised,
             RtcClientError::RecordingArtifactPipelineBypassed,
+            RtcClientError::TranscriptionArtifactPipelineBypassed,
             RtcClientError::DesktopMediaUnavailable,
         ] {
             assert_eq!(RtcClientError::from_wire(err.as_wire()), Some(err));

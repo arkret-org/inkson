@@ -1257,6 +1257,10 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "Recording destination is not a Cokret authenticated blob — refusing to record.",
     );
     dict.set(
+        "error.call.transcription_artifact_pipeline_bypassed",
+        "Transcript destination is not a Cokret authenticated blob — refusing transcription.",
+    );
+    dict.set(
         "error.call.desktop_media_unavailable",
         "Desktop calling is not ready yet on this build — no media transport. Use a web client to place this call.",
     );

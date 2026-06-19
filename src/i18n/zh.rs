@@ -68,6 +68,10 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "录制目标不是 Cokret 认证 blob — 拒绝录制。",
     );
     dict.set(
+        "error.call.transcription_artifact_pipeline_bypassed",
+        "转写目标不是 Cokret 认证 blob — 拒绝转写。",
+    );
+    dict.set(
         "error.call.desktop_media_unavailable",
         "桌面端通话尚未就绪(此版本无媒体传输)。请改用 Web 客户端发起本次通话。",
     );

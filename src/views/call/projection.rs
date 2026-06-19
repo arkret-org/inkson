@@ -31,11 +31,44 @@ fn call_state_recording_artifact_boundary(
         .map_err(|_| crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed)
 }
 
+fn call_state_transcript_artifact_boundary(
+    body: &Value,
+) -> Result<(), crate::media::rtc::RtcClientError> {
+    if !body_mentions_transcript_artifact(body) {
+        return Ok(());
+    }
+    if let Some(result) = body.get("transcript_result")
+        && value_has_backend_direct_transcript_ref(result)
+    {
+        return Err(crate::media::rtc::RtcClientError::TranscriptionArtifactPipelineBypassed);
+    }
+    let payload: cokret_sdk::CallStatePayload = serde_json::from_value(body.clone())
+        .map_err(|_| crate::media::rtc::RtcClientError::TranscriptionArtifactPipelineBypassed)?;
+    payload
+        .validate_transcript_result_storage()
+        .map_err(|_| crate::media::rtc::RtcClientError::TranscriptionArtifactPipelineBypassed)
+}
+
+fn call_state_media_artifact_boundary(
+    body: &Value,
+) -> Result<(), crate::media::rtc::RtcClientError> {
+    call_state_recording_artifact_boundary(body)?;
+    call_state_transcript_artifact_boundary(body)
+}
+
 fn body_mentions_recording_artifact(body: &Value) -> bool {
     body.get("recording_result").is_some()
         || matches!(
             body.get("recording_state").and_then(Value::as_str),
             Some("ready" | "failed")
+        )
+}
+
+fn body_mentions_transcript_artifact(body: &Value) -> bool {
+    body.get("transcript_result").is_some()
+        || matches!(
+            body.get("transcript_state").and_then(Value::as_str),
+            Some("stopped" | "ready" | "failed")
         )
 }
 
@@ -57,6 +90,34 @@ fn value_has_backend_direct_recording_ref(value: &Value) -> bool {
                 key.as_str(),
                 "url" | "download_url" | "recording_url" | "destination" | "external_url"
             ) || value_has_backend_direct_recording_ref(value)
+        }),
+        _ => false,
+    }
+}
+
+fn value_has_backend_direct_transcript_ref(value: &Value) -> bool {
+    match value {
+        Value::String(value) => {
+            let lower = value.to_ascii_lowercase();
+            lower.contains("http://")
+                || lower.contains("https://")
+                || lower.contains("s3://")
+                || lower.contains("gs://")
+                || lower.contains("s3.amazonaws.com")
+                || lower.contains("storage.googleapis.com")
+                || lower.contains("livekit")
+        }
+        Value::Array(values) => values.iter().any(value_has_backend_direct_transcript_ref),
+        Value::Object(object) => object.iter().any(|(key, value)| {
+            matches!(
+                key.as_str(),
+                "url"
+                    | "download_url"
+                    | "transcript_url"
+                    | "transcript_artifact_url"
+                    | "destination"
+                    | "external_url"
+            ) || value_has_backend_direct_transcript_ref(value)
         }),
         _ => false,
     }
@@ -140,7 +201,7 @@ pub(super) fn call_state_participant_identities(
             continue;
         }
         let body = operation_body(&record.payload);
-        if call_state_recording_artifact_boundary(body).is_err() {
+        if call_state_media_artifact_boundary(body).is_err() {
             continue;
         }
         if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
@@ -186,7 +247,7 @@ pub(super) fn call_state_participant_device_map(
             continue;
         }
         let body = operation_body(&record.payload);
-        if call_state_recording_artifact_boundary(body).is_err() {
+        if call_state_media_artifact_boundary(body).is_err() {
             continue;
         }
         if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
@@ -428,6 +489,23 @@ mod tests {
     }
 
     #[test]
+    fn transcript_artifact_boundary_rejects_backend_url() {
+        let body = json!({
+            "call_id": "ck:call:019a7360-0000-7000-8000-000000000001",
+            "state": "ended",
+            "transcript_state": "ready",
+            "transcript_result": {
+                "transcript_start_event_id": "ck:event:019a7360-0000-7000-8000-000000000003",
+                "transcript_artifact_url": "https://backend.example/transcript.vtt"
+            }
+        });
+        assert_eq!(
+            call_state_transcript_artifact_boundary(&body),
+            Err(crate::media::rtc::RtcClientError::TranscriptionArtifactPipelineBypassed)
+        );
+    }
+
+    #[test]
     fn call_state_projection_skips_backend_recording_result() {
         let mut state = crate::local_state::ClientLocalState::default();
         state.raw_operations.push(crate::local_state::RawOperationRecord {
@@ -443,6 +521,41 @@ mod tests {
                     "recording_result": {
                         "recording_start_event_id": "ck:event:019a7360-0000-7000-8000-000000000003",
                         "recording_url": "https://backend.example/egress/out.mp4"
+                    },
+                    "participants": [
+                        {
+                            "actor_id": "did:web:alice.example",
+                            "device_id": "ck:device:019a7360-0000-7000-8000-000000000008",
+                            "participant_identity": "ck:rtc_participant:alice"
+                        }
+                    ]
+                }
+            }),
+        });
+        let identities = call_state_participant_identities(
+            &state,
+            "ck:realm:019a7360-0000-7000-8000-000000000000",
+            "ck:call:019a7360-0000-7000-8000-000000000001",
+        );
+        assert!(identities.is_empty());
+    }
+
+    #[test]
+    fn call_state_projection_skips_backend_transcript_result() {
+        let mut state = crate::local_state::ClientLocalState::default();
+        state.raw_operations.push(crate::local_state::RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ck:realm:019a7360-0000-7000-8000-000000000000".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ck.call.state",
+                "body": {
+                    "call_id": "ck:call:019a7360-0000-7000-8000-000000000001",
+                    "state": "ended",
+                    "transcript_state": "ready",
+                    "transcript_result": {
+                        "transcript_start_event_id": "ck:event:019a7360-0000-7000-8000-000000000003",
+                        "transcript_artifact_url": "https://backend.example/transcript.vtt"
                     },
                     "participants": [
                         {
