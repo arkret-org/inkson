@@ -22,7 +22,7 @@ use super::components::{ActorKindBadge, DraftApprovalPanel, SidecarExposureDiscl
 use super::model::{
     AgentPermissionPreset, agent_pair_url, agent_state_badge_class, agent_state_label,
     agent_view_from_directory_row, expand_preset_grant, is_pairing_request_expired,
-    requested_scope_for_presets,
+    participation_ceiling_reason, requested_scope_for_presets,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -1251,6 +1251,7 @@ pub fn PersonalAgentAdminPanel(
                                     let sel = entry.selection;
                                     let eff = entry.effective;
                                     let ceil = entry.ceiling;
+                                    let ceiling_reason = participation_ceiling_reason(sel, ceil);
                                     rsx! {
                                         div {
                                             class: "event",
@@ -1264,6 +1265,9 @@ pub fn PersonalAgentAdminPanel(
                                             }
                                             div { class: "muted",
                                                 "ceiling: reply={ceil.reply} mention={ceil.accept_third_party_mention} act_on_behalf={ceil.act_on_behalf} · selection: reply={sel.reply} mention={sel.accept_third_party_mention} act_on_behalf={sel.act_on_behalf}"
+                                            }
+                                            div { class: "muted", "data-testid": "agent-admin-participation-ceiling-reason",
+                                                "{ceiling_reason}"
                                             }
                                         }
                                     }

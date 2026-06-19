@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod personal_agent_tests {
-    use cokret_sdk::models::AgentKeyScope;
+    use cokret_sdk::models::{AgentKeyScope, AgentParticipation};
 
     use super::super::*;
 
@@ -30,6 +30,39 @@ mod personal_agent_tests {
             actor_kind_badge_class(Some("agent")),
             actor_kind_badge_class(Some("service"))
         );
+    }
+
+    #[test]
+    fn agent_state_badges_cover_management_lifecycle() {
+        assert_eq!(agent_state_label("pending_runtime_key"), "Pending");
+        assert_eq!(agent_state_label("active"), "Active");
+        assert_eq!(agent_state_label("paused"), "Paused");
+        assert_eq!(agent_state_label("deactivated"), "Deactivated");
+        assert_eq!(
+            agent_state_badge_class("pending_runtime_key"),
+            "badge amber"
+        );
+        assert_eq!(agent_state_badge_class("active"), "badge green");
+        assert_eq!(agent_state_badge_class("paused"), "badge amber");
+        assert_eq!(agent_state_badge_class("deactivated"), "badge red");
+    }
+
+    #[test]
+    fn participation_ceiling_reason_names_capped_selected_bits() {
+        let selection = AgentParticipation {
+            reply: true,
+            accept_third_party_mention: true,
+            act_on_behalf: true,
+        };
+        let ceiling = AgentParticipation {
+            reply: true,
+            accept_third_party_mention: false,
+            act_on_behalf: false,
+        };
+        let reason = participation_ceiling_reason(selection, ceiling);
+        assert!(reason.contains("third-party mentions capped"));
+        assert!(reason.contains("act-on-behalf capped"));
+        assert!(!reason.contains("reply capped"));
     }
 
     #[test]

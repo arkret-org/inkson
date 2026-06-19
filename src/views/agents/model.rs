@@ -5,7 +5,7 @@
 //! endpoint registry, the personal-agent admin, and the handoff
 //! surfaces.
 
-use cokret_sdk::models::{AgentKeyScope, AgentView};
+use cokret_sdk::models::{AgentKeyScope, AgentParticipation, AgentView};
 use serde_json::{Value, json};
 
 // ─────────────────────────────────────────────────────────────────────
@@ -247,7 +247,9 @@ pub fn expand_preset_grant(
 /// still legible.
 pub fn agent_state_label(state: &str) -> &str {
     match state {
+        "pending" | "pending_runtime_key" => "Pending",
         "active" => "Active",
+        "pairing_expired" => "Pairing expired",
         "paused" => "Paused",
         "deactivated" => "Deactivated",
         other => other,
@@ -259,7 +261,9 @@ pub fn agent_state_label(state: &str) -> &str {
 /// deactivated = red.
 pub fn agent_state_badge_class(state: &str) -> &'static str {
     match state {
+        "pending" | "pending_runtime_key" => "badge amber",
         "active" => "badge green",
+        "pairing_expired" => "badge red",
         "paused" => "badge amber",
         "deactivated" => "badge red",
         _ => "badge",
@@ -271,6 +275,28 @@ pub fn agent_state_badge_class(state: &str) -> &'static str {
 /// "Show deactivated" toggle re-includes it for audit purposes.
 pub fn agent_state_is_terminal(state: &str) -> bool {
     state == "deactivated"
+}
+
+pub fn participation_ceiling_reason(
+    selection: AgentParticipation,
+    ceiling: AgentParticipation,
+) -> String {
+    let mut blocked = Vec::new();
+    if selection.reply && !ceiling.reply {
+        blocked.push("reply capped by governance ceiling");
+    }
+    if selection.accept_third_party_mention && !ceiling.accept_third_party_mention {
+        blocked.push("third-party mentions capped by governance ceiling");
+    }
+    if selection.act_on_behalf && !ceiling.act_on_behalf {
+        blocked.push("act-on-behalf capped by governance ceiling");
+    }
+
+    if blocked.is_empty() {
+        "ceiling reason: no selected participation bit is capped".to_owned()
+    } else {
+        format!("ceiling reason: {}", blocked.join("; "))
+    }
 }
 
 /// G3.Y4 — handoff lifecycle. Drives
