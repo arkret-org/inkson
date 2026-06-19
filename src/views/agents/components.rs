@@ -180,6 +180,9 @@ pub fn ActionApproveDialog(
     actor_id: String,
     space_id: String,
     request_id: String,
+    agent_principal_id: String,
+    proposed_action: String,
+    target_json: String,
     payload_digest: String,
     expires_at: String,
     nonce_status: String,
@@ -231,14 +234,22 @@ pub fn ActionApproveDialog(
                         let actor = actor_id.clone();
                         let space = space_id.clone();
                         let request_id = request_id.clone();
+                        let agent = agent_principal_id.clone();
+                        let action = proposed_action.clone();
+                        let target_json = target_json.clone();
                         let digest = payload_digest.clone();
+                        let approval_expires_at = expires_at.clone();
                         move |_| {
                             state.set(ActionApproveDialogState::Submitting);
                             let base = base.clone();
                             let actor = actor.clone();
                             let space = space.clone();
                             let request_id = request_id.clone();
+                            let agent = agent.clone();
+                            let action = action.clone();
+                            let target_json = target_json.clone();
                             let digest = digest.clone();
+                            let approval_expires_at = approval_expires_at.clone();
                             let api_token = token();
                             spawn(async move {
                                 // Submit a ck.agent.action_approve
@@ -247,15 +258,32 @@ pub fn ActionApproveDialog(
                                 // so the reducer can match it back to
                                 // the originating action_request and
                                 // burn the single-use nonce.
+                                let target = serde_json::from_str::<Value>(&target_json)
+                                    .unwrap_or_else(|_| json!({
+                                        "kind": "realm",
+                                        "realm_id": space.clone(),
+                                    }));
+                                let request_payload = json!({
+                                    "request_id": request_id,
+                                    "agent_principal_id": agent,
+                                    "controller_principal_id": actor.clone(),
+                                    "proposed_action": action,
+                                    "target": target,
+                                    "request_canonical_digest": digest,
+                                });
+                                let approved_at = crate::clock::now_rfc3339_secs();
+                                let payload = build_action_approve_payload(
+                                    &request_payload,
+                                    &actor,
+                                    &approved_at,
+                                    &approval_expires_at,
+                                );
                                 let op = crate::operation::OperationBuilder::new(
                                     &space,
                                     &actor,
                                     "ck.agent.action_approve",
                                 )
-                                .body(json!({
-                                    "request_id": request_id,
-                                    "payload_digest": digest,
-                                }))
+                                .body(payload)
                                 .build("yougen");
                                 match with_authed_api(&base, api_token, move |api| {
                                     let op = op.clone();
@@ -302,17 +330,13 @@ pub fn ActionApproveDialog(
     }
 }
 
-/// CKP-0008 §4.8 — controller-owned draft approval panel. Lists
-/// `ck.agent.draft.v1` drafts and lets the controller approve (submits
-/// `ck.agent.action_approve`) or reject (submits `ck.agent.action_reject`).
+/// CKP-0008 approval panel for controller-owned drafts and action
+/// requests. Lets the controller approve with `ck.agent.action_approve`
+/// or reject with `ck.agent.action_reject`.
 ///
-/// Data source: drafts are delivered as controller-owned account-data
-/// over `ck.self.account.subscribe`. soland's draft materialization
-/// (agent `ck.agent.draft.propose` → controller `ck.agent.draft.v1`) is
-/// pending, so the list is populated here by pasting a draft payload;
-/// the approve / reject call chain is fully wired and exercises the real
-/// wire envelope today. Once the projection ships, the subscribe fold
-/// auto-populates this list.
+/// Data source: controller-owned account-data over
+/// `ck.self.account.subscribe`; until the subscribe fold is attached to
+/// this component, operators can paste a draft or action request payload.
 #[component]
 pub fn DraftApprovalPanel(
     base_url: String,
@@ -322,6 +346,7 @@ pub fn DraftApprovalPanel(
     let mut drafts = use_signal(Vec::<Value>::new);
     let mut draft_input = use_signal(String::new);
     let mut panel_status = use_signal(String::new);
+    let mut reject_reason = use_signal(String::new);
 
     // Controller-private events (action_approve / action_reject) author
     // in the controller's principal-control realm.
@@ -332,14 +357,14 @@ pub fn DraftApprovalPanel(
     rsx! {
         div { class: "event", "data-testid": "agent-draft-approval",
             div { class: "event-head",
-                span { "Draft approvals" }
-                span { class: "badge blue", "ck.agent.draft.v1" }
+                span { "Draft and action approvals" }
+                span { class: "badge blue", "ck.agent.* approval" }
             }
             div { class: "muted",
-                "Review agent-proposed drafts before anything reaches a shared Realm. Approve submits ck.agent.action_approve (binds draft_id + content digest + single-use nonce + expiry); reject submits ck.agent.action_reject."
+                "Review agent-proposed drafts or action requests before anything reaches a shared Realm. Approve submits ck.agent.action_approve; reject submits ck.agent.action_reject with a human reason when provided."
             }
             div { class: "muted", "data-testid": "agent-draft-data-source",
-                "Data source: controller-owned account-data over ck.self.account.subscribe; soland draft materialization pending — paste a ck.agent.draft.v1 payload below to review it now."
+                "Data source: controller-owned account-data over ck.self.account.subscribe; paste a ck.agent.draft.v1 or ck.agent.action_request payload below to review it now."
             }
             if principal_realm.is_none() {
                 div { class: "badge amber", "data-testid": "agent-draft-no-realm",
@@ -349,9 +374,15 @@ pub fn DraftApprovalPanel(
             div { class: "workflow-form",
                 Input {
                     "data-testid": "agent-draft-input",
-                    placeholder: "ck.agent.draft.v1 payload (JSON)",
+                    placeholder: "ck.agent.draft.v1 or ck.agent.action_request payload (JSON)",
                     value: "{draft_input}",
                     oninput: move |event: FormEvent| draft_input.set(event.value()),
+                }
+                Input {
+                    "data-testid": "agent-draft-reject-reason-input",
+                    placeholder: "Optional rejection reason",
+                    value: "{reject_reason}",
+                    oninput: move |event: FormEvent| reject_reason.set(event.value()),
                 }
                 div { class: "actions",
                     Button {
@@ -363,14 +394,14 @@ pub fn DraftApprovalPanel(
                                 Ok(value) => {
                                     drafts.write().push(value);
                                     draft_input.set(String::new());
-                                    panel_status.set("draft added".to_owned());
+                                    panel_status.set("approval item added".to_owned());
                                 }
                                 Err(err) => panel_status.set(format!(
-                                    "draft is not valid JSON: {err}"
+                                    "approval item is not valid JSON: {err}"
                                 )),
                             }
                         },
-                        "Add draft"
+                        "Add approval item"
                     }
                 }
                 if !panel_status().is_empty() {
@@ -379,17 +410,32 @@ pub fn DraftApprovalPanel(
             }
             if drafts.read().is_empty() {
                 div { class: "muted", "data-testid": "agent-draft-empty",
-                    "No drafts to review."
+                    "No drafts or action requests to review."
                 }
             } else {
                 div { class: "timeline", "data-testid": "agent-draft-list",
                     for (idx, draft) in drafts.read().iter().enumerate() {
                         {
+                            let request_id = draft
+                                .get("request_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_owned();
                             let draft_id = draft
                                 .get("draft_id")
                                 .and_then(Value::as_str)
-                                .unwrap_or("?")
+                                .unwrap_or("")
                                 .to_owned();
+                            let item_id = if request_id.is_empty() {
+                                draft_id.clone()
+                            } else {
+                                request_id.clone()
+                            };
+                            let item_id = if item_id.is_empty() {
+                                "?".to_owned()
+                            } else {
+                                item_id
+                            };
                             let proposed_action = draft
                                 .get("proposed_action")
                                 .and_then(Value::as_str)
@@ -412,14 +458,15 @@ pub fn DraftApprovalPanel(
                                 .unwrap_or("")
                                 .to_owned();
                             let agent_id_label = short_protocol_id(&agent_id);
-                            let draft_id_label = short_protocol_id(&draft_id);
+                            let item_id_label = short_protocol_id(&item_id);
                             rsx! {
                                 div {
                                     class: "event",
                                     "data-testid": "agent-draft-row",
                                     "data-draft-id": "{draft_id}",
+                                    "data-request-id": "{request_id}",
                                     div { class: "event-head",
-                                        span { class: "mono", title: "{draft_id}", "{draft_id_label}" }
+                                        span { class: "mono", title: "{item_id}", "{item_id_label}" }
                                         span { class: "badge", "{proposed_action}" }
                                         span { class: "mono", title: "{agent_id}", "agent {agent_id_label}" }
                                     }
@@ -444,9 +491,13 @@ pub fn DraftApprovalPanel(
                                                     let draft = drafts.read()[idx].clone();
                                                     // Default approval window: 1h
                                                     // from now, single-use nonce.
+                                                    let approved_at = crate::clock::now_rfc3339_secs();
                                                     let approval_expires_at = crate::clock::rfc3339_secs_in(60);
                                                     let payload = build_action_approve_payload(
-                                                        &draft, &approval_expires_at,
+                                                        &draft,
+                                                        &actor,
+                                                        &approved_at,
+                                                        &approval_expires_at,
                                                     );
                                                     let op = crate::operation::OperationBuilder::new(
                                                         &realm,
@@ -494,7 +545,14 @@ pub fn DraftApprovalPanel(
                                                     let actor = actor.clone();
                                                     let api_token = token();
                                                     let draft = drafts.read()[idx].clone();
-                                                    let payload = build_action_reject_payload(&draft);
+                                                    let reason = reject_reason();
+                                                    let rejected_at = crate::clock::now_rfc3339_secs();
+                                                    let payload = build_action_reject_payload(
+                                                        &draft,
+                                                        &actor,
+                                                        &rejected_at,
+                                                        Some(&reason),
+                                                    );
                                                     let op = crate::operation::OperationBuilder::new(
                                                         &realm,
                                                         &actor,
@@ -513,6 +571,7 @@ pub fn DraftApprovalPanel(
                                                         {
                                                             Ok(resp) => {
                                                                 drafts.write().remove(idx);
+                                                                reject_reason.set(String::new());
                                                                 panel_status.set(format!(
                                                                     "rejected; event_id {}",
                                                                     resp.event_id

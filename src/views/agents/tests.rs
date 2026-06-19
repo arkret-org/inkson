@@ -171,22 +171,103 @@ mod personal_agent_tests {
             "draft_id": "0197-draft",
             "agent_principal_id": "did:web:agents.example:summary",
             "proposed_action": "ck.message.create",
-            "target": {"realm_id": "ck:realm:01"},
+            "target": {"kind": "realm", "realm_id": "ck:realm:01"},
             "content": {"body": "draft text"},
         });
-        let payload = build_action_approve_payload(&draft, "2026-06-26T01:00:00Z");
+        let payload = build_action_approve_payload(
+            &draft,
+            "did:web:alice.example",
+            "2026-06-26T00:00:00Z",
+            "2026-06-26T01:00:00Z",
+        );
         assert_eq!(payload["draft_id"], "0197-draft");
+        assert_eq!(payload["controller_principal_id"], "did:web:alice.example");
         assert_eq!(payload["proposed_action"], "ck.message.create");
-        assert_eq!(payload["approval_expires_at"], "2026-06-26T01:00:00Z");
-        let digest = payload["content_digest"].as_str().unwrap();
+        assert_eq!(payload["approved_at"], "2026-06-26T00:00:00Z");
+        assert_eq!(payload["expires_at"], "2026-06-26T01:00:00Z");
+        let digest = payload["draft_content_digest"].as_str().unwrap();
         assert!(digest.starts_with("sha256:"));
         // Approving as-is means both digests match.
         assert_eq!(
-            payload["content_digest"],
+            payload["draft_content_digest"],
             payload["approved_payload_digest"]
         );
         // Nonce is a fresh uuid, not empty.
-        assert!(!payload["nonce"].as_str().unwrap().is_empty());
+        assert!(!payload["approval_nonce"].as_str().unwrap().is_empty());
+        assert!(!payload["approval_id"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn build_action_approve_payload_prefers_action_request_digest() {
+        let request = serde_json::json!({
+            "request_id": "ck:agent-action-request:0197",
+            "agent_principal_id": "did:web:agents.example:summary",
+            "proposed_action": "ck.message.create",
+            "target": {"kind": "realm", "realm_id": "ck:realm:01"},
+            "request_canonical_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        });
+        let payload = build_action_approve_payload(
+            &request,
+            "did:web:alice.example",
+            "2026-06-26T00:00:00Z",
+            "2026-06-26T01:00:00Z",
+        );
+        assert_eq!(payload["request_id"], "ck:agent-action-request:0197");
+        assert_eq!(
+            payload["approved_payload_digest"],
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+        assert!(payload.get("draft_content_digest").is_none());
+    }
+
+    #[test]
+    fn build_action_reject_payload_carries_reason_and_controller() {
+        let request = serde_json::json!({
+            "request_id": "ck:agent-action-request:0198",
+            "agent_principal_id": "did:web:agents.example:summary",
+        });
+        let payload = build_action_reject_payload(
+            &request,
+            "did:web:alice.example",
+            "2026-06-26T00:00:00Z",
+            Some("needs review"),
+        );
+        assert_eq!(payload["request_id"], "ck:agent-action-request:0198");
+        assert_eq!(payload["controller_principal_id"], "did:web:alice.example");
+        assert_eq!(payload["rejected_at"], "2026-06-26T00:00:00Z");
+        assert_eq!(payload["reason"], "needs review");
+        assert!(!payload["rejection_id"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn act_on_behalf_message_operation_carries_dual_identity_and_approval() {
+        let operation = build_act_on_behalf_message_operation(
+            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "did:web:agents.example:summary",
+            "ck:grant:01904100-0000-7000-8000-000000000002",
+            "ck:agent-action-request:01904100-0000-7000-8000-000000000003",
+            "nonce-01904100",
+            "ck:strand:01904100-0000-7000-8000-000000000004",
+            "approved message",
+        )
+        .unwrap();
+
+        assert_eq!(operation.kind, "ck.message.create");
+        assert_eq!(operation.actor_id, "did:web:alice.example");
+        assert_eq!(
+            operation.executed_by.as_deref(),
+            Some("did:web:agents.example:summary")
+        );
+        assert_eq!(
+            operation.authorization_ref.as_deref(),
+            Some("ck:grant:01904100-0000-7000-8000-000000000002")
+        );
+        assert_eq!(
+            operation.payload["approval_request_id"],
+            "ck:agent-action-request:01904100-0000-7000-8000-000000000003"
+        );
+        assert_eq!(operation.payload["approval_nonce"], "nonce-01904100");
     }
 
     #[test]

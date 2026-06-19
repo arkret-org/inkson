@@ -592,50 +592,133 @@ pub(crate) fn agent_view_from_directory_row(row: Value) -> Option<AgentView> {
     })
 }
 
-/// CKP-0008 §4.8 / §4.8.1 — build a `ck.agent.action_approve` payload
-/// for a controller-owned `ck.agent.draft.v1` draft. Binds `draft_id`,
-/// content digest, target descriptor, `proposed_action`, approved
-/// payload digest, approval expiry, and a single-use nonce. The content
-/// digest covers the draft's `content` object; the approved payload
-/// digest covers the same payload the publish executor will emit (the
-/// controller may edit before approving — here they approve as-is, so
-/// both digests are over `content`).
-pub fn build_action_approve_payload(draft: &Value, approval_expires_at: &str) -> Value {
-    let draft_id = draft.get("draft_id").and_then(Value::as_str).unwrap_or("");
-    let agent_principal_id = draft
+/// Hash pasted draft content or action request payload fragments.
+/// Return a sha256 digest for canonical JSON.
+fn canonical_digest(value: &Value) -> Option<String> {
+    cokret_sdk::canonical::canonical_json_bytes(value)
+        .map(cokret_sdk::canonical::sha256_digest)
+        .ok()
+}
+
+fn non_empty_field(payload: &Value, field: &str) -> Option<String> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+/// Build a `ck.agent.action_approve` payload for a controller-owned
+/// draft or action request using the current schema fields.
+pub fn build_action_approve_payload(
+    request: &Value,
+    controller_principal_id: &str,
+    approved_at: &str,
+    expires_at: &str,
+) -> Value {
+    let draft_content_digest = request.get("content").and_then(canonical_digest);
+    let approved_payload_digest = non_empty_field(request, "approved_payload_digest")
+        .or_else(|| non_empty_field(request, "request_canonical_digest"))
+        .or_else(|| draft_content_digest.clone())
+        .unwrap_or_default();
+    let agent_principal_id = request
         .get("agent_principal_id")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let proposed_action = draft
+    let proposed_action = request
         .get("proposed_action")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let target = draft.get("target").cloned().unwrap_or(Value::Null);
-    let content = draft.get("content").cloned().unwrap_or(Value::Null);
-    let content_digest = cokret_sdk::canonical::canonical_json_bytes(&content)
-        .map(cokret_sdk::canonical::sha256_digest)
-        .unwrap_or_default();
-    json!({
-        "draft_id": draft_id,
+    let target = request.get("target").cloned().unwrap_or(Value::Null);
+    let mut payload = json!({
+        "approval_id": format!("ck:agent_approval:{}", crate::operation::uuid_v7()),
         "agent_principal_id": agent_principal_id,
+        "controller_principal_id": controller_principal_id,
         "proposed_action": proposed_action,
         "target": target,
-        "content_digest": content_digest,
-        "approved_payload_digest": content_digest,
-        "approval_expires_at": approval_expires_at,
-        "nonce": crate::operation::uuid_v7(),
-    })
+        "approved_payload_digest": approved_payload_digest,
+        "approval_nonce": crate::operation::uuid_v7(),
+        "approved_at": approved_at,
+        "expires_at": expires_at,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(request_id) = non_empty_field(request, "request_id") {
+            object.insert("request_id".to_owned(), json!(request_id));
+        }
+        if let Some(draft_id) = non_empty_field(request, "draft_id") {
+            object.insert("draft_id".to_owned(), json!(draft_id));
+        }
+        if let Some(digest) = draft_content_digest {
+            object.insert("draft_content_digest".to_owned(), json!(digest));
+        }
+    }
+    payload
 }
 
-/// Build a `ck.agent.action_reject` payload for a draft (CKP-0008
-/// §4.8.1). Carries the `draft_id` so the reducer transitions the draft
-/// to `rejected`.
-pub fn build_action_reject_payload(draft: &Value) -> Value {
-    json!({
-        "draft_id": draft.get("draft_id").and_then(Value::as_str).unwrap_or(""),
-        "agent_principal_id": draft
+/// Build a `ck.agent.action_reject` payload for a draft or action
+/// request. A human-entered reason is included when present.
+pub fn build_action_reject_payload(
+    request: &Value,
+    controller_principal_id: &str,
+    rejected_at: &str,
+    reason: Option<&str>,
+) -> Value {
+    let mut payload = json!({
+        "rejection_id": format!("ck:agent_rejection:{}", crate::operation::uuid_v7()),
+        "agent_principal_id": request
             .get("agent_principal_id")
             .and_then(Value::as_str)
             .unwrap_or(""),
-    })
+        "controller_principal_id": controller_principal_id,
+        "rejected_at": rejected_at,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(request_id) = non_empty_field(request, "request_id") {
+            object.insert("request_id".to_owned(), json!(request_id));
+        }
+        if let Some(draft_id) = non_empty_field(request, "draft_id") {
+            object.insert("draft_id".to_owned(), json!(draft_id));
+        }
+        if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
+            object.insert("reason".to_owned(), json!(reason));
+        }
+    }
+    payload
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_act_on_behalf_message_operation(
+    realm_id: &str,
+    controller_principal_id: &str,
+    agent_principal_id: &str,
+    authorization_ref: &str,
+    approval_request_id: &str,
+    approval_nonce: &str,
+    strand_id: &str,
+    body: &str,
+) -> anyhow::Result<crate::operation::EventEnvelope> {
+    let strand_id_typed = cokret_sdk::StrandId::new(strand_id.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid strand id {strand_id:?}: {error:?}"))?;
+    let content = cokret_sdk::ContentBlock::text(body)
+        .to_value()
+        .map_err(|error| anyhow::anyhow!("act-on-behalf content serialize: {error}"))?;
+    let mut payload =
+        cokret_sdk::MessageCreatePayload::with_content(strand_id_typed, "discussion", content)
+            .to_value()
+            .map_err(|error| anyhow::anyhow!("act-on-behalf message payload serialize: {error}"))?;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("approval_request_id".to_owned(), json!(approval_request_id));
+        object.insert("approval_nonce".to_owned(), json!(approval_nonce));
+    }
+    Ok(crate::operation::OperationBuilder::new(
+        realm_id,
+        controller_principal_id,
+        "ck.message.create",
+    )
+    .target_ref(strand_id)
+    .executed_by(agent_principal_id)
+    .authorization_ref(authorization_ref)
+    .body(payload)
+    .build("yougen"))
 }
