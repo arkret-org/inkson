@@ -7,7 +7,7 @@
 // `background_sync_needed` payload and can signal the foreground page without
 // exposing message/title/sender/collapse metadata.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   ensureServiceWorkerAvailable,
   gotoOrSkip,
@@ -22,10 +22,47 @@ const LEAK_FIELDS = [
   "title",
   "sender",
   "collapse_key",
-];
+  "note",
+  "target_ref",
+  "planned_message_id",
+  "expiry_target_ref",
+  "scheduled_body",
+  "draft_content",
+] as const;
+const WAKEUP_KINDS = [
+  "reminder",
+  "scheduled_send",
+  "expiry_invalidation",
+] as const;
+
+type LeakField = (typeof LEAK_FIELDS)[number];
+type WakeupKind = (typeof WAKEUP_KINDS)[number];
+type ReceivedPush = {
+  reason: string | null;
+  wakeupKind: string | null;
+  leaked: string[];
+  hasDisplayText: boolean;
+  receivedProbeKeys: string[];
+};
+
+const READABLE_PROBES: Record<LeakField, string> = {
+  body: "hidden body",
+  message_body: "hidden message",
+  realm_title: "hidden realm",
+  title: "hidden title",
+  sender: "did:web:alice.example",
+  collapse_key: "ck:event:01904100-0000-7000-8000-000000000001",
+  note: "private reminder note",
+  target_ref: "ck:message:01904100-0000-7000-8000-000000000002",
+  planned_message_id: "ck:message:01904100-0000-7000-8000-000000000003",
+  expiry_target_ref: "ck:event:01904100-0000-7000-8000-000000000004",
+  scheduled_body: "hidden scheduled send body",
+  draft_content: "hidden draft content",
+};
 
 const PUSH_WORKER_SCRIPT = `
   const LEAK_FIELDS = ${JSON.stringify(LEAK_FIELDS)};
+  const WAKEUP_KINDS = new Set(${JSON.stringify(WAKEUP_KINDS)});
 
   self.addEventListener("install", (event) => {
     event.waitUntil(self.skipWaiting());
@@ -43,6 +80,9 @@ const PUSH_WORKER_SCRIPT = `
         ? "background_sync_needed"
         : "background_sync_needed",
     };
+    if (WAKEUP_KINDS.has(incoming.wakeup_kind)) {
+      outbound.wakeupKind = incoming.wakeup_kind;
+    }
     return {
       ...outbound,
       leaked: LEAK_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(outbound, field)),
@@ -79,6 +119,78 @@ const PUSH_WORKER_SCRIPT = `
   });
 `;
 
+async function simulatePushReceive(
+  page: Page,
+  payload: Record<string, string>,
+): Promise<ReceivedPush> {
+  return await page.evaluate(
+    async ({ path, payload }) => {
+      const registration = await navigator.serviceWorker.register(path, {
+        scope: "/",
+      });
+      const ready = await navigator.serviceWorker.ready;
+      let worker = ready.active || registration.active || registration.waiting || registration.installing;
+      if (!worker) {
+        throw new Error("service worker did not become active");
+      }
+
+      if (worker.state !== "activated") {
+        await new Promise<void>((resolve) => {
+          worker.addEventListener(
+            "statechange",
+            () => {
+              if (worker.state === "activated") {
+                resolve();
+              }
+            },
+            { once: false },
+          );
+        });
+        worker = ready.active || registration.active || worker;
+      }
+
+      return await new Promise<{
+        reason: string | null;
+        wakeupKind: string | null;
+        leaked: string[];
+        hasDisplayText: boolean;
+        receivedProbeKeys: string[];
+      }>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("push receive timeout")), 10_000);
+        navigator.serviceWorker.addEventListener("message", function onMessage(event) {
+          if (event.data?.type !== "yougen.push.receive") {
+            return;
+          }
+          clearTimeout(timeout);
+          navigator.serviceWorker.removeEventListener("message", onMessage);
+          resolve({
+            reason: event.data.reason ?? null,
+            wakeupKind: event.data.wakeupKind ?? null,
+            leaked: Array.isArray(event.data.leaked) ? event.data.leaked : [],
+            hasDisplayText: event.data.hasDisplayText === true,
+            receivedProbeKeys: Array.isArray(event.data.receivedProbeKeys)
+              ? event.data.receivedProbeKeys
+              : [],
+          });
+        });
+        worker.postMessage({
+          type: "simulate-push",
+          payload,
+        });
+      });
+    },
+    { path: PUSH_SW_PATH, payload },
+  );
+}
+
+function expectBlindWakeup(received: ReceivedPush, wakeupKind?: WakeupKind): void {
+  expect(received.reason).toBe("background_sync_needed");
+  expect(received.wakeupKind).toBe(wakeupKind ?? null);
+  expect(received.receivedProbeKeys.sort()).toEqual([...LEAK_FIELDS].sort());
+  expect(received.leaked).toEqual([]);
+  expect(received.hasDisplayText).toBe(false);
+}
+
 test.describe("desktop push receive smoke", () => {
   test.beforeEach(async ({ context, page }) => {
     await context.route(`**${PUSH_SW_PATH}`, async (route) => {
@@ -96,74 +208,25 @@ test.describe("desktop push receive smoke", () => {
   test("background_sync_needed wakeup reaches the foreground without readable content", async ({
     page,
   }) => {
-    const received = await page.evaluate(
-      async ({ path }) => {
-        const registration = await navigator.serviceWorker.register(path, {
-          scope: "/",
-        });
-        const ready = await navigator.serviceWorker.ready;
-        let worker = ready.active || registration.active || registration.waiting || registration.installing;
-        if (!worker) {
-          throw new Error("service worker did not become active");
-        }
+    const received = await simulatePushReceive(page, {
+      reason: "background_sync_needed",
+      ...READABLE_PROBES,
+    });
 
-        if (worker.state !== "activated") {
-          await new Promise<void>((resolve) => {
-            worker.addEventListener(
-              "statechange",
-              () => {
-                if (worker.state === "activated") {
-                  resolve();
-                }
-              },
-              { once: false },
-            );
-          });
-          worker = ready.active || registration.active || worker;
-        }
-
-        return await new Promise<{
-          reason: string | null;
-          leaked: string[];
-          hasDisplayText: boolean;
-          receivedProbeKeys: string[];
-        }>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error("push receive timeout")), 10_000);
-          navigator.serviceWorker.addEventListener("message", function onMessage(event) {
-            if (event.data?.type !== "yougen.push.receive") {
-              return;
-            }
-            clearTimeout(timeout);
-            navigator.serviceWorker.removeEventListener("message", onMessage);
-            resolve({
-              reason: event.data.reason ?? null,
-              leaked: Array.isArray(event.data.leaked) ? event.data.leaked : [],
-              hasDisplayText: event.data.hasDisplayText === true,
-              receivedProbeKeys: Array.isArray(event.data.receivedProbeKeys)
-                ? event.data.receivedProbeKeys
-                : [],
-            });
-          });
-          worker.postMessage({
-            type: "simulate-push",
-            payload: {
-              reason: "background_sync_needed",
-              body: "hidden body",
-              message_body: "hidden message",
-              realm_title: "hidden realm",
-              title: "hidden title",
-              sender: "did:web:alice.example",
-              collapse_key: "ck:event:1",
-            },
-          });
-        });
-      },
-      { path: PUSH_SW_PATH },
-    );
-
-    expect(received.reason).toBe("background_sync_needed");
-    expect(received.receivedProbeKeys.sort()).toEqual([...LEAK_FIELDS].sort());
-    expect(received.leaked).toEqual([]);
-    expect(received.hasDisplayText).toBe(false);
+    expectBlindWakeup(received);
   });
+
+  for (const wakeupKind of WAKEUP_KINDS) {
+    test(`${wakeupKind} wakeup reaches the foreground without readable content`, async ({
+      page,
+    }) => {
+      const received = await simulatePushReceive(page, {
+        reason: "background_sync_needed",
+        wakeup_kind: wakeupKind,
+        ...READABLE_PROBES,
+      });
+
+      expectBlindWakeup(received, wakeupKind);
+    });
+  }
 });
