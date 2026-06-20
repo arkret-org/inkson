@@ -6,6 +6,7 @@ use super::decrypt::try_local_mls_decrypt;
 use super::model::{BlobAttachment, TimelineEvent, TimelineRevision, timestamp_now};
 use super::operations::{
     message_redact_operation, message_revise_operation, reaction_add_operation,
+    sdk_event_local_operation_id,
 };
 use super::preferences::{
     EMOJI_GRID, TIMELINE_ENCRYPT_LOCAL_DEFAULT_KEY, TIMELINE_PLAINTEXT_ACK_KEY,
@@ -652,9 +653,15 @@ pub fn TimelinePanel(
                                                         // status line is the only feedback left.
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                                             Ok(api) => {
-                                                                let op = reaction_add_operation(&realm, &actor, &eid, &emoji);
-                                                                if let Err(error) = api.submit_event_envelope(&op).await {
-                                                                    write_status.set(format!("reaction failed: {error}"));
+                                                                match reaction_add_operation(&realm, &actor, &eid, &emoji) {
+                                                                    Ok(op) => {
+                                                                        if let Err(error) = api.submit_sdk_event(&op).await {
+                                                                            write_status.set(format!("reaction failed: {error}"));
+                                                                        }
+                                                                    }
+                                                                    Err(error) => {
+                                                                        write_status.set(format!("reaction failed: {error:#}"));
+                                                                    }
                                                                 }
                                                             }
                                                             Err(error) => {
@@ -748,8 +755,8 @@ pub fn TimelinePanel(
                                                                         return;
                                                                     }
                                                                 };
-                                                                let op_id = op.local_operation_id().to_owned();
-                                                                match api.submit_event_envelope(&op).await {
+                                                                let op_id = sdk_event_local_operation_id(&op).to_owned();
+                                                                match api.submit_sdk_event(&op).await {
                                                                 Ok(updated) => {
                                                                     if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
                                                                         found.operation_id = Some(op_id.clone());
@@ -849,14 +856,27 @@ pub fn TimelinePanel(
                                                     spawn(async move {
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                                             Ok(api) => {
-                                                                let op = message_redact_operation(
+                                                                let op = match message_redact_operation(
                                                                     &realm,
                                                                     &actor,
                                                                     &eid,
                                                                     reason.as_deref(),
-                                                                );
-                                                                let op_id = op.local_operation_id().to_owned();
-                                                                match api.submit_event_envelope(&op).await {
+                                                                ) {
+                                                                    Ok(op) => op,
+                                                                    Err(error) => {
+                                                                        if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid)
+                                                                            && let Some(original) = original
+                                                                        {
+                                                                            *found = original;
+                                                                            found.failed = true;
+                                                                            found.error = Some(format!("redact failed: {error:#}"));
+                                                                        }
+                                                                        write_status.set(format!("redact failed: {error:#}"));
+                                                                        return;
+                                                                    }
+                                                                };
+                                                                let op_id = sdk_event_local_operation_id(&op).to_owned();
+                                                                match api.submit_sdk_event(&op).await {
                                                                 Ok(redacted) => {
                                                                     if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
                                                                         found.apply_redaction(redacted.event_id.clone(), reason.clone());

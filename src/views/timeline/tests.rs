@@ -16,15 +16,15 @@ fn message_create_operation_retags_realm_scope_to_strand_id() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["strand_id"],
+        op.content["strand_id"],
         "ck:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
     );
-    assert_eq!(op.payload["track_name"], "discussion");
-    assert_eq!(op.payload["content"]["kind"], "ck.content.text");
-    assert!(op.payload.get("body").is_none());
-    assert!(op.payload.get("encrypted").is_none());
+    assert_eq!(op.content["track_name"], "discussion");
+    assert_eq!(op.content["content"]["kind"], "ck.content.text");
+    assert!(op.content.get("body").is_none());
+    assert!(op.content.get("encrypted").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -40,19 +40,19 @@ fn message_create_operation_attaches_incident_priority_under_realm() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["strand_id"],
+        op.content["strand_id"],
         "ck:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
     );
-    assert!(op.payload.get("priority").is_none());
-    assert!(op.payload.get("notification_priority").is_none());
-    assert!(op.payload.get("priority_override").is_none());
-    assert_eq!(op.payload["content"]["priority"], "critical");
+    assert!(op.content.get("priority").is_none());
+    assert!(op.content.get("notification_priority").is_none());
+    assert!(op.content.get("priority_override").is_none());
+    assert_eq!(op.content["content"]["priority"], "critical");
     assert_eq!(
-        op.payload["content"]["notification"]["priority"],
+        op.content["content"]["notification"]["priority"],
         "critical"
     );
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -73,11 +73,11 @@ fn message_create_operation_with_expiry_attaches_top_level_expiry() {
     )
     .expect("builds");
 
-    assert_eq!(op.payload["expiry"]["ttl_ms"], 30_000);
-    assert_eq!(op.payload["expiry"]["trigger"], "on_send");
-    assert!(op.payload["content"].get("expiry").is_none());
+    assert_eq!(op.content["expiry"]["ttl_ms"], 30_000);
+    assert_eq!(op.content["expiry"]["trigger"], "on_send");
+    assert!(op.content["content"].get("expiry").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -142,15 +142,15 @@ fn message_revise_operation_carries_schema_target_ref() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["target_ref"],
+        op.content["target_ref"],
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert_eq!(op.payload["content"]["kind"], "ck.content.text");
-    assert_eq!(op.payload["content"]["body"], "edited");
-    assert!(op.payload.get("body").is_none());
-    assert!(op.payload.get("target_event_id").is_none());
+    assert_eq!(op.content["content"]["kind"], "ck.content.text");
+    assert_eq!(op.content["content"]["body"], "edited");
+    assert!(op.content.get("body").is_none());
+    assert!(op.content.get("target_event_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -161,16 +161,17 @@ fn reaction_add_operation_uses_schema_target_ref() {
         "did:web:bob.example",
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
         "+1",
-    );
+    )
+    .expect("builds");
 
     assert_eq!(
-        op.payload["target_ref"],
+        op.content["target_ref"],
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert_eq!(op.payload["key"], "+1");
-    assert!(op.payload.get("event_id").is_none());
-    assert!(op.payload.get("actor").is_none());
+    assert_eq!(op.content["key"], "+1");
+    assert!(op.content.get("event_id").is_none());
+    assert!(op.content.get("actor").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }

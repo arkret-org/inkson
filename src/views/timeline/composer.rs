@@ -9,7 +9,7 @@ use serde_json::json;
 use super::model::{BlobAttachment, TimelineEvent};
 use super::operations::{
     message_create_operation, pending_send_error_is_permanent, public_update_requires_sanitization,
-    submit_timeline_message_with_plaintext_retry,
+    sdk_event_local_operation_id, submit_timeline_message_with_plaintext_retry,
 };
 use super::preferences::ATTACHMENT_BYTES;
 use super::secure_send::{TimelineEncryptedSend, send_timeline_encrypted_message};
@@ -406,7 +406,7 @@ pub(super) fn TimelineComposer(
                                             return;
                                         }
                                     };
-                                    let op_id = op.local_operation_id().to_owned();
+                                    let op_id = sdk_event_local_operation_id(&op).to_owned();
                                     match submit_timeline_message_with_plaintext_retry(
                                         &api,
                                         &realm,
@@ -686,7 +686,7 @@ pub(super) fn TimelineComposer(
                                                     return;
                                                 }
                                             };
-                                            let op_id = op.local_operation_id().to_owned();
+                                            let op_id = sdk_event_local_operation_id(&op).to_owned();
                                             let mut attempt = 0usize;
                                             loop {
                                                 match submit_timeline_message_with_plaintext_retry(

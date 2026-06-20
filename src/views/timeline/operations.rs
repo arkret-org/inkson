@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::local_state::default_strand_id_for_realm;
-use crate::operation::{EventEnvelope, OperationBuilder};
+use crate::operation::OperationBuilder;
 
 // YOU-02-001: these helpers return `Result` instead of panicking — the
 // realm/strand ids they parse come from server-synced UI state, and a
@@ -16,6 +16,20 @@ pub(super) fn sdk_payload_value(
 fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
     cokret_sdk::StrandId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
+}
+
+fn sdk_event_from_builder_event(
+    event: crate::operation::EventEnvelope,
+) -> anyhow::Result<cokret_sdk::Event> {
+    event.to_sdk_event_for_submit()
+}
+
+pub(super) fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
+    event
+        .unsigned
+        .get("local_operation_idempotency_alias")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| event.event_id.as_str())
 }
 
 fn text_content(body: &str) -> anyhow::Result<Value> {
@@ -64,7 +78,7 @@ pub(crate) fn message_create_operation(
     thread_id: Option<&str>,
     body: &str,
     incident_priority: Option<&str>,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     message_create_operation_with_expiry(realm_id, actor, thread_id, body, incident_priority, None)
 }
 
@@ -75,7 +89,7 @@ pub(crate) fn message_create_operation_with_expiry(
     body: &str,
     incident_priority: Option<&str>,
     expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     // Spec `event-payload.schema.json` `message_create_payload` requires
     // `strand_id` and `track_name` (`strand-and-message.md` §2). The default Strand
     // for a Realm is `ck:strand:<uuid>` (typed-id re-tag, matching
@@ -102,12 +116,14 @@ pub(crate) fn message_create_operation_with_expiry(
     if let Some(expiry) = expiry {
         payload = payload.with_expiry(expiry);
     }
-    Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "timeline ck.message.create payload serialize",
-        )?)
-        .build("yougen"))
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.message.create")
+            .body(sdk_payload_value(
+                payload.to_value(),
+                "timeline ck.message.create payload serialize",
+            )?)
+            .build("yougen"),
+    )
 }
 
 pub(super) fn message_revise_operation(
@@ -115,14 +131,16 @@ pub(super) fn message_revise_operation(
     actor: &str,
     event_id: &str,
     body: &str,
-) -> anyhow::Result<EventEnvelope> {
-    Ok(OperationBuilder::new(realm_id, actor, "ck.message.revise")
-        .target_ref(event_id)
-        .body(json!({
-            "content": text_content(body)?,
-            "target_ref": event_id,
-        }))
-        .build("yougen"))
+) -> anyhow::Result<cokret_sdk::Event> {
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.message.revise")
+            .target_ref(event_id)
+            .body(json!({
+                "content": text_content(body)?,
+                "target_ref": event_id,
+            }))
+            .build("yougen"),
+    )
 }
 
 pub(super) fn pending_send_error_is_permanent(error: &str) -> bool {
@@ -140,9 +158,9 @@ pub(super) async fn submit_timeline_message_with_plaintext_retry(
     api: &crate::api::CokretApi,
     realm_id: &str,
     actor_id: &str,
-    operation: &EventEnvelope,
+    operation: &cokret_sdk::Event,
 ) -> anyhow::Result<crate::models::SubmitEventResult> {
-    match api.submit_event_envelope(operation).await {
+    match api.submit_sdk_event(operation).await {
         Ok(response) => Ok(response),
         Err(error) if crate::api::is_plaintext_visibility_policy_error(&error) => {
             let description = api.describe().await?;
@@ -161,7 +179,7 @@ pub(super) async fn submit_timeline_message_with_plaintext_retry(
                     "plaintext policy update failed: {update_error}; original send failed: {error}"
                 )
             })?;
-            api.submit_event_envelope(operation).await
+            api.submit_sdk_event(operation).await
         }
         Err(error) => Err(error),
     }
@@ -172,14 +190,16 @@ pub(super) fn message_redact_operation(
     actor: &str,
     event_id: &str,
     reason: Option<&str>,
-) -> EventEnvelope {
-    OperationBuilder::new(realm_id, actor, "ck.message.redact")
-        .target_ref(event_id)
-        .body(json!({
-            "reason": reason,
-            "target_event_id": event_id,
-        }))
-        .build("yougen")
+) -> anyhow::Result<cokret_sdk::Event> {
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.message.redact")
+            .target_ref(event_id)
+            .body(json!({
+                "reason": reason,
+                "target_event_id": event_id,
+            }))
+            .build("yougen"),
+    )
 }
 
 pub(super) fn reaction_add_operation(
@@ -187,12 +207,14 @@ pub(super) fn reaction_add_operation(
     actor: &str,
     event_id: &str,
     key: &str,
-) -> EventEnvelope {
-    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
-        .target_ref(event_id)
-        .body(json!({
-            "target_ref": event_id,
-            "key": key,
-        }))
-        .build("yougen")
+) -> anyhow::Result<cokret_sdk::Event> {
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.reaction.add")
+            .target_ref(event_id)
+            .body(json!({
+                "target_ref": event_id,
+                "key": key,
+            }))
+            .build("yougen"),
+    )
 }
