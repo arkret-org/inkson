@@ -213,41 +213,8 @@ impl CokretApi {
             signed.seal_ref = Some(seal);
         }
 
-        // Single signing path. No placeholder, no fallback.
-        if signed.proofs.is_empty() {
-            let proof_context = self.event_proof_context().await?;
-            crate::event_signer::sign_with_active_context(&mut signed, proof_context).map_err(
-                |err| {
-                    anyhow::anyhow!(
-                        "no active signer configured \u{2014} cannot submit unsigned event: {err}"
-                    )
-                },
-            )?;
-        }
-        self.post_signed_event_envelope(&signed).await
-    }
-
-    /// Wire-submit a fully-prepared, already-signed [`EventEnvelope`]
-    /// verbatim over `POST /_cokret/self/events`. This does NOT stamp
-    /// `seal_ref` or sign — the caller owns both. It is the shared
-    /// tail of [`Self::submit_event_envelope`] and the per-envelope
-    /// fallback in [`Self::submit_events_batch`]: a genesis Realm
-    /// bootstrap deliberately carries `seal_ref: None` (it asserts
-    /// `head_eq null`, there is no prior seal head), so re-running the
-    /// seal-stamp heuristic here would both 404 against the
-    /// not-yet-existing Realm's snapshot head and corrupt the signature.
-    async fn post_signed_event_envelope(
-        &self,
-        signed: &EventEnvelope,
-    ) -> anyhow::Result<SubmitEventResult> {
         let sdk_event = signed.to_sdk_event_for_submit()?;
-        let idempotency_key = signed
-            .local_operation_idempotency_alias()
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(uuid_v7);
-
-        self.post_signed_sdk_event(&sdk_event, idempotency_key)
-            .await
+        self.submit_sdk_event(&sdk_event).await
     }
 
     /// Wire-submit a fully-prepared, already-signed SDK [`cokret_sdk::Event`].
@@ -283,6 +250,39 @@ impl CokretApi {
         signed: &cokret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
         self.post_signed_sdk_event(signed, uuid_v7()).await
+    }
+
+    /// Submit a SDK-typed Event, signing it with the active signer when needed.
+    /// This mirrors [`Self::submit_event_envelope`] without requiring callers
+    /// to materialise yougen's local `EventEnvelope` compatibility wrapper.
+    pub(crate) async fn submit_sdk_event(
+        &self,
+        event: &cokret_sdk::Event,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let mut signed = event.clone();
+        if signed.seal_ref.is_none() && !signed.effects.is_empty() {
+            let seal = self.current_seal_for(signed.realm_id.as_str()).await?;
+            signed.seal_ref = Some(
+                cokret_sdk::SealId::new(seal)
+                    .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
+            );
+        }
+        if signed.proofs.is_empty() {
+            let proof_context = self.event_proof_context().await?;
+            crate::event_signer::sign_sdk_event_with_active_context(&mut signed, proof_context)
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "no active signer configured \u{2014} cannot submit unsigned SDK Event: {err}"
+                    )
+                })?;
+        }
+        let idempotency_key = signed
+            .unsigned
+            .get("local_operation_idempotency_alias")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(uuid_v7);
+        self.post_signed_sdk_event(&signed, idempotency_key).await
     }
 
     /// `ck.self.events.command.submit` in batch form over typed envelopes. Spec binds

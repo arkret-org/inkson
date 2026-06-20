@@ -322,6 +322,88 @@ impl YougenEventSigner {
         Ok(())
     }
 
+    /// Sign a SDK-typed Event in place. This is the forward path for modules
+    /// that already build `cokret_sdk::Event` and should not round-trip through
+    /// yougen's local `EventEnvelope` compatibility wrapper.
+    pub fn sign_sdk_event_with_context(
+        &self,
+        event: &mut cokret_sdk::Event,
+        context: EventProofContext,
+    ) -> Result<(), EventSignerError> {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+        let builder = EventProofBuilder::new();
+        let event_digest = event
+            .event_digest()
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let verification_method = self.verification_method_for_sdk_event(event);
+        let created_at = crate::clock::now_rfc3339_secs();
+        let actor_id = event.actor_id.as_str();
+        let mut proof_binding = serde_json::json!({
+            "event_digest": event_digest.as_str(),
+            "actor_id": actor_id,
+            "verification_method": verification_method.as_str(),
+            "created_at": created_at.as_str(),
+        });
+        if let Value::Object(object) = &mut proof_binding {
+            if let Some(domain) = &context.domain {
+                object.insert("domain".to_owned(), Value::String(domain.clone()));
+            }
+            if let Some(audience) = &context.audience {
+                object.insert(
+                    "audience".to_owned(),
+                    serde_json::to_value(audience)
+                        .map_err(|err| EventSignerError::Encoding(err.to_string()))?,
+                );
+            }
+        }
+        let proof_binding_bytes = builder
+            .canonical_bytes(&proof_binding)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let signature = self
+            .inner
+            .sign(&proof_binding_bytes)
+            .map_err(|err| EventSignerError::Backend(err.to_string()))?;
+
+        let header = serde_json::json!({ "alg": self.algorithm() });
+        let header = serde_json::to_vec(&header)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
+        let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
+        let jws = format!("{header_b64}..{sig_b64}");
+        let proof_created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?
+            .with_timezone(&Utc);
+        let proof_audience = context
+            .audience
+            .map(|audience| {
+                serde_json::from_value::<cokret_sdk::Audience>(
+                    serde_json::to_value(audience)
+                        .map_err(|err| EventSignerError::Encoding(err.to_string()))?,
+                )
+                .map_err(|err| EventSignerError::Encoding(err.to_string()))
+            })
+            .transpose()?;
+        event.proofs = vec![cokret_sdk::Proof {
+            kind: "detached_jws".to_owned(),
+            alg: self.algorithm().to_owned(),
+            verification_method,
+            event_digest: cokret_sdk::Hash::new(event_digest)
+                .map_err(|err| EventSignerError::Encoding(err.to_string()))?,
+            created_at: proof_created_at,
+            domain: context.domain,
+            audience: proof_audience,
+            jws,
+        }];
+
+        if let Ok(mut guard) = self.last_signed_at.lock() {
+            *guard = Some(crate::clock::now_utc());
+        }
+        let _proof_type = Self::proof_type_tag();
+        Ok(())
+    }
+
     /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
     /// using the active backend, matching the alg-only protected header
     /// shape [`Self::sign_envelope_with_context`] uses. Control-plane
@@ -356,6 +438,10 @@ impl YougenEventSigner {
         } else {
             format!("{actor_id}#device")
         }
+    }
+
+    fn verification_method_for_sdk_event(&self, event: &cokret_sdk::Event) -> String {
+        format!("{}#device", event.actor_id.as_str())
     }
 
     /// The [`ProofType`] tag every proof emitted by this signer carries.
@@ -488,6 +574,22 @@ pub fn sign_with_active_context(
         mode: current_proof_mode().label_en(),
     })?;
     signer.sign_envelope_with_context(event, context)
+}
+
+pub fn sign_sdk_event_with_active_context(
+    event: &mut cokret_sdk::Event,
+    context: EventProofContext,
+) -> Result<(), EventSignerError> {
+    let mode = current_proof_mode();
+    if !should_auto_sign() {
+        return Err(EventSignerError::MissingSigner {
+            mode: mode.label_en(),
+        });
+    }
+    let signer = active_signer().ok_or(EventSignerError::MissingSigner {
+        mode: mode.label_en(),
+    })?;
+    signer.sign_sdk_event_with_context(event, context)
 }
 
 /// UI-facing snapshot of the currently-installed signer. `None` when no
@@ -814,6 +916,41 @@ mod tests {
         Ed25519DetachedJwsVerifier::new()
             .verify(&proof_binding_bytes, &sig, &public_key)
             .expect("SDK verifier accepts domain/audience-bound proof");
+    }
+
+    #[test]
+    fn sign_sdk_event_with_context_attaches_typed_proof() {
+        let _g = reset();
+        let signer = build_ed25519_signer([10u8; 32], "did:web:sdk.example");
+        let mut event: cokret_sdk::Event = serde_json::from_value(json!({
+            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "kind": "ck.message.create",
+            "realm_id": TEST_REALM_ID,
+            "actor_id": "did:web:sdk.example",
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {"kind": "ck.content.text", "body": "typed"},
+            "proofs": []
+        }))
+        .unwrap();
+        let context = EventProofContext::new()
+            .with_domain("did:web:server.example")
+            .with_audience(EventProofAudience::single("did:web:server.example"));
+
+        signer
+            .sign_sdk_event_with_context(&mut event, context)
+            .expect("sign SDK event");
+
+        let proof = event.proofs.first().expect("proof");
+        assert_eq!(proof.kind, "detached_jws");
+        assert_eq!(proof.verification_method, "did:web:sdk.example#device");
+        assert_eq!(proof.domain.as_deref(), Some("did:web:server.example"));
+        assert!(proof.audience.is_some());
+        event
+            .validate_proof_bindings()
+            .expect("proof digest matches");
     }
 
     #[test]
