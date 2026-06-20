@@ -459,7 +459,12 @@ impl EventEnvelope {
     /// network boundary pinned to `cokret_sdk::Event` while the remaining
     /// builder migration happens behind it.
     pub fn to_sdk_event(&self) -> anyhow::Result<cokret_sdk::Event> {
-        let value = serde_json::to_value(self)?;
+        let mut value = serde_json::to_value(self)?;
+        if let Value::Object(object) = &mut value {
+            object
+                .entry("proofs".to_owned())
+                .or_insert_with(|| Value::Array(Vec::new()));
+        }
         serde_json::from_value(value)
             .map_err(|err| anyhow::anyhow!("event does not match SDK Event wire model: {err}"))
     }

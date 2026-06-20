@@ -27,11 +27,9 @@
 //! Yougen's [`crate::operation::EventEnvelope`] is still a local builder
 //! wrapper, but the HTTP submit boundary decodes it through
 //! `cokret_sdk::Event` before serialising the request. To keep the SDK as the
-//! single canonical-bytes source, this module re-serializes the envelope into
-//! a `serde_json::Value` with `proofs` + `unsigned` stripped (the same
-//! projection [`crate::operation::EventEnvelope::sign_ed25519`] used) and feeds
-//! that into `EventProofBuilder::canonical_bytes`; submit then verifies that
-//! this digest matches `cokret_sdk::Event::event_digest()`.
+//! single canonical-bytes source, this module decodes the local builder
+//! envelope into `cokret_sdk::Event` before deriving `Event::event_digest()`;
+//! submit keeps the old drift guard until the local builder is fully removed.
 //!
 //! ## Wiring contract
 //!
@@ -258,26 +256,19 @@ impl YougenEventSigner {
             event.actor_id = self.signer_did.clone();
         }
 
-        // Mirror EventEnvelope::sign_ed25519: strip proofs + unsigned
-        // before canonicalising so the digest is stable across rounds.
-        let mut canonical = serde_json::to_value(&*event)
+        let sdk_event = event
+            .to_sdk_event()
             .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        if let Value::Object(object) = &mut canonical {
-            object.remove("proofs");
-            object.remove("unsigned");
-        }
-
         let builder = EventProofBuilder::new();
-        let canonical_bytes = builder
-            .canonical_bytes(&canonical)
+        let event_digest = sdk_event
+            .event_digest()
             .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
 
         let verification_method = self.verification_method_for_event(event);
         let created_at = crate::clock::now_rfc3339_secs();
         let mut proof_binding = serde_json::json!({
             "event_digest": event_digest.as_str(),
-            "actor_id": event.actor_id.as_str(),
+            "actor_id": sdk_event.actor_id.as_str(),
             "verification_method": verification_method.as_str(),
             "created_at": created_at.as_str(),
         });
@@ -569,6 +560,8 @@ mod tests {
     use crate::canonical::canonical_json_bytes;
     use crate::operation::{EventProofAudience, OperationBuilder, set_proof_mode};
 
+    const TEST_REALM_ID: &str = "ck:realm:01964137-0000-7000-8000-000000000001";
+
     /// Same per-process guard pattern operation.rs uses — proof-mode
     /// and active-signer state is global so concurrent tests would
     /// race.
@@ -661,7 +654,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:realm:t", "did:web:bob.example", "ck.message.create")
+            OperationBuilder::new(TEST_REALM_ID, "did:web:bob.example", "ck.message.create")
                 .body(json!({"body": "hi"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -698,7 +691,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:realm:t", "did:web:alice.example", "ck.message.create")
+            OperationBuilder::new(TEST_REALM_ID, "did:web:alice.example", "ck.message.create")
                 .body(json!({"body": "actor-rooted"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -728,7 +721,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:realm:t", "did:web:carol.example", "ck.message.create")
+            OperationBuilder::new(TEST_REALM_ID, "did:web:carol.example", "ck.message.create")
                 .body(json!({"body": "verifiable"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -739,20 +732,12 @@ mod tests {
         // over the spec proof-binding object. Event proofs sign
         // `{event_digest, actor_id, verification_method, created_at}`,
         // not the full event bytes directly.
-        let mut canonical = serde_json::to_value(&event).unwrap();
-        if let Value::Object(obj) = &mut canonical {
-            obj.remove("proofs");
-            obj.remove("unsigned");
-        }
-        let canonical_bytes = canonical_json_bytes(&canonical).unwrap();
         let proof = event.proofs.first().unwrap();
-        assert_eq!(
-            proof.event_digest,
-            crate::canonical::sha256_digest(&canonical_bytes).as_str()
-        );
+        let sdk_event = event.to_sdk_event().expect("SDK Event");
+        assert_eq!(proof.event_digest, sdk_event.event_digest().unwrap());
         let proof_binding_bytes = canonical_json_bytes(&json!({
             "event_digest": proof.event_digest.as_str(),
-            "actor_id": event.actor_id.as_str(),
+            "actor_id": sdk_event.actor_id.as_str(),
             "verification_method": proof.verification_method.as_str(),
             "created_at": proof.created_at.as_str(),
         }))
@@ -786,7 +771,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:realm:t", "did:web:carol.example", "ck.message.create")
+            OperationBuilder::new(TEST_REALM_ID, "did:web:carol.example", "ck.message.create")
                 .body(json!({"body": "bound"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -810,19 +795,11 @@ mod tests {
             ))
         );
 
-        let mut canonical = serde_json::to_value(&event).unwrap();
-        if let Value::Object(obj) = &mut canonical {
-            obj.remove("proofs");
-            obj.remove("unsigned");
-        }
-        let canonical_bytes = canonical_json_bytes(&canonical).unwrap();
-        assert_eq!(
-            proof.event_digest,
-            crate::canonical::sha256_digest(&canonical_bytes).as_str()
-        );
+        let sdk_event = event.to_sdk_event().expect("SDK Event");
+        assert_eq!(proof.event_digest, sdk_event.event_digest().unwrap());
         let proof_binding_bytes = canonical_json_bytes(&json!({
             "event_digest": proof.event_digest.as_str(),
-            "actor_id": event.actor_id.as_str(),
+            "actor_id": sdk_event.actor_id.as_str(),
             "verification_method": proof.verification_method.as_str(),
             "created_at": proof.created_at.as_str(),
             "domain": "ck:trust_domain:server.example",
@@ -867,7 +844,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:realm:t", "did:web:dave.example", "ck.message.create")
+            OperationBuilder::new(TEST_REALM_ID, "did:web:dave.example", "ck.message.create")
                 .body(json!({"body": "auto"}))
                 .build("test_node");
         sign_with_active(&mut event).expect("auto sign");
@@ -885,7 +862,7 @@ mod tests {
     fn sign_with_active_returns_missing_signer_when_none_installed() {
         let _g = reset();
         let mut event =
-            OperationBuilder::new("ck:realm:t", "did:web:eve.example", "ck.message.create")
+            OperationBuilder::new(TEST_REALM_ID, "did:web:eve.example", "ck.message.create")
                 .body(json!({"body": "no"}))
                 .build("test_node");
         let err = sign_with_active(&mut event).unwrap_err();

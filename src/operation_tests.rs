@@ -689,9 +689,13 @@ fn canonical_digest_is_stable_across_key_order() {
 #[test]
 fn sign_ed25519_attaches_typed_proof() {
     use ed25519_dalek::SigningKey;
-    let mut op = OperationBuilder::new("ck:realm:s1", "did:web:alice", "ck.message.create")
-        .body(json!({"body": "hi"}))
-        .build("node");
+    let mut op = OperationBuilder::new(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "did:web:alice",
+        "ck.message.create",
+    )
+    .body(json!({"body": "hi"}))
+    .build("node");
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
         .expect("sign ok");
