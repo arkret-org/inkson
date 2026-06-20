@@ -245,7 +245,8 @@ pub fn TimelinePanel(
                                 &realm, &actor, &event_id, &device,
                             )
                             .build("yougen");
-                            api.submit_event_envelope(&op).await
+                            let op = op.to_sdk_event_for_submit()?;
+                            api.submit_sdk_event(&op).await
                         })
                         .await;
                     });

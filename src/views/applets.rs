@@ -404,8 +404,17 @@ pub fn AppletsPanel(
                                             &realm, &actor, &did, &ns, &caps_refs,
                                         )
                                         .build("yougen");
+                                        let op = match op.to_sdk_event_for_submit() {
+                                            Ok(op) => op,
+                                            Err(err) => {
+                                                status.set(format!(
+                                                    "applet registration build failed: {err}"
+                                                ));
+                                                return;
+                                            }
+                                        };
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.submit_event_envelope(&op).await
+                                            api.submit_sdk_event(&op).await
                                         })
                                         .await
                                         {

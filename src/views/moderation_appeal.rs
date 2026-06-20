@@ -228,8 +228,16 @@ pub fn AppealEntrypoint(
                                 }
                             };
                             let envelope = op.build("yougen");
+                            let envelope = match envelope.to_sdk_event_for_submit() {
+                                Ok(envelope) => envelope,
+                                Err(err) => {
+                                    status.set(format!("Appeal build failed: {err}"));
+                                    submitting.set(false);
+                                    return;
+                                }
+                            };
                             let result = with_authed_api(&base, token, |api| async move {
-                                api.submit_event_envelope(&envelope).await
+                                api.submit_sdk_event(&envelope).await
                             })
                             .await;
                             match result {
