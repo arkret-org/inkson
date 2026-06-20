@@ -884,11 +884,18 @@ pub fn ChatPanel(
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         status_msg.set("Creating Strand".to_owned());
+                                        let sdk_op = match op.to_sdk_event_for_submit() {
+                                            Ok(op) => op,
+                                            Err(error) => {
+                                                status_msg.set(format!(
+                                                    "Could not create Strand proof: {error}"
+                                                ));
+                                                return;
+                                            }
+                                        };
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token.clone(), wait_for) {
-                                                Ok(api) => match api
-                                                        .submit_event_envelope(&op)
-                                                        .await
+                                                Ok(api) => match api.submit_sdk_event(&sdk_op).await
                                                     {
                                                         Ok(submitted) => {
                                                             channels.write().push(ChannelEntity {
@@ -1083,10 +1090,19 @@ pub fn ChatPanel(
                                                                                 return;
                                                                             }
                                                                         };
+                                                                        let watch_op = match watch_op.to_sdk_event_for_submit() {
+                                                                            Ok(watch_op) => watch_op,
+                                                                            Err(err) => {
+                                                                                tracing::warn!("strand_watch_set SDK conversion failed: {err:#}");
+                                                                                strand_watch_level.set(prev);
+                                                                                status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
+                                                                                return;
+                                                                            }
+                                                                        };
                                                                         let base = base_for_click.clone();
                                                                         spawn(async move {
                                                                             match authed_api_with_sync(&base, api_token, wait_for) {
-                                                                                Ok(api) => match api.submit_event_envelope(&watch_op).await {
+                                                                                Ok(api) => match api.submit_sdk_event(&watch_op).await {
                                                                                     Ok(_) => {
                                                                                         status_msg.set(crate::i18n::tr("chat.watch_level.saved"));
                                                                                     }
@@ -4261,16 +4277,28 @@ pub fn ChatPanel(
                                     // YOU-02-007: surface a silent receipt failure so
                                     // the sender knows the audit row is missing (the
                                     // message itself sent).
-                                    if let Err(err) =
-                                        api.submit_event_envelope(&audit_op).await
-                                    {
-                                        tracing::warn!(
-                                            "audit RYW receipt for {} failed: {err:#}",
-                                            resp_event_id
-                                        );
-                                        status_msg.set(format!(
-                                            "Message sent; audit receipt failed: {err}"
-                                        ));
+                                    match audit_op.to_sdk_event_for_submit() {
+                                        Ok(audit_op) => {
+                                            if let Err(err) = api.submit_sdk_event(&audit_op).await
+                                            {
+                                                tracing::warn!(
+                                                    "audit RYW receipt for {} failed: {err:#}",
+                                                    resp_event_id
+                                                );
+                                                status_msg.set(format!(
+                                                    "Message sent; audit receipt failed: {err}"
+                                                ));
+                                            }
+                                        }
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                "audit RYW receipt for {} failed to build: {err:#}",
+                                                resp_event_id
+                                            );
+                                            status_msg.set(format!(
+                                                "Message sent; audit receipt failed: {err}"
+                                            ));
+                                        }
                                     }
                                 });
                                 });

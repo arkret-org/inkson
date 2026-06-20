@@ -377,6 +377,15 @@ pub fn DocumentPanel(
                                             return;
                                         }
                                     };
+                                    let op = match op.to_sdk_event_for_submit() {
+                                        Ok(op) => op,
+                                        Err(err) => {
+                                            sync_state.set(SyncState::Failed);
+                                            save_status
+                                                .set(format!("Saved locally; sync: {err:#}"));
+                                            return;
+                                        }
+                                    };
                                     let relation_op = if linked_incident_for_wire
                                         .trim()
                                         .starts_with("ck:")
@@ -399,17 +408,29 @@ pub fn DocumentPanel(
                                     } else {
                                         None
                                     };
+                                    let relation_op = match relation_op
+                                        .map(|op| op.to_sdk_event_for_submit())
+                                        .transpose()
+                                    {
+                                        Ok(relation_op) => relation_op,
+                                        Err(err) => {
+                                            sync_state.set(SyncState::Failed);
+                                            save_status
+                                                .set(format!("Saved locally; sync: {err:#}"));
+                                            return;
+                                        }
+                                    };
 
                                     // YOU-02-007: the incident relation op
                                     // failure used to be swallowed; carry it
                                     // out so the user sees the link did not
                                     // stick even though the document synced.
                                     match with_authed_api(&base, token_val, |api| async move {
-                                        let resp = api.submit_event_envelope(&op).await?;
+                                        let resp = api.submit_sdk_event(&op).await?;
                                         let mut relation_error = None;
                                         if let Some(relation_op) = relation_op {
                                             if let Err(err) =
-                                                api.submit_event_envelope(&relation_op).await
+                                                api.submit_sdk_event(&relation_op).await
                                             {
                                                 relation_error = Some(format!("{err:#}"));
                                             }
@@ -803,11 +824,20 @@ pub fn DocumentPanel(
                                             return;
                                         }
                                     };
+                                    let op = match op.to_sdk_event_for_submit() {
+                                        Ok(op) => op,
+                                        Err(err) => {
+                                            comment_status.set(format!(
+                                                "comment {id} local; sync: {err:#}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     let base = base.clone();
                                     let token_val = token();
                                     spawn(async move {
                                         match with_authed_api(&base, token_val, |api| async move {
-                                            api.submit_event_envelope(&op).await
+                                            api.submit_sdk_event(&op).await
                                         })
                                         .await
                                         {
