@@ -285,10 +285,18 @@ pub fn ActionApproveDialog(
                                 )
                                 .body(payload)
                                 .build("yougen");
+                                let op = match op.to_sdk_event_for_submit() {
+                                    Ok(op) => op,
+                                    Err(err) => {
+                                        state.set(ActionApproveDialogState::Reviewing);
+                                        status_text.set(format!("approval build failed: {err}"));
+                                        return;
+                                    }
+                                };
                                 match with_authed_api(&base, api_token, move |api| {
                                     let op = op.clone();
                                     async move {
-                                        api.submit_event_envelope(&op).await
+                                        api.submit_sdk_event(&op).await
                                     }
                                 })
                                 .await
@@ -507,10 +515,19 @@ pub fn DraftApprovalPanel(
                                                     .body(payload)
                                                     .build("yougen");
                                                     spawn(async move {
+                                                        let op = match op.to_sdk_event_for_submit() {
+                                                            Ok(op) => op,
+                                                            Err(err) => {
+                                                                panel_status.set(format!(
+                                                                    "approve build failed: {err}"
+                                                                ));
+                                                                return;
+                                                            }
+                                                        };
                                                         match with_authed_api(&base, api_token, move |api| {
                                                             let op = op.clone();
                                                             async move {
-                                                                api.submit_event_envelope(&op).await
+                                                                api.submit_sdk_event(&op).await
                                                             }
                                                         })
                                                         .await
@@ -561,10 +578,19 @@ pub fn DraftApprovalPanel(
                                                     .body(payload)
                                                     .build("yougen");
                                                     spawn(async move {
+                                                        let op = match op.to_sdk_event_for_submit() {
+                                                            Ok(op) => op,
+                                                            Err(err) => {
+                                                                panel_status.set(format!(
+                                                                    "reject build failed: {err}"
+                                                                ));
+                                                                return;
+                                                            }
+                                                        };
                                                         match with_authed_api(&base, api_token, move |api| {
                                                             let op = op.clone();
                                                             async move {
-                                                                api.submit_event_envelope(&op).await
+                                                                api.submit_sdk_event(&op).await
                                                             }
                                                         })
                                                         .await

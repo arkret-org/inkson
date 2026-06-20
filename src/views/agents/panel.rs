@@ -274,8 +274,17 @@ pub fn AgentsPanel(
                                             &realm, &actor, &did, &proto, &caps_refs,
                                         )
                                         .build("yougen");
+                                        let op = match op.to_sdk_event_for_submit() {
+                                            Ok(op) => op,
+                                            Err(err) => {
+                                                status.set(format!(
+                                                    "agent endpoint build failed: {err}"
+                                                ));
+                                                return;
+                                            }
+                                        };
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.submit_event_envelope(&op).await
+                                            api.submit_sdk_event(&op).await
                                         })
                                         .await
                                         {
@@ -544,8 +553,18 @@ pub fn AgentsPanel(
                                                 "ck:grant:01904100-0000-7000-8000-000000000099",
                                             )
                                             .build("yougen");
+                                            let op = match op.to_sdk_event_for_submit() {
+                                                Ok(op) => op,
+                                                Err(err) => {
+                                                    handoff_state.set(HandoffState::Failed);
+                                                    handoff_status_text.set(format!(
+                                                        "handoff start build failed: {err}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
                                             match with_authed_api(&base, api_token, |api| async move {
-                                                api.submit_event_envelope(&op).await
+                                                api.submit_sdk_event(&op).await
                                             })
                                             .await
                                             {
