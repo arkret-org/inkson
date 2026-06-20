@@ -709,6 +709,23 @@ fn sign_ed25519_attaches_typed_proof() {
 }
 
 #[test]
+fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
+    let op = OperationBuilder::new(
+        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "did:web:alice.example",
+        "ck.message.create",
+    )
+    .body(json!({"kind": "ck.content.text", "body": "hi"}))
+    .build("node");
+
+    let sdk_event = op.to_sdk_event().expect("unsigned builder decodes");
+
+    assert!(sdk_event.proofs.is_empty());
+    assert_eq!(sdk_event.kind.as_str(), "ck.message.create");
+    assert_eq!(sdk_event.realm_id.as_str(), op.realm_id);
+}
+
+#[test]
 fn sdk_submit_event_conversion_preserves_signed_digest() {
     use ed25519_dalek::SigningKey;
 
