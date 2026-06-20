@@ -273,8 +273,8 @@ pub fn AgentsPanel(
                                         let op = crate::operation::ck_ops::agent_endpoint(
                                             &realm, &actor, &did, &proto, &caps_refs,
                                         )
-                                        .build("yougen");
-                                        let op = match op.to_sdk_event_for_submit() {
+                                        .build_sdk_event("yougen");
+                                        let op = match op {
                                             Ok(op) => op,
                                             Err(err) => {
                                                 status.set(format!(
@@ -552,8 +552,8 @@ pub fn AgentsPanel(
                                                 serde_json::json!({ "handoff_intent": "controller_initiated" }),
                                                 "ck:grant:01904100-0000-7000-8000-000000000099",
                                             )
-                                            .build("yougen");
-                                            let op = match op.to_sdk_event_for_submit() {
+                                            .build_sdk_event("yougen");
+                                            let op = match op {
                                                 Ok(op) => op,
                                                 Err(err) => {
                                                     handoff_state.set(HandoffState::Failed);

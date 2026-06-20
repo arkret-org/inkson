@@ -403,8 +403,8 @@ pub fn AppletsPanel(
                                         let op = crate::operation::ck_ops::applet_registration(
                                             &realm, &actor, &did, &ns, &caps_refs,
                                         )
-                                        .build("yougen");
-                                        let op = match op.to_sdk_event_for_submit() {
+                                        .build_sdk_event("yougen");
+                                        let op = match op {
                                             Ok(op) => op,
                                             Err(err) => {
                                                 status.set(format!(

@@ -1181,9 +1181,8 @@ pub fn RealmAdminPanel(
                                     &tag_val,
                                     constraint_json,
                                 )
-                                .build("yougen");
-                                let op_id = envelope.local_operation_id().to_owned();
-                                let envelope = match envelope.to_sdk_event_for_submit() {
+                                .build_sdk_event("yougen");
+                                let envelope = match envelope {
                                     Ok(envelope) => envelope,
                                     Err(err) => {
                                         status_msg.set(format!(
@@ -1192,6 +1191,12 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
+                                let op_id = envelope
+                                    .unsigned
+                                    .get("local_operation_idempotency_alias")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or_else(|| envelope.event_id.as_str())
+                                    .to_owned();
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
@@ -1258,9 +1263,8 @@ pub fn RealmAdminPanel(
                                     &tag_val,
                                     reason_opt.as_deref(),
                                 )
-                                .build("yougen");
-                                let op_id = envelope.local_operation_id().to_owned();
-                                let envelope = match envelope.to_sdk_event_for_submit() {
+                                .build_sdk_event("yougen");
+                                let envelope = match envelope {
                                     Ok(envelope) => envelope,
                                     Err(err) => {
                                         status_msg.set(format!(
@@ -1269,6 +1273,12 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
+                                let op_id = envelope
+                                    .unsigned
+                                    .get("local_operation_idempotency_alias")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or_else(|| envelope.event_id.as_str())
+                                    .to_owned();
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,

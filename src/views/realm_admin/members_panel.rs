@@ -421,20 +421,26 @@ pub fn RealmMembersPanel(
                                                         invitee.invite_delivery_target.clone(),
                                                         &invitee.introduction_evidence_digest,
                                                     ) {
-                                                        Ok(builder) => builder.build("yougen"),
+                                                        Ok(builder) => builder
+                                                            .build_sdk_event("yougen"),
                                                         Err(err) => {
                                                             status_msg.set(format!("invite failed: {err:#}"));
                                                             return;
                                                         }
                                                     };
-                                                    let op_id = op.local_operation_id().to_owned();
-                                                    let submit_event = match op.to_sdk_event_for_submit() {
+                                                    let submit_event = match op {
                                                         Ok(event) => event,
                                                         Err(err) => {
                                                             status_msg.set(format!("invite failed: {err:#}"));
                                                             return;
                                                         }
                                                     };
+                                                    let op_id = submit_event
+                                                        .unsigned
+                                                        .get("local_operation_idempotency_alias")
+                                                        .and_then(|value| value.as_str())
+                                                        .unwrap_or_else(|| submit_event.event_id.as_str())
+                                                        .to_owned();
                                                     status_msg.set(format!(
                                                         "submitting invite for {}",
                                                         invitee_label

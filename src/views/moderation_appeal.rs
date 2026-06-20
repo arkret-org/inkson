@@ -227,8 +227,7 @@ pub fn AppealEntrypoint(
                                     return;
                                 }
                             };
-                            let envelope = op.build("yougen");
-                            let envelope = match envelope.to_sdk_event_for_submit() {
+                            let envelope = match op.build_sdk_event("yougen") {
                                 Ok(envelope) => envelope,
                                 Err(err) => {
                                     status.set(format!("Appeal build failed: {err}"));

@@ -368,7 +368,7 @@ pub fn DocumentPanel(
                                         )
                                     };
                                     let op = match op_builder {
-                                        Ok(builder) => builder.build("yougen"),
+                                        Ok(builder) => builder.build_sdk_event("yougen"),
                                         Err(err) => {
                                             sync_state.set(SyncState::Failed);
                                             save_status.set(format!(
@@ -377,7 +377,7 @@ pub fn DocumentPanel(
                                             return;
                                         }
                                     };
-                                    let op = match op.to_sdk_event_for_submit() {
+                                    let op = match op {
                                         Ok(op) => op,
                                         Err(err) => {
                                             sync_state.set(SyncState::Failed);
@@ -394,9 +394,9 @@ pub fn DocumentPanel(
                                             &operation_realm_id,
                                             &actor_key_save,
                                             &morph_id,
-                                            linked_incident_for_wire.trim(),
-                                        ) {
-                                            Ok(builder) => Some(builder.build("yougen")),
+                                                linked_incident_for_wire.trim(),
+                                            ) {
+                                            Ok(builder) => Some(builder.build_sdk_event("yougen")),
                                             Err(err) => {
                                                 sync_state.set(SyncState::Failed);
                                                 save_status.set(format!(
@@ -408,10 +408,7 @@ pub fn DocumentPanel(
                                     } else {
                                         None
                                     };
-                                    let relation_op = match relation_op
-                                        .map(|op| op.to_sdk_event_for_submit())
-                                        .transpose()
-                                    {
+                                    let relation_op = match relation_op.transpose() {
                                         Ok(relation_op) => relation_op,
                                         Err(err) => {
                                             sync_state.set(SyncState::Failed);
@@ -816,7 +813,7 @@ pub fn DocumentPanel(
                                         &body_for_wire,
                                         None,
                                     ) {
-                                        Ok(builder) => builder.build("yougen"),
+                                        Ok(builder) => builder.build_sdk_event("yougen"),
                                         Err(err) => {
                                             comment_status.set(format!(
                                                 "comment {id} local; sync: {err:#}"
@@ -824,7 +821,7 @@ pub fn DocumentPanel(
                                             return;
                                         }
                                     };
-                                    let op = match op.to_sdk_event_for_submit() {
+                                    let op = match op {
                                         Ok(op) => op,
                                         Err(err) => {
                                             comment_status.set(format!(

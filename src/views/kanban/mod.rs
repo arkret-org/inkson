@@ -1780,13 +1780,14 @@ pub fn KanbanPanel(
                                                 Some(&board_space_id),
                                                 Some(&rank),
                                             ) {
-                                                Ok(builder) => builder.build("yougen"),
+                                                Ok(builder) => builder
+                                                    .build_sdk_event("yougen"),
                                                 Err(err) => {
                                                     board_status.set(format!("cannot create list: {err:#}"));
                                                     return;
                                                 }
                                             };
-                                            let op = match op.to_sdk_event_for_submit() {
+                                            let op = match op {
                                                 Ok(event) => event,
                                                 Err(err) => {
                                                     board_status.set(format!("cannot create list: {err}"));
@@ -1877,13 +1878,14 @@ pub fn KanbanPanel(
                                                     None,
                                                     None,
                                                 ) {
-                                                    Ok(builder) => builder.build("yougen"),
+                                                    Ok(builder) => builder
+                                                        .build_sdk_event("yougen"),
                                                     Err(err) => {
                                                         board_status.set(format!("cannot create board: {err:#}"));
                                                         return;
                                                 }
                                             };
-                                                let op = match op.to_sdk_event_for_submit() {
+                                                let op = match op {
                                                     Ok(event) => event,
                                                     Err(err) => {
                                                         board_status.set(format!("cannot create board: {err}"));

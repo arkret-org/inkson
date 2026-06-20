@@ -340,7 +340,7 @@ pub(crate) fn build_secure_send(
         .map_err(|err| format!("Send Secure payload encode failed: {err}"))?;
     let message_envelope = OperationBuilder::new(realm_id, actor, "ck.message.create")
         .body(msg_payload_value)
-        .build("yougen");
+        .build_sdk_event("yougen");
 
     let commit_event = commit_envelope
         .map(|event| {
@@ -350,7 +350,6 @@ pub(crate) fn build_secure_send(
         })
         .transpose()?;
     let message_event = message_envelope
-        .to_sdk_event_for_submit()
         .map_err(|err| format!("Send Secure SDK Event conversion failed: {err}"))?;
 
     Ok(SecureSendBuild {

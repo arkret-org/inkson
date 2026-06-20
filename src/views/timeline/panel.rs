@@ -244,8 +244,7 @@ pub fn TimelinePanel(
                             let op = crate::audit::build_audit_accessed(
                                 &realm, &actor, &event_id, &device,
                             )
-                            .build("yougen");
-                            let op = op.to_sdk_event_for_submit()?;
+                            .build_sdk_event("yougen")?;
                             api.submit_sdk_event(&op).await
                         })
                         .await;

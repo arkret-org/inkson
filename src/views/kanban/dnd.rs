@@ -151,7 +151,7 @@ pub(super) fn submit_column_order_updates(
             &column_id,
             json!({ "rank": rank }),
         ) {
-            Ok(builder) => match builder.build("yougen").to_sdk_event_for_submit() {
+            Ok(builder) => match builder.build_sdk_event("yougen") {
                 Ok(event) => event,
                 Err(err) => {
                     board_status.set(format!("Column order failed: {err}"));
@@ -235,13 +235,13 @@ pub(super) fn submit_kanban_move(
         )
     };
     let envelope = match envelope {
-        Ok(builder) => builder.build("yougen"),
+        Ok(builder) => builder.build_sdk_event("yougen"),
         Err(err) => {
             board_status.set(format!("cannot submit card update: {err:#}"));
             return;
         }
     };
-    let event = match envelope.to_sdk_event_for_submit() {
+    let event = match envelope {
         Ok(event) => event,
         Err(err) => {
             board_status.set(format!("cannot submit card update: {err}"));
@@ -641,12 +641,9 @@ pub(super) fn dispatch_space_container_lifecycle(
             )
         }
     };
-    let op = builder.build("yougen");
-
-    let kind = op.kind.clone();
     let base = base_url.clone();
     let api_token = token();
-    let event = match op.to_sdk_event_for_submit() {
+    let event = match builder.build_sdk_event("yougen") {
         Ok(event) => event,
         Err(err) => {
             if let Some(col) = columns
@@ -656,10 +653,11 @@ pub(super) fn dispatch_space_container_lifecycle(
             {
                 col.state = prior_state;
             }
-            board_status.set(format!("{kind} failed: {err}"));
+            board_status.set(format!("lifecycle update failed: {err}"));
             return;
         }
     };
+    let kind = event.kind.as_str().to_owned();
     spawn(async move {
         let result = with_authed_api(&base, api_token, |api| async move {
             api.submit_sdk_event(&event).await
@@ -772,7 +770,7 @@ pub(super) fn dispatch_strand_lifecycle(
         }
     };
     let op = match builder {
-        Ok(builder) => builder.build("yougen"),
+        Ok(builder) => builder.build_sdk_event("yougen"),
         Err(err) => {
             // Roll back the optimistic lifecycle flip applied above.
             for col in columns.write().iter_mut() {
@@ -786,10 +784,9 @@ pub(super) fn dispatch_strand_lifecycle(
         }
     };
 
-    let kind = op.kind.clone();
     let base = base_url.clone();
     let api_token = token();
-    let event = match op.to_sdk_event_for_submit() {
+    let event = match op {
         Ok(event) => event,
         Err(err) => {
             for col in columns.write().iter_mut() {
@@ -798,10 +795,11 @@ pub(super) fn dispatch_strand_lifecycle(
                     break;
                 }
             }
-            board_status.set(format!("{kind} failed: {err}"));
+            board_status.set(format!("lifecycle update failed: {err}"));
             return;
         }
     };
+    let kind = event.kind.as_str().to_owned();
     spawn(async move {
         let result = with_authed_api(&base, api_token, |api| async move {
             api.submit_sdk_event(&event).await
@@ -970,13 +968,13 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
         expected_json.clone(),
         effect_json.clone(),
     ) {
-        Ok(builder) => builder.build("yougen"),
+        Ok(builder) => builder.build_sdk_event("yougen"),
         Err(err) => {
             board_status.set(format!("cannot submit {kind}: {err:#}"));
             return;
         }
     };
-    let event = match envelope.to_sdk_event_for_submit() {
+    let event = match envelope {
         Ok(event) => event,
         Err(err) => {
             board_status.set(format!("cannot submit {kind}: {err}"));

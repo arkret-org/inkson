@@ -136,8 +136,7 @@ pub(crate) async fn run_device_revoke_from_snapshot(
     if let Some(tref) = target_ref {
         envelope_builder = envelope_builder.target_ref(tref);
     }
-    let envelope = envelope_builder.build("yougen");
-    let envelope = match envelope.to_sdk_event_for_submit() {
+    let envelope = match envelope_builder.build_sdk_event("yougen") {
         Ok(envelope) => envelope,
         Err(err) => {
             status.set(format!("MLS Remove event build failed: {err}"));

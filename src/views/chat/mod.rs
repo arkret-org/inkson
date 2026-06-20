@@ -1082,7 +1082,7 @@ pub fn ChatPanel(
                                                                             Some(watch_level_wire_value(option)),
                                                                             None,
                                                                         ) {
-                                                                            Ok(builder) => builder.build("yougen"),
+                                                                            Ok(builder) => builder.build_sdk_event("yougen"),
                                                                             Err(err) => {
                                                                                 tracing::warn!("strand_watch_set build failed: {err:#}");
                                                                                 strand_watch_level.set(prev);
@@ -1090,7 +1090,7 @@ pub fn ChatPanel(
                                                                                 return;
                                                                             }
                                                                         };
-                                                                        let watch_op = match watch_op.to_sdk_event_for_submit() {
+                                                                        let watch_op = match watch_op {
                                                                             Ok(watch_op) => watch_op,
                                                                             Err(err) => {
                                                                                 tracing::warn!("strand_watch_set SDK conversion failed: {err:#}");
@@ -4276,11 +4276,11 @@ pub fn ChatPanel(
                                         &resp_event_id,
                                         audit_delivered.clone(),
                                     )
-                                    .build("yougen");
+                                    .build_sdk_event("yougen");
                                     // YOU-02-007: surface a silent receipt failure so
                                     // the sender knows the audit row is missing (the
                                     // message itself sent).
-                                    match audit_op.to_sdk_event_for_submit() {
+                                    match audit_op {
                                         Ok(audit_op) => {
                                             if let Err(err) = api.submit_sdk_event(&audit_op).await
                                             {

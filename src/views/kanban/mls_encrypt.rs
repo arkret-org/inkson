@@ -482,13 +482,13 @@ pub(super) fn dispatch_card_detail_update(
         &current.id,
         patch,
     ) {
-        Ok(builder) => builder.build("yougen"),
+        Ok(builder) => builder.build_sdk_event("yougen"),
         Err(err) => {
             board_status.set(format!("cannot update card: {err:#}"));
             return false;
         }
     };
-    let op = match op.to_sdk_event_for_submit() {
+    let op = match op {
         Ok(event) => event,
         Err(err) => {
             board_status.set(format!("cannot update card: {err}"));

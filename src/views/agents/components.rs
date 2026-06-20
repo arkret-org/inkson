@@ -284,8 +284,8 @@ pub fn ActionApproveDialog(
                                     "ck.agent.action_approve",
                                 )
                                 .body(payload)
-                                .build("yougen");
-                                let op = match op.to_sdk_event_for_submit() {
+                                .build_sdk_event("yougen");
+                                let op = match op {
                                     Ok(op) => op,
                                     Err(err) => {
                                         state.set(ActionApproveDialogState::Reviewing);
@@ -513,9 +513,9 @@ pub fn DraftApprovalPanel(
                                                         "ck.agent.action_approve",
                                                     )
                                                     .body(payload)
-                                                    .build("yougen");
+                                                    .build_sdk_event("yougen");
                                                     spawn(async move {
-                                                        let op = match op.to_sdk_event_for_submit() {
+                                                        let op = match op {
                                                             Ok(op) => op,
                                                             Err(err) => {
                                                                 panel_status.set(format!(
@@ -576,9 +576,9 @@ pub fn DraftApprovalPanel(
                                                         "ck.agent.action_reject",
                                                     )
                                                     .body(payload)
-                                                    .build("yougen");
+                                                    .build_sdk_event("yougen");
                                                     spawn(async move {
-                                                        let op = match op.to_sdk_event_for_submit() {
+                                                        let op = match op {
                                                             Ok(op) => op,
                                                             Err(err) => {
                                                                 panel_status.set(format!(
