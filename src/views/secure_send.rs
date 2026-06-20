@@ -399,7 +399,15 @@ pub(crate) async fn submit_secure_send(
     if let Some(commit_envelope) = commit_envelope {
         // Submit the forced MLS commit first; if it fails, abort the message
         // send (covered_seals won't bind).
-        match api.submit_event_envelope(&commit_envelope).await {
+        let commit_event = match commit_envelope.to_sdk_event_for_submit() {
+            Ok(event) => event,
+            Err(err) => {
+                return SecureSendOutcome::CommitFailed {
+                    message: format!("MLS commit event build failed: {err}"),
+                };
+            }
+        };
+        match api.submit_sdk_event(&commit_event).await {
             Ok(resp) => {
                 // X14 — persist-on-accept: the server accepted the commit, so
                 // NOW advance the local snapshot to the post-commit epoch. On a
@@ -442,7 +450,15 @@ pub(crate) async fn submit_secure_send(
         }
     }
 
-    match api.submit_event_envelope(&message_envelope).await {
+    let message_event = match message_envelope.to_sdk_event_for_submit() {
+        Ok(event) => event,
+        Err(err) => {
+            return SecureSendOutcome::MessageFailed {
+                message: format!("Message build failed: {err}"),
+            };
+        }
+    };
+    match api.submit_sdk_event(&message_event).await {
         Ok(resp) => SecureSendOutcome::Sent {
             event_id: resp.event_id,
             status: resp.status,

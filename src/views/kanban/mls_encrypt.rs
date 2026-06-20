@@ -552,13 +552,85 @@ pub(super) fn dispatch_card_detail_update(
     let base_for_backup_trigger = base_url.clone();
     let actor_for_backup_trigger = actor_id.clone();
     let device_for_sidecar_backup = device_id.clone();
+    let mls_genesis_op = match mls_genesis_op
+        .map(|op| op.to_sdk_event_for_submit())
+        .transpose()
+    {
+        Ok(op) => op,
+        Err(err) => {
+            let err_text = err.to_string();
+            state_store.write().update_raw_operation_write_state(
+                &operation_id,
+                "failed",
+                None,
+                Some(err_text.clone()),
+            );
+            set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
+            let selected = selected_card.read().clone();
+            if let Some(mut card) = selected
+                && card.id == strand_id
+            {
+                card.state = CardState::SoftFailed;
+                selected_card.set(Some(card));
+            }
+            board_status.set(format!("MLS genesis event failed: {err_text}"));
+            return false;
+        }
+    };
+    let mls_commit_op = match mls_commit_op
+        .map(|op| op.to_sdk_event_for_submit())
+        .transpose()
+    {
+        Ok(op) => op,
+        Err(err) => {
+            let err_text = err.to_string();
+            state_store.write().update_raw_operation_write_state(
+                &operation_id,
+                "failed",
+                None,
+                Some(err_text.clone()),
+            );
+            set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
+            let selected = selected_card.read().clone();
+            if let Some(mut card) = selected
+                && card.id == strand_id
+            {
+                card.state = CardState::SoftFailed;
+                selected_card.set(Some(card));
+            }
+            board_status.set(format!("MLS commit event failed: {err_text}"));
+            return false;
+        }
+    };
+    let submit_event = match op.to_sdk_event_for_submit() {
+        Ok(event) => event,
+        Err(err) => {
+            let err_text = err.to_string();
+            state_store.write().update_raw_operation_write_state(
+                &operation_id,
+                "failed",
+                None,
+                Some(err_text.clone()),
+            );
+            set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
+            let selected = selected_card.read().clone();
+            if let Some(mut card) = selected
+                && card.id == strand_id
+            {
+                card.state = CardState::SoftFailed;
+                selected_card.set(Some(card));
+            }
+            board_status.set(format!("{kind} event failed: {err_text}"));
+            return false;
+        }
+    };
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate
         // genesis (`mls_genesis_already_exists`) is treated as success.
         if let Some(genesis_op) = mls_genesis_op {
             let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.submit_event_envelope(&genesis_op).await
+                api.submit_sdk_event(&genesis_op).await
             })
             .await;
             match genesis_result {
@@ -597,7 +669,7 @@ pub(super) fn dispatch_card_detail_update(
         }
         if let Some(commit_op) = mls_commit_op {
             let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.submit_event_envelope(&commit_op).await
+                api.submit_sdk_event(&commit_op).await
             })
             .await;
             match commit_result {
@@ -660,7 +732,7 @@ pub(super) fn dispatch_card_detail_update(
             }
         }
         match with_authed_api(&base_url, api_token.clone(), |api| async move {
-            api.submit_event_envelope(&op).await
+            api.submit_sdk_event(&submit_event).await
         })
         .await
         {
