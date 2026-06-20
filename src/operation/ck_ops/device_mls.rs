@@ -50,6 +50,19 @@ pub fn mls_commit_with_governance(
         .body(body))
 }
 
+/// `ck.mls.proposal` event for a durable MLS membership-change intent.
+pub fn mls_proposal_with_governance(
+    realm_id: &str,
+    actor: &str,
+    group_id: &str,
+    payload: &cokret_sdk::MlsProposalPayload,
+) -> anyhow::Result<OperationBuilder> {
+    let body = serde_json::to_value(payload)?;
+    Ok(OperationBuilder::new(realm_id, actor, "ck.mls.proposal")
+        .target_ref(group_id.to_owned())
+        .body(body))
+}
+
 /// `ck.mls.genesis` event installing an MLS group at epoch 0. Emitted
 /// once when a creator's local group is first observed by the server so
 /// the canonical audit record + creator/covered_seals seed exist and

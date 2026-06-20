@@ -1,3 +1,5 @@
+use serde_json::json;
+
 use crate::local_state::LocalStateStore;
 use crate::secure_key_store::SecureKeyStore;
 
@@ -30,6 +32,50 @@ pub struct CircleScopeRotateDrainFailure {
     pub reason: String,
 }
 
+fn circle_effective_scope(
+    realm_id: &str,
+    circle_id: &str,
+) -> Result<cokret_sdk::models::EffectiveScope, String> {
+    Ok(cokret_sdk::models::EffectiveScope::Circle {
+        realm_id: cokret_sdk::RealmId::new(realm_id.to_owned())
+            .map_err(|err| format!("invalid Circle scope Realm id: {err:?}"))?,
+        circle_id: cokret_sdk::CircleId::new(circle_id.to_owned())
+            .map_err(|err| format!("invalid Circle scope Circle id: {err:?}"))?,
+    })
+}
+
+fn build_circle_remove_proposal_event(
+    realm_id: &str,
+    circle_id: &str,
+    actor_id: &str,
+    target_principal_id: &str,
+    proposal: &cokret_sdk::MlsProposalEnvelope,
+) -> Result<cokret_sdk::Event, String> {
+    let target_principal = cokret_sdk::Did::new(target_principal_id.to_owned())
+        .map_err(|err| format!("invalid remove target principal id: {err:?}"))?;
+    let proposal_payload = cokret_sdk::MlsProposalPayload {
+        mls_group_id: proposal.group_id.clone(),
+        base_epoch: proposal.epoch,
+        proposal_type: json!(proposal.proposal_type),
+        proposal_message_ref: None,
+        proposal_digest: Some(proposal.proposal_digest.clone()),
+        target_principal_id: Some(target_principal),
+        target_device_id: None,
+        governance_binding: None,
+    };
+    let mut event = crate::operation::ck_ops::mls_proposal_with_governance(
+        realm_id,
+        actor_id,
+        &proposal.group_id,
+        &proposal_payload,
+    )
+    .map_err(|err| format!("MLS proposal payload failed: {err}"))?
+    .build_sdk_event("yougen")
+    .map_err(|err| format!("MLS proposal SDK Event conversion failed: {err}"))?;
+    event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+    Ok(event)
+}
+
 pub fn build_circle_remove_scope_rotate_draft(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -54,16 +100,34 @@ pub fn build_circle_remove_scope_rotate_draft(
             target_principal_id,
         )
         .map_err(|err| err.user_message())?;
+    if remove.proposals.is_empty() {
+        return Err("OpenMLS remove did not produce durable proposal artifacts".to_owned());
+    }
+    let mut events = Vec::with_capacity(remove.proposals.len().saturating_add(1));
+    let mut proposal_refs = Vec::with_capacity(remove.proposals.len());
+    for proposal in &remove.proposals {
+        let proposal_event = build_circle_remove_proposal_event(
+            realm_id,
+            circle,
+            actor_id,
+            target_principal_id,
+            proposal,
+        )?;
+        proposal_refs.push(proposal_event.event_id.clone());
+        events.push(proposal_event);
+    }
     let commit_event =
-        crate::views::kanban::kanban_mls_commit_event_from_store_for_effective_scope(
+        crate::views::kanban::kanban_mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
             state_store,
             realm_id,
             Some(circle),
             actor_id,
             &remove.commit,
+            proposal_refs,
         )?;
+    events.push(commit_event);
     Ok(CircleScopeRotateDraft {
-        events: vec![commit_event],
+        events,
         post_commit_snapshot,
         removed_leaves: remove.removed_leaves,
         removed_principals: remove

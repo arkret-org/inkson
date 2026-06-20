@@ -145,6 +145,18 @@ pub(super) fn projection_creator_matches_actor(projection: &Value, actor_id: &st
     false
 }
 
+fn circle_effective_scope(
+    realm_id: &str,
+    circle_id: &str,
+) -> Result<cokret_sdk::models::EffectiveScope, String> {
+    Ok(cokret_sdk::models::EffectiveScope::Circle {
+        realm_id: cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+            .map_err(|err| format!("invalid Circle scope Realm id: {err:?}"))?,
+        circle_id: cokret_sdk::CircleId::new(circle_id.to_owned())
+            .map_err(|err| format!("invalid Circle scope Circle id: {err:?}"))?,
+    })
+}
+
 pub(super) fn ensure_creator_mls_snapshot_for_encrypted_scope(
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -285,6 +297,9 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))?;
     if let Some(event) = event.as_mut() {
         event.event_id = event_id_typed;
+        if let Some(circle_id) = circle {
+            event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+        }
     }
     Ok(event)
 }
@@ -314,6 +329,24 @@ pub(crate) fn kanban_mls_commit_event_from_store_for_effective_scope(
     circle_id: Option<&str>,
     actor_id: &str,
     commit_envelope: &cokret_sdk::MlsCommitEnvelope,
+) -> Result<cokret_sdk::Event, String> {
+    kanban_mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
+        state_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        commit_envelope,
+        Vec::new(),
+    )
+}
+
+pub(crate) fn kanban_mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
+    proposal_refs: Vec<cokret_sdk::EventId>,
 ) -> Result<cokret_sdk::Event, String> {
     let circle = circle_id
         .map(str::trim)
@@ -367,7 +400,7 @@ pub(crate) fn kanban_mls_commit_event_from_store_for_effective_scope(
         commit_envelope.group_id.clone(),
         prev_epoch,
         kanban_mls_base_epoch_ref_for_scope(&seal_view, realm_id, circle),
-        Vec::new(),
+        proposal_refs,
         commit_envelope.epoch,
         commit_envelope.commit_digest.clone(),
         governance_binding,
@@ -379,6 +412,9 @@ pub(crate) fn kanban_mls_commit_event_from_store_for_effective_scope(
             .build_sdk_event("yougen")
             .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
     event.event_id = event_id_typed;
+    if let Some(circle_id) = circle {
+        event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+    }
     Ok(event)
 }
 

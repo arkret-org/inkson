@@ -138,7 +138,7 @@ pub struct SyncEngineContext {
 enum IterationOutcome {
     /// Response applied successfully — reset backoff, immediately
     /// re-enter the loop.
-    Ok,
+    Ok { realm_ids: Vec<String> },
     /// Cursor was rejected (`cursor_expired` / `cursor_integrity_invalid`
     /// / `cursor_unrecognized`). Clear the persisted cursor and re-enter
     /// the loop as a full sync (client-sync.md §12.3).
@@ -217,13 +217,14 @@ pub async fn run_sync_engine(
         )
         .await
         {
-            IterationOutcome::Ok => {
+            IterationOutcome::Ok { realm_ids } => {
                 backoff_secs = MIN_BACKOFF_SECS;
                 // Recovery: clear any stale error the user has been
                 // staring at. Without this, a single Transient or
                 // RateLimited blip sticks in the status bar forever
                 // because apply_response doesn't touch last_error.
                 ctx.last_error.clone().set(None);
+                run_circle_scope_rotate_pass(start_generation, generation, &ctx, &realm_ids).await;
                 // YOU-02-004R (`encryption-and-audit.md` §5.6) — non-send
                 // self-preservation trigger. A long-lived read-only member's
                 // epoch is otherwise never force-advanced (the send path only
@@ -307,22 +308,204 @@ pub async fn run_sync_engine(
     }
 }
 
-/// YOU-02-004R (`encryption-and-audit.md` §5.6) — background idle / receive-only
-/// self-preservation Commit driver.
+/// Background Circle MLS scope-rotate worker.
 ///
-/// Walks every persisted MLS Realm and, for each one over the §5.6 trigger
-/// floor whose deterministic member-order jitter slot has opened, builds a
-/// `self_update_commit`, submits the canonical `ck.mls.commit`, and — only on
-/// server-accept — persists the post-commit snapshot (persist-on-accept, the
-/// same contract as the send path and the realm-admin epoch-rotation button).
+/// Scans the Realm ids that changed in the just-applied sync response, discovers
+/// pending Circle remove obligations from the typed Circle list endpoint, builds
+/// a real OpenMLS remove commit from the local Circle snapshot, and persists the
+/// post-commit snapshot only after the server accepts or deduplicates the event.
+/// One commit is submitted per pass so competing clients and multi-Realm
+/// accounts do not burst writes after a sync wakeup.
+async fn run_circle_scope_rotate_pass(
+    start_generation: u64,
+    generation: Signal<u64>,
+    ctx: &SyncEngineContext,
+    realm_ids: &[String],
+) {
+    if generation() != start_generation {
+        return;
+    }
+    let base = ctx.base_url.read().clone();
+    let token = ctx.token.read().clone();
+    let actor_id = ctx.account_did.read().trim().to_owned();
+    let device_id = ctx.device_id.read().trim().to_owned();
+    if base.trim().is_empty()
+        || token.trim().is_empty()
+        || actor_id.is_empty()
+        || device_id.is_empty()
+    {
+        return;
+    }
+    let realm_ids: BTreeSet<String> = realm_ids
+        .iter()
+        .map(|realm_id| realm_id.trim())
+        .filter(|realm_id| realm_id.starts_with("ck:realm:"))
+        .map(str::to_owned)
+        .collect();
+    if realm_ids.is_empty() {
+        return;
+    }
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    for realm_id in realm_ids {
+        if generation() != start_generation {
+            return;
+        }
+        let circles = match crate::views::helpers::with_authed_api(&base, token.clone(), {
+            let realm_id = realm_id.clone();
+            move |api| async move { api.list_circles(&realm_id).await }
+        })
+        .await
+        {
+            Ok(circles) => circles,
+            Err(err) => {
+                if err.is_auth_expired() {
+                    return;
+                }
+                tracing::debug!(
+                    %realm_id,
+                    error = %err.display(),
+                    "sync_engine: Circle scope-rotate scan skipped",
+                );
+                continue;
+            }
+        };
+        for circle in circles.circles {
+            if generation() != start_generation {
+                return;
+            }
+            let circle_id = circle.circle_id.to_string();
+            if circle.state != cokret_sdk::CircleState::Active
+                || circle.encryption_profile != cokret_sdk::EncryptionProfile::MlsRfc9420
+                || circle.pending_mls_removals.is_empty()
+            {
+                continue;
+            }
+            if !circle
+                .members
+                .iter()
+                .any(|member| member.to_string() == actor_id)
+            {
+                tracing::debug!(
+                    %realm_id,
+                    %circle_id,
+                    "sync_engine: Circle scope-rotate skipped for non-member actor",
+                );
+                continue;
+            }
+            if ctx
+                .state_store
+                .read()
+                .mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id))
+                .is_none()
+            {
+                tracing::debug!(
+                    %realm_id,
+                    %circle_id,
+                    "sync_engine: Circle scope-rotate skipped without local MLS snapshot",
+                );
+                continue;
+            }
+            for target in circle.pending_mls_removals {
+                if generation() != start_generation {
+                    return;
+                }
+                let target_principal_id = target.to_string();
+                let draft = {
+                    let store = ctx.state_store.read();
+                    crate::circle_mls::build_circle_remove_scope_rotate_draft(
+                        &store,
+                        secure_store.as_ref(),
+                        &realm_id,
+                        &circle_id,
+                        &actor_id,
+                        &device_id,
+                        &target_principal_id,
+                    )
+                };
+                let draft = match draft {
+                    Ok(draft) => draft,
+                    Err(err) => {
+                        tracing::debug!(
+                            %realm_id,
+                            %circle_id,
+                            %target_principal_id,
+                            error = %err,
+                            "sync_engine: Circle scope-rotate draft build skipped",
+                        );
+                        continue;
+                    }
+                };
+                let events = draft.events;
+                let post_commit_snapshot = draft.post_commit_snapshot;
+                let removed_leaves = draft.removed_leaves;
+                let removed_principals = draft.removed_principals;
+                let outcome = match crate::views::helpers::with_authed_api(&base, token.clone(), {
+                    let circle_id = circle_id.clone();
+                    move |api| async move {
+                        api.submit_circle_scope_rotate_events(&circle_id, &events, None)
+                            .await
+                    }
+                })
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(err) => {
+                        if err.is_auth_expired() {
+                            return;
+                        }
+                        tracing::debug!(
+                            %realm_id,
+                            %circle_id,
+                            %target_principal_id,
+                            error = %err.display(),
+                            "sync_engine: Circle scope-rotate submit failed",
+                        );
+                        continue;
+                    }
+                };
+                if !outcome.accepted.is_empty() || !outcome.duplicate.is_empty() {
+                    if generation() != start_generation {
+                        return;
+                    }
+                    ctx.state_store
+                        .clone()
+                        .write()
+                        .save_mls_snapshot_for_effective_scope(
+                            realm_id.clone(),
+                            Some(&circle_id),
+                            post_commit_snapshot,
+                        );
+                    tracing::info!(
+                        %realm_id,
+                        %circle_id,
+                        %target_principal_id,
+                        ?removed_leaves,
+                        ?removed_principals,
+                        accepted = outcome.accepted.len(),
+                        duplicate = outcome.duplicate.len(),
+                        cleared_pending_removals = outcome.cleared_pending_removals.len(),
+                        "sync_engine: Circle scope-rotate commit accepted",
+                    );
+                    return;
+                }
+                tracing::debug!(
+                    %realm_id,
+                    %circle_id,
+                    %target_principal_id,
+                    rejected = outcome.rejected.len(),
+                    quarantine = outcome.quarantine.len(),
+                    "sync_engine: Circle scope-rotate commit not accepted",
+                );
+            }
+        }
+    }
+}
+
+/// Background idle self-preservation commit driver.
 ///
-/// Why here and not a separate timer: the sync loop already wakes on a
-/// human-scale cadence with the membership / pending-commit view at its
-/// freshest right after a sync applied, and the §5.6 normative pending-commit
-/// suppression + base-epoch CAS make a redundant pass cheap and safe (a loser
-/// just discards its local change per §5.4). One Realm is committed per pass at
-/// most, so a multi-Realm client spreads its background commits across passes
-/// instead of bursting.
+/// Walks persisted MLS Realm snapshots and submits at most one due
+/// self-update commit per pass. The snapshot is persisted only after
+/// server acceptance, matching the send path and epoch-rotation button.
 async fn run_idle_self_update_pass(
     start_generation: u64,
     generation: Signal<u64>,
@@ -478,7 +661,9 @@ async fn run_iteration(
             // state_store write below is still safe because it's keyed
             // by content, but the UI signals are not.
             if generation() != start_generation {
-                return IterationOutcome::Ok;
+                return IterationOutcome::Ok {
+                    realm_ids: Vec::new(),
+                };
             }
             // Throttle invite refetches: full syncs always refresh, delta
             // syncs only every `INVITES_REFRESH_EVERY_N_DELTAS` iterations.
@@ -522,7 +707,9 @@ async fn run_iteration(
             // timeline) can't be written into the new generation's store and UI
             // signals. The generation bump covers the profile/server switch case.
             if generation() != start_generation {
-                return IterationOutcome::Ok;
+                return IterationOutcome::Ok {
+                    realm_ids: Vec::new(),
+                };
             }
             apply_response(&response, is_full_sync, ctx, invite_notifications);
             // Receiver side of `ck.call.signal` (async, needs the directory):
@@ -539,7 +726,9 @@ async fn run_iteration(
                 last_error.set(Some(format!("sync_engine to-device: {error}")));
                 return IterationOutcome::Transient(format!("sync_engine to-device: {error}"));
             }
-            IterationOutcome::Ok
+            IterationOutcome::Ok {
+                realm_ids: response.realms.keys().cloned().collect(),
+            }
         }
         Ok(AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,

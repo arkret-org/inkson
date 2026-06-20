@@ -5108,6 +5108,7 @@ use mls_encrypt::*;
 pub(crate) use mls_encrypt::{
     build_creator_mls_genesis_event, kanban_mls_commit_event_from_store,
     kanban_mls_commit_event_from_store_for_effective_scope,
+    kanban_mls_commit_event_from_store_for_effective_scope_with_proposal_refs,
 };
 use plaintext_guard::*;
 
