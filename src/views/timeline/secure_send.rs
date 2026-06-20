@@ -122,7 +122,8 @@ pub(super) fn send_timeline_encrypted_message(input: TimelineEncryptedSend) -> b
 
     // Capture the message op id before the build moves into the submitter; the
     // optimistic event's ack records it as its `operation_id` (fact summary).
-    let msg_op_id = build.message_envelope.local_operation_id().to_owned();
+    let msg_op_id =
+        crate::views::secure_send::sdk_event_local_operation_id(&build.message_event).to_owned();
 
     spawn(async move {
         let Ok(api) = authed_api_with_sync(&base_url, api_token.clone(), wait_for) else {

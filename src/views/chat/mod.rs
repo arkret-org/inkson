@@ -4121,7 +4121,10 @@ pub fn ChatPanel(
                                 // raw_operation record (X10.6 sidecar re-key) is
                                 // keyed on it.
                                 let msg_local_op_id =
-                                    secure_build.message_envelope.local_operation_id().to_owned();
+                                    crate::views::secure_send::sdk_event_local_operation_id(
+                                        &secure_build.message_event,
+                                    )
+                                    .to_owned();
                                 spawn(async move {
                                     let Ok(api) = authed_api_with_sync(&base, api_token.clone(), wait_for) else {
                                         // P2: auth/API init failed — without this

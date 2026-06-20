@@ -27,7 +27,7 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState};
-use crate::operation::{EventEnvelope, OperationBuilder, trim_realm_id, uuid_v7};
+use crate::operation::{OperationBuilder, trim_realm_id, uuid_v7};
 
 /// The structured MLS payload + the canonical AAD it was bound to.
 pub(crate) type LocalEncryptedMessage = (
@@ -193,14 +193,14 @@ pub(crate) fn mls_policy_root(
 }
 
 /// The built (but not yet submitted) secure-send artifacts: the optional
-/// forced MLS commit envelope, the encrypted `ck.message.create` envelope, and
+/// forced MLS commit event, the encrypted `ck.message.create` event, and
 /// the metadata the caller needs to drive UI / persist-on-accept.
 pub(crate) struct SecureSendBuild {
     /// Forced `ck.mls.commit` to submit BEFORE the message, when the encrypt
     /// advanced the epoch. `None` rides the current epoch.
-    pub commit_envelope: Option<EventEnvelope>,
-    /// The encrypted `ck.message.create` event envelope.
-    pub message_envelope: EventEnvelope,
+    pub commit_event: Option<cokret_sdk::Event>,
+    /// The encrypted `ck.message.create` event.
+    pub message_event: cokret_sdk::Event,
     /// The spec `ck.schema.encrypted_envelope.v1` JSON wrapped in the message
     /// (`content.encrypted_content`). Callers attach it to the optimistic
     /// timeline/chat event's `encrypted_payload` so the audit-accessed emitter
@@ -215,7 +215,7 @@ pub(crate) struct SecureSendBuild {
     pub seal_ref: String,
 }
 
-/// Build the full encrypted send (MLS encrypt → forced commit envelope →
+/// Build the full encrypted send (MLS encrypt → forced commit event →
 /// `ck.schema.encrypted_envelope.v1` wrap → `ck.message.create` payload) for a
 /// discussion message.
 ///
@@ -342,9 +342,20 @@ pub(crate) fn build_secure_send(
         .body(msg_payload_value)
         .build("yougen");
 
+    let commit_event = commit_envelope
+        .map(|event| {
+            event
+                .to_sdk_event_for_submit()
+                .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))
+        })
+        .transpose()?;
+    let message_event = message_envelope
+        .to_sdk_event_for_submit()
+        .map_err(|err| format!("Send Secure SDK Event conversion failed: {err}"))?;
+
     Ok(SecureSendBuild {
-        commit_envelope,
-        message_envelope,
+        commit_event,
+        message_event,
         encrypted_content,
         new_mls_snapshot,
         member_dids: local_member_dids,
@@ -385,28 +396,20 @@ pub(crate) async fn submit_secure_send(
     actor: String,
 ) -> SecureSendOutcome {
     let SecureSendBuild {
-        commit_envelope,
-        message_envelope,
+        commit_event,
+        message_event,
         new_mls_snapshot,
         seal_ref,
         encrypted_content: _,
         member_dids: _,
     } = build;
-    let commit_op_id = commit_envelope
+    let commit_op_id = commit_event
         .as_ref()
-        .map(|commit| commit.local_operation_id().to_owned());
+        .map(|commit| sdk_event_local_operation_id(commit).to_owned());
 
-    if let Some(commit_envelope) = commit_envelope {
+    if let Some(commit_event) = commit_event {
         // Submit the forced MLS commit first; if it fails, abort the message
         // send (covered_seals won't bind).
-        let commit_event = match commit_envelope.to_sdk_event_for_submit() {
-            Ok(event) => event,
-            Err(err) => {
-                return SecureSendOutcome::CommitFailed {
-                    message: format!("MLS commit event build failed: {err}"),
-                };
-            }
-        };
         match api.submit_sdk_event(&commit_event).await {
             Ok(resp) => {
                 // X14 — persist-on-accept: the server accepted the commit, so
@@ -450,14 +453,6 @@ pub(crate) async fn submit_secure_send(
         }
     }
 
-    let message_event = match message_envelope.to_sdk_event_for_submit() {
-        Ok(event) => event,
-        Err(err) => {
-            return SecureSendOutcome::MessageFailed {
-                message: format!("Message build failed: {err}"),
-            };
-        }
-    };
     match api.submit_sdk_event(&message_event).await {
         Ok(resp) => SecureSendOutcome::Sent {
             event_id: resp.event_id,
@@ -467,4 +462,12 @@ pub(crate) async fn submit_secure_send(
             message: format!("Message send failed: {err}"),
         },
     }
+}
+
+pub(crate) fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
+    event
+        .unsigned
+        .get("local_operation_idempotency_alias")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| event.event_id.as_str())
 }
