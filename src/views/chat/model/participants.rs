@@ -550,6 +550,13 @@ pub(crate) fn participant_handle_label(participant: &SpaceParticipant) -> Option
         .or_else(|| crate::views::helpers::handle_display_from_did(&participant.did))
 }
 
+fn display_name_is_handle_localpart(display_name: &str, handle_label: &str) -> bool {
+    let Some(localpart) = handle_label.split(':').next() else {
+        return false;
+    };
+    display_name.trim().eq_ignore_ascii_case(localpart.trim())
+}
+
 pub(crate) fn participant_roster_display_label(
     state_store: &LocalStateStore,
     participant: &SpaceParticipant,
@@ -650,11 +657,27 @@ pub(crate) fn sender_display_label(
         let own_participant = participants
             .iter()
             .find(|participant| participant.did == account_did);
+        let did_handle_label = crate::views::helpers::handle_display_from_did(account_did);
+        let account_display_name =
+            clean_participant_display_name(account_display_name, Some(account_did)).filter(
+                |label| {
+                    did_handle_label.as_deref().map_or(true, |handle| {
+                        !display_name_is_handle_localpart(label, handle)
+                    })
+                },
+            );
+        let participant_display_name = own_participant
+            .and_then(|participant| participant.display_name.clone())
+            .filter(|label| {
+                did_handle_label.as_deref().map_or(true, |handle| {
+                    !display_name_is_handle_localpart(label, handle)
+                })
+            });
         return own_participant
             .and_then(|participant| participant.handle_label.clone())
-            .or_else(|| clean_participant_display_name(account_display_name, Some(account_did)))
-            .or_else(|| own_participant.and_then(|participant| participant.display_name.clone()))
-            .or_else(|| crate::views::helpers::handle_display_from_did(account_did))
+            .or(account_display_name)
+            .or(participant_display_name)
+            .or(did_handle_label)
             .unwrap_or_else(|| {
                 if account_did.is_empty() {
                     "yougen".to_owned()

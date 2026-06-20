@@ -2154,7 +2154,7 @@ pub fn ChatPanel(
                                                                                                     &poll_id,
                                                                                                     &option_id,
                                                                                                 )?;
-                                                                                                api.submit_event_envelope(&op).await
+                                                                                                api.submit_sdk_event(&op).await
                                                                                             },
                                                                                         )
                                                                                         .await
@@ -2239,7 +2239,7 @@ pub fn ChatPanel(
                                                                                     &actor,
                                                                                     &poll_id,
                                                                                 )?;
-                                                                                api.submit_event_envelope(&op).await
+                                                                                api.submit_sdk_event(&op).await
                                                                             },
                                                                         )
                                                                         .await
@@ -2886,7 +2886,7 @@ pub fn ChatPanel(
                                                         &title,
                                                     )?;
                                                     for op in ops {
-                                                        api.submit_event_envelope(&op).await?;
+                                                        api.submit_sdk_event(&op).await?;
                                                     }
                                                     Ok(())
                                                 },
@@ -3473,7 +3473,7 @@ pub fn ChatPanel(
                                                         &poll_id_for_op,
                                                         &draft_for_op,
                                                     )?;
-                                                    api.submit_event_envelope(&op).await
+                                                    api.submit_sdk_event(&op).await
                                                 },
                                             )
                                             .await
@@ -3568,7 +3568,7 @@ pub fn ChatPanel(
                                                         &poll_id_for_op,
                                                         &draft_for_op,
                                                     )?;
-                                                    api.submit_event_envelope(&op).await
+                                                    api.submit_sdk_event(&op).await
                                                 },
                                             )
                                             .await

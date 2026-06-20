@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
+use crate::operation::{OperationBuilder, uuid_v7};
 
 /// Whether the local UI should expose poll composer / vote controls.
 pub fn polls_enabled() -> bool {
@@ -384,6 +384,12 @@ fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
         .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
 }
 
+fn sdk_event_from_builder_event(
+    event: crate::operation::EventEnvelope,
+) -> anyhow::Result<cokret_sdk::Event> {
+    event.to_sdk_event_for_submit()
+}
+
 /// Build the `ck.content.poll.create` envelope for the wire.
 pub fn build_poll_create_op(
     realm_id: &str,
@@ -391,7 +397,7 @@ pub fn build_poll_create_op(
     strand_id: &str,
     poll_id: &str,
     draft: &PollDraft,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let options: Vec<Value> = draft
         .options
         .iter()
@@ -420,7 +426,7 @@ pub fn build_poll_create_op(
     let message_ref = envelope.event_id.replacen("ck:event:", "ck:message:", 1);
     envelope.payload["message_id"] = json!(message_ref);
     envelope.payload["content"]["message_id"] = json!(message_ref);
-    Ok(envelope)
+    sdk_event_from_builder_event(envelope)
 }
 
 /// Build the `ck.content.poll.response` envelope for a single-select
@@ -431,7 +437,7 @@ pub fn build_poll_vote_op(
     actor: &str,
     poll_id: &str,
     option_id: &str,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let strand_id = strand_id_from_realm_id(realm_id);
     let content = cokret_sdk::ContentBlock::new("ck.content.poll.response", "poll response")
         .with_field("poll_id", json!(poll_id))
@@ -441,13 +447,15 @@ pub fn build_poll_vote_op(
         "discussion",
         sdk_payload_value(content.to_value(), "poll vote content serialize")?,
     );
-    Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .target_ref(poll_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "poll vote ck.message.create payload serialize",
-        )?)
-        .build("yougen"))
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.message.create")
+            .target_ref(poll_id)
+            .body(sdk_payload_value(
+                payload.to_value(),
+                "poll vote ck.message.create payload serialize",
+            )?)
+            .build("yougen"),
+    )
 }
 
 /// Build the `ck.content.poll.close` envelope.
@@ -455,7 +463,7 @@ pub fn build_poll_close_op(
     realm_id: &str,
     actor: &str,
     poll_id: &str,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let strand_id = strand_id_from_realm_id(realm_id);
     let content = cokret_sdk::ContentBlock::new("ck.content.poll.close", "poll closed")
         .with_field("poll_id", json!(poll_id));
@@ -464,13 +472,15 @@ pub fn build_poll_close_op(
         "discussion",
         sdk_payload_value(content.to_value(), "poll close content serialize")?,
     );
-    Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .target_ref(poll_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "poll close ck.message.create payload serialize",
-        )?)
-        .build("yougen"))
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.message.create")
+            .target_ref(poll_id)
+            .body(sdk_payload_value(
+                payload.to_value(),
+                "poll close ck.message.create payload serialize",
+            )?)
+            .build("yougen"),
+    )
 }
 
 /// Generate a fresh poll id (`poll-<uuid>`).
@@ -561,19 +571,19 @@ mod tests {
             &draft,
         )
         .expect("builds");
-        assert_eq!(op.kind, "ck.message.create");
-        assert!(op.payload.get("body").is_none());
-        assert!(op.payload.get("encrypted").is_none());
-        assert!(op.payload.get("poll_id").is_none());
+        assert_eq!(op.kind.as_str(), "ck.message.create");
+        assert!(op.content.get("body").is_none());
+        assert!(op.content.get("encrypted").is_none());
+        assert!(op.content.get("poll_id").is_none());
         let options = op
-            .payload
+            .content
             .get("content")
             .and_then(|content| content.get("options"))
             .and_then(|v| v.as_array())
             .unwrap();
         assert_eq!(options.len(), 2);
         cokret_sdk::schema::event_payload_validator_catalog()
-            .validate_payload(&op.kind, &op.payload)
+            .validate_payload(op.kind.as_str(), &op.content)
             .unwrap();
     }
 
