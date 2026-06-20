@@ -253,10 +253,10 @@ mod personal_agent_tests {
         )
         .unwrap();
 
-        assert_eq!(operation.kind, "ck.message.create");
-        assert_eq!(operation.actor_id, "did:web:alice.example");
+        assert_eq!(operation.kind.as_str(), "ck.message.create");
+        assert_eq!(operation.actor_id.as_str(), "did:web:alice.example");
         assert_eq!(
-            operation.executed_by.as_deref(),
+            operation.executed_by.as_ref().map(|did| did.as_str()),
             Some("did:web:agents.example:summary")
         );
         assert_eq!(
@@ -264,10 +264,10 @@ mod personal_agent_tests {
             Some("ck:grant:01904100-0000-7000-8000-000000000002")
         );
         assert_eq!(
-            operation.payload["approval_request_id"],
+            operation.content["approval_request_id"],
             "ck:agent-action-request:01904100-0000-7000-8000-000000000003"
         );
-        assert_eq!(operation.payload["approval_nonce"], "nonce-01904100");
+        assert_eq!(operation.content["approval_nonce"], "nonce-01904100");
     }
 
     #[test]

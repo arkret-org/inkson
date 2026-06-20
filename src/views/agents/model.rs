@@ -697,7 +697,7 @@ pub fn build_act_on_behalf_message_operation(
     approval_nonce: &str,
     strand_id: &str,
     body: &str,
-) -> anyhow::Result<crate::operation::EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let strand_id_typed = cokret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid strand id {strand_id:?}: {error:?}"))?;
     let content = cokret_sdk::ContentBlock::text(body)
@@ -711,14 +711,11 @@ pub fn build_act_on_behalf_message_operation(
         object.insert("approval_request_id".to_owned(), json!(approval_request_id));
         object.insert("approval_nonce".to_owned(), json!(approval_nonce));
     }
-    Ok(crate::operation::OperationBuilder::new(
-        realm_id,
-        controller_principal_id,
-        "ck.message.create",
-    )
-    .target_ref(strand_id)
-    .executed_by(agent_principal_id)
-    .authorization_ref(authorization_ref)
-    .body(payload)
-    .build("yougen"))
+    crate::operation::OperationBuilder::new(realm_id, controller_principal_id, "ck.message.create")
+        .target_ref(strand_id)
+        .executed_by(agent_principal_id)
+        .authorization_ref(authorization_ref)
+        .body(payload)
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
