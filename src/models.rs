@@ -26,9 +26,9 @@ pub struct CurrentAccount {
     pub created_at: String,
 }
 
-/// A6.1 — app-local global search projection. The Cokret HTTP catalog
-/// currently has no spec-defined endpoint for this query; the shape is
-/// retained for the search UI state model and contract tests.
+/// A6.1 — app-local global search projection. The shape is used by the
+/// local decrypted client-index path; the Cokret HTTP catalog intentionally
+/// has no spec-defined global plaintext search endpoint.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IndexSearchView {
     pub query: String,

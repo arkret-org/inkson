@@ -2,9 +2,10 @@
 //!
 //! Spec: yougen UX backlog (see `_claude_todos.md` lane A). Pressing
 //! `Cmd+F` (or `Ctrl+F` off-mac), the `topbar-search-button`, or
-//! navigating directly to `/search` opens this panel. The Cokret HTTP
-//! catalog currently has no spec-defined global index search endpoint, so
-//! the request path fails closed until the durable projection lands.
+//! navigating directly to `/search` opens this panel. The remote Cokret HTTP
+//! catalog still has no spec-defined global plaintext search endpoint; this
+//! panel searches only the local client index material the device can already
+//! render from decrypted timeline projections.
 //!
 //! UI states surfaced:
 //! - empty (no query typed yet) — `global-search-results-empty`
@@ -21,14 +22,16 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 use dioxus_router::hooks::use_navigator;
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::api::CokretApi;
 use crate::i18n::tr;
+use crate::local_state::LocalStateStore;
+use crate::models::IndexSearchView;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::short_protocol_id;
+use crate::views::timeline::timeline_events_from_sync_realms;
 
 /// True when a `key` event should be treated as the global search
 /// trigger (`Ctrl+F` on Win/Linux, `Cmd+F` on macOS). The `meta` flag
@@ -76,6 +79,86 @@ pub struct SearchDestination {
     pub route: Route,
     pub seal: Option<String>,
     pub label: String,
+}
+
+pub fn local_decrypted_index_search(
+    realms: &std::collections::BTreeMap<String, Value>,
+    store: &LocalStateStore,
+    actor_id: &str,
+    device_id: &str,
+    query: &str,
+    realm_ids: &[String],
+    object_kinds: Option<&[&str]>,
+    limit: usize,
+) -> IndexSearchView {
+    let query_trimmed = query.trim();
+    if query_trimmed.is_empty()
+        || limit == 0
+        || object_kinds.is_some_and(|kinds| !kinds.iter().any(|kind| *kind == "message"))
+    {
+        return IndexSearchView {
+            query: query_trimmed.to_owned(),
+            results: Vec::new(),
+            next_cursor: None,
+        };
+    }
+
+    let query_lc = query_trimmed.to_lowercase();
+    let realm_filter = realm_ids
+        .iter()
+        .cloned()
+        .filter(|realm_id| !realm_id.trim().is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    let events = timeline_events_from_sync_realms(realms, Some(store), Some((actor_id, device_id)));
+    let mut results = Vec::new();
+    for event in events {
+        if results.len() >= limit {
+            break;
+        }
+        let Some(realm_id) = event.realm_id.as_deref() else {
+            continue;
+        };
+        if !realm_filter.is_empty() && !realm_filter.contains(realm_id) {
+            continue;
+        }
+        let Some(body) = searchable_message_body(&event.body, event.redacted) else {
+            continue;
+        };
+        if !body.to_lowercase().contains(&query_lc) {
+            continue;
+        }
+        let event_ref = event
+            .event_id
+            .as_deref()
+            .or(Some(event.id.as_str()))
+            .unwrap_or_default();
+        results.push(json!({
+            "realm_id": realm_id,
+            "kind": "message",
+            "surface": "timeline",
+            "event_id": event_ref,
+            "message_id": event_ref,
+            "actor_id": event.sender,
+            "content": { "body": body },
+            "index_profile": cokret_sdk::PROFILE_SEARCH_CLIENT_INDEX,
+            "index_source": "local_decrypted_client_index"
+        }));
+    }
+
+    IndexSearchView {
+        query: query_trimmed.to_owned(),
+        results,
+        next_cursor: None,
+    }
+}
+
+fn searchable_message_body(body: &str, redacted: bool) -> Option<&str> {
+    let trimmed = body.trim();
+    if redacted || trimmed.is_empty() || trimmed == "[message]" {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 /// Resolve a search result to the most specific local target we can
@@ -139,8 +222,9 @@ use crate::realm_tree::string_field;
 
 #[component]
 pub fn GlobalSearchPanel(
-    base_url: Signal<String>,
-    token: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
     initial_query: String,
 ) -> Element {
     // `Signal` is `Copy`; the `mut` here is just so the closures below
@@ -168,8 +252,9 @@ pub fn GlobalSearchPanel(
         if !q.trim().is_empty() {
             run_search(
                 q,
-                base_url(),
-                token(),
+                state_store,
+                account_did(),
+                device_id(),
                 results,
                 loading,
                 error_msg,
@@ -192,8 +277,9 @@ pub fn GlobalSearchPanel(
                         if q.trim().is_empty() { return; }
                         run_search(
                             q,
-                            base_url(),
-                            token(),
+                            state_store,
+                            account_did(),
+                            device_id(),
                             results,
                             loading,
                             error_msg,
@@ -324,8 +410,9 @@ pub fn GlobalSearchPanel(
 #[allow(clippy::too_many_arguments)]
 fn run_search(
     q: String,
-    base_url: String,
-    api_token: String,
+    state_store: Signal<LocalStateStore>,
+    actor_id: String,
+    device_id: String,
     mut results: Signal<ResultRows>,
     mut loading: Signal<bool>,
     mut error_msg: Signal<String>,
@@ -338,28 +425,21 @@ fn run_search(
     loading.set(true);
     error_msg.set(String::new());
     has_searched.set(true);
-    spawn(async move {
-        let realm_ids: Vec<String> = Vec::new();
-        match with_authed_api(&base_url, api_token, move |api: CokretApi| {
-            let q = query_trimmed.clone();
-            async move {
-                api.index_search(&q, &realm_ids, Some(&["message"]), 50)
-                    .await
-            }
-        })
-        .await
-        {
-            Ok(resp) => {
-                results.set(resp.results);
-                loading.set(false);
-            }
-            Err(err) => {
-                error_msg.set(err.display());
-                results.set(ResultRows::new());
-                loading.set(false);
-            }
-        }
-    });
+    let realm_ids: Vec<String> = Vec::new();
+    let store = state_store.read();
+    let state = store.load();
+    let response = local_decrypted_index_search(
+        &state.realm_tree_projections,
+        &store,
+        &actor_id,
+        &device_id,
+        &query_trimmed,
+        &realm_ids,
+        Some(&["message"]),
+        50,
+    );
+    results.set(response.results);
+    loading.set(false);
 }
 
 #[cfg(test)]
@@ -428,5 +508,154 @@ mod tests {
             }
             other => panic!("expected TimelineMessage, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn local_index_search_returns_decrypted_projection_message() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000901".to_owned();
+        let event_id = "ck:event:01904100-0000-7000-8000-000000000902";
+        let realms = std::collections::BTreeMap::from([(
+            realm_id.clone(),
+            json!({
+                "summary": {"summary": "Searchable Realm"},
+                "timeline": {"events": [{
+                    "kind": "ck.message.create",
+                    "event_id": event_id,
+                    "actor_id": "did:web:alice.example",
+                    "created_at": "2026-06-19T00:00:00Z",
+                    "content": {
+                        "realm_id": realm_id,
+                        "message_id": "ck:message:01904100-0000-7000-8000-000000000903",
+                        "body": "alpha local body"
+                    }
+                }]}
+            }),
+        )]);
+        let store = LocalStateStore::default();
+
+        let response = local_decrypted_index_search(
+            &realms,
+            &store,
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-000000000904",
+            "LOCAL",
+            &[],
+            Some(&["message"]),
+            10,
+        );
+
+        assert_eq!(response.query, "LOCAL");
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(
+            response.results[0]["realm_id"].as_str(),
+            realms.keys().next().map(String::as_str)
+        );
+        assert_eq!(response.results[0]["event_id"], event_id);
+        assert_eq!(response.results[0]["content"]["body"], "alpha local body");
+        assert_eq!(
+            response.results[0]["index_profile"],
+            cokret_sdk::PROFILE_SEARCH_CLIENT_INDEX
+        );
+        assert_eq!(
+            response.results[0]["index_source"],
+            "local_decrypted_client_index"
+        );
+    }
+
+    #[test]
+    fn local_index_search_skips_encrypted_placeholders_without_plaintext() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000911".to_owned();
+        let realms = std::collections::BTreeMap::from([(
+            realm_id.clone(),
+            json!({
+                "summary": {"summary": "Encrypted Realm"},
+                "timeline": {"events": [{
+                    "kind": "ck.message.create",
+                    "event_id": "ck:event:01904100-0000-7000-8000-000000000912",
+                    "actor_id": "did:web:alice.example",
+                    "created_at": "2026-06-19T00:00:00Z",
+                    "content": {
+                        "realm_id": realm_id,
+                        "message_id": "ck:message:01904100-0000-7000-8000-000000000913",
+                        "encrypted_content": {"schema": "ck.schema.encrypted_envelope.v1"}
+                    }
+                }]}
+            }),
+        )]);
+        let store = LocalStateStore::default();
+
+        let response = local_decrypted_index_search(
+            &realms,
+            &store,
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-000000000914",
+            "message",
+            &[],
+            Some(&["message"]),
+            10,
+        );
+
+        assert!(response.results.is_empty());
+    }
+
+    #[test]
+    fn local_index_search_respects_realm_kind_and_limit_filters() {
+        let first_realm_id = "ck:realm:01904100-0000-7000-8000-000000000921".to_owned();
+        let second_realm_id = "ck:realm:01904100-0000-7000-8000-000000000922".to_owned();
+        let realms = std::collections::BTreeMap::from([
+            (
+                first_realm_id.clone(),
+                json!({
+                    "summary": {"summary": "First Realm"},
+                    "timeline": {"events": [{
+                        "kind": "ck.message.create",
+                        "event_id": "ck:event:01904100-0000-7000-8000-000000000923",
+                        "actor_id": "did:web:alice.example",
+                        "created_at": "2026-06-19T00:00:00Z",
+                        "content": {"realm_id": first_realm_id, "body": "needle first"}
+                    }]}
+                }),
+            ),
+            (
+                second_realm_id.clone(),
+                json!({
+                    "summary": {"summary": "Second Realm"},
+                    "timeline": {"events": [{
+                        "kind": "ck.message.create",
+                        "event_id": "ck:event:01904100-0000-7000-8000-000000000924",
+                        "actor_id": "did:web:bob.example",
+                        "created_at": "2026-06-19T00:00:00Z",
+                        "content": {"realm_id": second_realm_id, "body": "needle second"}
+                    }]}
+                }),
+            ),
+        ]);
+        let store = LocalStateStore::default();
+
+        let not_messages = local_decrypted_index_search(
+            &realms,
+            &store,
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-000000000925",
+            "needle",
+            &[],
+            Some(&["realm"]),
+            10,
+        );
+        assert!(not_messages.results.is_empty());
+
+        let filtered = local_decrypted_index_search(
+            &realms,
+            &store,
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-000000000925",
+            "needle",
+            std::slice::from_ref(&second_realm_id),
+            Some(&["message"]),
+            1,
+        );
+        assert_eq!(filtered.results.len(), 1);
+        assert_eq!(filtered.results[0]["realm_id"], second_realm_id);
+        assert_eq!(filtered.results[0]["content"]["body"], "needle second");
     }
 }

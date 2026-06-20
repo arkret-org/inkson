@@ -4543,8 +4543,9 @@ pub fn RouterView() -> Element {
                     // A6.1 — global cross-Space message search panel.
                     Route::Search => rsx! {
                         crate::views::global_search::GlobalSearchPanel {
-                            base_url,
-                            token,
+                            state_store,
+                            account_did,
+                            device_id,
                             initial_query: String::new(),
                         }
                     },
