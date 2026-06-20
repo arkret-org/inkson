@@ -5105,7 +5105,10 @@ use mls_encrypt::*;
 // setup) through `crate::views::kanban::<name>`, so re-export them at the
 // module root to keep those `pub(crate)` call sites resolving after the
 // move into `mls_encrypt`.
-pub(crate) use mls_encrypt::{build_creator_mls_genesis_event, kanban_mls_commit_event_from_store};
+pub(crate) use mls_encrypt::{
+    build_creator_mls_genesis_event, kanban_mls_commit_event_from_store,
+    kanban_mls_commit_event_from_store_for_effective_scope,
+};
 use plaintext_guard::*;
 
 #[cfg(test)]

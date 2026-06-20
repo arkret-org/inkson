@@ -259,6 +259,7 @@ mod blob_resumable;
 // Re-exports preserve `crate::api::build_*` and sibling submodule `use super::*`
 // resolution paths.
 mod builders;
+mod circle;
 mod directory;
 // Structural split: server error-envelope classifiers, account-subscribe gate /
 // reconnect result types, the `wait_for` normalizer, and the blob-presign error

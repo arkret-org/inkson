@@ -34,6 +34,7 @@ pub mod card_comments;
 /// the client-side surface; the canonical struct lives in
 /// `cokret_sdk::cokret_core::modelss::circle`.
 pub mod circle;
+pub mod circle_mls;
 pub(crate) mod clock;
 pub mod coauth;
 pub mod components;

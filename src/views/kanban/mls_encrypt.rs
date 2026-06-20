@@ -54,7 +54,11 @@ pub(super) fn kanban_object_ref_from_seal_ref(value: &str) -> Option<String> {
     None
 }
 
-pub(super) fn kanban_mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> String {
+pub(super) fn kanban_mls_base_epoch_ref_for_scope(
+    seal_view: &LocalSealView,
+    realm_id: &str,
+    circle_id: Option<&str>,
+) -> String {
     seal_view
         .frontier
         .iter()
@@ -65,6 +69,7 @@ pub(super) fn kanban_mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &st
             crate::canonical::canonical_sha256(&json!({
                 "kind": "kanban_mls_base_epoch",
                 "realm_id": realm_id,
+                "circle_id": circle_id,
                 "epoch": seal_view.mls_epoch.unwrap_or(0),
             }))
             .unwrap_or_else(|_| {
@@ -191,7 +196,28 @@ pub(crate) fn build_creator_mls_genesis_event(
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
 ) -> Result<Option<cokret_sdk::Event>, String> {
-    if state_store.mls_genesis_emitted_for(realm_id) {
+    build_creator_mls_genesis_event_for_effective_scope(
+        state_store,
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+        fresh_summary,
+    )
+}
+
+pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
+) -> Result<Option<cokret_sdk::Event>, String> {
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
+    if state_store.mls_genesis_emitted_for_effective_scope(realm_id, circle) {
         return Ok(None);
     }
     // Genesis describes the group at epoch 0. We can only build a
@@ -211,16 +237,35 @@ pub(crate) fn build_creator_mls_genesis_event(
         .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
     let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS genesis Realm id: {err:?}"))?;
-    let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
-        typed_realm_id,
-        summary.group_id.clone(),
-        0,
-        0,
-        kanban_mls_membership_frontier(&seal_view, &event_id_typed),
-        kanban_mls_policy_root(&seal_view, realm_id)?,
-        cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-        cokret_sdk::CORE_REDUCER_PROFILE,
-    )
+    let membership_frontier = kanban_mls_membership_frontier(&seal_view, &event_id_typed);
+    let policy_root = kanban_mls_policy_root(&seal_view, realm_id)?;
+    let governance_binding = match circle {
+        Some(circle_id) => {
+            let typed_circle_id = cokret_sdk::CircleId::new(circle_id.to_owned())
+                .map_err(|err| format!("invalid MLS genesis Circle id: {err:?}"))?;
+            cokret_sdk::MlsGovernanceBindingPayload::circle(
+                typed_realm_id,
+                typed_circle_id,
+                summary.group_id.clone(),
+                0,
+                0,
+                membership_frontier,
+                policy_root,
+                cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+                cokret_sdk::CORE_REDUCER_PROFILE,
+            )
+        }
+        None => cokret_sdk::MlsGovernanceBindingPayload::realm(
+            typed_realm_id,
+            summary.group_id.clone(),
+            0,
+            0,
+            membership_frontier,
+            policy_root,
+            cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+            cokret_sdk::CORE_REDUCER_PROFILE,
+        ),
+    }
     .map_err(|err| format!("MLS genesis governance binding failed: {err}"))?;
     let payload = crate::mls::runtime::build_mls_genesis_payload(
         summary,
@@ -254,6 +299,25 @@ pub(crate) fn kanban_mls_commit_event_from_store(
     _schedule_hash: &cokret_sdk::Hash,
     commit_envelope: &cokret_sdk::MlsCommitEnvelope,
 ) -> Result<cokret_sdk::Event, String> {
+    kanban_mls_commit_event_from_store_for_effective_scope(
+        state_store,
+        realm_id,
+        None,
+        actor_id,
+        commit_envelope,
+    )
+}
+
+pub(crate) fn kanban_mls_commit_event_from_store_for_effective_scope(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
+) -> Result<cokret_sdk::Event, String> {
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
     let seal_view = state_store.seal_view_for_realm(realm_id);
     // `base_epoch` MUST be the SDK group's PRE-commit epoch so the
     // `next_epoch == base_epoch + 1` invariant holds by construction.
@@ -269,21 +333,40 @@ pub(crate) fn kanban_mls_commit_event_from_store(
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
     let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS commit Realm id: {err:?}"))?;
-    let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
-        typed_realm_id,
-        commit_envelope.group_id.clone(),
-        prev_epoch,
-        commit_envelope.epoch,
-        kanban_mls_membership_frontier(&seal_view, &event_id_typed),
-        kanban_mls_policy_root(&seal_view, realm_id)?,
-        cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-        cokret_sdk::CORE_REDUCER_PROFILE,
-    )
+    let membership_frontier = kanban_mls_membership_frontier(&seal_view, &event_id_typed);
+    let policy_root = kanban_mls_policy_root(&seal_view, realm_id)?;
+    let governance_binding = match circle {
+        Some(circle_id) => {
+            let typed_circle_id = cokret_sdk::CircleId::new(circle_id.to_owned())
+                .map_err(|err| format!("invalid MLS commit Circle id: {err:?}"))?;
+            cokret_sdk::MlsGovernanceBindingPayload::circle(
+                typed_realm_id,
+                typed_circle_id,
+                commit_envelope.group_id.clone(),
+                prev_epoch,
+                commit_envelope.epoch,
+                membership_frontier,
+                policy_root,
+                cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+                cokret_sdk::CORE_REDUCER_PROFILE,
+            )
+        }
+        None => cokret_sdk::MlsGovernanceBindingPayload::realm(
+            typed_realm_id,
+            commit_envelope.group_id.clone(),
+            prev_epoch,
+            commit_envelope.epoch,
+            membership_frontier,
+            policy_root,
+            cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+            cokret_sdk::CORE_REDUCER_PROFILE,
+        ),
+    }
     .map_err(|err| format!("MLS governance binding failed: {err}"))?;
     let payload = cokret_sdk::MlsCommitPayload::new(
         commit_envelope.group_id.clone(),
         prev_epoch,
-        kanban_mls_base_epoch_ref(&seal_view, realm_id),
+        kanban_mls_base_epoch_ref_for_scope(&seal_view, realm_id, circle),
         Vec::new(),
         commit_envelope.epoch,
         commit_envelope.commit_digest.clone(),

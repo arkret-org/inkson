@@ -24,8 +24,35 @@ pub fn force_epoch_rotation_commit(
     ),
     MlsRuntimeError,
 > {
+    force_epoch_rotation_commit_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+    )
+}
+
+pub fn force_epoch_rotation_commit_for_effective_scope(
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<
+    (
+        cokret_sdk::MlsCommitEnvelope,
+        crate::mls::persistence::MlsSnapshotEnvelope,
+    ),
+    MlsRuntimeError,
+> {
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
     let snapshot = state_store
-        .mls_snapshot_for(realm_id)
+        .mls_snapshot_for_effective_scope(realm_id, circle)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -50,6 +77,54 @@ pub fn force_epoch_rotation_commit(
         &salt,
     );
     Ok((commit_envelope, new_envelope))
+}
+
+pub fn build_mls_remove_commit_for_effective_scope(
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    target_principal_id: &str,
+) -> Result<
+    (
+        cokret_sdk::MlsRemoveMemberResult,
+        crate::mls::persistence::MlsSnapshotEnvelope,
+    ),
+    MlsRuntimeError,
+> {
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
+    let snapshot = state_store
+        .mls_snapshot_for_effective_scope(realm_id, circle)
+        .ok_or(MlsRuntimeError::MissingWelcome)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    let target = cokret_sdk::Did::new(target_principal_id.to_owned())
+        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let remove = group
+        .remove_member_by_principal(&target)
+        .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    let serialized_state = serde_json::to_vec(&post_state)
+        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    let new_envelope = crate::mls::persistence::encrypt_state(
+        realm_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized_state,
+        &secret,
+        &salt,
+    );
+    Ok((remove, new_envelope))
 }
 
 /// YOU-02-004 (`encryption-and-audit.md` §5.6, normative) — decrypt a remote

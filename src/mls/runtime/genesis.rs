@@ -32,13 +32,37 @@ pub fn ensure_creator_mls_snapshot(
     actor_id: &str,
     device_id: &str,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+    ensure_creator_mls_snapshot_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+    )
+}
+
+pub fn ensure_creator_mls_snapshot_for_effective_scope(
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
             "realm_id is required for initial MLS group setup".to_owned(),
         ));
     }
-    if state_store.mls_snapshot_for(realm).is_some() {
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
+    if state_store
+        .mls_snapshot_for_effective_scope(realm, circle)
+        .is_some()
+    {
         return Ok(None);
     }
 
@@ -50,8 +74,9 @@ pub fn ensure_creator_mls_snapshot(
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let identity = cokret_sdk::CokretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+    let group_seed = circle.unwrap_or(realm);
     let group = identity
-        .create_group(realm.as_bytes())
+        .create_group(group_seed.as_bytes())
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
     let ratchet_tree = group
         .ratchet_tree()
@@ -81,7 +106,7 @@ pub fn ensure_creator_mls_snapshot(
         schedule_hash,
         cipher_suite,
     };
-    state_store.save_mls_snapshot(realm.to_owned(), snapshot);
+    state_store.save_mls_snapshot_for_effective_scope(realm.to_owned(), circle, snapshot);
     Ok(Some(summary))
 }
 

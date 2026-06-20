@@ -13,11 +13,22 @@ impl LocalStateStore {
         realm_id: impl Into<String>,
         envelope: crate::mls::persistence::MlsSnapshotEnvelope,
     ) {
+        self.save_mls_snapshot_for_effective_scope(realm_id, None, envelope);
+    }
+
+    pub fn save_mls_snapshot_for_effective_scope(
+        &mut self,
+        realm_id: impl Into<String>,
+        circle_id: Option<&str>,
+        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+    ) {
         // YOU-02-004: order this write after any decrypt write-backs so the
         // overlay can never shadow it (overlay snapshots always derive from
         // the state this caller just read via `mls_snapshot_for`).
         self.absorb_mls_receive_overlay();
-        self.cached.mls_snapshots.insert(realm_id.into(), envelope);
+        let realm_id = realm_id.into();
+        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        self.cached.mls_snapshots.insert(key, envelope);
         let _ = self.flush();
     }
 
@@ -29,7 +40,16 @@ impl LocalStateStore {
         &self,
         realm_id: &str,
     ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
-        self.load().mls_snapshots.get(realm_id).cloned()
+        self.mls_snapshot_for_effective_scope(realm_id, None)
+    }
+
+    pub fn mls_snapshot_for_effective_scope(
+        &self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        self.load().mls_snapshots.get(&key).cloned()
     }
 
     /// Snapshot of every persisted MLS envelope. Used by the boot
@@ -44,8 +64,17 @@ impl LocalStateStore {
     /// "rotate group" / "leave group" Move so the next boot doesn't
     /// try to rehydrate a stale leaf.
     pub fn drop_mls_snapshot(&mut self, realm_id: &str) {
+        self.drop_mls_snapshot_for_effective_scope(realm_id, None);
+    }
+
+    pub fn drop_mls_snapshot_for_effective_scope(
+        &mut self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+    ) {
         self.absorb_mls_receive_overlay();
-        let dropped_snapshot = self.cached.mls_snapshots.remove(realm_id).is_some();
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let dropped_snapshot = self.cached.mls_snapshots.remove(&key).is_some();
         // The decrypted-plaintext cache is keyed to ciphertext minted under
         // the dropped group state; it stays readable history (same lifetime
         // policy as the author sidecar) and is NOT wiped here.
@@ -200,14 +229,33 @@ impl LocalStateStore {
 
     /// True once a `ck.mls.genesis` event has been submitted for this Realm.
     pub fn mls_genesis_emitted_for(&self, realm_id: &str) -> bool {
-        self.load().mls_genesis_emitted.contains(realm_id)
+        self.mls_genesis_emitted_for_effective_scope(realm_id, None)
+    }
+
+    pub fn mls_genesis_emitted_for_effective_scope(
+        &self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+    ) -> bool {
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        self.load().mls_genesis_emitted.contains(&key)
     }
 
     /// Record that a `ck.mls.genesis` event has been submitted for this
     /// Realm so it is never re-emitted (idempotent).
     pub fn mark_mls_genesis_emitted(&mut self, realm_id: impl Into<String>) {
+        self.mark_mls_genesis_emitted_for_effective_scope(realm_id, None);
+    }
+
+    pub fn mark_mls_genesis_emitted_for_effective_scope(
+        &mut self,
+        realm_id: impl Into<String>,
+        circle_id: Option<&str>,
+    ) {
         self.ensure_cached_loaded();
-        if self.cached.mls_genesis_emitted.insert(realm_id.into()) {
+        let realm_id = realm_id.into();
+        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        if self.cached.mls_genesis_emitted.insert(key) {
             let _ = self.flush();
         }
     }
@@ -367,6 +415,16 @@ impl LocalStateStore {
         if changed {
             let _ = self.flush();
         }
+    }
+}
+
+pub(crate) fn mls_effective_scope_snapshot_key(realm_id: &str, circle_id: Option<&str>) -> String {
+    match circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty())
+    {
+        Some(circle_id) => circle_id.to_owned(),
+        None => realm_id.to_owned(),
     }
 }
 
