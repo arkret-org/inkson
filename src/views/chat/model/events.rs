@@ -125,7 +125,7 @@ pub(crate) fn first_string_in_candidates<'a>(
 }
 
 pub(crate) fn message_actor_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a str> {
-    first_string_in_candidates(candidates, &["actor_id", "sender_actor_id"])
+    first_string_in_candidates(candidates, &["actor_id", "sender_actor_id", "actor"])
 }
 
 pub(crate) fn message_kind_is_create(value: &Value) -> bool {
