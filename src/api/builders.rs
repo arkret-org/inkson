@@ -18,13 +18,9 @@ use sha2::{Digest, Sha256};
 use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::operation::{
-    Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
-    trim_realm_id, uuid_v7,
+    Effect, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate, trim_realm_id,
+    uuid_v7,
 };
-
-fn sdk_event_from_envelope(envelope: EventEnvelope) -> anyhow::Result<cokret_sdk::Event> {
-    envelope.to_sdk_event_for_submit()
-}
 
 /// RFC3339 timestamp in the canonical wire form soland's
 /// `canonical::validate_timestamp_canonical` accepts: exactly
@@ -32,6 +28,13 @@ fn sdk_event_from_envelope(envelope: EventEnvelope) -> anyhow::Result<cokret_sdk
 /// seconds - spec encoding.md section 3.5).
 fn event_timestamp() -> String {
     crate::clock::now_rfc3339_secs()
+}
+
+fn set_sdk_event_created_at(event: &mut cokret_sdk::Event, created_at: &str) -> anyhow::Result<()> {
+    event.created_at = chrono::DateTime::parse_from_rfc3339(created_at)
+        .map_err(|err| anyhow::anyhow!("event timestamp is not canonical RFC3339: {err}"))?
+        .with_timezone(&chrono::Utc);
+    Ok(())
 }
 
 /// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
@@ -296,7 +299,7 @@ pub fn build_realm_create_event(
     let realm_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.realm.create payload serialize: {e}"))?;
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.create")
+    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.realm.create")
         .target_ref(realm_id)
         .body(realm_body)
         .preconditions(preconditions)
@@ -307,9 +310,9 @@ pub fn build_realm_create_event(
             features: Vec::new(),
             critical_extensions: Vec::new(),
         })
-        .build("yougen");
-    envelope.created_at = created_at_for_object;
-    sdk_event_from_envelope(envelope)
+        .build_sdk_event("yougen")?;
+    set_sdk_event_created_at(&mut event, &created_at_for_object)?;
+    Ok(event)
 }
 
 pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
@@ -469,7 +472,7 @@ pub fn build_space_create_event(
     let space_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.space.create payload serialize: {e}"))?;
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.space.create")
+    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.space.create")
         .target_ref(space_id)
         .body(space_body)
         .preconditions(preconditions)
@@ -480,9 +483,9 @@ pub fn build_space_create_event(
             features: Vec::new(),
             critical_extensions: Vec::new(),
         })
-        .build("yougen");
-    envelope.created_at = created_at;
-    sdk_event_from_envelope(envelope)
+        .build_sdk_event("yougen")?;
+    set_sdk_event_created_at(&mut event, &created_at)?;
+    Ok(event)
 }
 
 /// Build a Space lifecycle event (`ck.space.archive` /
@@ -536,14 +539,14 @@ pub fn build_space_lifecycle_event(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, kind)
+    let mut event = OperationBuilder::new(realm_id, actor_id, kind)
         .target_ref(space_id)
         .body(json!({ "space_id": space_id }))
         .preconditions(preconditions)
         .effects(effects)
-        .build("yougen");
-    envelope.created_at = created_at;
-    sdk_event_from_envelope(envelope)
+        .build_sdk_event("yougen")?;
+    set_sdk_event_created_at(&mut event, &created_at)?;
+    Ok(event)
 }
 
 /// Build a Realm facet state event (`ck.realm.join_rule`,
@@ -613,13 +616,13 @@ pub fn build_realm_state_event(
     } else {
         json!({ "value": value })
     };
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, kind)
+    let mut event = OperationBuilder::new(realm_id, actor_id, kind)
         .body(body)
         .preconditions(preconditions)
         .effects(effects)
-        .build("yougen");
-    envelope.created_at = created_at;
-    sdk_event_from_envelope(envelope)
+        .build_sdk_event("yougen")?;
+    set_sdk_event_created_at(&mut event, &created_at)?;
+    Ok(event)
 }
 
 /// Build a `ck.realm.archive` lifecycle facet event. Realm archive is a
@@ -653,12 +656,12 @@ pub fn build_realm_archive_event(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.archive")
+    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.realm.archive")
         .body(payload)
         .effects(effects)
-        .build("yougen");
-    envelope.created_at = created_at;
-    sdk_event_from_envelope(envelope)
+        .build_sdk_event("yougen")?;
+    set_sdk_event_created_at(&mut event, &created_at)?;
+    Ok(event)
 }
 
 /// Build a `ck.realm.tombstone` terminal lifecycle event. The successor Realm
@@ -702,12 +705,12 @@ pub fn build_realm_tombstone_event(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.tombstone")
+    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.realm.tombstone")
         .body(payload)
         .effects(effects)
-        .build("yougen");
-    envelope.created_at = created_at;
-    sdk_event_from_envelope(envelope)
+        .build_sdk_event("yougen")?;
+    set_sdk_event_created_at(&mut event, &created_at)?;
+    Ok(event)
 }
 
 /// Build a `ck.realm.destroy` terminal lifecycle event.
@@ -741,12 +744,12 @@ pub fn build_realm_destroy_event(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.destroy")
+    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.realm.destroy")
         .body(payload)
         .effects(effects)
-        .build("yougen");
-    envelope.created_at = created_at;
-    sdk_event_from_envelope(envelope)
+        .build_sdk_event("yougen")?;
+    set_sdk_event_created_at(&mut event, &created_at)?;
+    Ok(event)
 }
 
 pub fn build_realm_history_sharing_policy_event(
@@ -843,14 +846,14 @@ pub fn build_plaintext_visible_services_event(
     }];
     // Builder takes `Value` by move; reuse the value we already built for
     // the effect rather than cloning `services` a second time.
-    let mut envelope =
+    let mut event =
         OperationBuilder::new(realm_id, actor_id, "ck.realm.plaintext_visible_services")
             .body(body_value)
             .preconditions(preconditions)
             .effects(effects)
-            .build("yougen");
-    envelope.created_at = created_at;
-    sdk_event_from_envelope(envelope).map(Some)
+            .build_sdk_event("yougen")?;
+    set_sdk_event_created_at(&mut event, &created_at)?;
+    Ok(Some(event))
 }
 
 fn build_member_state_event(
