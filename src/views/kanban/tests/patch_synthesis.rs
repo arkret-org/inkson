@@ -291,6 +291,7 @@ fn card_detail_update_patch_unsets_empty_optional_fields() {
     let mut current = test_card("ck:strand:f1", "U");
     current.title = "Keep".to_owned();
     current.description = "old summary".to_owned();
+    current.labels = vec!["old".to_owned()];
     current.assignee = "did:web:bob.example".to_owned();
     current.due = "2026-05-19".to_owned();
     let draft = CardDetailDraft {
@@ -301,12 +302,20 @@ fn card_detail_update_patch_unsets_empty_optional_fields() {
         labels: Vec::new(),
         assignee: String::new(),
         due: String::new(),
+        calendar: CalendarCardFields::default(),
     };
 
     let patch = card_detail_update_patch(&current, &draft).unwrap();
     assert_eq!(patch["metadata.summary"]["$op"], "unset");
-    assert!(patch["metadata.fields"]["value"].get("assignee").is_none());
-    assert!(patch["metadata.fields"]["value"].get("due_at").is_none());
+    assert_eq!(
+        patch["metadata.fields.labels"]["value"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(patch["metadata.fields.due_at"]["$op"], "unset");
+    assert!(patch.get("metadata.fields.assignee").is_none());
 }
 
 #[test]
@@ -320,6 +329,7 @@ fn apply_card_detail_draft_marks_card_queued() {
         labels: vec!["ops".to_owned()],
         assignee: String::new(),
         due: "2026-05-20".to_owned(),
+        calendar: CalendarCardFields::default(),
     };
 
     apply_card_detail_draft(&mut card, &draft);

@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
 
@@ -12,6 +13,7 @@ use crate::operation::uuid_v7;
 use crate::rank::rank_for_drop;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
@@ -155,6 +157,165 @@ fn CardDetailEditActions(
                 "data-testid": "card-detail-cancel-edit-button",
                 onclick: move |_| on_cancel.call(()),
                 {crate::i18n::tr("common.cancel")}
+            }
+        }
+    }
+}
+
+fn update_calendar_draft(
+    mut calendar: Signal<CalendarCardFields>,
+    update: impl FnOnce(&mut CalendarCardFields),
+) {
+    let mut next = calendar();
+    update(&mut next);
+    calendar.set(next);
+}
+
+#[component]
+fn CalendarScheduleEditForm(
+    calendar: Signal<CalendarCardFields>,
+    status: String,
+    on_save: EventHandler<()>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    let selected_frequency = use_memo(move || {
+        let frequency = calendar().recurrence_frequency.trim().to_owned();
+        Some(if frequency.is_empty() {
+            "none".to_owned()
+        } else {
+            frequency
+        })
+    });
+    rsx! {
+        div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-calendar-edit-form",
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-start-input", "Start" }
+                Input {
+                    id: "card-detail-calendar-start-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-start-input",
+                    value: "{calendar().start}",
+                    placeholder: "2026-06-20T09:00:00Z",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.start = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-end-input", "End" }
+                Input {
+                    id: "card-detail-calendar-end-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-end-input",
+                    value: "{calendar().end}",
+                    placeholder: "2026-06-20T10:00:00Z",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.end = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-timezone-input", "Timezone" }
+                Input {
+                    id: "card-detail-calendar-timezone-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-timezone-input",
+                    value: "{calendar().timezone}",
+                    placeholder: "Asia/Shanghai",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.timezone = event.value()),
+                }
+            }
+            label { class: "discussion-checkbox-row",
+                Checkbox {
+                    "data-testid": "card-detail-calendar-all-day",
+                    checked: if calendar().all_day { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                    on_checked_change: move |state: CheckboxState| {
+                        update_calendar_draft(calendar, |draft| draft.all_day = bool::from(state));
+                    },
+                }
+                span { "All day" }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-recurrence-select", "Recurrence" }
+                Select::<String> {
+                    "data-testid": "card-detail-calendar-recurrence-select",
+                    value: Some(selected_frequency.into()),
+                    on_value_change: move |value: Option<String>| {
+                        if let Some(value) = value {
+                            update_calendar_draft(calendar, |draft| {
+                                draft.recurrence_frequency = if value == "none" {
+                                    String::new()
+                                } else {
+                                    value
+                                };
+                            });
+                        }
+                    },
+                    SelectOption::<String> { index: 0usize, value: "none".to_owned(), text_value: "None", "None" }
+                    SelectOption::<String> { index: 1usize, value: "DAILY".to_owned(), text_value: "Daily", "Daily" }
+                    SelectOption::<String> { index: 2usize, value: "WEEKLY".to_owned(), text_value: "Weekly", "Weekly" }
+                    SelectOption::<String> { index: 3usize, value: "MONTHLY".to_owned(), text_value: "Monthly", "Monthly" }
+                    SelectOption::<String> { index: 4usize, value: "YEARLY".to_owned(), text_value: "Yearly", "Yearly" }
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-interval-input", "Interval" }
+                Input {
+                    id: "card-detail-calendar-interval-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-interval-input",
+                    value: "{calendar().recurrence_interval}",
+                    placeholder: "1",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_interval = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-by-day-input", "By day" }
+                Input {
+                    id: "card-detail-calendar-by-day-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-by-day-input",
+                    value: "{calendar().recurrence_by_day}",
+                    placeholder: "MO, WE, FR",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_day = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-count-input", "Count" }
+                Input {
+                    id: "card-detail-calendar-count-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-count-input",
+                    value: "{calendar().recurrence_count}",
+                    placeholder: "10",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_count = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-until-input", "Until" }
+                Input {
+                    id: "card-detail-calendar-until-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-until-input",
+                    value: "{calendar().recurrence_expires_at}",
+                    placeholder: "2026-12-31T23:59:59Z",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_expires_at = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-location-input", "Location" }
+                Input {
+                    id: "card-detail-calendar-location-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-location-input",
+                    value: "{calendar().location}",
+                    placeholder: "Encrypted location",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| {
+                        draft.location = event.value();
+                        draft.location_locked = false;
+                    }),
+                }
+            }
+            CardDetailEditActions {
+                status,
+                on_save,
+                on_cancel,
             }
         }
     }
@@ -546,6 +707,8 @@ pub fn KanbanPanel(
     let mut due_edit_value = use_signal(String::new);
     let mut due_calendar_month = use_signal(default_due_calendar_month);
     let mut due_edit_status = use_signal(String::new);
+    let mut card_edit_calendar = use_signal(CalendarCardFields::default);
+    let mut calendar_rsvp_occurrence = use_signal(String::new);
     let mut card_synthesis_history_open_id = use_signal(|| Option::<String>::None);
     let mut card_synthesis_selected_revision_id = use_signal(|| Option::<String>::None);
     let mut card_edit_labels = use_signal(String::new);
@@ -600,6 +763,9 @@ pub fn KanbanPanel(
                 card_edit_labels.set(draft.labels.join(", "));
                 card_edit_assignee.set(draft.assignee);
                 card_edit_due.set(draft.due);
+                let calendar = draft.calendar.clone();
+                card_edit_calendar.set(calendar.clone());
+                calendar_rsvp_occurrence.set(calendar_occurrence_hint(&calendar));
                 editing_card_detail.set(false);
                 card_detail_edit_status.set(String::new());
                 assignee_picker_open.set(false);
@@ -2276,6 +2442,9 @@ pub fn KanbanPanel(
                                         card_edit_labels.set(draft.labels.join(", "));
                                         card_edit_assignee.set(draft.assignee);
                                         card_edit_due.set(draft.due);
+                                        let calendar = draft.calendar.clone();
+                                        card_edit_calendar.set(calendar.clone());
+                                        calendar_rsvp_occurrence.set(calendar_occurrence_hint(&calendar));
                                         editing_card_detail.set(false);
                                         card_detail_edit_status.set(String::new());
                                         assignee_picker_open.set(false);
@@ -2900,6 +3069,8 @@ pub fn KanbanPanel(
                                 due_edit_value.set(String::new());
                                 due_calendar_month.set(default_due_calendar_month());
                                 due_edit_status.set(String::new());
+                                card_edit_calendar.set(CalendarCardFields::default());
+                                calendar_rsvp_occurrence.set(String::new());
                                 card_detail_actions_open.set(false);
                                 if route_is_card_detail {
                                     let _ = overlay_navigator.push(overlay_board_route.clone());
@@ -3115,6 +3286,8 @@ pub fn KanbanPanel(
                                                                             selected_card.set(None);
                                                                             editing_card_detail.set(false);
                                                                             card_detail_edit_status.set(String::new());
+                                                                            card_edit_calendar.set(CalendarCardFields::default());
+                                                                            calendar_rsvp_occurrence.set(String::new());
                                                                             card_detail_actions_open.set(false);
                                                                             if route_is_card_detail {
                                                                                 let _ = action_navigator.push(action_board_route.clone());
@@ -3148,6 +3321,8 @@ pub fn KanbanPanel(
                                                 due_edit_value.set(String::new());
                                                 due_calendar_month.set(default_due_calendar_month());
                                                 due_edit_status.set(String::new());
+                                                card_edit_calendar.set(CalendarCardFields::default());
+                                                calendar_rsvp_occurrence.set(String::new());
                                                 card_detail_actions_open.set(false);
                                                 if route_is_card_detail {
                                                     let _ = close_navigator.push(close_board_route.clone());
@@ -4540,6 +4715,234 @@ pub fn KanbanPanel(
                                                                                         }
                                                                                     }
                                                                                 }
+                                                                        }
+                                                                    }
+                                                                }
+                                                                div {
+                                                                    dt { "Calendar" }
+                                                                    dd {
+                                                                        {
+                                                                            let schedule = card.calendar.clone();
+                                                                            let has_schedule = schedule.has_schedule();
+                                                                            let recurrence_label = schedule.recurrence_label();
+                                                                            let occurrence_hint = calendar_occurrence_hint(&schedule);
+                                                                            let location_label = if schedule.location_locked {
+                                                                                MLS_LOCKED_FIELD_PLACEHOLDER.to_owned()
+                                                                            } else {
+                                                                                schedule.location.clone()
+                                                                            };
+                                                                            rsx! {
+                                                                                div {
+                                                                                    class: "calendar-editor",
+                                                                                    "data-testid": "card-detail-calendar",
+                                                                                    if editing_card_detail() && card_edit_scope() == CardEditScope::Calendar {
+                                                                                        CalendarScheduleEditForm {
+                                                                                            calendar: card_edit_calendar,
+                                                                                            status: card_detail_edit_status(),
+                                                                                            on_save: {
+                                                                                                let base = base_url.clone();
+                                                                                                let realm = selected_realm_id.clone();
+                                                                                                let actor = account_did.clone();
+                                                                                                let device = device_id.clone();
+                                                                                                let current_card = card.clone();
+                                                                                                move |_| {
+                                                                                                    save_card_calendar_edit(
+                                                                                                        base.clone(),
+                                                                                                        token,
+                                                                                                        realm.clone(),
+                                                                                                        actor.clone(),
+                                                                                                        device.clone(),
+                                                                                                        current_card.clone(),
+                                                                                                        card_edit_calendar(),
+                                                                                                        selected_scope_security_encrypted,
+                                                                                                        editing_card_detail,
+                                                                                                        card_detail_actions_open,
+                                                                                                        card_detail_edit_status,
+                                                                                                        columns,
+                                                                                                        selected_card,
+                                                                                                        state_store,
+                                                                                                        board_status,
+                                                                                                    );
+                                                                                                }
+                                                                                            },
+                                                                                            on_cancel: {
+                                                                                                let current_calendar = card.calendar.clone();
+                                                                                                move |_| {
+                                                                                                    card_edit_calendar.set(current_calendar.clone());
+                                                                                                    calendar_rsvp_occurrence.set(calendar_occurrence_hint(&current_calendar));
+                                                                                                    editing_card_detail.set(false);
+                                                                                                    card_detail_actions_open.set(false);
+                                                                                                    card_detail_edit_status.set(String::new());
+                                                                                                }
+                                                                                            },
+                                                                                        }
+                                                                                    } else {
+                                                                                        if has_schedule {
+                                                                                            div { class: "calendar-summary",
+                                                                                                if !schedule.start.trim().is_empty() {
+                                                                                                    div {
+                                                                                                        span { "Start" }
+                                                                                                        strong { "{schedule.start}" }
+                                                                                                    }
+                                                                                                }
+                                                                                                if !schedule.end.trim().is_empty() {
+                                                                                                    div {
+                                                                                                        span { "End" }
+                                                                                                        strong { "{schedule.end}" }
+                                                                                                    }
+                                                                                                }
+                                                                                                if !schedule.timezone.trim().is_empty() {
+                                                                                                    div {
+                                                                                                        span { "Timezone" }
+                                                                                                        strong { "{schedule.timezone}" }
+                                                                                                    }
+                                                                                                }
+                                                                                                if schedule.all_day {
+                                                                                                    div {
+                                                                                                        span { "Mode" }
+                                                                                                        strong { "All day" }
+                                                                                                    }
+                                                                                                }
+                                                                                                if !recurrence_label.trim().is_empty() {
+                                                                                                    div {
+                                                                                                        span { "Recurrence" }
+                                                                                                        strong { "{recurrence_label}" }
+                                                                                                    }
+                                                                                                }
+                                                                                                if !location_label.trim().is_empty() {
+                                                                                                    div {
+                                                                                                        span { "Location" }
+                                                                                                        strong { "{location_label}" }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        } else {
+                                                                                            div { class: "card-detail-empty", "No schedule" }
+                                                                                        }
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Secondary,
+                                                                                            r#type: "button",
+                                                                                            class: "card-detail-mini-action",
+                                                                                            "data-testid": "card-detail-edit-calendar-button",
+                                                                                            onclick: {
+                                                                                                let current = card.clone();
+                                                                                                move |_| {
+                                                                                                    let draft = card_detail_draft_from_card(&current);
+                                                                                                    let calendar = draft.calendar.clone();
+                                                                                                    card_edit_calendar.set(calendar.clone());
+                                                                                                    calendar_rsvp_occurrence.set(calendar_occurrence_hint(&calendar));
+                                                                                                    card_edit_scope.set(CardEditScope::Calendar);
+                                                                                                    card_detail_edit_status.set(String::new());
+                                                                                                    editing_card_detail.set(true);
+                                                                                                    card_detail_actions_open.set(false);
+                                                                                                    assignee_picker_open.set(false);
+                                                                                                    due_picker_open.set(false);
+                                                                                                }
+                                                                                            },
+                                                                                            UiIcon { name: if has_schedule { "settings" } else { "plus" } }
+                                                                                            span { if has_schedule { "Edit schedule" } else { "Add schedule" } }
+                                                                                        }
+                                                                                        if has_schedule {
+                                                                                            div {
+                                                                                                class: "calendar-rsvp",
+                                                                                                "data-testid": "card-detail-calendar-rsvp",
+                                                                                                Label { html_for: "card-detail-calendar-rsvp-occurrence", "Occurrence" }
+                                                                                                Input {
+                                                                                                    id: "card-detail-calendar-rsvp-occurrence",
+                                                                                                    class: "input",
+                                                                                                    "data-testid": "card-detail-calendar-rsvp-occurrence",
+                                                                                                    value: "{calendar_rsvp_occurrence}",
+                                                                                                    placeholder: "{occurrence_hint}",
+                                                                                                    oninput: move |event: FormEvent| calendar_rsvp_occurrence.set(event.value()),
+                                                                                                }
+                                                                                                div { class: "calendar-rsvp-actions",
+                                                                                                    Button {
+                                                                                                        variant: ButtonVariant::Secondary,
+                                                                                                        r#type: "button",
+                                                                                                        onclick: move |_| calendar_rsvp_occurrence.set(String::new()),
+                                                                                                        "Series"
+                                                                                                    }
+                                                                                                    Button {
+                                                                                                        variant: ButtonVariant::Secondary,
+                                                                                                        r#type: "button",
+                                                                                                        "data-testid": "card-detail-rsvp-accepted",
+                                                                                                        onclick: {
+                                                                                                            let base = base_url.clone();
+                                                                                                            let realm = selected_realm_id.clone();
+                                                                                                            let actor = account_did.clone();
+                                                                                                            let current_card = card.clone();
+                                                                                                            move |_| {
+                                                                                                                dispatch_calendar_rsvp(
+                                                                                                                    base.clone(),
+                                                                                                                    token,
+                                                                                                                    realm.clone(),
+                                                                                                                    actor.clone(),
+                                                                                                                    current_card.clone(),
+                                                                                                                    "accepted",
+                                                                                                                    calendar_rsvp_occurrence(),
+                                                                                                                    state_store,
+                                                                                                                    board_status,
+                                                                                                                );
+                                                                                                            }
+                                                                                                        },
+                                                                                                        "Accept"
+                                                                                                    }
+                                                                                                    Button {
+                                                                                                        variant: ButtonVariant::Secondary,
+                                                                                                        r#type: "button",
+                                                                                                        "data-testid": "card-detail-rsvp-tentative",
+                                                                                                        onclick: {
+                                                                                                            let base = base_url.clone();
+                                                                                                            let realm = selected_realm_id.clone();
+                                                                                                            let actor = account_did.clone();
+                                                                                                            let current_card = card.clone();
+                                                                                                            move |_| {
+                                                                                                                dispatch_calendar_rsvp(
+                                                                                                                    base.clone(),
+                                                                                                                    token,
+                                                                                                                    realm.clone(),
+                                                                                                                    actor.clone(),
+                                                                                                                    current_card.clone(),
+                                                                                                                    "tentative",
+                                                                                                                    calendar_rsvp_occurrence(),
+                                                                                                                    state_store,
+                                                                                                                    board_status,
+                                                                                                                );
+                                                                                                            }
+                                                                                                        },
+                                                                                                        "Maybe"
+                                                                                                    }
+                                                                                                    Button {
+                                                                                                        variant: ButtonVariant::Secondary,
+                                                                                                        r#type: "button",
+                                                                                                        "data-testid": "card-detail-rsvp-declined",
+                                                                                                        onclick: {
+                                                                                                            let base = base_url.clone();
+                                                                                                            let realm = selected_realm_id.clone();
+                                                                                                            let actor = account_did.clone();
+                                                                                                            let current_card = card.clone();
+                                                                                                            move |_| {
+                                                                                                                dispatch_calendar_rsvp(
+                                                                                                                    base.clone(),
+                                                                                                                    token,
+                                                                                                                    realm.clone(),
+                                                                                                                    actor.clone(),
+                                                                                                                    current_card.clone(),
+                                                                                                                    "declined",
+                                                                                                                    calendar_rsvp_occurrence(),
+                                                                                                                    state_store,
+                                                                                                                    board_status,
+                                                                                                                );
+                                                                                                            }
+                                                                                                        },
+                                                                                                        "Decline"
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }

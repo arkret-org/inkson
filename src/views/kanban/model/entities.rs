@@ -58,6 +58,7 @@ pub(crate) struct KanbanCard {
     pub(crate) assignee: String,
     pub(crate) assigned_to_relations: Vec<CardAssignedToRelation>,
     pub(crate) due: String,
+    pub(crate) calendar: CalendarCardFields,
     pub(crate) primary_strand_id: String,
     pub(crate) locked_strand: Option<LockedStrand>,
     pub(crate) external_visibility: String,
@@ -133,6 +134,7 @@ pub(crate) struct CardDetailDraft {
     pub(crate) labels: Vec<String>,
     pub(crate) assignee: String,
     pub(crate) due: String,
+    pub(crate) calendar: CalendarCardFields,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -247,6 +249,7 @@ pub(crate) enum CardEditScope {
     Summary,
     Description,
     Synthesis,
+    Calendar,
 }
 
 pub(crate) const TOAST_EDITOR_SCRIPT_URL: &str =

@@ -63,6 +63,8 @@ pub(crate) const KANBAN_PRIVATE_STRAND_PATCH_PATHS: &[&str] = &[
     "attachments",
     "fields.body",
     "fields.synthesis",
+    "metadata.fields.location",
+    "fields.location",
     "tracks.synthesis.body",
     "tracks.discussion.body",
 ];

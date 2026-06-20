@@ -7,6 +7,7 @@ use super::{
 };
 use crate::local_state::{LocalStateStore, RawOperationRecord};
 use crate::routes::Route;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 pub(super) fn route_card_strand_id(route: &Route) -> Option<String> {
     match route {
@@ -243,6 +244,7 @@ pub(super) fn save_card_detail_edit(
         labels: parse_card_labels(&card_edit_labels()),
         assignee: card_edit_assignee().trim().to_owned(),
         due: card_edit_due().trim().to_owned(),
+        calendar: current.calendar.clone(),
     };
     let synthesis_revision =
         (edit_scope == CardEditScope::Synthesis).then_some(synthesis_revision_body);
@@ -323,6 +325,123 @@ pub(super) fn save_card_due_edit(
         });
         false
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn save_card_calendar_edit(
+    base_url: String,
+    token: Signal<String>,
+    realm_id: String,
+    actor_id: String,
+    device_id: String,
+    current: KanbanCard,
+    calendar: CalendarCardFields,
+    scope_security_encrypted: Option<bool>,
+    mut editing_card_detail: Signal<bool>,
+    mut card_detail_actions_open: Signal<bool>,
+    mut card_detail_edit_status: Signal<String>,
+    columns: Signal<Vec<KanbanColumn>>,
+    selected_card: Signal<Option<KanbanCard>>,
+    state_store: Signal<LocalStateStore>,
+    board_status: Signal<String>,
+) -> bool {
+    let mut draft = card_detail_draft_from_card(&current);
+    draft.calendar = calendar;
+    card_detail_edit_status.set("Saving calendar...".to_owned());
+    if dispatch_card_detail_update(
+        base_url,
+        token,
+        realm_id,
+        actor_id,
+        device_id,
+        current,
+        draft,
+        scope_security_encrypted,
+        None,
+        None,
+        columns,
+        selected_card,
+        state_store,
+        board_status,
+    ) {
+        card_detail_edit_status.set(String::new());
+        editing_card_detail.set(false);
+        card_detail_actions_open.set(false);
+        true
+    } else {
+        let status = board_status();
+        card_detail_edit_status.set(if status.trim().is_empty() {
+            "Unable to save calendar.".to_owned()
+        } else {
+            status
+        });
+        false
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn dispatch_calendar_rsvp(
+    base_url: String,
+    token: Signal<String>,
+    realm_id: String,
+    actor_id: String,
+    card: KanbanCard,
+    status: &'static str,
+    occurrence: String,
+    mut state_store: Signal<LocalStateStore>,
+    mut board_status: Signal<String>,
+) {
+    let op = match calendar_rsvp_operation(
+        &realm_id,
+        &actor_id,
+        &card.primary_strand_id,
+        status,
+        &occurrence,
+    ) {
+        Ok(op) => op,
+        Err(err) => {
+            board_status.set(format!("cannot build RSVP: {err:#}"));
+            return;
+        }
+    };
+    let operation_id = op.local_operation_id().to_owned();
+    state_store.write().append_raw_operation(
+        operation_id.clone(),
+        Some(realm_id.clone()),
+        serde_json::json!({
+            "kind": op.kind.clone(),
+            "operation_id": operation_id.clone(),
+            "actor_id": op.actor_id.clone(),
+            "created_at": op.created_at.clone(),
+            "write_state": "queued",
+            "body": op.payload.clone(),
+            "activity_summary": format!("RSVP {status}"),
+        }),
+    );
+    board_status.set(format!(
+        "submitting RSVP {}",
+        short_protocol_id(&operation_id)
+    ));
+    let api_token = token();
+    let kind = op.kind.clone();
+    spawn(async move {
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.submit_event_envelope(&op).await
+        })
+        .await
+        {
+            Ok(response) => {
+                board_status.set(format!(
+                    "{} accepted as {}",
+                    kind,
+                    short_protocol_id(&response.event_id)
+                ));
+            }
+            Err(err) => {
+                board_status.set(format!("RSVP failed: {err:#?}"));
+            }
+        }
+    });
 }
 
 pub(super) fn projection_synthesis_revision(
@@ -655,6 +774,7 @@ pub(super) fn card_detail_draft_from_card(card: &KanbanCard) -> CardDetailDraft 
         labels: card.labels.clone(),
         assignee: editor_value_for_optional_card_field(&card.assignee),
         due: editor_value_for_optional_card_field(&card.due),
+        calendar: card.calendar.clone(),
     }
 }
 

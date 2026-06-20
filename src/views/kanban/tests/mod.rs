@@ -18,6 +18,7 @@ pub(super) const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-0000000
 pub(super) use crate::local_state::isolated_store_for_tests as temp_state_store;
 
 mod activity_assignment;
+mod calendar_event;
 mod card_detail_routes;
 mod due_calendar;
 mod encrypted_scope;
@@ -74,6 +75,7 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         assignee: String::new(),
         assigned_to_relations: Vec::new(),
         due: String::new(),
+        calendar: CalendarCardFields::default(),
         primary_strand_id: String::new(),
         locked_strand: None,
         external_visibility: String::new(),

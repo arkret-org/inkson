@@ -59,20 +59,25 @@ pub(super) fn card_detail_update_patch(
         patch.insert("synthesis".to_owned(), op);
     }
 
-    let current_due = editor_value_for_optional_card_field(&current.due);
-    let fields_changed = current.labels != draft.labels || current_due != draft.due.trim();
-    if fields_changed {
-        let mut fields = Map::new();
-        fields.insert("labels".to_owned(), json!(draft.labels.clone()));
-        let due = draft.due.trim();
-        if !due.is_empty() && due != "—" {
-            fields.insert("due_at".to_owned(), json!(due));
-        }
+    if current.labels != draft.labels {
         patch.insert(
-            "metadata.fields".to_owned(),
-            json!({ "$op": "set", "value": Value::Object(fields) }),
+            "metadata.fields.labels".to_owned(),
+            json!({ "$op": "set", "value": draft.labels.clone() }),
         );
     }
+
+    let current_due = editor_value_for_optional_card_field(&current.due);
+    let draft_due = editor_value_for_optional_card_field(&draft.due);
+    if current_due != draft_due {
+        let op = if draft_due.is_empty() {
+            json!({ "$op": "unset" })
+        } else {
+            json!({ "$op": "set", "value": draft_due })
+        };
+        patch.insert("metadata.fields.due_at".to_owned(), op);
+    }
+
+    calendar_patch_entries(&mut patch, &current.calendar, &draft.calendar)?;
 
     if patch.is_empty() {
         return Err("no card detail changes to save".to_owned());
@@ -85,9 +90,9 @@ pub(super) fn card_detail_activity_summary(
     draft: &CardDetailDraft,
 ) -> String {
     let current_due = editor_value_for_optional_card_field(&current.due);
-    let next_due = draft.due.trim();
+    let next_due = editor_value_for_optional_card_field(&draft.due);
     if current_due != next_due {
-        return if next_due.is_empty() || next_due == "—" {
+        return if next_due.is_empty() {
             "Due date cleared".to_owned()
         } else {
             format!("Due date set to {next_due}")
@@ -95,6 +100,9 @@ pub(super) fn card_detail_activity_summary(
     }
     if current.labels != draft.labels {
         return "Labels updated".to_owned();
+    }
+    if current.calendar != draft.calendar {
+        return "Calendar schedule updated".to_owned();
     }
     if current.title.trim() != draft.title.trim()
         || current.description.trim() != draft.description.trim()
@@ -112,7 +120,9 @@ pub(super) fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailD
     card.body = draft.body.trim().to_owned();
     card.synthesis = draft.synthesis.trim().to_owned();
     card.labels = draft.labels.clone();
+    card.assignee = display_optional_card_field(&draft.assignee);
     card.due = display_optional_card_field(&draft.due);
+    card.calendar = draft.calendar.clone();
     card.state = CardState::Queued;
 }
 

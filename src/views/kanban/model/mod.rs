@@ -14,6 +14,7 @@ use crate::components::WriteState;
 use crate::local_state::RawOperationRecord;
 use crate::operation::trim_realm_id;
 
+mod calendar;
 mod constants;
 mod entities;
 mod mls;
@@ -21,6 +22,7 @@ mod overlays;
 mod projection;
 mod strand;
 
+pub(crate) use calendar::*;
 pub(crate) use constants::*;
 pub(crate) use entities::*;
 pub(crate) use mls::*;

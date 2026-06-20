@@ -218,6 +218,7 @@ pub(crate) fn card_from_strand_projection(
         assigned_to_relations: strand_projection_assigned_to_relations(strand),
         due: strand_projection_field_string(strand, None, &["due_at", "due"])
             .unwrap_or_else(|| "—".to_owned()),
+        calendar: calendar_fields_from_metadata(&strand.fields, decrypt_ctx, &strand.strand_id),
         primary_strand_id: strand.strand_id.clone(),
         locked_strand,
         external_visibility,

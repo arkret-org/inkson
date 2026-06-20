@@ -73,15 +73,16 @@ fn card_detail_update_patch_uses_strand_update_patch_paths() {
         labels: vec!["release".to_owned(), "ops".to_owned()],
         assignee: "did:web:alice.example".to_owned(),
         due: "2026-05-20".to_owned(),
+        calendar: CalendarCardFields::default(),
     };
 
     let patch = card_detail_update_patch(&current, &draft).unwrap();
     assert_eq!(patch["metadata.title"]["value"], "Launch checklist");
     assert_eq!(patch["metadata.summary"]["value"], "Ship blockers only");
-    assert_eq!(patch["metadata.fields"]["value"]["labels"][0], "release");
-    assert!(patch["metadata.fields"]["value"].get("assignee").is_none());
-    assert_eq!(patch["metadata.fields"]["value"]["due_at"], "2026-05-20");
-    assert!(patch["metadata.fields"]["value"].get("due").is_none());
+    assert_eq!(patch["metadata.fields.labels"]["value"][0], "release");
+    assert_eq!(patch["metadata.fields.due_at"]["value"], "2026-05-20");
+    assert!(patch.get("metadata.fields.assignee").is_none());
+    assert!(patch.get("metadata.fields.due").is_none());
 }
 
 #[test]

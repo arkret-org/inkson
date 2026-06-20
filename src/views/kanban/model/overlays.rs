@@ -30,6 +30,7 @@ pub(crate) fn local_created_card(
         assignee: "yougen".to_owned(),
         assigned_to_relations: Vec::new(),
         due: "unscheduled".to_owned(),
+        calendar: CalendarCardFields::default(),
         primary_strand_id: strand_id,
         locked_strand: None,
         external_visibility: "Not shared externally".to_owned(),
@@ -411,6 +412,8 @@ pub(crate) struct LocalCardUpdate {
     pub(crate) body: Option<PrivateFieldOverlay>,
     pub(crate) synthesis: Option<PrivateFieldOverlay>,
     pub(crate) fields: Option<Value>,
+    pub(crate) fields_replaces_all: bool,
+    pub(crate) calendar: Option<CalendarCardFields>,
     pub(crate) state: CardState,
 }
 
@@ -505,7 +508,20 @@ pub(crate) fn local_card_update_from_raw_operation(
         decrypt_ctx,
         &strand_id,
     );
-    let fields = patch
+    fn extract_direct_field_patch(patch: &Map<String, Value>, field: &str) -> Option<Value> {
+        let metadata_path = format!("metadata.fields.{field}");
+        let field_path = format!("fields.{field}");
+        patch
+            .get(&metadata_path)
+            .or_else(|| patch.get(&field_path))
+            .and_then(|op| match op.get("$op").and_then(Value::as_str) {
+                Some("set") => op.get("value").cloned(),
+                Some("unset") => Some(Value::Null),
+                _ => None,
+            })
+    }
+
+    let replacement_fields = patch
         .get("metadata.fields")
         .or_else(|| patch.get("fields"))
         .and_then(|fields_op| {
@@ -515,6 +531,34 @@ pub(crate) fn local_card_update_from_raw_operation(
                 None
             }
         });
+    let mut direct_fields = Map::new();
+    for field in [
+        CALENDAR_PROFILE_FIELD,
+        CALENDAR_PROFILE_REFS_FIELD,
+        "labels",
+        "due_at",
+        "due",
+        "start",
+        "end",
+        "timezone",
+        "all_day",
+        "recurrence",
+        "location",
+    ] {
+        if let Some(value) = extract_direct_field_patch(patch, field) {
+            direct_fields.insert(field.to_owned(), value);
+        }
+    }
+    let fields_replaces_all = replacement_fields.is_some();
+    let fields = replacement_fields
+        .or_else(|| (!direct_fields.is_empty()).then(|| Value::Object(direct_fields.clone())));
+    let calendar = fields
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|fields| {
+            fields_have_calendar_keys(fields)
+                .then(|| calendar_fields_from_metadata(fields, decrypt_ctx, &strand_id))
+        });
 
     Some(LocalCardUpdate {
         strand_id,
@@ -523,6 +567,8 @@ pub(crate) fn local_card_update_from_raw_operation(
         body: body_op,
         synthesis,
         fields,
+        fields_replaces_all,
+        calendar,
         state: raw_operation_card_state(payload),
     })
 }
@@ -566,7 +612,7 @@ pub(crate) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
             }
         }
     }
-    if let Some(fields) = &update.fields {
+    if let Some(fields) = update.fields.as_ref().and_then(Value::as_object) {
         if let Some(labels) = fields.get("labels").and_then(Value::as_array) {
             card.labels = labels
                 .iter()
@@ -579,11 +625,51 @@ pub(crate) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
             .and_then(Value::as_str)
         {
             card.due = display_optional_card_field(due);
-        } else {
+        } else if update.fields_replaces_all
+            || fields.contains_key("due_at")
+            || fields.contains_key("due")
+        {
             card.due = display_optional_card_field("");
         }
     }
+    if let Some(calendar) = &update.calendar {
+        if update.fields_replaces_all {
+            card.calendar = calendar.clone();
+        } else if let Some(fields) = update.fields.as_ref().and_then(Value::as_object) {
+            apply_calendar_field_overlay(&mut card.calendar, fields, calendar);
+        }
+    }
     card.state = update.state;
+}
+
+fn apply_calendar_field_overlay(
+    current: &mut CalendarCardFields,
+    touched_fields: &Map<String, Value>,
+    next: &CalendarCardFields,
+) {
+    if touched_fields.contains_key("start") {
+        current.start = next.start.clone();
+    }
+    if touched_fields.contains_key("end") {
+        current.end = next.end.clone();
+    }
+    if touched_fields.contains_key("timezone") {
+        current.timezone = next.timezone.clone();
+    }
+    if touched_fields.contains_key("all_day") {
+        current.all_day = next.all_day;
+    }
+    if touched_fields.contains_key("recurrence") {
+        current.recurrence_frequency = next.recurrence_frequency.clone();
+        current.recurrence_interval = next.recurrence_interval.clone();
+        current.recurrence_by_day = next.recurrence_by_day.clone();
+        current.recurrence_count = next.recurrence_count.clone();
+        current.recurrence_expires_at = next.recurrence_expires_at.clone();
+    }
+    if touched_fields.contains_key("location") {
+        current.location = next.location.clone();
+        current.location_locked = next.location_locked;
+    }
 }
 
 pub(crate) fn overlay_local_card_create_records(

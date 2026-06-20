@@ -22,6 +22,7 @@ pub(super) use super::{OperationBuilder, trim_realm_id};
 
 mod agent;
 mod applet;
+mod calendar;
 mod capability;
 mod device_mls;
 mod discussion;
@@ -36,6 +37,7 @@ mod strand;
 
 pub use agent::*;
 pub use applet::*;
+pub use calendar::*;
 pub use capability::*;
 pub use device_mls::*;
 pub use discussion::*;

@@ -291,7 +291,7 @@ pub(crate) fn card_from_projection_item(
                 other => format!("discussion: {other}"),
             };
             let hist = if lazy_link {
-                "lazy_link (cross-Realm)".to_owned()
+                "lazy_link (cross-Space)".to_owned()
             } else if enabled {
                 // Tracks do not carry independent access; a private
                 // discussion uses a Circle-scoped Strand.
@@ -406,6 +406,10 @@ pub(crate) fn card_from_projection_item(
             .and_then(|v| v.as_str())
             .unwrap_or("—")
             .to_owned(),
+        calendar: object_fields
+            .and_then(Value::as_object)
+            .map(|fields| calendar_fields_from_metadata(fields, decrypt_ctx, &primary_strand_id))
+            .unwrap_or_default(),
         primary_strand_id,
         locked_strand,
         external_visibility,
