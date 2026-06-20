@@ -1,6 +1,14 @@
 use super::*;
 
 impl CokretApi {
+    pub(crate) async fn list_circles(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<cokret_sdk::CircleList> {
+        self.get_json(&format!("_cokret/self/circles?realm_id={realm_id}"))
+            .await
+    }
+
     pub(crate) async fn submit_circle_scope_rotate_events(
         &self,
         circle_id: &str,
