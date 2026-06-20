@@ -1456,17 +1456,17 @@ pub fn ChatPanel(
                                                     let existing_for_rollback = existing_pin.clone();
                                                     spawn(async move {
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
-                                                            Ok(api) => match api.submit_event_envelope(&op).await {
+                                                            Ok(api) => match api.submit_sdk_event(&op).await {
                                                                 Ok(submitted) => {
                                                                     {
                                                                         let mut store = state_store.write();
                                                                         store.append_raw_operation(
-                                                                            op.local_operation_id().to_owned(),
+                                                                            sdk_event_local_operation_id(&op).to_owned(),
                                                                             Some(realm_for_store),
                                                                             json!({
                                                                                 "event_id": submitted.event_id.clone(),
-                                                                                "kind": op.kind.clone(),
-                                                                                "payload": op.payload.clone(),
+                                                                                "kind": op.kind.as_str(),
+                                                                                "payload": op.content.clone(),
                                                                             }),
                                                                         );
                                                                     }

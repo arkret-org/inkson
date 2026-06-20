@@ -283,14 +283,14 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     )
     .expect("shared pin add builds");
 
-    assert_eq!(add.kind, "ck.pin.add");
-    assert_eq!(add.payload["pin_scope"]["kind"], "strand");
-    assert_eq!(add.payload["pin_scope"]["id"], strand_id);
-    assert_eq!(add.payload["target_ref"], target_ref);
-    assert_eq!(add.payload["rank"], "r100");
-    assert!(add.payload.get("key").is_none());
-    assert!(add.payload.get("encrypted_payload").is_none());
-    assert!(add.payload.get("body").is_none());
+    assert_eq!(add.kind.as_str(), "ck.pin.add");
+    assert_eq!(add.content["pin_scope"]["kind"], "strand");
+    assert_eq!(add.content["pin_scope"]["id"], strand_id);
+    assert_eq!(add.content["target_ref"], target_ref);
+    assert_eq!(add.content["rank"], "r100");
+    assert!(add.content.get("key").is_none());
+    assert!(add.content.get("encrypted_payload").is_none());
+    assert!(add.content.get("body").is_none());
 
     let remove = shared_message_pin_remove_operation(
         "ck:realm:01904100-0000-7000-8000-000000000010",
@@ -299,14 +299,14 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
         target_ref,
     )
     .expect("shared pin remove builds");
-    assert_eq!(remove.kind, "ck.pin.remove");
-    assert_eq!(remove.payload["target_ref"], target_ref);
-    assert!(remove.payload.get("key").is_none());
+    assert_eq!(remove.kind.as_str(), "ck.pin.remove");
+    assert_eq!(remove.content["target_ref"], target_ref);
+    assert!(remove.content.get("key").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&add.kind, &add.payload)
+        .validate_payload(add.kind.as_str(), &add.content)
         .unwrap();
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&remove.kind, &remove.payload)
+        .validate_payload(remove.kind.as_str(), &remove.content)
         .unwrap();
 }
 

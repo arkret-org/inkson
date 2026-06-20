@@ -43,7 +43,7 @@ pub(crate) fn shared_message_pin_add_operation(
     strand_id: &str,
     target_ref: &str,
     rank: &str,
-) -> anyhow::Result<crate::operation::EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let payload = cokret_sdk::PinAddPayload {
         pin_scope: cokret_sdk::PinScope::Strand {
             id: cokret_sdk::StrandId::new(strand_id.to_owned())
@@ -55,10 +55,12 @@ pub(crate) fn shared_message_pin_add_operation(
     };
     let payload = serde_json::to_value(payload)?;
     validate_pin_payload("ck.pin.add", &payload)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.pin.add")
-        .target_ref(target_ref)
-        .body(payload)
-        .build("yougen"))
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.pin.add")
+            .target_ref(target_ref)
+            .body(payload)
+            .build("yougen"),
+    )
 }
 
 pub(crate) fn shared_message_pin_remove_operation(
@@ -66,7 +68,7 @@ pub(crate) fn shared_message_pin_remove_operation(
     actor: &str,
     strand_id: &str,
     target_ref: &str,
-) -> anyhow::Result<crate::operation::EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let payload = cokret_sdk::PinRemovePayload {
         pin_scope: cokret_sdk::PinScope::Strand {
             id: cokret_sdk::StrandId::new(strand_id.to_owned())
@@ -77,10 +79,12 @@ pub(crate) fn shared_message_pin_remove_operation(
     };
     let payload = serde_json::to_value(payload)?;
     validate_pin_payload("ck.pin.remove", &payload)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.pin.remove")
-        .target_ref(target_ref)
-        .body(payload)
-        .build("yougen"))
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.pin.remove")
+            .target_ref(target_ref)
+            .body(payload)
+            .build("yougen"),
+    )
 }
 
 fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
