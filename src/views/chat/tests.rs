@@ -140,6 +140,36 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
 }
 
 #[test]
+fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level() {
+    let expiry = cokret_sdk::DisappearingMessageExpiry::new(
+        60_000,
+        cokret_sdk::DisappearingMessageExpiryTrigger::OnFirstRead,
+    )
+    .unwrap()
+    .with_grace_ms(5_000);
+    let op = chat_message_create_operation_with_expiry(
+        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "discussion",
+        "ck:message:01904100-0000-7000-8000-000000000005",
+        "short lived",
+        &[],
+        None,
+        Some(expiry),
+    )
+    .expect("builds");
+
+    assert_eq!(op.payload["expiry"]["ttl_ms"], 60_000);
+    assert_eq!(op.payload["expiry"]["trigger"], "on_first_read");
+    assert_eq!(op.payload["expiry"]["grace_ms"], 5_000);
+    assert!(op.payload["content"].get("expiry").is_none());
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .validate_payload(&op.kind, &op.payload)
+        .unwrap();
+}
+
+#[test]
 fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     let mentions = parse_mention_nodes("ping @here and @carol:example.com");
     let op = chat_message_create_operation(
@@ -522,6 +552,41 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
         restored[0].crypto_state,
         MessageCryptoState::Plaintext
     ));
+}
+
+#[test]
+fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
+    let temp = std::env::temp_dir().join(format!("yougen-expiry-stub-sidecar-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    let realm = "ck:realm:local";
+    let strand = "ck:strand:announce";
+    let message_id = "ck:message:expiring";
+    store.save_private_plaintext(
+        realm,
+        strand,
+        &format!("message:{message_id}"),
+        "secret discussion body",
+    );
+    let event = json!({
+        "event_id": "ck:event:expired",
+        "kind": "ck.message.create",
+        "actor_id": "did:web:alice.example",
+        "realm_id": realm,
+        "strand_id": strand,
+        "message_id": message_id,
+        "expiry_stub": true,
+        "expiry_state": "expired",
+        "content": {
+            "kind": "ck.content.text",
+            "body": "[expired]"
+        }
+    });
+
+    let message =
+        chat_message_from_event_with_sidecar(realm, &event, Some(&store), None).expect("message");
+
+    assert_eq!(message.body, "[expired]");
+    assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
 }
 
 #[test]

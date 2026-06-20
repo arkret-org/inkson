@@ -51,6 +51,7 @@ pub mod device_pairing;
 pub mod device_revoke;
 pub mod did_key;
 pub mod did_resolver;
+pub mod disappearing;
 pub mod discovery;
 pub mod dpop;
 pub mod event_signer;

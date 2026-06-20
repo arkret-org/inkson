@@ -549,6 +549,10 @@ pub fn ChatPanel(
                     for (realm_id, projection) in &sync.realms {
                         store.save_realm_tree_projection(realm_id.clone(), projection.clone());
                     }
+                    crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
+                        &mut store,
+                        &sync.realms,
+                    );
                 }
                 loaded_messages.extend(chat_messages_from_sync_realms_with_sidecar(
                     &sync.realms,
@@ -4015,6 +4019,7 @@ pub fn ChatPanel(
                                     &message_id,
                                     reply_to.as_deref(),
                                     &secure_content_bytes,
+                                    None,
                                 ) {
                                     Ok(build) => build,
                                     Err(message) => {

@@ -757,6 +757,10 @@ pub fn apply_response(
                 // surface needs to resolve a display identity.
                 ingest_member_identity_events_from_projection(store, id, body);
             }
+            crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
+                store,
+                &response.realms,
+            );
 
             apply_account_data(store, response, &account_did, &mut theme, &mut last_error);
             apply_notification_projection(store, response, invite_notifications);

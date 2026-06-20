@@ -125,7 +125,7 @@ fn yougen_accepts_server_contract_payloads() {
             "ck.edge.push.command.unregister_device",
             "ck.self.moderation.command.report"
         ],
-        "supported_bindings": [{"kind": "http_json", "base_path": "/_cokret"}],
+        "supported_bindings": [{"kind": "http_json", "base_url": "/_cokret"}],
         "supported_reducer_profiles": ["ck.reducer.v1"],
         "supported_schema_profiles": ["ck.schema.core.v1"],
         "auth_metadata": {"mode": "development"},
@@ -145,7 +145,10 @@ fn yougen_accepts_server_contract_payloads() {
             .supported_operations
             .contains(&"ck.index.query".to_owned())
     );
-    assert_eq!(describe.supported_bindings[0]["base_path"], "/_cokret");
+    assert_eq!(
+        describe.supported_bindings[0].base_url.as_deref(),
+        Some("/_cokret")
+    );
 
     let identity: yougen::models::IdentityDescribeOutcome = serde_json::from_value(json!({
         "service_did": "did:web:server.local",
@@ -397,7 +400,18 @@ fn yougen_accepts_server_contract_payloads() {
         "size_bytes": 23,
         "media_type": "application/octet-stream",
         "content_digest": blob_digest,
-        "upload_receipt": {"service_did": "did:web:server.local"}
+        "upload_receipt": {
+            "blob_ref": format!("ck:blob:{blob_digest}"),
+            "content_digest": blob_digest,
+            "size_bytes": 23,
+            "received_at": "2026-04-28T12:00:00Z",
+            "issuer_service_did": "did:web:server.local",
+            "signature": {
+                "kid": "did:web:server.local",
+                "alg": "EdDSA",
+                "sig": "c2ln"
+            }
+        }
     }))
     .unwrap();
     assert_eq!(blob.size_bytes, 23);
@@ -444,7 +458,7 @@ fn server_description_gates_event_envelope_write_plane() {
         ],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["events.submit", "account.subscribe"],
-        "auth_metadata": {},
+        "auth_metadata": {"mode": "development"},
         "limits": {},
         "plaintext_visibility": {"default": "e2ee", "allowed_services": []},
         "implemented_features": [],
@@ -533,7 +547,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_operations": ["ck.self.account.stream.subscribe"],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["account.subscribe"],
-        "auth_metadata": {},
+        "auth_metadata": {"mode": "development"},
         "limits": {},
         "plaintext_visibility": {"default": "encrypted"},
         "implemented_features": [],

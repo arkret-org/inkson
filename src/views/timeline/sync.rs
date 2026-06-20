@@ -92,6 +92,10 @@ pub fn timeline_events_from_sync_realms(
                 })
                 .unwrap_or("[message]")
                 .to_owned();
+            let is_expiry_stub = crate::disappearing::message_event_is_expiry_stub(event);
+            if is_expiry_stub {
+                body = crate::disappearing::message_expiry_stub_body(event);
+            }
             // B7: carry the raw `encrypted_content` block forward so the
             // audit-accessed emitter (later in this component) can try a
             // local MLS decrypt against it and fire `ck.audit.accessed`
@@ -103,7 +107,7 @@ pub fn timeline_events_from_sync_realms(
             // decrypting their OWN ciphertext) and otherwise a remote-member
             // decrypt-on-read. Leave the `[message]` fallback untouched when
             // neither store nor identity is available, or recovery soft-fails.
-            if let Some(encrypted_content) = encrypted_payload.as_ref() {
+            if !is_expiry_stub && let Some(encrypted_content) = encrypted_payload.as_ref() {
                 let message_realm = content
                     .get("realm_id")
                     .and_then(Value::as_str)

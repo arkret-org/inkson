@@ -65,6 +65,17 @@ pub(crate) fn message_create_operation(
     body: &str,
     incident_priority: Option<&str>,
 ) -> anyhow::Result<EventEnvelope> {
+    message_create_operation_with_expiry(realm_id, actor, thread_id, body, incident_priority, None)
+}
+
+pub(crate) fn message_create_operation_with_expiry(
+    realm_id: &str,
+    actor: &str,
+    thread_id: Option<&str>,
+    body: &str,
+    incident_priority: Option<&str>,
+    expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
+) -> anyhow::Result<EventEnvelope> {
     // Spec `event-payload.schema.json` `message_create_payload` requires
     // `strand_id` and `track_name` (`strand-and-message.md` §2). The default Strand
     // for a Realm is `ck:strand:<uuid>` (typed-id re-tag, matching
@@ -87,6 +98,9 @@ pub(crate) fn message_create_operation(
     );
     if let Some(thread_id) = thread_id {
         payload = payload.with_reply_to(thread_id);
+    }
+    if let Some(expiry) = expiry {
+        payload = payload.with_expiry(expiry);
     }
     Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
         .body(sdk_payload_value(

@@ -289,6 +289,30 @@ pub(crate) fn chat_message_create_operation(
     mentions: &[MentionNode],
     reply_to: Option<&str>,
 ) -> anyhow::Result<crate::operation::EventEnvelope> {
+    chat_message_create_operation_with_expiry(
+        realm_id,
+        actor,
+        strand_id,
+        _channel_kind,
+        message_id,
+        body,
+        mentions,
+        reply_to,
+        None,
+    )
+}
+
+pub(crate) fn chat_message_create_operation_with_expiry(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    _channel_kind: &str,
+    message_id: &str,
+    body: &str,
+    mentions: &[MentionNode],
+    reply_to: Option<&str>,
+    expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
+) -> anyhow::Result<crate::operation::EventEnvelope> {
     let actor_mentions = mentions
         .iter()
         .filter_map(|mention| mention.as_mention().cloned())
@@ -318,6 +342,9 @@ pub(crate) fn chat_message_create_operation(
     .with_message_id(message_id);
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
         payload = payload.with_reply_to(reply_to);
+    }
+    if let Some(expiry) = expiry {
+        payload = payload.with_expiry(expiry);
     }
     Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(strand_id)

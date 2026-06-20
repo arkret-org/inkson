@@ -236,6 +236,7 @@ pub(crate) fn build_secure_send(
     message_id: &str,
     reply_to: Option<&str>,
     plaintext_bytes: &[u8],
+    expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
 ) -> Result<SecureSendBuild, String> {
     let seal_ref = seal_view.move_seal_ref();
     let (
@@ -330,6 +331,9 @@ pub(crate) fn build_secure_send(
     .with_message_id(message_id.to_owned());
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
         message_payload = message_payload.with_reply_to(reply_to);
+    }
+    if let Some(expiry) = expiry {
+        message_payload = message_payload.with_expiry(expiry);
     }
     let msg_payload_value = message_payload
         .to_value()

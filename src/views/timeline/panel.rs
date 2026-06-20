@@ -154,6 +154,13 @@ pub fn TimelinePanel(
                 })
                 .await
             {
+                {
+                    let mut store = state_store.write();
+                    crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
+                        &mut store,
+                        &sync.realms,
+                    );
+                }
                 // Merge encrypted bodies on read: author sidecar first, then
                 // remote decrypt-on-read, both via the local state store. The
                 // read guard outlives the parse call; `try_local_mls_decrypt_core`

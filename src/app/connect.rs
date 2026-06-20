@@ -863,6 +863,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 store.set_realm_seal_view(id.clone(), view);
                                 store.ingest_move_event_states(id, body);
                             }
+                            crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
+                                &mut store,
+                                &sync.realms,
+                            );
                             // Keep notification projection current even when
                             // invites live on `authz/invites` rather than the
                             // normal account subscribe notification stream.
@@ -1078,6 +1082,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             *did_cache.write() = anchor.into_cache();
                         }
                         let synced_timeline = {
+                            {
+                                let mut store = state_store.write();
+                                crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
+                                    &mut store,
+                                    &sync.realms,
+                                );
+                            }
                             // Merge encrypted bodies on read (author sidecar →
                             // remote decrypt-on-read). The `store` write guard
                             // above is out of scope here; take a fresh read

@@ -338,21 +338,31 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         })
     });
     let has_encrypted_payload = encrypted_content_value.is_some();
+    let expiry_stub_candidate = candidates
+        .iter()
+        .copied()
+        .find(|candidate| crate::disappearing::message_event_is_expiry_stub(candidate));
+    let is_expiry_stub = expiry_stub_candidate.is_some();
     // Author-owned plaintext sidecar: look up the body the author stored on
     // encrypted send, keyed by `message:{message_id}` under the discussion
     // strand. Falls back to the decoded payload body (another member's message
     // we CAN decrypt, or a plaintext message).
-    let sidecar_body = state_store.and_then(|store| {
-        let message_id = first_string_in_candidates(&candidates, &["message_id"])?;
-        let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])?;
-        store.private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
-    });
+    let sidecar_body = if is_expiry_stub {
+        None
+    } else {
+        state_store.and_then(|store| {
+            let message_id = first_string_in_candidates(&candidates, &["message_id"])?;
+            let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])?;
+            store.private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
+        })
+    };
     let body_from_sidecar = sidecar_body.is_some();
     // P0 decrypt-on-read: a remote member's message carries ciphertext but no
     // author sidecar. Parse the canonical envelope, decrypt with this device's
     // MLS snapshot secret, and extract the Content Block text. Soft-fails to
     // `None` (→ Decrypting/KeyMissing) when the snapshot/secret is unavailable.
-    let decrypted_body = if !body_from_sidecar
+    let decrypted_body = if !is_expiry_stub
+        && !body_from_sidecar
         && let (Some((actor_id, device_id)), Some(store), Some(encrypted)) = (
             decrypt_identity,
             state_store,
@@ -363,10 +373,14 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         None
     };
     let body_was_decrypted = decrypted_body.is_some();
-    let body = match sidecar_body.or(decrypted_body) {
-        Some(plaintext) => plaintext,
-        None if has_encrypted_payload => String::new(),
-        None => text_body_from_message(&candidates)?,
+    let body = if let Some(stub) = expiry_stub_candidate {
+        crate::disappearing::message_expiry_stub_body(stub)
+    } else {
+        match sidecar_body.or(decrypted_body) {
+            Some(plaintext) => plaintext,
+            None if has_encrypted_payload => String::new(),
+            None => text_body_from_message(&candidates)?,
+        }
     };
     let explicit_message_kind = candidates
         .iter()
@@ -439,7 +453,9 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         // so the user is prompted to verify before trusting the body.
         _ => true,
     };
-    let crypto_state = if scope_mismatch || proof_verdict == ChatProofVerdict::Unresolved {
+    let crypto_state = if is_expiry_stub {
+        MessageCryptoState::Plaintext
+    } else if scope_mismatch || proof_verdict == ChatProofVerdict::Unresolved {
         // Either a Circle-scope mismatch, OR a present sender proof whose verify
         // key is not yet resolvable from the directory cache — flag for
         // verification rather than presenting the body as trusted.

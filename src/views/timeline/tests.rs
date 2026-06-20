@@ -1,7 +1,8 @@
 use super::operations::{
-    message_create_operation, message_revise_operation, public_update_requires_sanitization,
-    reaction_add_operation,
+    message_create_operation, message_create_operation_with_expiry, message_revise_operation,
+    public_update_requires_sanitization, reaction_add_operation,
 };
+use super::sync::timeline_events_from_sync_realms;
 
 #[test]
 fn message_create_operation_retags_realm_scope_to_strand_id() {
@@ -53,6 +54,71 @@ fn message_create_operation_attaches_incident_priority_under_realm() {
     cokret_sdk::schema::event_payload_validator_catalog()
         .validate_payload(&op.kind, &op.payload)
         .unwrap();
+}
+
+#[test]
+fn message_create_operation_with_expiry_attaches_top_level_expiry() {
+    let expiry = cokret_sdk::DisappearingMessageExpiry::new(
+        30_000,
+        cokret_sdk::DisappearingMessageExpiryTrigger::OnSend,
+    )
+    .unwrap();
+    let op = message_create_operation_with_expiry(
+        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "did:web:bob.example",
+        None,
+        "short lived",
+        None,
+        Some(expiry),
+    )
+    .expect("builds");
+
+    assert_eq!(op.payload["expiry"]["ttl_ms"], 30_000);
+    assert_eq!(op.payload["expiry"]["trigger"], "on_send");
+    assert!(op.payload["content"].get("expiry").is_none());
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .validate_payload(&op.kind, &op.payload)
+        .unwrap();
+}
+
+#[test]
+fn timeline_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
+    let path = std::env::temp_dir().join(format!(
+        "yougen-timeline-expiry-stub-{}.json",
+        crate::operation::uuid_v7()
+    ));
+    let mut store = crate::local_state::LocalStateStore::with_path(path);
+    let realm = "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
+    let strand = "ck:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
+    let message = "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a24";
+    store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");
+    let realms = std::collections::BTreeMap::from([(
+        realm.to_owned(),
+        serde_json::json!({
+            "summary": {"summary": "Demo"},
+            "timeline": {
+                "events": [{
+                    "kind": "ck.message.create",
+                    "event_id": "ck:event:expired",
+                    "actor_id": "did:web:alice.example",
+                    "realm_id": realm,
+                    "strand_id": strand,
+                    "message_id": message,
+                    "expiry_stub": true,
+                    "expiry_state": "expired",
+                    "content": {"kind": "ck.content.text", "body": "[expired]"}
+                }]
+            }
+        }),
+    )]);
+
+    let events = timeline_events_from_sync_realms(&realms, Some(&store), None);
+    let expired = events
+        .iter()
+        .find(|event| event.id == "ck:event:expired")
+        .expect("expired event");
+
+    assert_eq!(expired.body, "[expired]");
 }
 
 #[test]

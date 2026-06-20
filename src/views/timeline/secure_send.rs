@@ -86,6 +86,7 @@ pub(super) fn send_timeline_encrypted_message(input: TimelineEncryptedSend) -> b
         &message_id,
         reply_to.as_deref(),
         &content_bytes,
+        None,
     ) {
         Ok(build) => build,
         Err(_) => {

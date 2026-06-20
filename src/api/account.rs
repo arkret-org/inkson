@@ -92,6 +92,7 @@ impl CokretApi {
                 .filter(|value| !value.is_empty())
                 .map(|value| device_id_for_request_field("device_id", value))
                 .transpose()?,
+            policy_evidence: None,
             proof: None,
         };
         self.post_json("_cokret/gate/account/register", &body).await
