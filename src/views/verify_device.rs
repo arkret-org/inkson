@@ -1249,7 +1249,7 @@ pub fn VerifyDevicePanel(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.submit_event_envelope(&envelope).await
+                                                api.submit_sdk_event(&envelope).await
                                             },
                                         )
                                         .await

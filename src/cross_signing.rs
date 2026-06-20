@@ -33,7 +33,7 @@ use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 
 use crate::did_key::encode_ed25519_did_key_multibase;
-use crate::operation::{EventEnvelope, OperationBuilder};
+use crate::operation::OperationBuilder;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 /// One step of a complete cross-signing setup. Each variant maps to a specific
@@ -511,7 +511,7 @@ impl CrossSigningSetupOutput {
         Ok(())
     }
 
-    /// Construct the [`EventEnvelope`] yougen submits to write the
+    /// Construct the SDK Event yougen submits to write the
     /// `ck.cross_signing.publish` event. The caller supplies the
     /// `realm_id` of the principal's control Realm and the `actor` DID
     /// (typically the same as the principal). The envelope is unsigned;
@@ -521,15 +521,14 @@ impl CrossSigningSetupOutput {
         &self,
         realm_id: &str,
         actor: &str,
-    ) -> anyhow::Result<EventEnvelope> {
+    ) -> anyhow::Result<cokret_sdk::Event> {
         let body = serde_json::to_value(&self.publish_content)
             .context("serialize cross_signing publish content")?;
-        Ok(
-            OperationBuilder::new(realm_id, actor, "ck.cross_signing.publish")
-                .target_ref(self.publish_content.principal_id.as_str())
-                .body(body)
-                .build("yougen"),
-        )
+        OperationBuilder::new(realm_id, actor, "ck.cross_signing.publish")
+            .target_ref(self.publish_content.principal_id.as_str())
+            .body(body)
+            .build("yougen")
+            .to_sdk_event_for_submit()
     }
 }
 
@@ -979,24 +978,27 @@ mod tests {
 
         let envelope = out
             .build_publish_envelope(
-                "ck:space:01964137-0000-7000-8000-000000000aaa",
+                "ck:realm:01964137-0000-7000-8000-000000000aaa",
                 principal.as_str(),
             )
             .unwrap();
-        assert_eq!(envelope.kind, "ck.cross_signing.publish");
+        assert_eq!(envelope.kind.as_str(), "ck.cross_signing.publish");
         assert_eq!(
-            envelope.local_target_ref(),
+            envelope
+                .unsigned
+                .get("local_target_ref")
+                .and_then(serde_json::Value::as_str),
             Some(principal.as_str()),
             "target_ref must point at the principal whose keys these are"
         );
         // The full publish content body must round-trip — losing any
         // field here is the same as publishing a malformed event, which
         // the SDK validator would reject on the receiver side.
-        let body_principal = envelope.payload["principal_id"]
+        let body_principal = envelope.content["principal_id"]
             .as_str()
             .expect("body.principal_id is a string");
         assert_eq!(body_principal, principal.as_str());
-        assert_eq!(envelope.payload["generation"].as_u64(), Some(1));
+        assert_eq!(envelope.content["generation"].as_u64(), Some(1));
     }
 
     #[test]
