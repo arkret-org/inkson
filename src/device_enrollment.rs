@@ -17,7 +17,6 @@
 
 use crate::api::CokretApi;
 use crate::coauth::CoauthApi;
-use crate::operation::EventEnvelope;
 use crate::secure_key_store::SigningSeedMaterial;
 
 /// Inputs the caller resolves before invoking [`enroll_current_device`]. Kept as
@@ -59,20 +58,20 @@ pub fn device_public_key_multibase(material: &SigningSeedMaterial) -> String {
 pub fn parse_signed_device_authorize(
     signed_event: &serde_json::Value,
     expected_device_id: &str,
-) -> anyhow::Result<EventEnvelope> {
-    let envelope: EventEnvelope = serde_json::from_value(signed_event.clone())
-        .map_err(|err| anyhow::anyhow!("decode signed device.authorize: {err}"))?;
-    if envelope.kind != "ck.device.authorize" {
+) -> anyhow::Result<cokret_sdk::Event> {
+    let event: cokret_sdk::Event = serde_json::from_value(signed_event.clone())
+        .map_err(|err| anyhow::anyhow!("decode signed device.authorize SDK Event: {err}"))?;
+    if event.kind.as_str() != "ck.device.authorize" {
         anyhow::bail!(
             "enrollment authority returned unexpected event kind {:?}",
-            envelope.kind
+            event.kind.as_str()
         );
     }
-    if envelope.proofs.is_empty() {
+    if event.proofs.is_empty() {
         anyhow::bail!("enrollment authority returned an unsigned device.authorize");
     }
-    let payload_device_id = envelope
-        .payload
+    let payload_device_id = event
+        .content
         .get("device_id")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
@@ -81,7 +80,7 @@ pub fn parse_signed_device_authorize(
             "device.authorize device_id {payload_device_id:?} does not match this session device {expected_device_id:?}"
         );
     }
-    Ok(envelope)
+    Ok(event)
 }
 
 /// Enroll the current session device: ask `coauth` to sign a
@@ -105,8 +104,8 @@ pub async fn enroll_current_device(
             request.not_before.as_deref(),
         )
         .await?;
-    let envelope = parse_signed_device_authorize(&signed_event, expected_device_id)?;
-    principal_api.submit_event_envelope(&envelope).await?;
+    let event = parse_signed_device_authorize(&signed_event, expected_device_id)?;
+    principal_api.submit_signed_sdk_event(&event).await?;
     Ok(())
 }
 
@@ -126,7 +125,8 @@ mod tests {
             "authorization_ref": "did:webvh:example:users:alice#device-enrollment",
             "actor_seq": 3,
             "created_at": "2026-06-17T00:00:00Z",
-            "hlc": "2026-06-17T00:00:00Z|0|ck:device:x",
+            "hlc": "019641370000-0000-12345678",
+            "prev_refs": [],
             "payload": {
                 "principal_id": "did:webvh:example:users:alice",
                 "device_id": device_id,
@@ -143,7 +143,7 @@ mod tests {
                 "kind": "detached_jws",
                 "alg": "EdDSA",
                 "verification_method": "did:webvh:example:auth-server#enroll-key-1",
-                "event_digest": "sha256:0000",
+                "event_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 "created_at": "2026-06-17T00:00:00Z",
                 "domain": "did:webvh:example:auth-server",
                 "audience": "did:webvh:soland.example",
@@ -154,18 +154,18 @@ mod tests {
 
     #[test]
     fn accepts_matching_signed_device_authorize() {
-        let device_id = "ck:device:01964137-0000-8000-8000-000000000002";
+        let device_id = "ck:device:01964137-0000-7000-8000-000000000002";
         let event = signed_device_authorize(device_id);
         let parsed = parse_signed_device_authorize(&event, device_id).expect("parse");
-        assert_eq!(parsed.kind, "ck.device.authorize");
+        assert_eq!(parsed.kind.as_str(), "ck.device.authorize");
         assert_eq!(parsed.actor_seq, 3);
     }
 
     #[test]
     fn rejects_device_id_mismatch() {
-        let event = signed_device_authorize("ck:device:01964137-0000-8000-8000-000000000002");
+        let event = signed_device_authorize("ck:device:01964137-0000-7000-8000-000000000002");
         let err =
-            parse_signed_device_authorize(&event, "ck:device:01964137-0000-8000-8000-0000000000ff")
+            parse_signed_device_authorize(&event, "ck:device:01964137-0000-7000-8000-0000000000ff")
                 .expect_err("mismatch must fail closed");
         assert!(
             err.to_string()
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn rejects_unsigned_event() {
-        let device_id = "ck:device:01964137-0000-8000-8000-000000000002";
+        let device_id = "ck:device:01964137-0000-7000-8000-000000000002";
         let mut event = signed_device_authorize(device_id);
         event["proofs"] = json!([]);
         let err = parse_signed_device_authorize(&event, device_id)
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_kind() {
-        let device_id = "ck:device:01964137-0000-8000-8000-000000000002";
+        let device_id = "ck:device:01964137-0000-7000-8000-000000000002";
         let mut event = signed_device_authorize(device_id);
         event["kind"] = json!("ck.device.revoke");
         let err = parse_signed_device_authorize(&event, device_id)

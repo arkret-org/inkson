@@ -277,6 +277,20 @@ impl CokretApi {
         Ok(SubmitEventResult::from(response))
     }
 
+    /// Submit a fully-prepared, already-signed SDK [`cokret_sdk::Event`]
+    /// without passing through the local `EventEnvelope` builder path.
+    ///
+    /// This is for service-returned Events that are already the authoritative
+    /// wire object, such as account-authority device enrollment. It does not
+    /// stamp `seal_ref` or attach proofs because either change would mutate the
+    /// signed transcript.
+    pub(crate) async fn submit_signed_sdk_event(
+        &self,
+        signed: &cokret_sdk::Event,
+    ) -> anyhow::Result<SubmitEventResult> {
+        self.post_signed_sdk_event(signed, uuid_v7()).await
+    }
+
     /// `ck.self.events.command.submit` in batch form over typed envelopes. Spec binds
     /// events.submit to `POST /_cokret/self/events` and distinguishes the three
     /// accepted body shapes (single envelope,
