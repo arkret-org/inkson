@@ -527,8 +527,7 @@ impl CrossSigningSetupOutput {
         OperationBuilder::new(realm_id, actor, "ck.cross_signing.publish")
             .target_ref(self.publish_content.principal_id.as_str())
             .body(body)
-            .build("yougen")
-            .to_sdk_event_for_submit()
+            .build_sdk_event("yougen")
     }
 }
 

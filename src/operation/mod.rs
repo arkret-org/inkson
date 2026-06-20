@@ -405,6 +405,10 @@ impl OperationBuilder {
         self.build_with_deps(node_id, Vec::new())
     }
 
+    pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<cokret_sdk::Event> {
+        self.build(node_id).to_sdk_event_for_submit()
+    }
+
     pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> EventEnvelope {
         let hlc = Hlc::now(node_id);
         let operation_id = typed_operation_id(&uuid_v7());
@@ -447,6 +451,15 @@ impl OperationBuilder {
             unsigned,
             proofs: Vec::new(),
         }
+    }
+
+    pub fn build_sdk_event_with_deps(
+        self,
+        node_id: &str,
+        deps: Vec<String>,
+    ) -> anyhow::Result<cokret_sdk::Event> {
+        self.build_with_deps(node_id, deps)
+            .to_sdk_event_for_submit()
     }
 }
 

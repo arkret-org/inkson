@@ -429,7 +429,7 @@ impl CokretApi {
             .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
         let introduction_evidence_digest = contact_consent_evidence_digest(consent_grant_ref)?;
         let invite_id = format!("ck:invite:{}", crate::operation::uuid_v7());
-        let op = crate::operation::ck_ops::invite_create_structured(
+        let event = crate::operation::ck_ops::invite_create_structured(
             realm_id,
             actor_id,
             &invite_id,
@@ -438,8 +438,7 @@ impl CokretApi {
             invite_delivery_target,
             &introduction_evidence_digest,
         )?
-        .build("yougen");
-        let event = op.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         let submitted = self.submit_sdk_event(&event).await?;
         Ok(submitted.event_id)
     }

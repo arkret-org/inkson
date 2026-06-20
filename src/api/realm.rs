@@ -261,10 +261,9 @@ impl CokretApi {
                 "Realm encryption_profile is locked at creation; create a new Realm to change E2EE mode."
             );
         }
-        let envelope =
+        let event =
             crate::operation::ck_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)?
-                .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+                .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -278,10 +277,9 @@ impl CokretApi {
         actor_id: &str,
         patch: Value,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope =
+        let event =
             crate::operation::ck_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
-                .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+                .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -381,7 +379,7 @@ impl CokretApi {
         let invitee = self
             .resolve_invitee_for_invite(target, realm_id, actor_id)
             .await?;
-        let envelope = crate::operation::ck_ops::invite_create_structured(
+        let event = crate::operation::ck_ops::invite_create_structured(
             realm_id,
             actor_id,
             invite_id,
@@ -390,8 +388,7 @@ impl CokretApi {
             invitee.invite_delivery_target,
             &invitee.introduction_evidence_digest,
         )?
-        .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -403,8 +400,7 @@ impl CokretApi {
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
         let mut event = crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?
-            .build("yougen")
-            .to_sdk_event_for_submit()?;
+            .build_sdk_event("yougen")?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
@@ -474,10 +470,8 @@ impl CokretApi {
         invite_id: &str,
         reason: Option<&str>,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope =
-            crate::operation::ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?
-                .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        let event = crate::operation::ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?
+            .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -575,7 +569,7 @@ impl CokretApi {
         grant_id: &str,
         subject: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = crate::operation::ck_ops::capability_grant_actions(
+        let event = crate::operation::ck_ops::capability_grant_actions(
             realm_id,
             actor_id,
             grant_id,
@@ -584,8 +578,7 @@ impl CokretApi {
             None,
             Value::Null,
         )
-        .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -599,15 +592,14 @@ impl CokretApi {
         grant_id: &str,
         reason: Option<&str>,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = crate::operation::ck_ops::capability_revoke(
+        let event = crate::operation::ck_ops::capability_revoke(
             realm_id,
             actor_id,
             grant_id,
             "ck.realm.admin",
             reason,
         )
-        .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -622,7 +614,7 @@ impl CokretApi {
         verdict: &str,
         reason_code: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = crate::operation::ck_ops::moderation_decision(
+        let event = crate::operation::ck_ops::moderation_decision(
             realm_id,
             actor_id,
             decision_id,
@@ -630,8 +622,7 @@ impl CokretApi {
             verdict,
             reason_code,
         )
-        .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -645,14 +636,13 @@ impl CokretApi {
         decision_ref: &str,
         reason_code: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = crate::operation::ck_ops::moderation_decision_lift(
+        let event = crate::operation::ck_ops::moderation_decision_lift(
             realm_id,
             actor_id,
             decision_ref,
             reason_code,
         )
-        .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -664,11 +654,10 @@ impl CokretApi {
         appeal_id: &str,
         notes_ref: Option<&str>,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = crate::operation::ck_ops::moderation_appeal_review(
+        let event = crate::operation::ck_ops::moderation_appeal_review(
             realm_id, actor_id, appeal_id, notes_ref,
         )
-        .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -687,7 +676,7 @@ impl CokretApi {
         reason_text_ref: &str,
         modify_decision_ref: Option<&str>,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = crate::operation::ck_ops::moderation_appeal_decision(
+        let event = crate::operation::ck_ops::moderation_appeal_decision(
             realm_id,
             actor_id,
             appeal_id,
@@ -695,8 +684,7 @@ impl CokretApi {
             reason_text_ref,
             modify_decision_ref,
         )
-        .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 
@@ -725,16 +713,14 @@ impl CokretApi {
             reason_text_ref,
             None,
         )
-        .build("yougen");
+        .build_sdk_event("yougen")?;
         let lift_event = crate::operation::ck_ops::moderation_decision_lift(
             realm_id,
             actor_id,
             decision_ref,
             lift_reason_code,
         )
-        .build("yougen");
-        let appeal_event = appeal_event.to_sdk_event_for_submit()?;
-        let lift_event = lift_event.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.sign_and_submit_moderation_batch(realm_id, vec![appeal_event, lift_event])
             .await
     }
@@ -780,8 +766,7 @@ impl CokretApi {
             appeal_reason_text_ref,
             Some(&new_decision_id),
         )
-        .build("yougen");
-        let appeal_event = appeal_event.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         let new_decision = new_decision.to_sdk_event_for_submit()?;
         let result = self
             .sign_and_submit_moderation_batch(realm_id, vec![appeal_event, new_decision])
@@ -834,14 +819,13 @@ impl CokretApi {
         appeal_id: &str,
         close_reason: Option<&str>,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = crate::operation::ck_ops::moderation_appeal_close(
+        let event = crate::operation::ck_ops::moderation_appeal_close(
             realm_id,
             actor_id,
             appeal_id,
             close_reason,
         )
-        .build("yougen");
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
     }
 

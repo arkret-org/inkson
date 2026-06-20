@@ -33,8 +33,7 @@ pub fn build_read_cursor_advance_event(
 ) -> anyhow::Result<cokret_sdk::Event> {
     OperationBuilder::new(&marker.body.realm_id, &marker.actor, &marker.marker_type)
         .body(marker.ck_read_cursor_payload())
-        .build(&marker.device_id)
-        .to_sdk_event_for_submit()
+        .build_sdk_event(&marker.device_id)
 }
 
 pub(crate) fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {

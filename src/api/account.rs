@@ -403,8 +403,7 @@ impl CokretApi {
         let key = crate::account_data::AccountDataKey::from_wire(type_key);
         let event =
             crate::account_data::build_account_data_set(&principal_realm_id, &actor, &key, content)
-                .build("yougen-account-data");
-        let event = event.to_sdk_event_for_submit()?;
+                .build_sdk_event("yougen-account-data")?;
         let result = self.submit_sdk_event(&event).await;
         match result {
             Ok(value) => Ok(AccountDataSetResult::Stored {
@@ -452,8 +451,7 @@ impl CokretApi {
             encrypted_payload,
             expected_state_digest,
         )?
-        .build("yougen-private-account-data");
-        let event = event.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen-private-account-data")?;
         let result = self.submit_sdk_event(&event).await;
         match result {
             Ok(value) => Ok(AccountDataSetResult::Stored {
@@ -488,8 +486,7 @@ impl CokretApi {
         let key = crate::account_data::AccountDataKey::from_wire(type_key);
         let event =
             crate::account_data::build_account_data_tombstone(&principal_realm_id, &actor, &key)
-                .build("yougen-account-data");
-        let event = event.to_sdk_event_for_submit()?;
+                .build_sdk_event("yougen-account-data")?;
         match self.submit_sdk_event(&event).await {
             Ok(_) => Ok(()),
             Err(error) => {

@@ -137,7 +137,7 @@ impl CokretApi {
         capture_kind: cokret_sdk::RecordingCaptureKind,
         mode: cokret_sdk::RecordingMode,
     ) -> anyhow::Result<SubmitEventResult> {
-        let op = crate::webrtc::build_call_recording_start(
+        let event = crate::webrtc::build_call_recording_start(
             realm_id,
             actor_id,
             call_id,
@@ -146,8 +146,7 @@ impl CokretApi {
             mode,
             true,
         )
-        .build("yougen");
-        let event = op.to_sdk_event_for_submit()?;
+        .build_sdk_event("yougen")?;
         self.submit_sdk_event(&event).await
     }
 

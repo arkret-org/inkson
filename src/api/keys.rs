@@ -387,7 +387,7 @@ impl CokretApi {
         let control_realm = cokret_sdk::auth::principal_control_realm_id(&principal);
         let seal_view = self.events_frontier_realm_seal_view(&control_realm).await?;
         let basis = seal_view.seal_basis();
-        let envelope = crate::operation::ck_ops::device_revoke(
+        let event = crate::operation::ck_ops::device_revoke(
             &control_realm,
             actor_id,
             target_device_id,
@@ -403,8 +403,7 @@ impl CokretApi {
             control_event_set_root: basis.control_event_set_root.as_str().to_owned(),
             state_root: basis.state_root.as_str().to_owned(),
         })
-        .build(revoked_by_device_id);
-        let event = envelope.to_sdk_event_for_submit()?;
+        .build_sdk_event(revoked_by_device_id)?;
         self.submit_sdk_event(&event).await
     }
 
