@@ -50,7 +50,7 @@ impl CokretApi {
 
         let realm_id = format!("ck:realm:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
-        let mut envelopes = build_realm_bootstrap_events(
+        let envelopes = build_realm_bootstrap_events(
             &realm_id,
             actor_id,
             title,
@@ -71,11 +71,15 @@ impl CokretApi {
         // `ck.realm.create` precondition asserts `head_eq null`; follow-up
         // facet events in the same batch are admitted after soland
         // materialises the creator membership from the create event.
-        // Sign every envelope before they reach the wire; the batch
-        // submitter takes pre-signed typed envelopes.
+        // Sign every SDK Event before it reaches the wire; the batch
+        // submitter takes pre-signed typed Events.
+        let mut events: Vec<cokret_sdk::Event> = envelopes
+            .iter()
+            .map(EventEnvelope::to_sdk_event_for_submit)
+            .collect::<anyhow::Result<_>>()?;
         let proof_context = self.event_proof_context().await?;
-        for envelope in envelopes.iter_mut() {
-            crate::event_signer::sign_with_active_context(envelope, proof_context.clone())
+        for event in events.iter_mut() {
+            crate::event_signer::sign_sdk_event_with_active_context(event, proof_context.clone())
                 .map_err(|err| {
                     anyhow::anyhow!(
                         "no active signer configured \u{2014} cannot submit unsigned realm bootstrap: {err}"
@@ -83,7 +87,7 @@ impl CokretApi {
                 })?;
         }
         let idempotency_key = format!("ck:operation:{}", uuid_v7());
-        self.submit_events_batch(&envelopes, Some(&idempotency_key))
+        self.submit_signed_sdk_events_batch(&events, Some(&idempotency_key))
             .await?;
 
         let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
@@ -775,8 +779,8 @@ impl CokretApi {
         Ok((new_decision_id, result))
     }
 
-    /// Seal-stamp + sign each envelope in a moderation control transaction,
-    /// then submit them atomically via [`Self::submit_events_batch`]. Shared
+    /// Seal-stamp + sign each event in a moderation control transaction, then
+    /// submit them atomically via [`Self::submit_signed_sdk_events_batch`]. Shared
     /// by [`Self::appeal_overturn_atomic`] / [`Self::appeal_modify_atomic`].
     /// All envelopes ride the same Realm seal head so the batch is one
     /// consistent control view.
@@ -786,21 +790,30 @@ impl CokretApi {
         mut envelopes: Vec<crate::operation::EventEnvelope>,
     ) -> anyhow::Result<Value> {
         let seal = self.current_seal_for(realm_id).await?;
-        let proof_context = self.event_proof_context().await?;
         for envelope in &mut envelopes {
             if envelope.seal_ref.is_none() && !envelope.effects.is_empty() {
                 envelope.seal_ref = Some(seal.clone());
             }
-            if envelope.proofs.is_empty() {
-                crate::event_signer::sign_with_active_context(envelope, proof_context.clone())
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "no active signer configured \u{2014} cannot submit moderation batch: {err}"
-                        )
-                    })?;
+        }
+        let mut events: Vec<cokret_sdk::Event> = envelopes
+            .iter()
+            .map(EventEnvelope::to_sdk_event_for_submit)
+            .collect::<anyhow::Result<_>>()?;
+        let proof_context = self.event_proof_context().await?;
+        for event in events.iter_mut() {
+            if event.proofs.is_empty() {
+                crate::event_signer::sign_sdk_event_with_active_context(
+                    event,
+                    proof_context.clone(),
+                )
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "no active signer configured \u{2014} cannot submit moderation batch: {err}"
+                    )
+                })?;
             }
         }
-        self.submit_events_batch(&envelopes, None).await
+        self.submit_signed_sdk_events_batch(&events, None).await
     }
 
     /// Close an appeal (`ck.moderation.appeal.close`). Reviewer close or

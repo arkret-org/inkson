@@ -293,13 +293,13 @@ impl CokretApi {
     /// by URL suffix. The federation shape is S2S only and yougen MUST
     /// NEVER serialise it.
     ///
-    /// Envelopes MUST already be signed by the caller (typically via
-    /// `event_signer::sign_with_active`) — the batch path does not
-    /// auto-sign because callers commonly need an atomic seal_ref +
-    /// sign sequence the per-envelope helper cannot replicate.
-    pub async fn submit_events_batch(
+    /// SDK Events MUST already be signed by the caller (typically via
+    /// `event_signer::sign_sdk_event_with_active_context`) — the batch path
+    /// does not auto-sign because callers commonly need an atomic seal_ref +
+    /// sign sequence the per-event helper cannot replicate.
+    pub(crate) async fn submit_signed_sdk_events_batch(
         &self,
-        envelopes: &[EventEnvelope],
+        sdk_events: &[cokret_sdk::Event],
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<Value> {
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
@@ -307,15 +307,11 @@ impl CokretApi {
         // body is one of the three spec-defined `ck.self.events.command.submit`
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
-        let sdk_events: Vec<cokret_sdk::Event> = envelopes
-            .iter()
-            .map(EventEnvelope::to_sdk_event_for_submit)
-            .collect::<anyhow::Result<_>>()?;
-        for sdk_event in &sdk_events {
+        for sdk_event in sdk_events {
             validate_signed_sdk_event_for_submit(sdk_event)?;
         }
         let body = cokret_sdk::EventsSubmitBatchRequestBody {
-            events: sdk_events,
+            events: sdk_events.to_vec(),
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
         let request = self
@@ -332,6 +328,21 @@ impl CokretApi {
         let response = serde_json::to_value(response)?;
         ensure_events_submit_batch_accepted(&response)?;
         Ok(response)
+    }
+
+    /// Compatibility wrapper for old local builders. New code should submit
+    /// SDK Events through [`Self::submit_signed_sdk_events_batch`].
+    pub async fn submit_events_batch(
+        &self,
+        envelopes: &[EventEnvelope],
+        idempotency_key: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let sdk_events: Vec<cokret_sdk::Event> = envelopes
+            .iter()
+            .map(EventEnvelope::to_sdk_event_for_submit)
+            .collect::<anyhow::Result<_>>()?;
+        self.submit_signed_sdk_events_batch(&sdk_events, idempotency_key)
+            .await
     }
 
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
