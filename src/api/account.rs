@@ -644,8 +644,8 @@ impl CokretApi {
         &self,
         marker: &crate::local_state::ReadMarkerRecord,
     ) -> anyhow::Result<SubmitEventResult> {
-        let event = build_read_cursor_advance_event(marker);
-        self.submit_event_envelope(&event).await
+        let event = build_read_cursor_advance_event(marker)?;
+        self.submit_sdk_event(&event).await
     }
 
     pub async fn invites(&self) -> anyhow::Result<InvitesView> {
