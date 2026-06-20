@@ -439,7 +439,8 @@ impl CokretApi {
             &introduction_evidence_digest,
         )?
         .build("yougen");
-        let submitted = self.submit_event_envelope(&op).await?;
+        let event = op.to_sdk_event_for_submit()?;
+        let submitted = self.submit_sdk_event(&event).await?;
         Ok(submitted.event_id)
     }
 

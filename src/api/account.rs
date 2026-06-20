@@ -404,7 +404,8 @@ impl CokretApi {
         let event =
             crate::account_data::build_account_data_set(&principal_realm_id, &actor, &key, content)
                 .build("yougen-account-data");
-        let result = self.submit_event_envelope(&event).await;
+        let event = event.to_sdk_event_for_submit()?;
+        let result = self.submit_sdk_event(&event).await;
         match result {
             Ok(value) => Ok(AccountDataSetResult::Stored {
                 response: serde_json::to_value(value)?,
@@ -452,7 +453,8 @@ impl CokretApi {
             expected_state_digest,
         )?
         .build("yougen-private-account-data");
-        let result = self.submit_event_envelope(&event).await;
+        let event = event.to_sdk_event_for_submit()?;
+        let result = self.submit_sdk_event(&event).await;
         match result {
             Ok(value) => Ok(AccountDataSetResult::Stored {
                 response: serde_json::to_value(value)?,
@@ -487,7 +489,8 @@ impl CokretApi {
         let event =
             crate::account_data::build_account_data_tombstone(&principal_realm_id, &actor, &key)
                 .build("yougen-account-data");
-        match self.submit_event_envelope(&event).await {
+        let event = event.to_sdk_event_for_submit()?;
+        match self.submit_sdk_event(&event).await {
             Ok(_) => Ok(()),
             Err(error) => {
                 if unsupported_status(&error).is_some() {

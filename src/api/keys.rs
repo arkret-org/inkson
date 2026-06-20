@@ -404,7 +404,8 @@ impl CokretApi {
             state_root: basis.state_root.as_str().to_owned(),
         })
         .build(revoked_by_device_id);
-        self.submit_event_envelope(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_sdk_event(&event).await
     }
 
     /// Rename is not exposed as a spec-defined Cokret HTTP endpoint.

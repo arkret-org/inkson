@@ -147,7 +147,8 @@ impl CokretApi {
             true,
         )
         .build("yougen");
-        self.submit_event_envelope(&op).await
+        let event = op.to_sdk_event_for_submit()?;
+        self.submit_sdk_event(&event).await
     }
 
     // ── Media ───────────────────────────────────────────────────────
