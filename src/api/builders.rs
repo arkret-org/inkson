@@ -22,6 +22,10 @@ use crate::operation::{
     trim_realm_id, uuid_v7,
 };
 
+fn sdk_event_from_envelope(envelope: EventEnvelope) -> anyhow::Result<cokret_sdk::Event> {
+    envelope.to_sdk_event_for_submit()
+}
+
 /// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
 /// (renamed from `handle_uri` @ cokret-spec 7157ee8 — the `cokret://`
 /// URI handle form has been retired).
@@ -110,14 +114,14 @@ pub fn build_realm_bootstrap_events(
     trust_domain: &str,
     invitees: &[String],
     plaintext_visible_services: &[String],
-) -> anyhow::Result<Vec<EventEnvelope>> {
+) -> anyhow::Result<Vec<cokret_sdk::Event>> {
     // Spec realm-and-space.md §2.6: creator membership is auto-derived
     // by the reducer from `ck.realm.create`'s `created_by == actor_id`
     // (renamed from `created_by_principal` at spec head 37ce729).
     // The bootstrap MUST NOT emit an explicit `ck.member.state{join}` for
     // the creator — the reducer writes that cell atomically with the
     // create event.
-    let mut events: Vec<EventEnvelope> = Vec::new();
+    let mut events: Vec<cokret_sdk::Event> = Vec::new();
     if history_visibility.trim() == "restricted" {
         return Err(anyhow::anyhow!(
             "restricted history_visibility requires a ck.realm.history_sharing_policy event in the same ordered batch"
@@ -201,7 +205,7 @@ pub fn build_realm_create_event(
     digest_algorithm: &str,
     trust_domain: &str,
     plaintext_visible_services: &[String],
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     // Per spec realm-and-space.md §2.3: high_assurance security_class
     // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
     let effective_federation_policy =
@@ -297,7 +301,7 @@ pub fn build_realm_create_event(
         })
         .build("yougen");
     envelope.created_at = created_at_for_object;
-    Ok(envelope)
+    sdk_event_from_envelope(envelope)
 }
 
 pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
@@ -382,7 +386,7 @@ pub fn build_space_create_event(
     kind: &str,
     parent_space_id: Option<&str>,
     default_realm_id: Option<&str>,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let created_at = event_timestamp();
     // Build the canonical Space object via the SDK strong type so that
     // field names / shape stay aligned with `space_create_payload`
@@ -470,7 +474,7 @@ pub fn build_space_create_event(
         })
         .build("yougen");
     envelope.created_at = created_at;
-    Ok(envelope)
+    sdk_event_from_envelope(envelope)
 }
 
 /// Build a Space lifecycle event (`ck.space.archive` /
@@ -483,7 +487,7 @@ pub fn build_space_lifecycle_event(
     realm_id: &str,
     actor_id: &str,
     kind: &str,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let (prior_state, next_state) = match kind {
         "ck.space.archive" => ("active", "archived"),
         "ck.space.restore" => ("archived", "active"),
@@ -531,7 +535,7 @@ pub fn build_space_lifecycle_event(
         .effects(effects)
         .build("yougen");
     envelope.created_at = created_at;
-    Ok(envelope)
+    sdk_event_from_envelope(envelope)
 }
 
 /// Build a Realm facet state event (`ck.realm.join_rule`,
@@ -541,7 +545,7 @@ pub fn build_realm_state_event(
     actor_id: &str,
     kind: &str,
     value: Value,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let cell_family = match kind {
         "ck.realm.join_rule" => "ck.component.realm.join_rule.v1",
         "ck.realm.history_visibility" => "ck.component.realm.history_visibility.v1",
@@ -607,7 +611,7 @@ pub fn build_realm_state_event(
         .effects(effects)
         .build("yougen");
     envelope.created_at = created_at;
-    Ok(envelope)
+    sdk_event_from_envelope(envelope)
 }
 
 /// Build a `ck.realm.archive` lifecycle facet event. Realm archive is a
@@ -617,7 +621,7 @@ pub fn build_realm_archive_event(
     actor_id: &str,
     archived: bool,
     reason: Option<&str>,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.archive.v1", &realm_id_wire);
@@ -646,7 +650,7 @@ pub fn build_realm_archive_event(
         .effects(effects)
         .build("yougen");
     envelope.created_at = created_at;
-    Ok(envelope)
+    sdk_event_from_envelope(envelope)
 }
 
 /// Build a `ck.realm.tombstone` terminal lifecycle event. The successor Realm
@@ -657,7 +661,7 @@ pub fn build_realm_tombstone_event(
     actor_id: &str,
     successor_realm_id: &str,
     reason: &str,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let successor_realm_id = successor_realm_id.trim();
     if successor_realm_id.is_empty() {
         return Err(anyhow::anyhow!(
@@ -695,7 +699,7 @@ pub fn build_realm_tombstone_event(
         .effects(effects)
         .build("yougen");
     envelope.created_at = created_at;
-    Ok(envelope)
+    sdk_event_from_envelope(envelope)
 }
 
 /// Build a `ck.realm.destroy` terminal lifecycle event.
@@ -703,7 +707,7 @@ pub fn build_realm_destroy_event(
     realm_id: &str,
     actor_id: &str,
     reason: &str,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let reason = reason.trim();
     if reason.is_empty() {
         return Err(anyhow::anyhow!("reason is required for ck.realm.destroy"));
@@ -734,14 +738,14 @@ pub fn build_realm_destroy_event(
         .effects(effects)
         .build("yougen");
     envelope.created_at = created_at;
-    Ok(envelope)
+    sdk_event_from_envelope(envelope)
 }
 
 pub fn build_realm_history_sharing_policy_event(
     realm_id: &str,
     actor_id: &str,
     policy: Value,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     build_realm_state_event(
         realm_id,
         actor_id,
@@ -754,7 +758,7 @@ pub fn build_realm_preview_policy_event(
     realm_id: &str,
     actor_id: &str,
     policy: Value,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     build_realm_state_event(realm_id, actor_id, "ck.realm.preview_policy", policy)
 }
 
@@ -765,7 +769,7 @@ pub fn build_plaintext_visible_services_event(
     realm_id: &str,
     actor_id: &str,
     service_dids: &[String],
-) -> anyhow::Result<Option<EventEnvelope>> {
+) -> anyhow::Result<Option<cokret_sdk::Event>> {
     // Strong type: plaintext_visible_services_payload (top-level
     // additionalProperties:false; item required fields strongly typed via the
     // SDK PlaintextDataClassKind / PlaintextServiceVisibility enums).
@@ -838,7 +842,7 @@ pub fn build_plaintext_visible_services_event(
             .effects(effects)
             .build("yougen");
     envelope.created_at = created_at;
-    Ok(Some(envelope))
+    sdk_event_from_envelope(envelope).map(Some)
 }
 
 fn build_member_state_event(
@@ -846,7 +850,7 @@ fn build_member_state_event(
     actor_id: &str,
     member: &RealmBootstrapMember,
     membership: &str,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     build_member_state_transition_event_with_binding(
         realm_id,
         actor_id,
@@ -856,6 +860,7 @@ fn build_member_state_event(
         "space_create",
         member.delivery_binding.clone(),
     )
+    .and_then(sdk_event_from_envelope)
 }
 
 /// Build a generic `ck.member.state` event on `ck.component.member.state.v1`,
@@ -869,7 +874,7 @@ pub fn build_member_state_transition_event(
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     build_member_state_transition_event_with_binding(
         realm_id,
         actor_id,
@@ -879,27 +884,29 @@ pub fn build_member_state_transition_event(
         reason,
         None,
     )
+    .and_then(sdk_event_from_envelope)
 }
 
 pub fn build_member_state_invite_accept_event(
     realm_id: &str,
     actor_id: &str,
     invite_id: &str,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let invite_id = invite_id.trim();
     if invite_id.is_empty() {
         return Err(anyhow::anyhow!("invite_id is required for invite accept"));
     }
-    let mut envelope = build_member_state_transition_event(
+    let mut envelope = build_member_state_transition_event_with_binding(
         realm_id,
         actor_id,
         actor_id,
         Some("invite"),
         "join",
         "invite_accept",
+        None,
     )?;
     envelope.payload["invite_ref"] = json!(invite_id);
-    Ok(envelope)
+    sdk_event_from_envelope(envelope)
 }
 
 fn build_member_state_transition_event_with_binding(

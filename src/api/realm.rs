@@ -50,7 +50,7 @@ impl CokretApi {
 
         let realm_id = format!("ck:realm:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
-        let envelopes = build_realm_bootstrap_events(
+        let mut events = build_realm_bootstrap_events(
             &realm_id,
             actor_id,
             title,
@@ -73,10 +73,6 @@ impl CokretApi {
         // materialises the creator membership from the create event.
         // Sign every SDK Event before it reaches the wire; the batch
         // submitter takes pre-signed typed Events.
-        let mut events: Vec<cokret_sdk::Event> = envelopes
-            .iter()
-            .map(EventEnvelope::to_sdk_event_for_submit)
-            .collect::<anyhow::Result<_>>()?;
         let proof_context = self.event_proof_context().await?;
         for event in events.iter_mut() {
             crate::event_signer::sign_sdk_event_with_active_context(event, proof_context.clone())
@@ -268,7 +264,8 @@ impl CokretApi {
         let envelope =
             crate::operation::ck_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)?
                 .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Update a structural Space object's metadata via `ck.space.update`.
@@ -284,7 +281,8 @@ impl CokretApi {
         let envelope =
             crate::operation::ck_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
                 .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Archive a Space via `ck.space.archive` event (spec-canonical).
@@ -393,7 +391,8 @@ impl CokretApi {
             &invitee.introduction_evidence_digest,
         )?
         .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Accept an invite via `ck.invite.accept` event (spec-canonical).
@@ -403,13 +402,14 @@ impl CokretApi {
         actor_id: &str,
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let mut envelope =
-            crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?.build("yougen");
+        let mut event = crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?
+            .build("yougen")
+            .to_sdk_event_for_submit()?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
-        stamp_invite_join_seal_ref(&mut envelope, candidate);
-        self.submit_built_event_via_join_candidate(candidate, &envelope)
+        stamp_invite_join_seal_ref(&mut event, candidate);
+        self.submit_built_event_via_join_candidate(candidate, &event)
             .await
     }
 
@@ -422,37 +422,38 @@ impl CokretApi {
         actor_id: &str,
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let mut envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
+        let mut event = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
-        stamp_invite_join_seal_ref(&mut envelope, candidate);
-        self.submit_built_event_via_join_candidate(candidate, &envelope)
+        stamp_invite_join_seal_ref(&mut event, candidate);
+        self.submit_built_event_via_join_candidate(candidate, &event)
             .await
     }
 
-    async fn submit_built_event(&self, event: &EventEnvelope) -> anyhow::Result<SubmitEventResult> {
-        let event = event.to_sdk_event_for_submit()?;
-        self.submit_sdk_event(&event).await
+    async fn submit_built_event(
+        &self,
+        event: &cokret_sdk::Event,
+    ) -> anyhow::Result<SubmitEventResult> {
+        self.submit_sdk_event(event).await
     }
 
     async fn submit_built_event_via_join_candidate(
         &self,
         candidate: &RealmJoinCandidate,
-        event: &EventEnvelope,
+        event: &cokret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
-        let event = event.to_sdk_event_for_submit()?;
         let Some(endpoint) = candidate
             .endpoint
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
         else {
-            return self.submit_sdk_event(&event).await;
+            return self.submit_sdk_event(event).await;
         };
         let endpoint_url = validate_server_url(endpoint)?;
         if endpoint_url == self.base_url {
-            return self.submit_sdk_event(&event).await;
+            return self.submit_sdk_event(event).await;
         }
 
         let mut routed = CokretApi::new(endpoint)?;
@@ -462,7 +463,7 @@ impl CokretApi {
         if let Some(sync_token) = self.wait_for_sync_token.as_deref() {
             routed = routed.with_wait_for(sync_token.to_owned());
         }
-        routed.submit_sdk_event(&event).await
+        routed.submit_sdk_event(event).await
     }
 
     /// Reject an invite via `ck.invite.cancel` event (spec-canonical).
@@ -476,7 +477,8 @@ impl CokretApi {
         let envelope =
             crate::operation::ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?
                 .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Leave a Realm via `ck.member.state` event (`join → leave` FSM).
@@ -502,9 +504,8 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope =
-            build_realm_archive_event(realm_id, actor_id, true, Some("operator_request"))?;
-        self.submit_built_event(&envelope).await
+        let event = build_realm_archive_event(realm_id, actor_id, true, Some("operator_request"))?;
+        self.submit_built_event(&event).await
     }
 
     /// Restore a Realm by writing `ck.realm.archive{archived:false}`.
@@ -513,9 +514,8 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope =
-            build_realm_archive_event(realm_id, actor_id, false, Some("operator_request"))?;
-        self.submit_built_event(&envelope).await
+        let event = build_realm_archive_event(realm_id, actor_id, false, Some("operator_request"))?;
+        self.submit_built_event(&event).await
     }
 
     /// Tombstone a Realm and point clients at an explicit successor Realm.
@@ -526,8 +526,8 @@ impl CokretApi {
         successor_realm_id: &str,
         reason: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = build_realm_tombstone_event(realm_id, actor_id, successor_realm_id, reason)?;
-        self.submit_built_event(&envelope).await
+        let event = build_realm_tombstone_event(realm_id, actor_id, successor_realm_id, reason)?;
+        self.submit_built_event(&event).await
     }
 
     /// Permanently retire a Realm via `ck.realm.destroy`.
@@ -537,8 +537,8 @@ impl CokretApi {
         actor_id: &str,
         reason: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let envelope = build_realm_destroy_event(realm_id, actor_id, reason)?;
-        self.submit_built_event(&envelope).await
+        let event = build_realm_destroy_event(realm_id, actor_id, reason)?;
+        self.submit_built_event(&event).await
     }
 
     /// Ban a member via `ck.member.state` event (`join → ban` FSM).
@@ -585,7 +585,8 @@ impl CokretApi {
             Value::Null,
         )
         .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Revoke a Realm-admin grant via `ck.capability.revoke`. `grant_id`
@@ -606,7 +607,8 @@ impl CokretApi {
             reason,
         )
         .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Seal a moderation disposition via `ck.moderation.decision`.
@@ -629,7 +631,8 @@ impl CokretApi {
             reason_code,
         )
         .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Lift a previously sealed moderation decision via
@@ -649,7 +652,8 @@ impl CokretApi {
             reason_code,
         )
         .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Take an appeal under review (`ck.moderation.appeal.review`).
@@ -664,7 +668,8 @@ impl CokretApi {
             realm_id, actor_id, appeal_id, notes_ref,
         )
         .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// Decide an appeal (`ck.moderation.appeal.decision`). For an
@@ -691,7 +696,8 @@ impl CokretApi {
             modify_decision_ref,
         )
         .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     /// `governance/content-moderation.md` §5.5.1.1 — atomically decide an
@@ -727,6 +733,8 @@ impl CokretApi {
             lift_reason_code,
         )
         .build("yougen");
+        let appeal_event = appeal_event.to_sdk_event_for_submit()?;
+        let lift_event = lift_event.to_sdk_event_for_submit()?;
         self.sign_and_submit_moderation_batch(realm_id, vec![appeal_event, lift_event])
             .await
     }
@@ -773,6 +781,8 @@ impl CokretApi {
             Some(&new_decision_id),
         )
         .build("yougen");
+        let appeal_event = appeal_event.to_sdk_event_for_submit()?;
+        let new_decision = new_decision.to_sdk_event_for_submit()?;
         let result = self
             .sign_and_submit_moderation_batch(realm_id, vec![appeal_event, new_decision])
             .await?;
@@ -787,18 +797,16 @@ impl CokretApi {
     async fn sign_and_submit_moderation_batch(
         &self,
         realm_id: &str,
-        mut envelopes: Vec<crate::operation::EventEnvelope>,
+        mut events: Vec<cokret_sdk::Event>,
     ) -> anyhow::Result<Value> {
         let seal = self.current_seal_for(realm_id).await?;
-        for envelope in &mut envelopes {
-            if envelope.seal_ref.is_none() && !envelope.effects.is_empty() {
-                envelope.seal_ref = Some(seal.clone());
+        let seal = cokret_sdk::SealId::new(seal)
+            .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?;
+        for event in &mut events {
+            if event.seal_ref.is_none() && !event.effects.is_empty() {
+                event.seal_ref = Some(seal.clone());
             }
         }
-        let mut events: Vec<cokret_sdk::Event> = envelopes
-            .iter()
-            .map(EventEnvelope::to_sdk_event_for_submit)
-            .collect::<anyhow::Result<_>>()?;
         let proof_context = self.event_proof_context().await?;
         for event in events.iter_mut() {
             if event.proofs.is_empty() {
@@ -833,7 +841,8 @@ impl CokretApi {
             close_reason,
         )
         .build("yougen");
-        self.submit_built_event(&envelope).await
+        let event = envelope.to_sdk_event_for_submit()?;
+        self.submit_built_event(&event).await
     }
 
     // ── Views — collection projection (T20 / YOU-01-009 subtask 3) ──────
@@ -914,10 +923,10 @@ impl CokretApi {
 /// carries `effects`) and the candidate advertised a head — mirroring
 /// `submit_built_event`'s own seal-stamp condition so it is a no-op
 /// otherwise.
-fn stamp_invite_join_seal_ref(envelope: &mut EventEnvelope, candidate: &RealmJoinCandidate) {
-    if envelope.seal_ref.is_none() && !envelope.effects.is_empty() {
+fn stamp_invite_join_seal_ref(event: &mut cokret_sdk::Event, candidate: &RealmJoinCandidate) {
+    if event.seal_ref.is_none() && !event.effects.is_empty() {
         if let Some(seal_head) = candidate.seal_head_ref.as_ref() {
-            envelope.seal_ref = Some(seal_head.as_str().to_owned());
+            event.seal_ref = Some(seal_head.clone());
         }
     }
 }

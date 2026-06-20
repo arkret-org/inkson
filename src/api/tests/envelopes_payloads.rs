@@ -178,38 +178,46 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
 
     let create = &events[0];
-    assert_eq!(create.payload["object"]["schema"], "ck.schema.realm.v1");
+    assert_eq!(create.content["object"]["schema"], "ck.schema.realm.v1");
     // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
     // `created_by_principal` → `created_by`.
-    assert_eq!(create.payload["object"]["created_by"], create.actor_id);
     assert_eq!(
-        create.payload["object"]["created_at"].as_str().unwrap(),
-        create.created_at,
+        create.content["object"]["created_by"],
+        create.actor_id.as_str()
+    );
+    assert_eq!(
+        create.content["object"]["created_at"].as_str().unwrap(),
+        create
+            .created_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         "Realm create cross-field semantic validation requires matching timestamps",
     );
-    assert_eq!(create.payload["object"]["default_join_rule"], "invite");
-    assert_eq!(create.payload["object"]["history_visibility"], "shared");
-    assert!(create.payload["object"]["content_encryption_floor"].is_null());
-    assert!(create.payload["object"]["metadata_encryption_floor"].is_null());
-    assert_eq!(create.payload["object"]["notary"]["type"], "single_did");
-    assert_eq!(create.payload["object"]["notary"]["did"], create.actor_id);
+    assert_eq!(create.content["object"]["default_join_rule"], "invite");
+    assert_eq!(create.content["object"]["history_visibility"], "shared");
+    assert!(create.content["object"]["content_encryption_floor"].is_null());
+    assert!(create.content["object"]["metadata_encryption_floor"].is_null());
+    assert_eq!(create.content["object"]["notary"]["type"], "single_did");
     assert_eq!(
-        create.payload["object"]["notary"]["recovery_members"][0],
+        create.content["object"]["notary"]["did"],
+        create.actor_id.as_str()
+    );
+    assert_eq!(
+        create.content["object"]["notary"]["recovery_members"][0],
         "did:web:alice.example:recovery:notary",
     );
     assert_eq!(
-        create.payload["object"]["notary"]["controller_organization"],
+        create.content["object"]["notary"]["controller_organization"],
         "did:web:alice.example",
     );
     assert_eq!(
-        create.payload["object"]["notary"]["recovery_controller_organizations"][0],
+        create.content["object"]["notary"]["recovery_controller_organizations"][0],
         "did:web:alice.example:recovery",
     );
     assert_eq!(
-        create.effects[0].cell,
+        create.effects[0].cell.to_string(),
         "ck:cell:ck.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
     );
-    assert_eq!(create.effects[0].op.kind, "set");
+    assert_eq!(create.effects[0].op.op_type, cokret_sdk::LatticeOpType::Set);
     // seal_ref starts unset on the typed envelope. Realm genesis
     // has no snapshot head yet, so the create event relies on its
     // `head_eq null` precondition instead of a prior seal.
@@ -222,23 +230,23 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // join_rule, history_visibility, discovery, plaintext_visible,
     // member-invite.
     assert_eq!(
-        events[1].payload["value"]["content_encryption_floor"],
+        events[1].content["value"]["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(
-        events[1].payload["value"]["metadata_encryption_floor"],
+        events[1].content["value"]["metadata_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
-    assert_eq!(events[1].payload["value"]["policy_revision"], 1);
-    assert_eq!(events[2].payload["value"], "invite");
-    assert_eq!(events[3].payload["value"], "shared");
-    assert_eq!(events[4].payload["value"], "listed");
+    assert_eq!(events[1].content["value"]["policy_revision"], 1);
+    assert_eq!(events[2].content["value"], "invite");
+    assert_eq!(events[3].content["value"], "shared");
+    assert_eq!(events[4].content["value"], "listed");
     assert_eq!(
-        events[5].payload["services"][0]["service_did"],
+        events[5].content["services"][0]["service_did"],
         "did:web:server.example"
     );
     assert_eq!(
-        events[5].payload["services"][0]["data_classes"],
+        events[5].content["services"][0]["data_classes"],
         json!([
             "message_content",
             "full_text_index",
@@ -246,7 +254,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "inbox_preview",
         ])
     );
-    assert_eq!(events[6].payload["membership"], "invite");
+    assert_eq!(events[6].content["membership"], "invite");
 }
 
 #[test]
@@ -269,9 +277,9 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     )
     .unwrap();
 
-    assert_eq!(envelope.payload["object"]["encryption_profile"], "none");
-    assert!(envelope.payload["object"]["content_encryption_floor"].is_null());
-    assert!(envelope.payload["object"]["metadata_encryption_floor"].is_null());
+    assert_eq!(envelope.content["object"]["encryption_profile"], "none");
+    assert!(envelope.content["object"]["content_encryption_floor"].is_null());
+    assert!(envelope.content["object"]["metadata_encryption_floor"].is_null());
 }
 
 /// Regression: every genesis bootstrap envelope must produce the SAME
@@ -309,32 +317,19 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     )
     .unwrap();
 
-    for mut envelope in events {
-        let kind = envelope.kind.clone();
-        // EventWire requires a non-empty proofs vec to deserialize; attach a
-        // dummy proof so to_sdk_event() succeeds. proofs are stripped before
-        // the digest, so the dummy does not affect the comparison.
-        envelope.proofs.push(crate::operation::EventProof {
-            kind: "detached_jws".to_owned(),
-            alg: "EdDSA".to_owned(),
-            verification_method: "did:web:alice.example#k".to_owned(),
-            event_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-                .to_owned(),
-            created_at: envelope.created_at.clone(),
-            domain: None,
-            audience: None,
-            jws: "a.b.c".to_owned(),
-        });
-
-        let local = envelope
-            .canonical_digest()
-            .unwrap_or_else(|err| panic!("{kind}: local canonical_digest: {err}"));
-        let sdk = envelope
-            .to_sdk_event()
-            .unwrap_or_else(|err| panic!("{kind}: to_sdk_event: {err}"))
+    for event in events {
+        let kind = event.kind.as_str().to_owned();
+        let digest = event
             .event_digest()
             .unwrap_or_else(|err| panic!("{kind}: SDK event_digest: {err}"));
-        assert_eq!(local, sdk, "{kind}: yougen/SDK digest drift");
+        let roundtrip: cokret_sdk::Event = serde_json::from_value(
+            serde_json::to_value(&event).unwrap_or_else(|err| panic!("{kind}: to_value: {err}")),
+        )
+        .unwrap_or_else(|err| panic!("{kind}: SDK roundtrip: {err}"));
+        let roundtrip_digest = roundtrip
+            .event_digest()
+            .unwrap_or_else(|err| panic!("{kind}: roundtrip event_digest: {err}"));
+        assert_eq!(digest, roundtrip_digest, "{kind}: SDK digest drift");
     }
 }
 
@@ -360,26 +355,26 @@ fn realm_bootstrap_handle_seed_materializes_user_and_principal_server_dids() {
     .unwrap();
     let member = events
         .iter()
-        .find(|event| event.kind == "ck.member.state")
+        .find(|event| event.kind.as_str() == "ck.member.state")
         .expect("member state invite");
 
-    assert_eq!(member.payload["actor_id"], "did:web:example.com:users:bob");
+    assert_eq!(member.content["actor_id"], "did:web:example.com:users:bob");
     // `membership_payload` is additionalProperties:false with NO `handle`
     // property — the member identity is carried by `actor_id`, and handle
     // evidence lives on the signed HandleClaim / roster path. The prior
     // `handle` field was an illegal property soland's schema rejected.
-    assert!(member.payload.get("handle").is_none());
+    assert!(member.content.get("handle").is_none());
     assert_eq!(
-        member.payload["delivery_binding"]["recipient_service_did"],
+        member.content["delivery_binding"]["recipient_service_did"],
         "did:web:example.com"
     );
     assert_eq!(
-        member.payload["delivery_binding"]["recipient_service_type"],
+        member.content["delivery_binding"]["recipient_service_type"],
         "principal_server"
     );
-    assert_eq!(member.payload["delivery_binding"]["binding_scope"], "realm");
+    assert_eq!(member.content["delivery_binding"]["binding_scope"], "realm");
     assert!(
-        member.payload["delivery_binding"]["service_acceptance_ref"]
+        member.content["delivery_binding"]["service_acceptance_ref"]
             .as_str()
             .is_some_and(|value| value.starts_with("ck:event:"))
     );
@@ -394,26 +389,26 @@ fn member_state_invite_accept_event_carries_invite_ref() {
     )
     .expect("invite accept event");
 
-    assert_eq!(event.kind, "ck.member.state");
+    assert_eq!(event.kind.as_str(), "ck.member.state");
     assert_eq!(
-        event.realm_id,
+        event.realm_id.as_str(),
         "ck:realm:0196419b-0000-7000-8000-000000000010"
     );
-    assert_eq!(event.actor_id, "did:web:bob.example");
+    assert_eq!(event.actor_id.as_str(), "did:web:bob.example");
     // Spec `membership_payload` requires `realm_id` in the body for join.
     assert_eq!(
-        event.payload["realm_id"],
+        event.content["realm_id"],
         "ck:realm:0196419b-0000-7000-8000-000000000010"
     );
-    assert_eq!(event.payload["actor_id"], "did:web:bob.example");
-    assert_eq!(event.payload["membership"], "join");
-    assert_eq!(event.payload["reason"], "invite_accept");
+    assert_eq!(event.content["actor_id"], "did:web:bob.example");
+    assert_eq!(event.content["membership"], "join");
+    assert_eq!(event.content["reason"], "invite_accept");
     assert_eq!(
-        event.payload["invite_ref"],
+        event.content["invite_ref"],
         "ck:invite:0196419b-0000-7000-8000-000000000020"
     );
-    assert!(event.payload.get("invite_id").is_none());
-    assert_eq!(event.payload["delivery_status"], "unroutable");
+    assert!(event.content.get("invite_id").is_none());
+    assert_eq!(event.content["delivery_status"], "unroutable");
     assert_eq!(event.preconditions.len(), 1);
     assert_eq!(
         event.preconditions[0].predicate.value,
@@ -472,11 +467,11 @@ fn space_create_payload_matches_spec_schema() {
     if catalog
         .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
         .is_empty()
-        && let Err(error) = catalog.validate_payload(&event.kind, &event.payload)
+        && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.content)
     {
         panic!(
             "ck.space.create payload violates spec: {error}\npayload: {}",
-            serde_json::to_string_pretty(&event.payload).unwrap_or_default()
+            serde_json::to_string_pretty(&event.content).unwrap_or_default()
         );
     }
 }
@@ -512,13 +507,13 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
             .is_empty()
-            && let Err(error) = catalog.validate_payload(&event.kind, &event.payload)
+            && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.content)
         {
             panic!(
                 "event kind `{}` payload violates spec schema: {error}\n\
                  payload was: {}",
-                event.kind,
-                serde_json::to_string_pretty(&event.payload).unwrap_or_default()
+                event.kind.as_str(),
+                serde_json::to_string_pretty(&event.content).unwrap_or_default()
             );
         }
     }
