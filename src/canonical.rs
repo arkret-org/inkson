@@ -65,15 +65,14 @@ pub fn canonical_event_digest<T: Serialize>(body: &T) -> anyhow::Result<String> 
 // when the spec adds new canonicalization rules for a specific
 // envelope type.
 
-/// F-CANONICAL-1: canonical bytes for an [`EventEnvelope`] payload —
+/// F-CANONICAL-1: canonical bytes for a SDK [`cokret_sdk::Event`] payload —
 /// the input the signer hashes when producing the detached JWS over
 /// an inbound event. Matches `conformance/encoding.md §2` (event
 /// envelope canonicalization rules: sorted keys, integer-only
-/// numbers, no whitespace).
-pub fn canonical_event_envelope_bytes(
-    envelope: &crate::operation::EventEnvelope,
-) -> anyhow::Result<Vec<u8>> {
-    canonical_json_bytes(envelope)
+/// numbers, no whitespace) and excludes `proofs` / `unsigned` exactly
+/// as [`cokret_sdk::Event::event_digest`] does.
+pub fn canonical_event_envelope_bytes(envelope: &cokret_sdk::Event) -> anyhow::Result<Vec<u8>> {
+    canonical_json_bytes(&envelope.digest_payload()?)
 }
 
 /// F-CANONICAL-1: canonical bytes for a Move body. Used at the move
@@ -148,6 +147,34 @@ mod tests {
             canonical_move_bytes(&a).unwrap(),
             canonical_move_bytes(&b).unwrap()
         );
+    }
+
+    #[test]
+    fn canonical_event_envelope_bytes_use_sdk_digest_payload() {
+        let event: cokret_sdk::Event = serde_json::from_value(json!({
+            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "kind": "ck.message.create",
+            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": "did:web:alice.example",
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {"kind": "ck.content.text", "body": "hi"},
+            "unsigned": {"local_only": true},
+            "proofs": []
+        }))
+        .unwrap();
+
+        let bytes = canonical_event_envelope_bytes(&event).unwrap();
+        let as_text = std::str::from_utf8(&bytes).unwrap();
+
+        assert_eq!(
+            bytes,
+            sdk_canonical_json_bytes(&event.digest_payload().unwrap()).unwrap()
+        );
+        assert!(!as_text.contains("proofs"));
+        assert!(!as_text.contains("unsigned"));
     }
 
     #[test]
