@@ -8,7 +8,7 @@
 //!     accepts.
 //!   * Surfaces a registration form bound to [`crate::operation::ck_ops::applet_registration`] —
 //!     fills `service_did`, `namespace` and `capabilities` and submits via
-//!     `with_authed_api(api.submit_event_envelope)`.
+//!     `with_authed_api(api.submit_sdk_event)`.
 //!   * Per-session monitor lists active `interop_session.start/status` rows so an operator can see
 //!     in-flight applet calls + their bridge errors.
 //!

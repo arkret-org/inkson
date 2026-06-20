@@ -17,19 +17,17 @@
 //!   `secure_key_store::ensure_signing_seed`) and returns a `YougenEventSigner` ready to attach
 //!   detached JWS proofs to event envelopes.
 //! * [`install_active_signer`] / [`active_signer`] — a process-wide `OnceLock` that holds the
-//!   active signer; the submit guard in [`crate::api::CokretApi::submit_event_envelope`] reaches
-//!   into this to lazily sign envelopes that were built unsigned.
+//!   active signer; [`crate::api::CokretApi::submit_sdk_event`] reaches into this to lazily sign
+//!   SDK events that were built unsigned.
 //! * [`signer_status`] — diagnostic snapshot for the settings panel.
 //!
 //! ## Canonical bytes alignment
 //!
 //! The SDK's `EventProofBuilder` operates over an opaque `T: Serialize`.
-//! Yougen's [`crate::operation::EventEnvelope`] is still a local builder
-//! wrapper, but the HTTP submit boundary decodes it through
-//! `cokret_sdk::Event` before serialising the request. To keep the SDK as the
-//! single canonical-bytes source, this module decodes the local builder
-//! envelope into `cokret_sdk::Event` before deriving `Event::event_digest()`;
-//! submit keeps the old drift guard until the local builder is fully removed.
+//! The legacy [`crate::operation::EventEnvelope`] signer path is retained for
+//! compatibility tests and older local helpers. To keep the SDK as the single
+//! canonical-bytes source, this module decodes that local builder envelope into
+//! `cokret_sdk::Event` before deriving `Event::event_digest()`.
 //!
 //! ## Wiring contract
 //!

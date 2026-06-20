@@ -5,8 +5,7 @@
 //! # Signing
 //!
 //! All envelopes are produced with `proofs: Vec::new()`. The detached JWS
-//! proof is attached exclusively by [`crate::event_signer::sign_with_active`]
-//! from inside [`crate::api::CokretApi::submit_event_envelope`]. There is
+//! proof is attached through the SDK event signing path before submit. There is
 //! NO placeholder proof: a submit without an installed signer is rejected
 //! locally with `no active signer configured` rather than shipped to the
 //! wire in any form.
@@ -292,9 +291,8 @@ impl EventProofAudience {
 
 /// Builder for creating typed event envelopes. Callers attach
 /// preconditions / effects / seal_ref / requirements after `new()`
-/// and before `build()`; `build()` produces an unsigned envelope and the
-/// `submit_event_envelope` path requires an active signer to attach the
-/// detached JWS proof before going on the wire.
+/// and before `build_sdk_event()`; the SDK event submit path requires an active
+/// signer to attach the detached JWS proof before going on the wire.
 #[derive(Debug)]
 pub struct OperationBuilder {
     realm_id: String,

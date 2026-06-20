@@ -235,12 +235,13 @@ pub(crate) fn build_creator_mls_genesis_event(
         &summary.group_id,
         &payload,
     )
-    .build("yougen");
-    event.event_id = event_id;
-    event
-        .to_sdk_event_for_submit()
-        .map(Some)
-        .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))
+    .build_sdk_event("yougen")
+    .map(Some)
+    .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))?;
+    if let Some(event) = event.as_mut() {
+        event.event_id = event_id_typed;
+    }
+    Ok(event)
 }
 
 // pub(crate): the realm_admin epoch-rotation button (YOU-01-009) reuses
@@ -292,11 +293,10 @@ pub(crate) fn kanban_mls_commit_event_from_store(
     let mut event =
         crate::operation::ck_ops::mls_commit_with_governance(realm_id, actor_id, &payload)
             .map_err(|err| format!("MLS commit payload failed: {err}"))?
-            .build("yougen");
-    event.event_id = event_id;
-    event
-        .to_sdk_event_for_submit()
-        .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))
+            .build_sdk_event("yougen")
+            .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
+    event.event_id = event_id_typed;
+    Ok(event)
 }
 
 /// The MLS events an encrypted write must submit, in submit order: the

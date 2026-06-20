@@ -187,9 +187,9 @@ impl InviteBindingTranscript {
 /// [`InviteBindingTranscript`]. The device signing key MUST be the
 /// keypair registered on the claimant's `ck.device.authorize` event.
 ///
-/// Returns the raw JSON body for the caller to wrap in an
-/// `OperationBuilder` / `EventEnvelope` and submit through
-/// [`crate::api::CokretApi::submit_event_envelope`].
+/// Returns the raw JSON body for the caller to wrap with
+/// [`crate::operation::OperationBuilder::build_sdk_event`] and submit through
+/// [`crate::api::CokretApi::submit_sdk_event`].
 pub fn build_invite_claim_body(
     invite_id: &str,
     claimant_did: &str,

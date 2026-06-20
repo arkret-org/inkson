@@ -515,8 +515,7 @@ impl CrossSigningSetupOutput {
     /// `ck.cross_signing.publish` event. The caller supplies the
     /// `realm_id` of the principal's control Realm and the `actor` DID
     /// (typically the same as the principal). The envelope is unsigned;
-    /// callers attach a `proof` via the standard signing pipeline before
-    /// `submit_event_envelope`.
+    /// callers attach a `proof` via the standard SDK event signing pipeline.
     pub fn build_publish_envelope(
         &self,
         realm_id: &str,

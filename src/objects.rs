@@ -1,7 +1,7 @@
 //! Yougen-side wrappers for the Cokret object model objects.
 //!
 //! Re-exports the SDK's canonical types and provides minimal builders that
-//! turn them into [`crate::operation::EventEnvelope`] write actions. The
+//! turn them into SDK event write actions. The
 //! goal is a single place for `views/*` to construct `ck.morph.*`,
 //! `ck.relation.*`, and `ck.container.*` operations without each call site
 //! re-discovering the SDK's struct layout.

@@ -300,9 +300,11 @@ pub(crate) fn build_secure_send(
                 &mls_commit_payload,
             )
             .map_err(|err| format!("MLS commit payload failed: {err}"))?;
-            let mut commit_envelope = commit_builder.build("yougen");
-            commit_envelope.event_id = commit_event_id.clone();
-            (commit_event_id, Some(commit_envelope))
+            let mut commit_event = commit_builder
+                .build_sdk_event("yougen")
+                .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
+            commit_event.event_id = commit_event_id_typed;
+            (commit_event_id, Some(commit_event))
         } else {
             (base_group_state_ref, None)
         };
@@ -342,13 +344,7 @@ pub(crate) fn build_secure_send(
         .body(msg_payload_value)
         .build_sdk_event("yougen");
 
-    let commit_event = commit_envelope
-        .map(|event| {
-            event
-                .to_sdk_event_for_submit()
-                .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))
-        })
-        .transpose()?;
+    let commit_event = commit_envelope;
     let message_event = message_envelope
         .map_err(|err| format!("Send Secure SDK Event conversion failed: {err}"))?;
 

@@ -410,17 +410,20 @@ pub fn build_poll_create_op(
         sdk_payload_value(content.to_value(), "poll create content serialize")?,
     )
     .with_message_id(poll_id);
-    let mut envelope = OperationBuilder::new(realm_id, actor, "ck.message.create")
+    let mut event = OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(strand_id)
         .body(sdk_payload_value(
             payload.to_value(),
             "poll ck.message.create payload serialize",
         )?)
-        .build("yougen");
-    let message_ref = envelope.event_id.replacen("ck:event:", "ck:message:", 1);
-    envelope.payload["message_id"] = json!(message_ref);
-    envelope.payload["content"]["message_id"] = json!(message_ref);
-    envelope.to_sdk_event_for_submit()
+        .build_sdk_event("yougen")?;
+    let message_ref = event
+        .event_id
+        .as_str()
+        .replacen("ck:event:", "ck:message:", 1);
+    event.content["message_id"] = json!(message_ref);
+    event.content["content"]["message_id"] = json!(message_ref);
+    Ok(event)
 }
 
 /// Build the `ck.content.poll.response` event for a single-select

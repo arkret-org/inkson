@@ -26,6 +26,14 @@ fn sdk_event_from_envelope(envelope: EventEnvelope) -> anyhow::Result<cokret_sdk
     envelope.to_sdk_event_for_submit()
 }
 
+/// RFC3339 timestamp in the canonical wire form soland's
+/// `canonical::validate_timestamp_canonical` accepts: exactly
+/// `YYYY-MM-DDTHH:MM:SSZ` (20 chars, UTC `Z` suffix, NO fractional
+/// seconds - spec encoding.md section 3.5).
+fn event_timestamp() -> String {
+    crate::clock::now_rfc3339_secs()
+}
+
 /// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
 /// (renamed from `handle_uri` @ cokret-spec 7157ee8 — the `cokret://`
 /// URI handle form has been retired).
@@ -860,7 +868,6 @@ fn build_member_state_event(
         "space_create",
         member.delivery_binding.clone(),
     )
-    .and_then(sdk_event_from_envelope)
 }
 
 /// Build a generic `ck.member.state` event on `ck.component.member.state.v1`,
@@ -884,7 +891,6 @@ pub fn build_member_state_transition_event(
         reason,
         None,
     )
-    .and_then(sdk_event_from_envelope)
 }
 
 pub fn build_member_state_invite_accept_event(
@@ -896,7 +902,7 @@ pub fn build_member_state_invite_accept_event(
     if invite_id.is_empty() {
         return Err(anyhow::anyhow!("invite_id is required for invite accept"));
     }
-    let mut envelope = build_member_state_transition_event_with_binding(
+    let mut event = build_member_state_transition_event_with_binding(
         realm_id,
         actor_id,
         actor_id,
@@ -905,8 +911,8 @@ pub fn build_member_state_invite_accept_event(
         "invite_accept",
         None,
     )?;
-    envelope.payload["invite_ref"] = json!(invite_id);
-    sdk_event_from_envelope(envelope)
+    event.content["invite_ref"] = json!(invite_id);
+    Ok(event)
 }
 
 fn build_member_state_transition_event_with_binding(
@@ -917,9 +923,8 @@ fn build_member_state_transition_event_with_binding(
     to_state: &str,
     reason: &str,
     delivery_binding: Option<Value>,
-) -> anyhow::Result<EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     use cokret_sdk::models::{DeliveryStatus, MembershipPayload, MembershipPayloadState};
-    let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let membership = match to_state {
         "join" => MembershipPayloadState::Join,
@@ -997,22 +1002,12 @@ fn build_member_state_transition_event_with_binding(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.member.state")
+    OperationBuilder::new(realm_id, actor_id, "ck.member.state")
         .target_ref(member_actor_id)
         .body(payload)
         .preconditions(preconditions)
         .effects(effects)
-        .build("yougen");
-    envelope.created_at = created_at;
-    Ok(envelope)
-}
-
-/// RFC3339 timestamp in the canonical wire form soland's
-/// `canonical::validate_timestamp_canonical` accepts: exactly
-/// `YYYY-MM-DDTHH:MM:SSZ` (20 chars, UTC `Z` suffix, NO fractional
-/// seconds — spec encoding.md §3.5).
-fn event_timestamp() -> String {
-    crate::clock::now_rfc3339_secs()
+        .build_sdk_event("yougen")
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {

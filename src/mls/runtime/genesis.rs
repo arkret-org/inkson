@@ -99,7 +99,7 @@ pub fn ensure_creator_mls_snapshot(
 /// - `ratchet_tree_digest` = `sha256:` over the base64 TLS-serialized ratchet tree bytes.
 ///
 /// `created_at` uses the same RFC3339 (seconds, UTC `Z`) format the event
-/// builder stamps on `EventEnvelope::created_at`.
+/// builder stamps on SDK events.
 pub fn build_mls_genesis_payload(
     summary: &InitialMlsSnapshotSummary,
     actor_id: &str,

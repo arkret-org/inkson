@@ -843,31 +843,33 @@ pub fn ChatPanel(
                                             &title,
                                         ) {
                                             Ok(builder) => {
-                                                let mut op = builder.build("yougen");
-                                                if !op.payload["object"]
+                                                let mut op = match builder.build_sdk_event("yougen") {
+                                                    Ok(event) => event,
+                                                    Err(error) => {
+                                                        status_msg.set(format!(
+                                                            "Could not create Strand proof: {error}"
+                                                        ));
+                                                        return;
+                                                    }
+                                                };
+                                                if !op.content["object"]
                                                     .get("fields")
                                                     .is_some_and(|fields| fields.is_object())
                                                 {
-                                                    op.payload["object"]["fields"] = json!({});
+                                                    op.content["object"]["fields"] = json!({});
                                                 }
-                                                op.payload["object"]["fields"]["category"] =
+                                                op.content["object"]["fields"]["category"] =
                                                     json!(category.clone());
-                                                op.payload["object"]["fields"]["has_synthesis"] =
+                                                op.content["object"]["fields"]["has_synthesis"] =
                                                     json!(create_card);
-                                                op.payload["object"]["rank"] = json!(rank.clone());
+                                                op.content["object"]["rank"] = json!(rank.clone());
                                                 if !summary.is_empty() {
-                                                    op.payload["object"]["summary"] = json!(summary.clone());
+                                                    op.content["object"]["summary"] = json!(summary.clone());
                                                 }
                                                 if !create_card
-                                                    && let Some(tracks) = op.payload["object"]["tracks"].as_object_mut()
+                                                    && let Some(tracks) = op.content["object"]["tracks"].as_object_mut()
                                                 {
                                                     tracks.remove("synthesis");
-                                                }
-                                                if let Err(error) = op.refresh_proof_hashes() {
-                                                    status_msg.set(format!(
-                                                        "Could not create Strand proof: {error}"
-                                                    ));
-                                                    return;
                                                 }
                                                 op
                                             }
@@ -884,15 +886,7 @@ pub fn ChatPanel(
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         status_msg.set("Creating Strand".to_owned());
-                                        let sdk_op = match op.to_sdk_event_for_submit() {
-                                            Ok(op) => op,
-                                            Err(error) => {
-                                                status_msg.set(format!(
-                                                    "Could not create Strand proof: {error}"
-                                                ));
-                                                return;
-                                            }
-                                        };
+                                        let sdk_op = op;
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token.clone(), wait_for) {
                                                 Ok(api) => match api.submit_sdk_event(&sdk_op).await
@@ -923,7 +917,7 @@ pub fn ChatPanel(
                                                                 // account-subscribe cursor; the background sync loop
                                                                 // must resume only from /account/subscribe cursors.
                                                                 store.append_raw_operation(
-                                                                    op.local_operation_id().to_owned(),
+                                                                    sdk_event_local_operation_id(&sdk_op).to_owned(),
                                                                     Some(realm.clone()),
                                                                     json!({
                                                                         "strand_id": strand_id,
@@ -932,7 +926,7 @@ pub fn ChatPanel(
                                                                         "category": category,
                                                                         "summary": channel_topic,
                                                                         "create_card": create_card,
-                                                                        "object": op.payload["object"].clone(),
+                                                                        "object": sdk_op.content["object"].clone(),
                                                                         "event_id": submitted.event_id,
                                                                     }),
                                                                 );

@@ -103,7 +103,7 @@ use crate::models::{
     ServerDescription, SessionLoginOutcome, SolandDirectoryDescribeResBody, SpaceCreateResult,
     SubmitEventResult, SyncDescribeView, TypingResult, VerifyDeviceResult,
 };
-use crate::operation::{EventEnvelope, OperationBuilder, trim_realm_id, uuid_v7};
+use crate::operation::{OperationBuilder, trim_realm_id, uuid_v7};
 
 #[derive(Clone)]
 pub struct CokretApi {

@@ -291,7 +291,7 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
 /// which carry an EXPLICIT wire `null`. An earlier `Option<Value>` field on
 /// the SDK `Predicate` / `LatticeOp` collapsed that `null` to `None` on
 /// deserialize and dropped it on re-serialize, so the SDK digest no longer
-/// matched the locally-signed one — `submit_event_envelope` failed closed
+/// matched the locally-signed one — the SDK submit path failed closed
 /// with "event digest drift between yougen builder and SDK Event" and the
 /// Realm could never be created.
 #[test]

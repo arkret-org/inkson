@@ -187,39 +187,8 @@ impl CokretApi {
         Ok(event_proof_context_from_description(describe))
     }
 
-    /// Submit a typed [`EventEnvelope`] over `ck.self.events.command.submit`. The
-    /// active-signer registry is the SINGLE source of detached JWS
-    /// proofs — if no signer is installed this fails closed with
-    /// `no active signer configured` rather than sending an unsigned
-    /// or placeholder-signed envelope.
-    ///
-    /// For reducer-input event kinds, `seal_ref` is auto-filled from
-    /// the current Realm seal (`/_cokret/self/snapshot/head`) when the
-    /// caller did not supply one.
-    pub async fn submit_event_envelope(
-        &self,
-        event: &EventEnvelope,
-    ) -> anyhow::Result<SubmitEventResult> {
-        let mut signed = event.clone();
-
-        // Real seal_ref for reducer-input kinds. The simple heuristic
-        // is: any envelope that already carries `effects[]` is a
-        // reducer-input write and MUST point at the current Realm
-        // seal head. Non-reducer kinds (ck.read_cursor.advance,
-        // ck.account_data.set, ck.account.blocklist, etc.) have no
-        // effects and keep `seal_ref: None`.
-        if signed.seal_ref.is_none() && !signed.effects.is_empty() {
-            let seal = self.current_seal_for(&signed.realm_id).await?;
-            signed.seal_ref = Some(seal);
-        }
-
-        let sdk_event = signed.to_sdk_event_for_submit()?;
-        self.submit_sdk_event(&sdk_event).await
-    }
-
     /// Wire-submit a fully-prepared, already-signed SDK [`cokret_sdk::Event`].
-    /// Local `EventEnvelope` remains a builder compatibility layer, but this
-    /// is the only single-event HTTP tail that serialises onto
+    /// This is the only single-event HTTP tail that serialises onto
     /// `POST /_cokret/self/events`.
     async fn post_signed_sdk_event(
         &self,
@@ -239,7 +208,7 @@ impl CokretApi {
     }
 
     /// Submit a fully-prepared, already-signed SDK [`cokret_sdk::Event`]
-    /// without passing through the local `EventEnvelope` builder path.
+    /// without passing through the local builder path.
     ///
     /// This is for service-returned Events that are already the authoritative
     /// wire object, such as account-authority device enrollment. It does not
@@ -253,8 +222,6 @@ impl CokretApi {
     }
 
     /// Submit a SDK-typed Event, signing it with the active signer when needed.
-    /// This mirrors [`Self::submit_event_envelope`] without requiring callers
-    /// to materialise yougen's local `EventEnvelope` compatibility wrapper.
     pub(crate) async fn submit_sdk_event(
         &self,
         event: &cokret_sdk::Event,
@@ -328,21 +295,6 @@ impl CokretApi {
         let response = serde_json::to_value(response)?;
         ensure_events_submit_batch_accepted(&response)?;
         Ok(response)
-    }
-
-    /// Compatibility wrapper for old local builders. New code should submit
-    /// SDK Events through [`Self::submit_signed_sdk_events_batch`].
-    pub async fn submit_events_batch(
-        &self,
-        envelopes: &[EventEnvelope],
-        idempotency_key: Option<&str>,
-    ) -> anyhow::Result<Value> {
-        let sdk_events: Vec<cokret_sdk::Event> = envelopes
-            .iter()
-            .map(EventEnvelope::to_sdk_event_for_submit)
-            .collect::<anyhow::Result<_>>()?;
-        self.submit_signed_sdk_events_batch(&sdk_events, idempotency_key)
-            .await
     }
 
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the

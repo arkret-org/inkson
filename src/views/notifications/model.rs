@@ -535,7 +535,7 @@ pub(crate) fn notification_eval_context(value: &Value) -> NotificationEvalContex
         realm_id: value_string(value, &["realm_id"]).unwrap_or_default(),
         strand_id: value_string(value, &["strand_id"]),
         strand_track: value_string(value, &["strand_track", "track_name"]),
-        // Canonical notification attribution comes from the EventEnvelope
+        // Canonical notification attribution comes from the SDK Event
         // actor_id. Deprecated sender/sender_did wire names are ignored in
         // the default protocol path.
         sender: value_string(value, &["actor_id"]),

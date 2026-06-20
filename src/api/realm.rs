@@ -693,7 +693,7 @@ impl CokretApi {
     /// matching `ck.moderation.decision.lift` (target = `decision_ref`) is not
     /// in the SAME ordered submit batch (`appeal_overturn_missing_lift`), so
     /// this helper builds BOTH events, signs them, and submits them via
-    /// [`Self::submit_events_batch`] as one transaction.
+    /// [`Self::submit_signed_sdk_events_batch`] as one transaction.
     ///
     /// Order matters: the appeal-decision precedes the lift it authorizes.
     pub async fn appeal_overturn_atomic(
@@ -754,10 +754,11 @@ impl CokretApi {
             new_verdict,
             new_reason_code,
         )
-        .build("yougen");
+        .build_sdk_event("yougen")?;
         // The reducer matches `modify_decision_ref` against the new decision's
-        // EVENT id, so pin the envelope's event_id to the same value we report.
-        new_decision.event_id = new_decision_id.clone();
+        // EVENT id, so pin the SDK Event id to the same value we report.
+        new_decision.event_id = cokret_sdk::EventId::new(new_decision_id.clone())
+            .map_err(|err| anyhow::anyhow!("replacement decision id is invalid: {err}"))?;
         let appeal_event = crate::operation::ck_ops::moderation_appeal_decision(
             realm_id,
             actor_id,
@@ -767,7 +768,6 @@ impl CokretApi {
             Some(&new_decision_id),
         )
         .build_sdk_event("yougen")?;
-        let new_decision = new_decision.to_sdk_event_for_submit()?;
         let result = self
             .sign_and_submit_moderation_batch(realm_id, vec![appeal_event, new_decision])
             .await?;
