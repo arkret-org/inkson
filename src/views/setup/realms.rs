@@ -826,21 +826,32 @@ pub(super) fn RealmsSection(
                                                                     }
                                                                 });
                                                             if let Some(genesis_event) = genesis_event {
-                                                                match api.submit_event_envelope(&genesis_event).await {
-                                                                    Ok(_) => {
-                                                                        state_store.write().mark_mls_genesis_emitted(realm_id.clone());
+                                                                match genesis_event.to_sdk_event_for_submit() {
+                                                                    Ok(genesis_event) => {
+                                                                        match api.submit_sdk_event(&genesis_event).await {
+                                                                            Ok(_) => {
+                                                                                state_store.write().mark_mls_genesis_emitted(realm_id.clone());
+                                                                            }
+                                                                            Err(err) => {
+                                                                                let text = err.to_string();
+                                                                                if text.contains("mls_genesis_already_exists") {
+                                                                                    state_store.write().mark_mls_genesis_emitted(realm_id.clone());
+                                                                                } else {
+                                                                                    tracing::warn!(
+                                                                                        error = %text,
+                                                                                        realm = %realm_id,
+                                                                                        "ck.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
+                                                                                    );
+                                                                                }
+                                                                            }
+                                                                        }
                                                                     }
                                                                     Err(err) => {
-                                                                        let text = err.to_string();
-                                                                        if text.contains("mls_genesis_already_exists") {
-                                                                            state_store.write().mark_mls_genesis_emitted(realm_id.clone());
-                                                                        } else {
-                                                                            tracing::warn!(
-                                                                                error = %text,
-                                                                                realm = %realm_id,
-                                                                                "ck.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
-                                                                            );
-                                                                        }
+                                                                        tracing::warn!(
+                                                                            error = %err,
+                                                                            realm = %realm_id,
+                                                                            "ck.mls.genesis event conversion failed; soland will default epoch 0 and the kanban write path will retry",
+                                                                        );
                                                                     }
                                                                 }
                                                             }

@@ -936,12 +936,19 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
+                                let commit_event = match commit_event.to_sdk_event_for_submit() {
+                                    Ok(event) => event,
+                                    Err(err) => {
+                                        status_msg.set(format!("rotate failed: {err}"));
+                                        return;
+                                    }
+                                };
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.submit_event_envelope(&commit_event).await
+                                            api.submit_sdk_event(&commit_event).await
                                         },
                                     )
                                     .await
@@ -1183,12 +1190,21 @@ pub fn RealmAdminPanel(
                                 )
                                 .build("yougen");
                                 let op_id = envelope.local_operation_id().to_owned();
+                                let envelope = match envelope.to_sdk_event_for_submit() {
+                                    Ok(envelope) => envelope,
+                                    Err(err) => {
+                                        status_msg.set(format!(
+                                            "capability.grant build failed: {err}"
+                                        ));
+                                        return;
+                                    }
+                                };
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.submit_event_envelope(&envelope).await
+                                            api.submit_sdk_event(&envelope).await
                                         },
                                     )
                                     .await
@@ -1251,12 +1267,21 @@ pub fn RealmAdminPanel(
                                 )
                                 .build("yougen");
                                 let op_id = envelope.local_operation_id().to_owned();
+                                let envelope = match envelope.to_sdk_event_for_submit() {
+                                    Ok(envelope) => envelope,
+                                    Err(err) => {
+                                        status_msg.set(format!(
+                                            "capability.revoke build failed: {err}"
+                                        ));
+                                        return;
+                                    }
+                                };
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.submit_event_envelope(&envelope).await
+                                            api.submit_sdk_event(&envelope).await
                                         },
                                     )
                                     .await

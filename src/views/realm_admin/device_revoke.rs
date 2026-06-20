@@ -118,10 +118,9 @@ pub(crate) async fn run_device_revoke_from_snapshot(
     };
     let removed_count = full.output.result.removed_leaves.len();
     let post_state = full.post_state.clone();
-    // The SDK's `commit_operation` returns an SDK-typed Operation. We
-    // wrap its payload into yougen's EventEnvelope shape so the
-    // existing `submit_event_envelope` path (Event envelope wrapper +
-    // /_cokret/self/events POST) accepts it without a separate wire route.
+    // The SDK's `commit_operation` returns an SDK-typed Operation. Wrap its
+    // payload into yougen's local builder shape, then convert back to an SDK
+    // Event so the normal typed submit path signs and posts it.
     let actor = full
         .output
         .commit_operation
@@ -138,9 +137,16 @@ pub(crate) async fn run_device_revoke_from_snapshot(
         envelope_builder = envelope_builder.target_ref(tref);
     }
     let envelope = envelope_builder.build("yougen");
+    let envelope = match envelope.to_sdk_event_for_submit() {
+        Ok(envelope) => envelope,
+        Err(err) => {
+            status.set(format!("MLS Remove event build failed: {err}"));
+            return;
+        }
+    };
     let submit_result =
         crate::views::helpers::with_authed_api(&base_url, api_token.clone(), |api| async move {
-            api.submit_event_envelope(&envelope).await
+            api.submit_sdk_event(&envelope).await
         })
         .await;
     match submit_result {

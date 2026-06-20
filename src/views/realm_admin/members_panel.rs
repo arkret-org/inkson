@@ -428,11 +428,18 @@ pub fn RealmMembersPanel(
                                                         }
                                                     };
                                                     let op_id = op.local_operation_id().to_owned();
+                                                    let submit_event = match op.to_sdk_event_for_submit() {
+                                                        Ok(event) => event,
+                                                        Err(err) => {
+                                                            status_msg.set(format!("invite failed: {err:#}"));
+                                                            return;
+                                                        }
+                                                    };
                                                     status_msg.set(format!(
                                                         "submitting invite for {}",
                                                         invitee_label
                                                     ));
-                                                    match api.submit_event_envelope(&op).await {
+                                                    match api.submit_sdk_event(&submit_event).await {
                                                         Ok(submitted) => {
                                                             frontier_state.set(submitted.event_id.clone());
                                                             {
