@@ -69,9 +69,7 @@ pub(super) fn patch_touches_private_paths(payload: &Value, private_paths: &[&str
         })
 }
 
-pub(super) fn kanban_event_carries_plaintext_private_content(
-    event: &crate::operation::EventEnvelope,
-) -> bool {
+pub(super) fn kanban_event_carries_plaintext_private_content(event: &cokret_sdk::Event) -> bool {
     match event.kind.as_str() {
         "ck.strand.create" => [
             &["body"][..],
@@ -89,10 +87,10 @@ pub(super) fn kanban_event_carries_plaintext_private_content(
         ]
         .iter()
         .any(|path| {
-            value_at_path(&event.payload, path).is_some_and(value_is_plaintext_private_content)
+            value_at_path(&event.content, path).is_some_and(value_is_plaintext_private_content)
         }),
         "ck.strand.update" => {
-            patch_touches_private_paths(&event.payload, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
+            patch_touches_private_paths(&event.content, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
         }
         _ => false,
     }
@@ -128,7 +126,7 @@ pub(super) const SECURITY_STATE_NOT_READY_REASON: &str =
 ///   projection is still in flight.
 pub(super) fn kanban_plaintext_block_reason(
     scope_security_encrypted: Option<bool>,
-    event: &crate::operation::EventEnvelope,
+    event: &cokret_sdk::Event,
 ) -> Option<String> {
     match scope_security_encrypted {
         // Known plaintext Realm — legitimate plaintext write, never block.
@@ -160,7 +158,7 @@ pub(super) fn kanban_plaintext_block_reason(
             if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind.as_str()) {
                 return None;
             }
-            kanban_plaintext_block_reason_for_kind(true, &event.kind)
+            kanban_plaintext_block_reason_for_kind(true, event.kind.as_str())
         }
     }
 }

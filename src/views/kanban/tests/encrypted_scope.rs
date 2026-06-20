@@ -12,6 +12,7 @@ fn encrypted_scope_blocks_plaintext_strand_update_payload() {
     )
     .expect("builds")
     .build("yougen");
+    let event = sdk_event(event);
 
     assert!(kanban_event_carries_plaintext_private_content(&event));
     let reason = kanban_plaintext_block_reason(Some(true), &event).unwrap();
@@ -37,6 +38,7 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     )
     .expect("builds")
     .build("yougen");
+    let private_update = sdk_event(private_update);
     assert!(kanban_event_carries_plaintext_private_content(
         &private_update
     ));
@@ -65,6 +67,7 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     )
     .expect("builds")
     .build("yougen");
+    let board_create = sdk_event(board_create);
     assert!(
         kanban_plaintext_block_reason(None, &board_create).is_none(),
         "container scaffold metadata must not be blocked by unknown security state"
@@ -93,6 +96,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     )
     .expect("builds")
     .build("yougen");
+    let event = sdk_event(event);
 
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
@@ -338,8 +342,9 @@ fn encrypted_scope_allows_structural_strand_position_update() {
     )
     .expect("builds")
     .build("yougen");
+    let event = sdk_event(event);
 
-    assert_eq!(event.kind, "ck.strand.update");
+    assert_eq!(event.kind.as_str(), "ck.strand.update");
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
 }
@@ -357,6 +362,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     )
     .expect("builds")
     .build("yougen");
+    let strand = sdk_event(strand);
     let space = crate::operation::ck_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
@@ -368,6 +374,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     )
     .expect("builds")
     .build("yougen");
+    let space = sdk_event(space);
 
     assert!(kanban_plaintext_block_reason(Some(true), &strand).is_none());
     assert!(kanban_plaintext_block_reason(Some(true), &space).is_none());
@@ -392,7 +399,8 @@ fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_co
     )
     .expect("builds")
     .build("yougen");
-    assert_eq!(board.kind, "ck.space.create");
+    let board = sdk_event(board);
+    assert_eq!(board.kind.as_str(), "ck.space.create");
     assert!(
         kanban_plaintext_block_reason(Some(true), &board).is_none(),
         "encrypted scope must not block board container create"
@@ -409,7 +417,8 @@ fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_co
     )
     .expect("builds")
     .build("yougen");
-    assert_eq!(list.kind, "ck.space.create");
+    let list = sdk_event(list);
+    assert_eq!(list.kind.as_str(), "ck.space.create");
     assert!(
         kanban_plaintext_block_reason(Some(true), &list).is_none(),
         "encrypted scope must not block list container create"
@@ -426,6 +435,7 @@ fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_co
     )
     .expect("builds")
     .build("yougen");
+    let private_update = sdk_event(private_update);
     assert!(
         kanban_plaintext_block_reason(Some(true), &private_update).is_some(),
         "encrypted scope must still block plaintext private strand content"
@@ -444,6 +454,7 @@ fn encrypted_scope_allows_strand_summary_metadata_update() {
     )
     .expect("builds")
     .build("yougen");
+    let event = sdk_event(event);
 
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());

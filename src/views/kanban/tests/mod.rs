@@ -29,16 +29,59 @@ mod roster;
 mod strand_mls;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn assert_registered_payload_valid(event: &crate::operation::EventEnvelope) {
+pub(super) trait TestEventPayloadView {
+    fn kind_for_schema(&self) -> &str;
+    fn payload_for_schema(&self) -> &serde_json::Value;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl TestEventPayloadView for crate::operation::EventEnvelope {
+    fn kind_for_schema(&self) -> &str {
+        &self.kind
+    }
+
+    fn payload_for_schema(&self) -> &serde_json::Value {
+        &self.payload
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl TestEventPayloadView for cokret_sdk::Event {
+    fn kind_for_schema(&self) -> &str {
+        self.kind.as_str()
+    }
+
+    fn payload_for_schema(&self) -> &serde_json::Value {
+        &self.content
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView) {
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&event.kind, &event.payload)
+        .validate_payload(event.kind_for_schema(), event.payload_for_schema())
         .unwrap_or_else(|err| {
             panic!(
                 "{} payload violates registered schema: {err}\npayload: {}",
-                event.kind,
-                serde_json::to_string_pretty(&event.payload).unwrap()
+                event.kind_for_schema(),
+                serde_json::to_string_pretty(event.payload_for_schema()).unwrap()
             )
         });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn sdk_event(event: crate::operation::EventEnvelope) -> cokret_sdk::Event {
+    event
+        .to_sdk_event_for_submit()
+        .expect("test event must match SDK Event wire model")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn sdk_event_local_target_ref(event: &cokret_sdk::Event) -> Option<&str> {
+    event
+        .unsigned
+        .get("local_target_ref")
+        .and_then(serde_json::Value::as_str)
 }
 
 pub(super) fn board_write_record(state: CardState, note: &str) -> BoardWriteRecord {

@@ -11,6 +11,14 @@ use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 use crate::operation::{trim_realm_id, uuid_v7};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
+fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
+    event
+        .unsigned
+        .get("local_operation_idempotency_alias")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| event.event_id.as_str())
+}
+
 pub(super) fn kanban_sha256_hash_from_ref(value: &str) -> Option<String> {
     if let Some(hex) = value.strip_prefix("sha256:")
         && hex.len() == 64
@@ -475,6 +483,13 @@ pub(super) fn dispatch_card_detail_update(
             return false;
         }
     };
+    let op = match op.to_sdk_event_for_submit() {
+        Ok(event) => event,
+        Err(err) => {
+            board_status.set(format!("cannot update card: {err}"));
+            return false;
+        }
+    };
     // R4: feed the guard the three-state security signal. An explicit
     // per-card `security_encrypted` flag (`Some`) wins; otherwise fall back to
     // the scope three-state so an unknown projection fails closed.
@@ -509,7 +524,7 @@ pub(super) fn dispatch_card_detail_update(
     }
     selected_card.set(Some(updated_card));
 
-    let operation_id = op.local_operation_id().to_owned();
+    let operation_id = sdk_event_local_operation_id(&op).to_owned();
     let synthesis_entry_id = synthesis_revision_body
         .as_ref()
         .map(|_| synthesis_entry_id.unwrap_or_else(|| operation_id.clone()));
@@ -520,12 +535,12 @@ pub(super) fn dispatch_card_detail_update(
         operation_id.clone(),
         Some(realm_id.clone()),
         json!({
-            "kind": op.kind.clone(),
+            "kind": op.kind.as_str(),
             "operation_id": operation_id.clone(),
-            "actor_id": op.actor_id.clone(),
-            "created_at": op.created_at.clone(),
+            "actor_id": op.actor_id.to_string(),
+            "created_at": op.created_at.to_rfc3339(),
             "write_state": "queued",
-            "body": op.payload.clone(),
+            "body": op.content.clone(),
             "activity_summary": card_detail_activity_summary(&current, &draft),
             "synthesis_entry_id": synthesis_entry_id,
             "synthesis_revision_body": local_synthesis_revision_body,
@@ -534,12 +549,12 @@ pub(super) fn dispatch_card_detail_update(
     );
     board_status.set(format!(
         "submitting {} operation {}",
-        op.kind,
+        op.kind.as_str(),
         short_protocol_id(&operation_id)
     ));
     let api_token = token();
     let strand_id = current.id.clone();
-    let kind = op.kind.clone();
+    let kind = op.kind.as_str().to_owned();
     let mls_commit_operation_id = mls_commit_op
         .as_ref()
         .map(|op| op.local_operation_id().to_owned());
@@ -602,28 +617,7 @@ pub(super) fn dispatch_card_detail_update(
             return false;
         }
     };
-    let submit_event = match op.to_sdk_event_for_submit() {
-        Ok(event) => event,
-        Err(err) => {
-            let err_text = err.to_string();
-            state_store.write().update_raw_operation_write_state(
-                &operation_id,
-                "failed",
-                None,
-                Some(err_text.clone()),
-            );
-            set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
-            let selected = selected_card.read().clone();
-            if let Some(mut card) = selected
-                && card.id == strand_id
-            {
-                card.state = CardState::SoftFailed;
-                selected_card.set(Some(card));
-            }
-            board_status.set(format!("{kind} event failed: {err_text}"));
-            return false;
-        }
-    };
+    let submit_event = op;
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate

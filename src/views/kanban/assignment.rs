@@ -13,12 +13,12 @@ pub(super) enum CardAssignmentMutation {
     Create {
         actor_id: String,
         relation_id: String,
-        operation: crate::operation::EventEnvelope,
+        operation: cokret_sdk::Event,
     },
     Tombstone {
         actor_id: String,
         relation_id: String,
-        operation: crate::operation::EventEnvelope,
+        operation: cokret_sdk::Event,
     },
 }
 
@@ -35,7 +35,7 @@ impl CardAssignmentMutation {
         }
     }
 
-    pub(super) fn operation(&self) -> &crate::operation::EventEnvelope {
+    pub(super) fn operation(&self) -> &cokret_sdk::Event {
         match self {
             Self::Create { operation, .. } | Self::Tombstone { operation, .. } => operation,
         }
@@ -54,6 +54,14 @@ pub(super) fn relation_id_from_event_id(event_id: &str) -> Option<String> {
     event_id
         .strip_prefix("ck:event:")
         .map(|suffix| format!("ck:relation:{suffix}"))
+}
+
+fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
+    event
+        .unsigned
+        .get("local_operation_idempotency_alias")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| event.event_id.as_str())
 }
 
 pub(super) fn normalize_assignee_selection(
@@ -108,13 +116,16 @@ pub(super) fn card_assignment_mutations(
             assignee_id,
         )
         .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
-        .build("yougen");
-        let relation_id = relation_id_from_event_id(&operation.event_id).ok_or_else(|| {
-            format!(
-                "internal: cannot derive assigned_to relation id from {}",
-                operation.event_id
-            )
-        })?;
+        .build("yougen")
+        .to_sdk_event_for_submit()
+        .map_err(|err| format!("cannot build assigned_to relation event: {err}"))?;
+        let relation_id =
+            relation_id_from_event_id(operation.event_id.as_str()).ok_or_else(|| {
+                format!(
+                    "internal: cannot derive assigned_to relation id from {}",
+                    operation.event_id.as_str()
+                )
+            })?;
         mutations.push(CardAssignmentMutation::Create {
             actor_id: assignee_id.clone(),
             relation_id,
@@ -132,7 +143,9 @@ pub(super) fn card_assignment_mutations(
         for relation_id in relation_ids {
             let operation =
                 crate::operation::ck_ops::relation_tombstone(realm_id, actor_id, relation_id)
-                    .build("yougen");
+                    .build("yougen")
+                    .to_sdk_event_for_submit()
+                    .map_err(|err| format!("cannot build assigned_to tombstone event: {err}"))?;
             mutations.push(CardAssignmentMutation::Tombstone {
                 actor_id: assignee_id.clone(),
                 relation_id: relation_id.clone(),
@@ -276,17 +289,17 @@ pub(super) fn dispatch_card_assignees_update(
 
     for mutation in &mutations {
         let operation = mutation.operation();
-        let operation_id = operation.local_operation_id().to_owned();
+        let operation_id = sdk_event_local_operation_id(operation).to_owned();
         state_store.write().append_raw_operation(
             operation_id.clone(),
             Some(realm_id.clone()),
             json!({
-                "kind": operation.kind.clone(),
+                "kind": operation.kind.as_str(),
                 "operation_id": operation_id,
-                "actor_id": operation.actor_id.clone(),
-                "created_at": operation.created_at.clone(),
+                "actor_id": operation.actor_id.to_string(),
+                "created_at": operation.created_at.to_rfc3339(),
                 "write_state": "queued",
-                "body": operation.payload.clone(),
+                "body": operation.content.clone(),
                 "assignment_strand_id": current.id.clone(),
                 "assignment_actor_id": mutation.actor_id(),
                 "assignment_relation_id": mutation.relation_id(),
@@ -306,33 +319,10 @@ pub(super) fn dispatch_card_assignees_update(
     spawn(async move {
         for mutation in mutations {
             let operation = mutation.operation().clone();
-            let operation_id = operation.local_operation_id().to_owned();
-            let kind = operation.kind.clone();
-            let event = match operation.to_sdk_event_for_submit() {
-                Ok(event) => event,
-                Err(err) => {
-                    let err_text = err.to_string();
-                    state_store.write().update_raw_operation_write_state(
-                        &operation_id,
-                        "failed",
-                        None,
-                        Some(err_text.clone()),
-                    );
-                    set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
-                    let selected = selected_card.read().clone();
-                    if let Some(mut card) = selected
-                        && card.id == strand_id
-                    {
-                        card.state = CardState::SoftFailed;
-                        selected_card.set(Some(card));
-                    }
-                    assignee_edit_status.set(format!("{kind} failed"));
-                    board_status.set(format!("{kind} operation failed: {err_text}"));
-                    return;
-                }
-            };
+            let operation_id = sdk_event_local_operation_id(&operation).to_owned();
+            let kind = operation.kind.as_str().to_owned();
             match with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.submit_sdk_event(&event).await
+                api.submit_sdk_event(&operation).await
             })
             .await
             {

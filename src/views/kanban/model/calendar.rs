@@ -243,7 +243,7 @@ pub(crate) fn calendar_rsvp_operation(
     strand_id: &str,
     status: &str,
     occurrence: &str,
-) -> anyhow::Result<crate::operation::EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     crate::operation::ck_ops::rsvp_set(
         realm_id,
         actor_id,
@@ -252,7 +252,7 @@ pub(crate) fn calendar_rsvp_operation(
         (!occurrence.trim().is_empty()).then_some(occurrence.trim()),
         None,
     )
-    .map(|builder| builder.build("yougen"))
+    .and_then(|builder| builder.build("yougen").to_sdk_event_for_submit())
 }
 
 pub(crate) fn calendar_occurrence_hint(calendar: &CalendarCardFields) -> String {

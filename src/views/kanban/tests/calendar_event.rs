@@ -69,12 +69,15 @@ fn calendar_rsvp_operation_uses_occurrence_payload() {
     )
     .unwrap();
 
-    assert_eq!(event.kind, "ck.rsvp.set");
-    assert_eq!(event.local_target_ref(), Some(TEST_CALENDAR_STRAND_ID));
-    assert_eq!(event.payload["event_ref"], TEST_CALENDAR_STRAND_ID);
-    assert_eq!(event.payload["status"], "accepted");
+    assert_eq!(event.kind.as_str(), "ck.rsvp.set");
     assert_eq!(
-        event.payload["occurrence"],
+        sdk_event_local_target_ref(&event),
+        Some(TEST_CALENDAR_STRAND_ID)
+    );
+    assert_eq!(event.content["event_ref"], TEST_CALENDAR_STRAND_ID);
+    assert_eq!(event.content["status"], "accepted");
+    assert_eq!(
+        event.content["occurrence"],
         "2026-06-20T09:00:00[Asia/Shanghai]"
     );
     assert_registered_payload_valid(&event);

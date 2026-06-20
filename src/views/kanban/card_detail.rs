@@ -379,6 +379,14 @@ pub(super) fn save_card_calendar_edit(
     }
 }
 
+fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
+    event
+        .unsigned
+        .get("local_operation_idempotency_alias")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| event.event_id.as_str())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_calendar_rsvp(
     base_url: String,
@@ -404,17 +412,17 @@ pub(super) fn dispatch_calendar_rsvp(
             return;
         }
     };
-    let operation_id = op.local_operation_id().to_owned();
+    let operation_id = sdk_event_local_operation_id(&op).to_owned();
     state_store.write().append_raw_operation(
         operation_id.clone(),
         Some(realm_id.clone()),
         serde_json::json!({
-            "kind": op.kind.clone(),
+            "kind": op.kind.as_str(),
             "operation_id": operation_id.clone(),
-            "actor_id": op.actor_id.clone(),
-            "created_at": op.created_at.clone(),
+            "actor_id": op.actor_id.to_string(),
+            "created_at": op.created_at.to_rfc3339(),
             "write_state": "queued",
-            "body": op.payload.clone(),
+            "body": op.content.clone(),
             "activity_summary": format!("RSVP {status}"),
         }),
     );
@@ -423,14 +431,8 @@ pub(super) fn dispatch_calendar_rsvp(
         short_protocol_id(&operation_id)
     ));
     let api_token = token();
-    let kind = op.kind.clone();
-    let event = match op.to_sdk_event_for_submit() {
-        Ok(event) => event,
-        Err(err) => {
-            board_status.set(format!("RSVP failed: {err:#?}"));
-            return;
-        }
-    };
+    let kind = op.kind.as_str().to_owned();
+    let event = op;
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
             api.submit_sdk_event(&event).await

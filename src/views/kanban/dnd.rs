@@ -13,7 +13,7 @@ pub(super) fn submit_kanban_operation_event(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    operation: crate::operation::EventEnvelope,
+    operation: cokret_sdk::Event,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
     mut state_store: Signal<LocalStateStore>,
@@ -23,10 +23,10 @@ pub(super) fn submit_kanban_operation_event(
         board_status.set(reason);
         return;
     }
-    let operation_id = operation.local_operation_id().to_owned();
-    let kind = operation.kind.clone();
-    let actor_id = operation.actor_id.clone();
-    let created_at = operation.created_at.clone();
+    let operation_id = sdk_event_local_operation_id(&operation).to_owned();
+    let kind = operation.kind.as_str().to_owned();
+    let actor_id = operation.actor_id.to_string();
+    let created_at = operation.created_at.to_rfc3339();
     state_store.write().append_raw_operation(
         operation_id.clone(),
         Some(realm_id),
@@ -36,7 +36,7 @@ pub(super) fn submit_kanban_operation_event(
             "actor_id": actor_id,
             "created_at": created_at,
             "write_state": "queued",
-            "body": operation.payload.clone(),
+            "body": operation.content.clone(),
         }),
     );
     board_status.set(format!(
@@ -67,22 +67,9 @@ pub(super) fn submit_kanban_operation_event(
     //
     // NOTE: `spawn_forever` is NOT in the dioxus prelude (only `spawn` is);
     // reach it via the re-exported core crate.
-    let submit_event = match operation.to_sdk_event_for_submit() {
-        Ok(event) => event,
-        Err(err) => {
-            state_store.write().update_raw_operation_write_state(
-                &operation_id_for_status,
-                "failed",
-                None,
-                Some(err.to_string()),
-            );
-            board_status.set(format!("{kind} operation failed: {err}"));
-            return;
-        }
-    };
     dioxus::core::spawn_forever(async move {
         let result = with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_sdk_event(&submit_event).await
+            api.submit_sdk_event(&operation).await
         })
         .await;
         match result {
@@ -117,6 +104,14 @@ pub(super) fn submit_kanban_operation_event(
             }
         }
     });
+}
+
+fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
+    event
+        .unsigned
+        .get("local_operation_idempotency_alias")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| event.event_id.as_str())
 }
 
 pub(super) fn submit_column_order_updates(
@@ -156,7 +151,13 @@ pub(super) fn submit_column_order_updates(
             &column_id,
             json!({ "rank": rank }),
         ) {
-            Ok(builder) => builder.build("yougen"),
+            Ok(builder) => match builder.build("yougen").to_sdk_event_for_submit() {
+                Ok(event) => event,
+                Err(err) => {
+                    board_status.set(format!("Column order failed: {err}"));
+                    return;
+                }
+            },
             Err(err) => {
                 board_status.set(format!("Column order failed: {err:#}"));
                 return;
@@ -240,19 +241,26 @@ pub(super) fn submit_kanban_move(
             return;
         }
     };
-    if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &envelope) {
+    let event = match envelope.to_sdk_event_for_submit() {
+        Ok(event) => event,
+        Err(err) => {
+            board_status.set(format!("cannot submit card update: {err}"));
+            return;
+        }
+    };
+    if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &event) {
         board_status.set(reason);
         return;
     }
-    let wire_kind = envelope.kind.clone();
-    let op_id = envelope.local_operation_id().to_owned();
+    let wire_kind = event.kind.as_str().to_owned();
+    let op_id = sdk_event_local_operation_id(&event).to_owned();
     let cell_id = value
         .get("board_space_id")
         .and_then(Value::as_str)
         .map(|board_space_id| strand_position_cell_id(board_space_id, &subject))
         .unwrap_or_else(|| format!("ck:cell:ck.component.strand.position.v1:{subject}"));
     let effect_summary = if kind == "ck.strand.create" {
-        serde_json::to_string(&envelope.payload).unwrap_or_else(|_| "{}".to_owned())
+        serde_json::to_string(&event.content).unwrap_or_else(|_| "{}".to_owned())
     } else {
         serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
     };
@@ -276,11 +284,11 @@ pub(super) fn submit_kanban_move(
             "kind": kind,
             "operation_id": op_id,
             "actor_id": actor_id.clone(),
-            "created_at": envelope.created_at.clone(),
+            "created_at": event.created_at.to_rfc3339(),
             "cell": cell_id,
             "effect": value,
             "wire_kind": wire_kind.clone(),
-            "body": envelope.payload.clone(),
+            "body": event.content.clone(),
             "write_state": "queued",
         }),
     );
@@ -293,30 +301,7 @@ pub(super) fn submit_kanban_move(
     let seal_for_record = seal_ref.clone();
     let kind_for_record = kind.to_owned();
     let op_for_track = op_id.clone();
-    let submit_event = match envelope.to_sdk_event_for_submit() {
-        Ok(event) => event,
-        Err(err) => {
-            let err_text = err.to_string();
-            state_store.write().update_raw_operation_write_state(
-                &op_for_track,
-                "failed",
-                None,
-                Some(err_text.clone()),
-            );
-            let state = MoveSubmissionState::from_submit_state("failed", Some(&err_text));
-            state_store.write().record_move_submission_with_event_id(
-                op_for_track.clone(),
-                None,
-                realm_for_record,
-                kind_for_record,
-                state,
-                Some(err_text.clone()),
-                Some(seal_for_record),
-            );
-            board_status.set(format!("{wire_kind} failed: {err_text}"));
-            return;
-        }
-    };
+    let submit_event = event;
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
             api.submit_sdk_event(&submit_event).await
@@ -991,7 +976,14 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
             return;
         }
     };
-    let move_id = envelope.local_operation_id().to_owned();
+    let event = match envelope.to_sdk_event_for_submit() {
+        Ok(event) => event,
+        Err(err) => {
+            board_status.set(format!("cannot submit {kind}: {err}"));
+            return;
+        }
+    };
+    let move_id = sdk_event_local_operation_id(&event).to_owned();
     let cell_id = strand_position_cell_id(&board_space_id, &strand_id);
     let effect_summary = match &effect {
         StrandPositionEffect::SetPosition {
@@ -1058,31 +1050,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
     let view_for_rebase = board_view_id.clone();
     let strand_for_rebase = strand_id.clone();
     let effect_for_rebase = effect.clone();
-    let submit_event = match envelope.to_sdk_event_for_submit() {
-        Ok(event) => event,
-        Err(err) => {
-            let err_text = err.to_string();
-            state_store.write().update_raw_operation_write_state(
-                &move_for_track,
-                "failed",
-                None,
-                Some(err_text.clone()),
-            );
-            let submission_state =
-                MoveSubmissionState::from_submit_state("failed", Some(&err_text));
-            state_store.write().record_move_submission_with_event_id(
-                move_for_track.clone(),
-                None,
-                realm_for_record,
-                kind_for_record,
-                submission_state,
-                Some(err_text.clone()),
-                Some(seal_for_record),
-            );
-            board_status.set(format!("{kind} event failed: {err_text}"));
-            return;
-        }
-    };
+    let submit_event = event;
     spawn(async move {
         let submit_result = with_authed_api(&base_url, api_token, |api| async move {
             api.submit_sdk_event(&submit_event).await

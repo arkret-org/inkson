@@ -1786,6 +1786,13 @@ pub fn KanbanPanel(
                                                     return;
                                                 }
                                             };
+                                            let op = match op.to_sdk_event_for_submit() {
+                                                Ok(event) => event,
+                                                Err(err) => {
+                                                    board_status.set(format!("cannot create list: {err}"));
+                                                    return;
+                                                }
+                                            };
                                             if let Some(reason) = kanban_plaintext_block_reason(
                                                 selected_scope_security_encrypted,
                                                 &op,
@@ -1873,6 +1880,13 @@ pub fn KanbanPanel(
                                                     Ok(builder) => builder.build("yougen"),
                                                     Err(err) => {
                                                         board_status.set(format!("cannot create board: {err:#}"));
+                                                        return;
+                                                }
+                                            };
+                                                let op = match op.to_sdk_event_for_submit() {
+                                                    Ok(event) => event,
+                                                    Err(err) => {
+                                                        board_status.set(format!("cannot create board: {err}"));
                                                         return;
                                                     }
                                                 };
