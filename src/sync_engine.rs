@@ -398,17 +398,6 @@ async fn run_idle_self_update_pass(
         // CAS (§5.4) rejects the loser of any concurrent commit race; either
         // way the epoch advances, so a rejection is fine — we simply do NOT
         // persist the local snapshot (persist-on-accept).
-        let commit_event = match commit_event.to_sdk_event_for_submit() {
-            Ok(event) => event,
-            Err(err) => {
-                tracing::debug!(
-                    %realm_id,
-                    error = %err,
-                    "sync_engine: idle §5.6 self-update event conversion skipped",
-                );
-                continue;
-            }
-        };
         let submit_token = token.clone();
         match crate::views::helpers::with_authed_api(&base, submit_token, |api| async move {
             api.submit_sdk_event(&commit_event).await

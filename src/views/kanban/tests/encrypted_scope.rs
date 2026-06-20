@@ -199,13 +199,13 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let genesis = mls_events
         .genesis
         .expect("freshly-created creator group should emit genesis");
-    assert_eq!(genesis.kind, "ck.mls.genesis");
-    assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
+    assert_eq!(genesis.kind.as_str(), "ck.mls.genesis");
+    assert_eq!(genesis.content["epoch"].as_u64(), Some(0));
     assert_eq!(
-        genesis.payload["creator_principal_id"].as_str(),
+        genesis.content["creator_principal_id"].as_str(),
         Some(actor)
     );
-    assert!(genesis.payload.get("governance_binding").is_some());
+    assert!(genesis.content.get("governance_binding").is_some());
     assert_registered_payload_valid(&genesis);
 }
 
@@ -278,27 +278,27 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let commit = mls_events
         .commit
         .expect("overdue minimal metadata MLS snapshot should emit commit event");
-    assert_eq!(commit.kind, "ck.mls.commit");
+    assert_eq!(commit.kind.as_str(), "ck.mls.commit");
     assert_registered_payload_valid(&commit);
-    assert!(commit.payload.get("group_id").is_none());
-    assert!(commit.payload.get("expected_prev_epoch").is_none());
-    assert!(commit.payload.get("commit_bytes_b64").is_none());
-    assert!(commit.payload.get("preconditions").is_none());
-    assert!(commit.payload.get("effects").is_none());
+    assert!(commit.content.get("group_id").is_none());
+    assert!(commit.content.get("expected_prev_epoch").is_none());
+    assert!(commit.content.get("commit_bytes_b64").is_none());
+    assert!(commit.content.get("preconditions").is_none());
+    assert!(commit.content.get("effects").is_none());
     assert_eq!(
-        commit.payload["governance_binding"]["realm_id"],
+        commit.content["governance_binding"]["realm_id"],
         json!("ck:realm:01904100-0000-7000-8000-000000000001")
     );
     assert_eq!(
-        commit.payload["governance_binding"]["effective_scope"],
+        commit.content["governance_binding"]["effective_scope"],
         json!({
             "kind": "realm",
             "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
         })
     );
     assert_eq!(
-        commit.payload["governance_binding"]["membership_frontier"][0],
-        json!(commit.event_id)
+        commit.content["governance_binding"]["membership_frontier"][0],
+        json!(commit.event_id.as_str())
     );
     assert!(state.load().raw_operations.is_empty());
 }

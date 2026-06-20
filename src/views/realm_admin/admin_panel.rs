@@ -936,13 +936,6 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
-                                let commit_event = match commit_event.to_sdk_event_for_submit() {
-                                    Ok(event) => event,
-                                    Err(err) => {
-                                        status_msg.set(format!("rotate failed: {err}"));
-                                        return;
-                                    }
-                                };
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,

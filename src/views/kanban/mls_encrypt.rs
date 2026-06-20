@@ -172,7 +172,7 @@ pub(super) fn ensure_creator_mls_snapshot_for_encrypted_scope(
     .map_err(|err| err.user_message())
 }
 
-/// Build the `ck.mls.genesis` [`EventEnvelope`] for a creator group that has a
+/// Build the `ck.mls.genesis` SDK event for a creator group that has a
 /// local snapshot but whose genesis has not yet been submitted to soland.
 ///
 /// Returns `None` when genesis was already emitted for this Realm (idempotent —
@@ -190,7 +190,7 @@ pub(crate) fn build_creator_mls_genesis_event(
     actor_id: &str,
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
-) -> Result<Option<crate::operation::EventEnvelope>, String> {
+) -> Result<Option<cokret_sdk::Event>, String> {
     if state_store.mls_genesis_emitted_for(realm_id) {
         return Ok(None);
     }
@@ -237,7 +237,10 @@ pub(crate) fn build_creator_mls_genesis_event(
     )
     .build("yougen");
     event.event_id = event_id;
-    Ok(Some(event))
+    event
+        .to_sdk_event_for_submit()
+        .map(Some)
+        .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))
 }
 
 // pub(crate): the realm_admin epoch-rotation button (YOU-01-009) reuses
@@ -249,7 +252,7 @@ pub(crate) fn kanban_mls_commit_event_from_store(
     actor_id: &str,
     _schedule_hash: &cokret_sdk::Hash,
     commit_envelope: &cokret_sdk::MlsCommitEnvelope,
-) -> Result<crate::operation::EventEnvelope, String> {
+) -> Result<cokret_sdk::Event, String> {
     let seal_view = state_store.seal_view_for_realm(realm_id);
     // `base_epoch` MUST be the SDK group's PRE-commit epoch so the
     // `next_epoch == base_epoch + 1` invariant holds by construction.
@@ -291,7 +294,9 @@ pub(crate) fn kanban_mls_commit_event_from_store(
             .map_err(|err| format!("MLS commit payload failed: {err}"))?
             .build("yougen");
     event.event_id = event_id;
-    Ok(event)
+    event
+        .to_sdk_event_for_submit()
+        .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))
 }
 
 /// The MLS events an encrypted write must submit, in submit order: the
@@ -300,8 +305,8 @@ pub(crate) fn kanban_mls_commit_event_from_store(
 /// bumps it.
 #[derive(Default, Debug)]
 pub(super) struct EncryptedWriteMlsEvents {
-    pub genesis: Option<crate::operation::EventEnvelope>,
-    pub commit: Option<crate::operation::EventEnvelope>,
+    pub genesis: Option<cokret_sdk::Event>,
+    pub commit: Option<cokret_sdk::Event>,
     /// X14 — the post-commit MLS snapshot. Persisted by the caller ONLY
     /// after the server ACCEPTS `commit`, so the local snapshot epoch never
     /// races ahead of the server's accepted epoch (the root cause of
@@ -557,7 +562,7 @@ pub(super) fn dispatch_card_detail_update(
     let kind = op.kind.as_str().to_owned();
     let mls_commit_operation_id = mls_commit_op
         .as_ref()
-        .map(|op| op.local_operation_id().to_owned());
+        .map(|op| sdk_event_local_operation_id(op).to_owned());
     // X11.2 — first-write trigger. Read the context-provided
     // `needs_mls_backup` signal HERE (inside the Dioxus scope), so the
     // encrypted-write success arm can flip the backup prompt on directly,
@@ -567,56 +572,8 @@ pub(super) fn dispatch_card_detail_update(
     let base_for_backup_trigger = base_url.clone();
     let actor_for_backup_trigger = actor_id.clone();
     let device_for_sidecar_backup = device_id.clone();
-    let mls_genesis_op = match mls_genesis_op
-        .map(|op| op.to_sdk_event_for_submit())
-        .transpose()
-    {
-        Ok(op) => op,
-        Err(err) => {
-            let err_text = err.to_string();
-            state_store.write().update_raw_operation_write_state(
-                &operation_id,
-                "failed",
-                None,
-                Some(err_text.clone()),
-            );
-            set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
-            let selected = selected_card.read().clone();
-            if let Some(mut card) = selected
-                && card.id == strand_id
-            {
-                card.state = CardState::SoftFailed;
-                selected_card.set(Some(card));
-            }
-            board_status.set(format!("MLS genesis event failed: {err_text}"));
-            return false;
-        }
-    };
-    let mls_commit_op = match mls_commit_op
-        .map(|op| op.to_sdk_event_for_submit())
-        .transpose()
-    {
-        Ok(op) => op,
-        Err(err) => {
-            let err_text = err.to_string();
-            state_store.write().update_raw_operation_write_state(
-                &operation_id,
-                "failed",
-                None,
-                Some(err_text.clone()),
-            );
-            set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
-            let selected = selected_card.read().clone();
-            if let Some(mut card) = selected
-                && card.id == strand_id
-            {
-                card.state = CardState::SoftFailed;
-                selected_card.set(Some(card));
-            }
-            board_status.set(format!("MLS commit event failed: {err_text}"));
-            return false;
-        }
-    };
+    let mls_genesis_op = mls_genesis_op;
+    let mls_commit_op = mls_commit_op;
     let submit_event = op;
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the
