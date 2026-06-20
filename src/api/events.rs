@@ -240,8 +240,6 @@ impl CokretApi {
         &self,
         signed: &EventEnvelope,
     ) -> anyhow::Result<SubmitEventResult> {
-        ensure_event_proofs_are_domain_bound(signed)?;
-        validate_outgoing_registered_payload(signed)?;
         let sdk_event = signed.to_sdk_event_for_submit()?;
         let idempotency_key = signed
             .local_operation_idempotency_alias()
@@ -261,11 +259,7 @@ impl CokretApi {
         signed: &cokret_sdk::Event,
         idempotency_key: String,
     ) -> anyhow::Result<SubmitEventResult> {
-        if signed.proofs.is_empty() {
-            anyhow::bail!("no active signer configured \u{2014} cannot submit unsigned event");
-        }
-        ensure_sdk_event_proofs_are_domain_bound(signed)?;
-        validate_outgoing_registered_event_payload(signed.kind.as_str(), &signed.content)?;
+        validate_signed_sdk_event_for_submit(signed)?;
         let request = self
             .http
             .post(self.endpoint("_cokret/self/events")?)
@@ -308,20 +302,6 @@ impl CokretApi {
         envelopes: &[EventEnvelope],
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<Value> {
-        // Re-validate every envelope carries a signed proof. The batch
-        // submit path is fail-closed by construction.
-        for envelope in envelopes {
-            if envelope.proofs.is_empty() {
-                anyhow::bail!(
-                    "submit_events_batch refuses unsigned envelope (event_id={}, kind={})",
-                    envelope.event_id,
-                    envelope.kind
-                );
-            }
-            ensure_event_proofs_are_domain_bound(envelope)?;
-            validate_outgoing_registered_payload(envelope)?;
-        }
-
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
         // body is one of the three spec-defined `ck.self.events.command.submit`
@@ -332,11 +312,7 @@ impl CokretApi {
             .map(EventEnvelope::to_sdk_event_for_submit)
             .collect::<anyhow::Result<_>>()?;
         for sdk_event in &sdk_events {
-            ensure_sdk_event_proofs_are_domain_bound(sdk_event)?;
-            validate_outgoing_registered_event_payload(
-                sdk_event.kind.as_str(),
-                &sdk_event.content,
-            )?;
+            validate_signed_sdk_event_for_submit(sdk_event)?;
         }
         let body = cokret_sdk::EventsSubmitBatchRequestBody {
             events: sdk_events,
@@ -427,28 +403,6 @@ impl CokretApi {
     }
 }
 
-fn ensure_event_proofs_are_domain_bound(envelope: &EventEnvelope) -> anyhow::Result<()> {
-    for proof in &envelope.proofs {
-        if proof
-            .domain
-            .as_deref()
-            .is_none_or(|domain| domain.trim().is_empty())
-        {
-            anyhow::bail!(
-                "event proof for {} is missing domain binding",
-                envelope.event_id
-            );
-        }
-        if proof.audience.is_none() {
-            anyhow::bail!(
-                "event proof for {} is missing audience binding",
-                envelope.event_id
-            );
-        }
-    }
-    Ok(())
-}
-
 fn ensure_sdk_event_proofs_are_domain_bound(event: &cokret_sdk::Event) -> anyhow::Result<()> {
     for proof in &event.proofs {
         if proof
@@ -469,6 +423,21 @@ fn ensure_sdk_event_proofs_are_domain_bound(event: &cokret_sdk::Event) -> anyhow
         }
     }
     Ok(())
+}
+
+fn validate_signed_sdk_event_for_submit(event: &cokret_sdk::Event) -> anyhow::Result<()> {
+    if event.proofs.is_empty() {
+        anyhow::bail!(
+            "submit refuses unsigned SDK Event (event_id={}, kind={})",
+            event.event_id,
+            event.kind.as_str()
+        );
+    }
+    ensure_sdk_event_proofs_are_domain_bound(event)?;
+    event.validate_proof_bindings().map_err(|err| {
+        anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
+    })?;
+    validate_outgoing_registered_event_payload(event.kind.as_str(), &event.content)
 }
 
 fn event_proof_context_from_description(
