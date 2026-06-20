@@ -308,8 +308,31 @@ pub(super) fn dispatch_card_assignees_update(
             let operation = mutation.operation().clone();
             let operation_id = operation.local_operation_id().to_owned();
             let kind = operation.kind.clone();
+            let event = match operation.to_sdk_event_for_submit() {
+                Ok(event) => event,
+                Err(err) => {
+                    let err_text = err.to_string();
+                    state_store.write().update_raw_operation_write_state(
+                        &operation_id,
+                        "failed",
+                        None,
+                        Some(err_text.clone()),
+                    );
+                    set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
+                    let selected = selected_card.read().clone();
+                    if let Some(mut card) = selected
+                        && card.id == strand_id
+                    {
+                        card.state = CardState::SoftFailed;
+                        selected_card.set(Some(card));
+                    }
+                    assignee_edit_status.set(format!("{kind} failed"));
+                    board_status.set(format!("{kind} operation failed: {err_text}"));
+                    return;
+                }
+            };
             match with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.submit_event_envelope(&operation).await
+                api.submit_sdk_event(&event).await
             })
             .await
             {

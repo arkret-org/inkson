@@ -424,9 +424,16 @@ pub(super) fn dispatch_calendar_rsvp(
     ));
     let api_token = token();
     let kind = op.kind.clone();
+    let event = match op.to_sdk_event_for_submit() {
+        Ok(event) => event,
+        Err(err) => {
+            board_status.set(format!("RSVP failed: {err:#?}"));
+            return;
+        }
+    };
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_event_envelope(&op).await
+            api.submit_sdk_event(&event).await
         })
         .await
         {
