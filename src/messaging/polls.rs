@@ -384,13 +384,7 @@ fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
         .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
 }
 
-fn sdk_event_from_builder_event(
-    event: crate::operation::EventEnvelope,
-) -> anyhow::Result<cokret_sdk::Event> {
-    event.to_sdk_event_for_submit()
-}
-
-/// Build the `ck.content.poll.create` envelope for the wire.
+/// Build the `ck.content.poll.create` event for the wire.
 pub fn build_poll_create_op(
     realm_id: &str,
     actor: &str,
@@ -426,10 +420,10 @@ pub fn build_poll_create_op(
     let message_ref = envelope.event_id.replacen("ck:event:", "ck:message:", 1);
     envelope.payload["message_id"] = json!(message_ref);
     envelope.payload["content"]["message_id"] = json!(message_ref);
-    sdk_event_from_builder_event(envelope)
+    envelope.to_sdk_event_for_submit()
 }
 
-/// Build the `ck.content.poll.response` envelope for a single-select
+/// Build the `ck.content.poll.response` event for a single-select
 /// vote. The multi-select variant is left for the soland-side reducer
 /// work referenced above.
 pub fn build_poll_vote_op(
@@ -447,18 +441,17 @@ pub fn build_poll_vote_op(
         "discussion",
         sdk_payload_value(content.to_value(), "poll vote content serialize")?,
     );
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.message.create")
-            .target_ref(poll_id)
-            .body(sdk_payload_value(
-                payload.to_value(),
-                "poll vote ck.message.create payload serialize",
-            )?)
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.message.create")
+        .target_ref(poll_id)
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "poll vote ck.message.create payload serialize",
+        )?)
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
-/// Build the `ck.content.poll.close` envelope.
+/// Build the `ck.content.poll.close` event.
 pub fn build_poll_close_op(
     realm_id: &str,
     actor: &str,
@@ -472,15 +465,14 @@ pub fn build_poll_close_op(
         "discussion",
         sdk_payload_value(content.to_value(), "poll close content serialize")?,
     );
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.message.create")
-            .target_ref(poll_id)
-            .body(sdk_payload_value(
-                payload.to_value(),
-                "poll close ck.message.create payload serialize",
-            )?)
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.message.create")
+        .target_ref(poll_id)
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "poll close ck.message.create payload serialize",
+        )?)
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
 /// Generate a fresh poll id (`poll-<uuid>`).

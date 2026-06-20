@@ -66,44 +66,37 @@ impl PromoteIds {
     }
 }
 
-fn sdk_event_from_builder_event(
-    event: crate::operation::EventEnvelope,
-) -> anyhow::Result<cokret_sdk::Event> {
-    event.to_sdk_event_for_submit()
-}
-
-/// Build the `ck.circle.create` envelope for the private discussion scope.
+/// Build the `ck.circle.create` event for the private discussion scope.
 pub fn build_discussion_circle_create_op(
     realm_id: &str,
     actor: &str,
     ids: &PromoteIds,
     title: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    sdk_event_from_builder_event(
-        ck_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?.build("yougen"),
-    )
+    ck_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
-/// Build the `ck.strand.create` envelope for the new private discussion Strand.
+/// Build the `ck.strand.create` event for the new private discussion Strand.
 pub fn build_discussion_strand_create_op(
     realm_id: &str,
     actor: &str,
     ids: &PromoteIds,
     title: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    sdk_event_from_builder_event(
-        ck_ops::scoped_discussion_strand_create(
-            realm_id,
-            actor,
-            &ids.discussion_strand_id,
-            &ids.circle_id,
-            title,
-        )?
-        .build("yougen"),
-    )
+    ck_ops::scoped_discussion_strand_create(
+        realm_id,
+        actor,
+        &ids.discussion_strand_id,
+        &ids.circle_id,
+        title,
+    )?
+    .build("yougen")
+    .to_sdk_event_for_submit()
 }
 
-/// Build the `ck.relation.create` envelope that links the private Strand back
+/// Build the `ck.relation.create` event that links the private Strand back
 /// to the source public Strand/message.
 pub fn build_confidential_discussion_relation_op(
     realm_id: &str,
@@ -111,16 +104,15 @@ pub fn build_confidential_discussion_relation_op(
     source_id: &str,
     ids: &PromoteIds,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    sdk_event_from_builder_event(
-        ck_ops::confidential_discussion_relation_create(
-            realm_id,
-            actor,
-            &ids.discussion_strand_id,
-            source_id,
-            &ids.circle_id,
-        )?
-        .build("yougen"),
-    )
+    ck_ops::confidential_discussion_relation_create(
+        realm_id,
+        actor,
+        &ids.discussion_strand_id,
+        source_id,
+        &ids.circle_id,
+    )?
+    .build("yougen")
+    .to_sdk_event_for_submit()
 }
 
 /// Convenience helper that bundles the promote envelopes in submit order.

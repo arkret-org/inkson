@@ -55,12 +55,11 @@ pub(crate) fn shared_message_pin_add_operation(
     };
     let payload = serde_json::to_value(payload)?;
     validate_pin_payload("ck.pin.add", &payload)?;
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.pin.add")
-            .target_ref(target_ref)
-            .body(payload)
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.pin.add")
+        .target_ref(target_ref)
+        .body(payload)
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
 pub(crate) fn shared_message_pin_remove_operation(
@@ -79,24 +78,17 @@ pub(crate) fn shared_message_pin_remove_operation(
     };
     let payload = serde_json::to_value(payload)?;
     validate_pin_payload("ck.pin.remove", &payload)?;
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.pin.remove")
-            .target_ref(target_ref)
-            .body(payload)
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.pin.remove")
+        .target_ref(target_ref)
+        .body(payload)
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
 fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
     cokret_sdk::schema::event_payload_validator_catalog()
         .validate_payload(kind, payload)
         .map_err(|error| anyhow::anyhow!("{kind} payload is not schema-valid: {error}"))
-}
-
-fn sdk_event_from_builder_event(
-    event: crate::operation::EventEnvelope,
-) -> anyhow::Result<cokret_sdk::Event> {
-    event.to_sdk_event_for_submit()
 }
 
 pub(crate) fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
@@ -155,18 +147,17 @@ pub(crate) fn chat_message_revise_operation(
     event_id: &str,
     body: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.message.revise")
-            .target_ref(event_id)
-            .body(json!({
-                "content": {
-                    "kind": "ck.content.text",
-                    "body": body,
-                },
-                "target_ref": event_id,
-            }))
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.message.revise")
+        .target_ref(event_id)
+        .body(json!({
+            "content": {
+                "kind": "ck.content.text",
+                "body": body,
+            },
+            "target_ref": event_id,
+        }))
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
 pub(crate) fn chat_message_redact_operation(
@@ -175,15 +166,14 @@ pub(crate) fn chat_message_redact_operation(
     event_id: &str,
     reason: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.message.redact")
-            .target_ref(event_id)
-            .body(json!({
-                "reason": reason,
-                "target_event_id": event_id,
-            }))
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.message.redact")
+        .target_ref(event_id)
+        .body(json!({
+            "reason": reason,
+            "target_event_id": event_id,
+        }))
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
 pub(crate) fn chat_reaction_add_operation(
@@ -192,15 +182,14 @@ pub(crate) fn chat_reaction_add_operation(
     event_id: &str,
     key: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.reaction.add")
-            .target_ref(event_id)
-            .body(json!({
-                "target_ref": event_id,
-                "key": key,
-            }))
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
+        .target_ref(event_id)
+        .body(json!({
+            "target_ref": event_id,
+            "key": key,
+        }))
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
 /// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
@@ -216,16 +205,15 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
 ) -> anyhow::Result<cokret_sdk::Event> {
     let encrypted_payload_json =
         serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.reaction.add")
-            .target_ref(event_id)
-            .body(json!({
-                "target_ref": event_id,
-                "key": routing_tag,
-                "encrypted_payload": encrypted_payload_json,
-            }))
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
+        .target_ref(event_id)
+        .body(json!({
+            "target_ref": event_id,
+            "key": routing_tag,
+            "encrypted_payload": encrypted_payload_json,
+        }))
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
 /// Build the `ck.reaction.add` operation for a tapped emoji, choosing the
@@ -371,15 +359,14 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     if let Some(expiry) = expiry {
         payload = payload.with_expiry(expiry);
     }
-    sdk_event_from_builder_event(
-        OperationBuilder::new(realm_id, actor, "ck.message.create")
-            .target_ref(strand_id)
-            .body(sdk_payload_value(
-                payload.to_value(),
-                "chat ck.message.create payload serialize",
-            )?)
-            .build("yougen"),
-    )
+    OperationBuilder::new(realm_id, actor, "ck.message.create")
+        .target_ref(strand_id)
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "chat ck.message.create payload serialize",
+        )?)
+        .build("yougen")
+        .to_sdk_event_for_submit()
 }
 
 pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {
