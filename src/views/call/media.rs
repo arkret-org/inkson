@@ -151,9 +151,7 @@ pub(super) async fn submit_call_state_participant(
     let op = crate::operation::OperationBuilder::new(realm_id, actor, "ck.call.state")
         .target_ref(call_id)
         .body(body)
-        .build("yougen");
-    let op = op
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
         .map_err(|err| err.to_string())?;
     with_authed_api(base, api_token.to_owned(), move |api| async move {
         api.submit_sdk_event(&op).await?;

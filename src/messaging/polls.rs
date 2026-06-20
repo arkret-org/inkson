@@ -447,8 +447,7 @@ pub fn build_poll_vote_op(
             payload.to_value(),
             "poll vote ck.message.create payload serialize",
         )?)
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 /// Build the `ck.content.poll.close` event.
@@ -471,8 +470,7 @@ pub fn build_poll_close_op(
             payload.to_value(),
             "poll close ck.message.create payload serialize",
         )?)
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 /// Generate a fresh poll id (`poll-<uuid>`).

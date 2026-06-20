@@ -252,7 +252,7 @@ pub(crate) fn calendar_rsvp_operation(
         (!occurrence.trim().is_empty()).then_some(occurrence.trim()),
         None,
     )
-    .and_then(|builder| builder.build("yougen").to_sdk_event_for_submit())
+    .and_then(|builder| builder.build_sdk_event("yougen"))
 }
 
 pub(crate) fn calendar_occurrence_hint(calendar: &CalendarCardFields) -> String {

@@ -58,8 +58,7 @@ pub(crate) fn shared_message_pin_add_operation(
     OperationBuilder::new(realm_id, actor, "ck.pin.add")
         .target_ref(target_ref)
         .body(payload)
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 pub(crate) fn shared_message_pin_remove_operation(
@@ -81,8 +80,7 @@ pub(crate) fn shared_message_pin_remove_operation(
     OperationBuilder::new(realm_id, actor, "ck.pin.remove")
         .target_ref(target_ref)
         .body(payload)
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
@@ -156,8 +154,7 @@ pub(crate) fn chat_message_revise_operation(
             },
             "target_ref": event_id,
         }))
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 pub(crate) fn chat_message_redact_operation(
@@ -172,8 +169,7 @@ pub(crate) fn chat_message_redact_operation(
             "reason": reason,
             "target_event_id": event_id,
         }))
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 pub(crate) fn chat_reaction_add_operation(
@@ -188,8 +184,7 @@ pub(crate) fn chat_reaction_add_operation(
             "target_ref": event_id,
             "key": key,
         }))
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 /// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
@@ -212,8 +207,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
             "key": routing_tag,
             "encrypted_payload": encrypted_payload_json,
         }))
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 /// Build the `ck.reaction.add` operation for a tapped emoji, choosing the
@@ -365,8 +359,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
             payload.to_value(),
             "chat ck.message.create payload serialize",
         )?)
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {

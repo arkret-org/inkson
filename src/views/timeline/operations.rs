@@ -115,8 +115,7 @@ pub(crate) fn message_create_operation_with_expiry(
             payload.to_value(),
             "timeline ck.message.create payload serialize",
         )?)
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 pub(super) fn message_revise_operation(
@@ -131,8 +130,7 @@ pub(super) fn message_revise_operation(
             "content": text_content(body)?,
             "target_ref": event_id,
         }))
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 pub(super) fn pending_send_error_is_permanent(error: &str) -> bool {
@@ -189,8 +187,7 @@ pub(super) fn message_redact_operation(
             "reason": reason,
             "target_event_id": event_id,
         }))
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 pub(super) fn reaction_add_operation(
@@ -205,6 +202,5 @@ pub(super) fn reaction_add_operation(
             "target_ref": event_id,
             "key": key,
         }))
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }

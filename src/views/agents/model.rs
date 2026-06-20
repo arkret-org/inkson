@@ -716,6 +716,5 @@ pub fn build_act_on_behalf_message_operation(
         .executed_by(agent_principal_id)
         .authorization_ref(authorization_ref)
         .body(payload)
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }

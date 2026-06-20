@@ -74,8 +74,7 @@ pub fn build_discussion_circle_create_op(
     title: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
     ck_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?
-        .build("yougen")
-        .to_sdk_event_for_submit()
+        .build_sdk_event("yougen")
 }
 
 /// Build the `ck.strand.create` event for the new private discussion Strand.
@@ -92,8 +91,7 @@ pub fn build_discussion_strand_create_op(
         &ids.circle_id,
         title,
     )?
-    .build("yougen")
-    .to_sdk_event_for_submit()
+    .build_sdk_event("yougen")
 }
 
 /// Build the `ck.relation.create` event that links the private Strand back
@@ -111,8 +109,7 @@ pub fn build_confidential_discussion_relation_op(
         source_id,
         &ids.circle_id,
     )?
-    .build("yougen")
-    .to_sdk_event_for_submit()
+    .build_sdk_event("yougen")
 }
 
 /// Convenience helper that bundles the promote envelopes in submit order.
