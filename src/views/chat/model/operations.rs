@@ -89,6 +89,20 @@ fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("{kind} payload is not schema-valid: {error}"))
 }
 
+fn sdk_event_from_builder_event(
+    event: crate::operation::EventEnvelope,
+) -> anyhow::Result<cokret_sdk::Event> {
+    event.to_sdk_event_for_submit()
+}
+
+pub(crate) fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
+    event
+        .unsigned
+        .get("local_operation_idempotency_alias")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| event.event_id.as_str())
+}
+
 pub(crate) fn load_chat_productivity_namespace_key(
     actor_id: &str,
     device_id: &str,
@@ -136,17 +150,19 @@ pub(crate) fn chat_message_revise_operation(
     actor: &str,
     event_id: &str,
     body: &str,
-) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(realm_id, actor, "ck.message.revise")
-        .target_ref(event_id)
-        .body(json!({
-            "content": {
-                "kind": "ck.content.text",
-                "body": body,
-            },
-            "target_ref": event_id,
-        }))
-        .build("yougen")
+) -> anyhow::Result<cokret_sdk::Event> {
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.message.revise")
+            .target_ref(event_id)
+            .body(json!({
+                "content": {
+                    "kind": "ck.content.text",
+                    "body": body,
+                },
+                "target_ref": event_id,
+            }))
+            .build("yougen"),
+    )
 }
 
 pub(crate) fn chat_message_redact_operation(
@@ -154,14 +170,16 @@ pub(crate) fn chat_message_redact_operation(
     actor: &str,
     event_id: &str,
     reason: &str,
-) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(realm_id, actor, "ck.message.redact")
-        .target_ref(event_id)
-        .body(json!({
-            "reason": reason,
-            "target_event_id": event_id,
-        }))
-        .build("yougen")
+) -> anyhow::Result<cokret_sdk::Event> {
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.message.redact")
+            .target_ref(event_id)
+            .body(json!({
+                "reason": reason,
+                "target_event_id": event_id,
+            }))
+            .build("yougen"),
+    )
 }
 
 pub(crate) fn chat_reaction_add_operation(
@@ -169,14 +187,16 @@ pub(crate) fn chat_reaction_add_operation(
     actor: &str,
     event_id: &str,
     key: &str,
-) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
-        .target_ref(event_id)
-        .body(json!({
-            "target_ref": event_id,
-            "key": key,
-        }))
-        .build("yougen")
+) -> anyhow::Result<cokret_sdk::Event> {
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.reaction.add")
+            .target_ref(event_id)
+            .body(json!({
+                "target_ref": event_id,
+                "key": key,
+            }))
+            .build("yougen"),
+    )
 }
 
 /// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
@@ -189,17 +209,19 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
     event_id: &str,
     routing_tag: &str,
     encrypted_payload: &cokret_sdk::EncryptedPayload,
-) -> crate::operation::EventEnvelope {
+) -> anyhow::Result<cokret_sdk::Event> {
     let encrypted_payload_json =
         serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
-    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
-        .target_ref(event_id)
-        .body(json!({
-            "target_ref": event_id,
-            "key": routing_tag,
-            "encrypted_payload": encrypted_payload_json,
-        }))
-        .build("yougen")
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.reaction.add")
+            .target_ref(event_id)
+            .body(json!({
+                "target_ref": event_id,
+                "key": routing_tag,
+                "encrypted_payload": encrypted_payload_json,
+            }))
+            .build("yougen"),
+    )
 }
 
 /// Build the `ck.reaction.add` operation for a tapped emoji, choosing the
@@ -215,11 +237,9 @@ pub(crate) fn build_chat_reaction_add_operation(
     event_id: &str,
     emoji: &str,
     channel_encrypted: bool,
-) -> Option<crate::operation::EventEnvelope> {
+) -> anyhow::Result<Option<cokret_sdk::Event>> {
     if !channel_encrypted {
-        return Some(chat_reaction_add_operation(
-            realm_id, actor, event_id, emoji,
-        ));
+        return chat_reaction_add_operation(realm_id, actor, event_id, emoji).map(Some);
     }
     let realm_id = trim_realm_id(realm_id);
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
@@ -231,14 +251,15 @@ pub(crate) fn build_chat_reaction_add_operation(
         device_id,
         emoji,
     ) {
-        Ok(sealed) => Some(chat_reaction_add_operation_encrypted(
+        Ok(sealed) => chat_reaction_add_operation_encrypted(
             &realm_id,
             actor,
             event_id,
             &sealed.routing_tag,
             &sealed.encrypted_payload,
-        )),
-        Err(_) => None,
+        )
+        .map(Some),
+        Err(_) => Ok(None),
     }
 }
 
@@ -288,7 +309,7 @@ pub(crate) fn chat_message_create_operation(
     body: &str,
     mentions: &[MentionNode],
     reply_to: Option<&str>,
-) -> anyhow::Result<crate::operation::EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     chat_message_create_operation_with_expiry(
         realm_id,
         actor,
@@ -312,7 +333,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     mentions: &[MentionNode],
     reply_to: Option<&str>,
     expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
-) -> anyhow::Result<crate::operation::EventEnvelope> {
+) -> anyhow::Result<cokret_sdk::Event> {
     let actor_mentions = mentions
         .iter()
         .filter_map(|mention| mention.as_mention().cloned())
@@ -346,13 +367,15 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     if let Some(expiry) = expiry {
         payload = payload.with_expiry(expiry);
     }
-    Ok(OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .target_ref(strand_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "chat ck.message.create payload serialize",
-        )?)
-        .build("yougen"))
+    sdk_event_from_builder_event(
+        OperationBuilder::new(realm_id, actor, "ck.message.create")
+            .target_ref(strand_id)
+            .body(sdk_payload_value(
+                payload.to_value(),
+                "chat ck.message.create payload serialize",
+            )?)
+            .build("yougen"),
+    )
 }
 
 pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {
@@ -375,9 +398,9 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
     realm_id: &str,
     actor_id: &str,
     plaintext_visible_services: &[String],
-    operation: &EventEnvelope,
+    operation: &cokret_sdk::Event,
 ) -> anyhow::Result<SubmitEventResult> {
-    match api.submit_event_envelope(operation).await {
+    match api.submit_sdk_event(operation).await {
         Ok(response) => Ok(response),
         Err(error) if is_plaintext_visibility_policy_error(&error) => {
             let mut services = plaintext_visible_services.to_vec();
@@ -403,7 +426,7 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
                     "plaintext policy update failed: {update_error}; original send failed: {error}"
                 )
             })?;
-            api.submit_event_envelope(operation).await
+            api.submit_sdk_event(operation).await
         }
         Err(error) => Err(error),
     }
@@ -427,7 +450,7 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
     access_token: String,
     wait_for_sync_token: Option<String>,
     plaintext_visible_services: &[String],
-    operation: &EventEnvelope,
+    operation: &cokret_sdk::Event,
 ) -> anyhow::Result<SubmitEventResult> {
     let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token.clone())?;
     let first = submit_chat_operation_with_plaintext_retry(

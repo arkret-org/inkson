@@ -107,35 +107,35 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     )
     .expect("builds");
 
-    assert_eq!(op.kind, "ck.message.create");
+    assert_eq!(op.kind.as_str(), "ck.message.create");
     assert_eq!(
-        op.payload["message_id"].as_str(),
+        op.content["message_id"].as_str(),
         Some("ck:message:01904100-0000-7000-8000-000000000001")
     );
     assert_eq!(
-        op.payload["strand_id"].as_str(),
+        op.content["strand_id"].as_str(),
         Some("ck:strand:01904100-0000-7000-8000-000000000001")
     );
-    assert_eq!(op.payload["track_name"].as_str(), Some("discussion"));
+    assert_eq!(op.content["track_name"].as_str(), Some("discussion"));
     assert_eq!(
-        op.payload["content"]["kind"].as_str(),
+        op.content["content"]["kind"].as_str(),
         Some("ck.content.text")
     );
     assert_eq!(
-        op.payload["content"]["body"].as_str(),
+        op.content["content"]["body"].as_str(),
         Some("hello from chat")
     );
-    assert!(op.payload["content"].get("blocks").is_none());
-    assert!(op.payload.get("body").is_none());
-    assert!(op.payload.get("encrypted").is_none());
-    assert!(op.payload.get("kind").is_none());
-    assert!(op.payload.get("mentions").is_none());
-    assert!(op.payload.get("audience_mentions").is_none());
-    assert!(op.payload.get("mention_relations").is_none());
-    assert!(op.payload.get("reply_to").is_none());
-    assert!(op.payload.get("thread_id").is_none());
+    assert!(op.content["content"].get("blocks").is_none());
+    assert!(op.content.get("body").is_none());
+    assert!(op.content.get("encrypted").is_none());
+    assert!(op.content.get("kind").is_none());
+    assert!(op.content.get("mentions").is_none());
+    assert!(op.content.get("audience_mentions").is_none());
+    assert!(op.content.get("mention_relations").is_none());
+    assert!(op.content.get("reply_to").is_none());
+    assert!(op.content.get("thread_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -160,12 +160,12 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
     )
     .expect("builds");
 
-    assert_eq!(op.payload["expiry"]["ttl_ms"], 60_000);
-    assert_eq!(op.payload["expiry"]["trigger"], "on_first_read");
-    assert_eq!(op.payload["expiry"]["grace_ms"], 5_000);
-    assert!(op.payload["content"].get("expiry").is_none());
+    assert_eq!(op.content["expiry"]["ttl_ms"], 60_000);
+    assert_eq!(op.content["expiry"]["trigger"], "on_first_read");
+    assert_eq!(op.content["expiry"]["grace_ms"], 5_000);
+    assert!(op.content["content"].get("expiry").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -185,14 +185,14 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
+        op.content["content"]["audience_mentions"][0]["audience"].as_str(),
         Some("strand_engaged")
     );
-    assert!(op.payload.get("audience_mentions").is_none());
-    assert!(op.payload.get("mentions").is_none());
-    assert!(op.payload.get("mention_relations").is_none());
+    assert!(op.content.get("audience_mentions").is_none());
+    assert!(op.content.get("mentions").is_none());
+    assert!(op.content.get("mention_relations").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -224,7 +224,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     )
     .expect("builds");
 
-    let mention = &op.payload["content"]["mentions"][0];
+    let mention = &op.content["content"]["mentions"][0];
     assert_eq!(mention["kind"].as_str(), Some("mention"));
     assert_eq!(
         mention["subject_id"].as_str(),
@@ -240,9 +240,9 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     );
     assert_eq!(mention["agent_slug_at_time"].as_str(), Some("summary"));
     assert!(mention.get("target").is_none());
-    assert!(op.payload.get("mentions").is_none());
+    assert!(op.content.get("mentions").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -261,12 +261,12 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["reply_to"].as_str(),
+        op.content["reply_to"].as_str(),
         Some("ck:message:01904100-0000-7000-8000-000000000004")
     );
-    assert!(op.payload.get("thread_id").is_none());
+    assert!(op.content.get("thread_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -1382,18 +1382,19 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
         "did:web:bob.example",
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
         "edited",
-    );
+    )
+    .expect("builds");
 
     assert_eq!(
-        op.payload["target_ref"],
+        op.content["target_ref"],
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert_eq!(op.payload["content"]["kind"], "ck.content.text");
-    assert_eq!(op.payload["content"]["body"], "edited");
-    assert!(op.payload.get("body").is_none());
-    assert!(op.payload.get("target_event_id").is_none());
+    assert_eq!(op.content["content"]["kind"], "ck.content.text");
+    assert_eq!(op.content["content"]["body"], "edited");
+    assert!(op.content.get("body").is_none());
+    assert!(op.content.get("target_event_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
 
@@ -1404,16 +1405,17 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
         "did:web:bob.example",
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
         "+1",
-    );
+    )
+    .expect("builds");
 
     assert_eq!(
-        op.payload["target_ref"],
+        op.content["target_ref"],
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert_eq!(op.payload["key"], "+1");
-    assert!(op.payload.get("event_id").is_none());
-    assert!(op.payload.get("actor").is_none());
+    assert_eq!(op.content["key"], "+1");
+    assert!(op.content.get("event_id").is_none());
+    assert!(op.content.get("actor").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
-        .validate_payload(&op.kind, &op.payload)
+        .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }

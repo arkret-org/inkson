@@ -14,7 +14,7 @@ use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIco
 use crate::hlc::{Hlc, observe_seq};
 use crate::local_state::{ClientLocalState, LocalStateStore};
 use crate::models::SubmitEventResult;
-use crate::operation::{EventEnvelope, OperationBuilder, ck_ops, trim_realm_id, uuid_v7};
+use crate::operation::{OperationBuilder, ck_ops, trim_realm_id, uuid_v7};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -1914,7 +1914,7 @@ pub fn ChatPanel(
                                                                 {
                                                                     let mut store = state_store.write();
                                                                     store.append_raw_operation(
-                                                                        op.local_operation_id().to_owned(),
+                                                                        sdk_event_local_operation_id(&op).to_owned(),
                                                                         Some(realm_for_record),
                                                                         json!({
                                                                             "event_id": resp.event_id.clone(),
@@ -2351,7 +2351,7 @@ pub fn ChatPanel(
                                                         // Build the op synchronously: in an encrypted channel this
                                                         // seals the emoji + derives the §2.9 routing tag (and persists
                                                         // the advanced MLS ratchet) before the network spawn.
-                                                        let Some(op) = build_chat_reaction_add_operation(
+                                                        let op = match build_chat_reaction_add_operation(
                                                             state_store,
                                                             &realm,
                                                             &actor,
@@ -2359,12 +2359,20 @@ pub fn ChatPanel(
                                                             &msg_id,
                                                             &emoji,
                                                             channel_encrypted,
-                                                        ) else {
-                                                            status_msg.set(
-                                                                "Reaction skipped: MLS state not ready for this encrypted channel".to_owned(),
-                                                            );
-                                                            reaction_picker.set(None);
-                                                            return;
+                                                        ) {
+                                                            Ok(Some(op)) => op,
+                                                            Ok(None) => {
+                                                                status_msg.set(
+                                                                    "Reaction skipped: MLS state not ready for this encrypted channel".to_owned(),
+                                                                );
+                                                                reaction_picker.set(None);
+                                                                return;
+                                                            }
+                                                            Err(error) => {
+                                                                status_msg.set(format!("Reaction skipped: {error:#}"));
+                                                                reaction_picker.set(None);
+                                                                return;
+                                                            }
                                                         };
                                                         let base = base.clone();
                                                         let api_token = token();
@@ -2375,7 +2383,7 @@ pub fn ChatPanel(
                                                                 api_token,
                                                                 wait_for,
                                                                 |api| async move {
-                                                                    api.submit_event_envelope(&op).await
+                                                                    api.submit_sdk_event(&op).await
                                                                 },
                                                             )
                                                             .await;
@@ -2428,8 +2436,19 @@ pub fn ChatPanel(
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
-                                                                    let op = chat_message_revise_operation(&realm, &actor, &msg_id, &content);
-                                                                    match api.submit_event_envelope(&op).await {
+                                                                    let op = match chat_message_revise_operation(&realm, &actor, &msg_id, &content) {
+                                                                        Ok(op) => op,
+                                                                        Err(error) => {
+                                                                            if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                                                found.pending = false;
+                                                                                found.failed = true;
+                                                                                found.error = Some(format!("Message update failed: {error:#}"));
+                                                                            }
+                                                                            status_msg.set(format!("Message update failed: {error:#}"));
+                                                                            return;
+                                                                        }
+                                                                    };
+                                                                    match api.submit_sdk_event(&op).await {
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                                                 found.pending = false;
@@ -2493,8 +2512,19 @@ pub fn ChatPanel(
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
-                                                                    let op = chat_message_redact_operation(&realm, &actor, &msg_id, "user requested tombstone");
-                                                                    match api.submit_event_envelope(&op).await {
+                                                                    let op = match chat_message_redact_operation(&realm, &actor, &msg_id, "user requested tombstone") {
+                                                                        Ok(op) => op,
+                                                                        Err(error) => {
+                                                                            if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                                                found.pending = false;
+                                                                                found.failed = true;
+                                                                                found.error = Some(format!("Message removal failed: {error:#}"));
+                                                                            }
+                                                                            status_msg.set(format!("Message removal failed: {error:#}"));
+                                                                            return;
+                                                                        }
+                                                                    };
+                                                                    match api.submit_sdk_event(&op).await {
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                                                 found.pending = false;
@@ -3806,7 +3836,7 @@ pub fn ChatPanel(
                                                 &mention_dids,
                                             );
                                         if let Some(content) = op
-                                            .payload
+                                            .content
                                             .get_mut("content")
                                             .and_then(Value::as_object_mut)
                                         {
@@ -3835,7 +3865,7 @@ pub fn ChatPanel(
                                             {
                                                 let mut store = state_store.write();
                                                 store.append_raw_operation(
-                                                    op.local_operation_id().to_owned(),
+                                                    sdk_event_local_operation_id(&op).to_owned(),
                                                     Some(realm_for_record),
                                                     json!({
                                                         "event_id": resp.event_id.clone(),
