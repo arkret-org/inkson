@@ -447,7 +447,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
     .body(payload)
     .build("yougen");
 
-    validate_outgoing_registered_payload(&event).unwrap();
+    validate_outgoing_registered_event_payload(&event.kind, &event.payload).unwrap();
 }
 
 /// Contract test: ck.space.create payload must satisfy spec

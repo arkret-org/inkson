@@ -28,10 +28,6 @@ pub(crate) fn validate_outgoing_registered_event_payload(
     })
 }
 
-pub(crate) fn validate_outgoing_registered_payload(event: &EventEnvelope) -> anyhow::Result<()> {
-    validate_outgoing_registered_event_payload(&event.kind, &event.payload)
-}
-
 pub fn build_read_cursor_advance_event(
     marker: &crate::local_state::ReadMarkerRecord,
 ) -> EventEnvelope {
