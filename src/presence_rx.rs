@@ -133,11 +133,9 @@ pub enum PresenceRxError {
 }
 
 /// Parse a `ck.typing` envelope's payload into a [`TypingEvent`].
-pub fn parse_typing(
-    envelope: &crate::operation::EventEnvelope,
-) -> Result<TypingEvent, PresenceRxError> {
-    require_kind(&envelope.kind, "ck.typing")?;
-    let payload = &envelope.payload;
+pub fn parse_typing(envelope: &cokret_sdk::Event) -> Result<TypingEvent, PresenceRxError> {
+    require_kind(envelope.kind.as_str(), "ck.typing")?;
+    let payload = &envelope.content;
     Ok(TypingEvent {
         actor_id: required_str(payload, "ck.typing", "actor_id")?.to_owned(),
         strand_id: required_str(payload, "ck.typing", "strand_id")?.to_owned(),
@@ -146,11 +144,9 @@ pub fn parse_typing(
 }
 
 /// Parse a `ck.presence` envelope's payload into a [`PresenceEvent`].
-pub fn parse_presence(
-    envelope: &crate::operation::EventEnvelope,
-) -> Result<PresenceEvent, PresenceRxError> {
-    require_kind(&envelope.kind, "ck.presence")?;
-    let payload = &envelope.payload;
+pub fn parse_presence(envelope: &cokret_sdk::Event) -> Result<PresenceEvent, PresenceRxError> {
+    require_kind(envelope.kind.as_str(), "ck.presence")?;
+    let payload = &envelope.content;
     let status_str = required_str(payload, "ck.presence", "status")?;
     Ok(PresenceEvent {
         actor_id: required_str(payload, "ck.presence", "actor_id")?.to_owned(),
@@ -160,11 +156,9 @@ pub fn parse_presence(
 }
 
 /// Parse a `ck.read_cursor.advance` envelope's payload into a [`ReadMarkerEvent`].
-pub fn parse_read_cursor(
-    envelope: &crate::operation::EventEnvelope,
-) -> Result<ReadMarkerEvent, PresenceRxError> {
-    require_kind(&envelope.kind, "ck.read_cursor.advance")?;
-    let payload = &envelope.payload;
+pub fn parse_read_cursor(envelope: &cokret_sdk::Event) -> Result<ReadMarkerEvent, PresenceRxError> {
+    require_kind(envelope.kind.as_str(), "ck.read_cursor.advance")?;
+    let payload = &envelope.content;
     let read_scope = required_value(payload, "ck.read_cursor.advance", "read_scope")?;
     let read_scope =
         serde_json::from_value::<ReadScopeEvent>(read_scope.clone()).map_err(|_| {
@@ -341,38 +335,24 @@ fn read_scope_key(read_scope: &ReadScopeEvent) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use serde_json::json;
 
     use super::*;
-    use crate::operation::EventEnvelope;
 
-    fn envelope(kind: &str, payload: Value) -> EventEnvelope {
-        EventEnvelope {
-            event_id: "ck:event:1".to_owned(),
-            kind: kind.to_owned(),
-            effective_scope: None,
-            actor_id: "did:web:alice".to_owned(),
-            executed_by: None,
-            authorization_ref: None,
-            actor_kind: None,
-            actor_seq: 1,
-            realm_id: "ck:realm:1".to_owned(),
-            created_at: "2026-05-19T00:00:00Z".to_owned(),
-            hlc: "01970e589d21-0001-a13f9c2e".to_owned(),
-            prev_refs: Vec::new(),
-            refs: Vec::new(),
-            payload,
-            preconditions: Vec::new(),
-            effects: Vec::new(),
-            seal_ref: None,
-            seal_basis: None,
-            requirements: None,
-            redacts: None,
-            unsigned: BTreeMap::new(),
-            proofs: Vec::new(),
-        }
+    fn envelope(kind: &str, payload: Value) -> cokret_sdk::Event {
+        serde_json::from_value(json!({
+            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "kind": kind,
+            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": "did:web:alice.example",
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": payload,
+            "proofs": []
+        }))
+        .unwrap()
     }
 
     #[test]

@@ -240,21 +240,36 @@ impl CokretApi {
         &self,
         signed: &EventEnvelope,
     ) -> anyhow::Result<SubmitEventResult> {
-        if signed.proofs.is_empty() {
-            anyhow::bail!("no active signer configured \u{2014} cannot submit unsigned event");
-        }
         ensure_event_proofs_are_domain_bound(signed)?;
         validate_outgoing_registered_payload(signed)?;
         let sdk_event = signed.to_sdk_event_for_submit()?;
-
         let idempotency_key = signed
             .local_operation_idempotency_alias()
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
+
+        self.post_signed_sdk_event(&sdk_event, idempotency_key)
+            .await
+    }
+
+    /// Wire-submit a fully-prepared, already-signed SDK [`cokret_sdk::Event`].
+    /// Local `EventEnvelope` remains a builder compatibility layer, but this
+    /// is the only single-event HTTP tail that serialises onto
+    /// `POST /_cokret/self/events`.
+    async fn post_signed_sdk_event(
+        &self,
+        signed: &cokret_sdk::Event,
+        idempotency_key: String,
+    ) -> anyhow::Result<SubmitEventResult> {
+        if signed.proofs.is_empty() {
+            anyhow::bail!("no active signer configured \u{2014} cannot submit unsigned event");
+        }
+        ensure_sdk_event_proofs_are_domain_bound(signed)?;
+        validate_outgoing_registered_event_payload(signed.kind.as_str(), &signed.content)?;
         let request = self
             .http
             .post(self.endpoint("_cokret/self/events")?)
-            .json(&sdk_event);
+            .json(signed);
         let request = self.with_write_request_headers(request, &idempotency_key);
         let response: cokret_sdk::EventsSubmitOutcome = self
             .send_json_retryable(self.prepare_request(request), Method::POST)
@@ -302,6 +317,13 @@ impl CokretApi {
             .iter()
             .map(EventEnvelope::to_sdk_event_for_submit)
             .collect::<anyhow::Result<_>>()?;
+        for sdk_event in &sdk_events {
+            ensure_sdk_event_proofs_are_domain_bound(sdk_event)?;
+            validate_outgoing_registered_event_payload(
+                sdk_event.kind.as_str(),
+                &sdk_event.content,
+            )?;
+        }
         let body = cokret_sdk::EventsSubmitBatchRequestBody {
             events: sdk_events,
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
@@ -413,6 +435,28 @@ fn ensure_event_proofs_are_domain_bound(envelope: &EventEnvelope) -> anyhow::Res
     Ok(())
 }
 
+fn ensure_sdk_event_proofs_are_domain_bound(event: &cokret_sdk::Event) -> anyhow::Result<()> {
+    for proof in &event.proofs {
+        if proof
+            .domain
+            .as_deref()
+            .is_none_or(|domain| domain.trim().is_empty())
+        {
+            anyhow::bail!(
+                "event proof for {} is missing domain binding",
+                event.event_id
+            );
+        }
+        if proof.audience.is_none() {
+            anyhow::bail!(
+                "event proof for {} is missing audience binding",
+                event.event_id
+            );
+        }
+    }
+    Ok(())
+}
+
 fn event_proof_context_from_description(
     describe: &ServerDescription,
 ) -> crate::event_signer::EventProofContext {
@@ -466,5 +510,50 @@ mod tests {
                 "did:web:local.host".to_owned()
             ))
         );
+    }
+
+    fn sdk_event_with_proof(domain: Option<&str>, audience: Option<&str>) -> cokret_sdk::Event {
+        let mut proof = json!({
+            "kind": "detached_jws",
+            "alg": "EdDSA",
+            "verification_method": "did:web:alice.example#device-1",
+            "event_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "created_at": "2026-05-19T00:00:00Z",
+            "jws": "header.payload.signature"
+        });
+        if let Some(domain) = domain {
+            proof["domain"] = json!(domain);
+        }
+        if let Some(audience) = audience {
+            proof["audience"] = json!(audience);
+        }
+        serde_json::from_value(json!({
+            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "kind": "ck.presence",
+            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": "did:web:alice.example",
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {
+                "actor_id": "did:web:alice.example",
+                "status": "online"
+            },
+            "proofs": [proof]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn sdk_event_proof_gate_requires_domain_and_audience() {
+        let ok = sdk_event_with_proof(Some("did:web:local.host"), Some("did:web:local.host"));
+        ensure_sdk_event_proofs_are_domain_bound(&ok).unwrap();
+
+        let missing_domain = sdk_event_with_proof(None, Some("did:web:local.host"));
+        assert!(ensure_sdk_event_proofs_are_domain_bound(&missing_domain).is_err());
+
+        let missing_audience = sdk_event_with_proof(Some("did:web:local.host"), None);
+        assert!(ensure_sdk_event_proofs_are_domain_bound(&missing_audience).is_err());
     }
 }

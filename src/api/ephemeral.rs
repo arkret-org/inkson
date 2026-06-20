@@ -9,23 +9,27 @@
 
 use super::*;
 
-pub(crate) fn validate_outgoing_registered_payload(event: &EventEnvelope) -> anyhow::Result<()> {
+pub(crate) fn validate_outgoing_registered_event_payload(
+    kind: &str,
+    payload: &Value,
+) -> anyhow::Result<()> {
     let catalog = cokret_sdk::schema::event_payload_validator_catalog();
     if !catalog
-        .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
+        .missing_payload_validators_for(std::iter::once(kind))
         .is_empty()
     {
         return Ok(());
     }
 
-    catalog
-        .validate_payload(&event.kind, &event.payload)
-        .map_err(|err| {
-            anyhow::anyhow!(
-                "outgoing event kind '{}' payload violates registered payload schema: {err}",
-                event.kind
-            )
-        })
+    catalog.validate_payload(kind, payload).map_err(|err| {
+        anyhow::anyhow!(
+            "outgoing event kind '{kind}' payload violates registered payload schema: {err}"
+        )
+    })
+}
+
+pub(crate) fn validate_outgoing_registered_payload(event: &EventEnvelope) -> anyhow::Result<()> {
+    validate_outgoing_registered_event_payload(&event.kind, &event.payload)
 }
 
 pub fn build_read_cursor_advance_event(
