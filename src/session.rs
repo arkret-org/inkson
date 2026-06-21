@@ -33,9 +33,31 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::time::Duration;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CurrentSessionRefresh {
+    Credential(String),
+    LoginRequired { reason: String },
+    RetryLater { reason: String },
+}
+
+impl CurrentSessionRefresh {
+    pub fn credential(self) -> Option<String> {
+        match self {
+            Self::Credential(value) => Some(value),
+            Self::LoginRequired { .. } | Self::RetryLater { .. } => None,
+        }
+    }
+
+    pub fn retry_later(reason: impl Into<String>) -> Self {
+        Self::RetryLater {
+            reason: reason.into(),
+        }
+    }
+}
+
 /// Boxed, single-threaded refresh future. `!Send` by design — it captures
 /// Dioxus signals and wasm `reqwest`.
-pub type LocalRefreshFuture = Pin<Box<dyn Future<Output = Option<String>>>>;
+pub type LocalRefreshFuture = Pin<Box<dyn Future<Output = CurrentSessionRefresh>>>;
 
 /// Registered refresher: produces a fresh refresh future each time it is
 /// invoked (so a later rollover can refresh again).
@@ -51,7 +73,7 @@ thread_local! {
     static REFRESHER: RefCell<Option<RefreshFn>> = const { RefCell::new(None) };
     static INVALIDATOR: RefCell<Option<InvalidateFn>> = const { RefCell::new(None) };
     static IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
-    static LAST_RESULT: RefCell<Option<String>> = const { RefCell::new(None) };
+    static LAST_RESULT: RefCell<Option<CurrentSessionRefresh>> = const { RefCell::new(None) };
 }
 
 /// Maximum time a coalescing caller waits for an in-flight refresh before
@@ -98,11 +120,21 @@ pub fn invalidate_current_session(reason: impl Into<String>) {
 /// Refresh the current session credential, coalescing concurrent callers onto a
 /// single in-flight refresh.
 ///
-/// Returns the current credential on success, or `None` when no refresher is
-/// registered or the session is genuinely dead (the caller routes to
-/// login). Safe to call from any auth-expired handler.
+/// Returns the current credential on success, or `None` when the richer
+/// refresh result did not produce a credential. Callers that need to decide
+/// whether to route to login should use [`refresh_current_session`] instead.
 pub async fn refresh_current_session_credential() -> Option<String> {
-    let refresher = REFRESHER.with(|slot| slot.borrow().clone())?;
+    refresh_current_session().await.credential()
+}
+
+/// Refresh the current session and preserve the reason when no credential can
+/// be produced. Callers that decide whether to route to login should use this
+/// instead of the legacy `Option<String>` helper so transient Account Authority
+/// failures are not treated as definite logout.
+pub async fn refresh_current_session() -> CurrentSessionRefresh {
+    let Some(refresher) = REFRESHER.with(|slot| slot.borrow().clone()) else {
+        return no_refresher_result();
+    };
 
     if IN_FLIGHT.with(Cell::get) {
         return wait_for_in_flight_refresh_result().await;
@@ -111,28 +143,38 @@ pub async fn refresh_current_session_credential() -> Option<String> {
     IN_FLIGHT.with(|flag| flag.set(true));
     let _guard = InFlightGuard;
     let result = refresher().await;
-    LAST_RESULT.with(|slot| *slot.borrow_mut() = result.clone());
+    LAST_RESULT.with(|slot| *slot.borrow_mut() = Some(result.clone()));
     result
+}
+
+fn no_refresher_result() -> CurrentSessionRefresh {
+    CurrentSessionRefresh::retry_later("session refresher is not registered")
 }
 
 /// If a credential refresh is already running, wait for it and return the
 /// resulting credential. Does not start a new refresh.
 pub async fn wait_for_current_session_credential_refresh() -> Option<String> {
+    wait_for_current_session_refresh().await.credential()
+}
+
+pub async fn wait_for_current_session_refresh() -> CurrentSessionRefresh {
     if IN_FLIGHT.with(Cell::get) {
         wait_for_in_flight_refresh_result().await
     } else {
-        None
+        CurrentSessionRefresh::retry_later("no session refresh is in flight")
     }
 }
 
-async fn wait_for_in_flight_refresh_result() -> Option<String> {
+async fn wait_for_in_flight_refresh_result() -> CurrentSessionRefresh {
     for _ in 0..COALESCE_MAX_POLLS {
         crate::api::sleep_for(Duration::from_millis(COALESCE_POLL_INTERVAL_MS)).await;
         if !IN_FLIGHT.with(Cell::get) {
             break;
         }
     }
-    LAST_RESULT.with(|slot| slot.borrow().clone())
+    LAST_RESULT
+        .with(|slot| slot.borrow().clone())
+        .unwrap_or_else(|| CurrentSessionRefresh::retry_later("session refresh did not finish"))
 }
 
 #[cfg(test)]
@@ -143,12 +185,27 @@ mod tests {
     #[tokio::test]
     async fn returns_registered_refresher_result() {
         register_session_refresher(Rc::new(|| {
-            Box::pin(async { Some("fresh-credential".to_owned()) })
+            Box::pin(async { CurrentSessionRefresh::Credential("fresh-credential".to_owned()) })
         }));
         assert_eq!(
             refresh_current_session_credential().await,
             Some("fresh-credential".to_owned())
         );
+    }
+
+    #[tokio::test]
+    async fn preserves_retry_later_refresh_result() {
+        register_session_refresher(Rc::new(|| {
+            Box::pin(async { CurrentSessionRefresh::retry_later("account authority unavailable") })
+        }));
+
+        assert_eq!(
+            refresh_current_session().await,
+            CurrentSessionRefresh::RetryLater {
+                reason: "account authority unavailable".to_owned(),
+            }
+        );
+        assert_eq!(refresh_current_session_credential().await, None);
     }
 
     #[tokio::test]
@@ -163,7 +220,7 @@ mod tests {
                 // Hold the in-flight slot open long enough that the second
                 // caller is forced onto the coalescing wait path.
                 crate::api::sleep_for(Duration::from_millis(120)).await;
-                Some("tok".to_owned())
+                CurrentSessionRefresh::Credential("tok".to_owned())
             })
         }));
 
