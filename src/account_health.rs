@@ -58,6 +58,10 @@ pub struct AccountHealthInputs {
     /// User is currently on a recovery/settings-recovery route, where the
     /// advisory prompts (floor, SPOF reminder) would be redundant noise.
     pub on_recovery_route: bool,
+    /// Server-side recovery state has been fetched. Backup prompts depend on
+    /// this because the UX is different for "use the existing Recovery Key"
+    /// versus "create the account Recovery Key".
+    pub recovery_check_complete: bool,
 
     pub needs_device_authorization: bool,
     pub needs_mls_unlock: bool,
@@ -102,6 +106,9 @@ pub fn resolve(i: AccountHealthInputs) -> AccountHealthPrompt {
         return AccountHealthPrompt::MlsUnlock;
     }
     if i.needs_mls_backup {
+        if !i.recovery_check_complete {
+            return AccountHealthPrompt::None;
+        }
         return AccountHealthPrompt::MlsBackup;
     }
     // Priority 4: fresh-device dead-end diagnostic (S5). Mutually exclusive with
@@ -146,6 +153,7 @@ mod tests {
             has_session: true,
             sync_bootstrap_complete: true,
             device_check_complete: true,
+            recovery_check_complete: true,
             ..Default::default()
         }
     }
@@ -218,6 +226,16 @@ mod tests {
             ..healthy()
         };
         assert_eq!(resolve(i), AccountHealthPrompt::MlsBackup);
+    }
+
+    #[test]
+    fn backup_waits_for_recovery_state() {
+        let i = AccountHealthInputs {
+            needs_mls_backup: true,
+            recovery_check_complete: false,
+            ..healthy()
+        };
+        assert_eq!(resolve(i), AccountHealthPrompt::None);
     }
 
     #[test]

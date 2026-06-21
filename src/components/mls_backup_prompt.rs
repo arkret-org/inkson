@@ -704,6 +704,10 @@ pub fn MlsBackupPrompt(
     device_id: Signal<String>,
     state_store: Signal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
+    /// Server truth for account-level recovery. `Some(true)` means the account
+    /// already has a Recovery Key root, even if this browser has no local
+    /// fingerprint cached.
+    account_recovery_configured: Signal<Option<bool>>,
     /// Account's personal handles (`<localpart>:<domain>`), used only to name
     /// the recovery-key download file readably.
     personal_handles: Signal<Vec<String>>,
@@ -743,11 +747,13 @@ pub fn MlsBackupPrompt(
     }
 
     let actor_for_state = actor_id();
-    let recovery_key_configured = crate::views::recovery::local_recovery_key_fingerprint(
+    let local_recovery_key_configured = crate::views::recovery::local_recovery_key_fingerprint(
         &state_store.read(),
         &actor_for_state,
     )
     .is_some();
+    let recovery_key_configured =
+        local_recovery_key_configured || matches!(account_recovery_configured(), Some(true));
     let generated_now = generated_recovery_key();
     let generated_confirm_now = generated_recovery_key_confirm();
     let recovery_key_input_value = recovery_key_input();
@@ -771,9 +777,11 @@ pub fn MlsBackupPrompt(
         let session = token();
         let actor = actor_id();
         let device = device_id();
-        let recovery_key_configured =
+        let local_recovery_key_configured =
             crate::views::recovery::local_recovery_key_fingerprint(&state_store.read(), &actor)
                 .is_some();
+        let recovery_key_configured =
+            local_recovery_key_configured || matches!(account_recovery_configured(), Some(true));
         let generated = generated_recovery_key();
         let generated_in_this_strand = !generated.trim().is_empty() || !recovery_key_configured;
         let recovery_key = if recovery_key_configured {

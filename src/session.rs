@@ -3,8 +3,10 @@
 //! The current credential (`token` signal, sent with every API call) is the
 //! active `ck.session.grant` JWT. When a request comes back `auth_expired`, the
 //! app either restores the still-valid grant into memory or rotates it through
-//! the Account Authority refresh endpoint. It falls back to the login page only
-//! when that recovery genuinely fails.
+//! the Account Authority refresh endpoint. It clears the live session only when
+//! the refresh endpoint returns a structured terminal grant error. Missing
+//! local refresh material or a transient refresh failure is surfaced to the
+//! caller without wiping the current credential.
 //!
 //! That recovery used to be hand-rolled at each call site — `connect()`,
 //! the sync bootstrap, chat send, Realm create, the account-menu button —
@@ -36,15 +38,29 @@ use std::time::Duration;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CurrentSessionRefresh {
     Credential(String),
-    LoginRequired { reason: String },
-    RetryLater { reason: String },
+    /// Recovery cannot continue locally, but the refresh endpoint did not
+    /// return a terminal grant error. Callers may ask the user to sign in
+    /// without clearing the current credential.
+    SignInRequired {
+        reason: String,
+    },
+    /// The refresh endpoint returned a terminal grant error and the app-wide
+    /// invalidator has cleared the current credential.
+    LoginRequired {
+        reason: String,
+    },
+    RetryLater {
+        reason: String,
+    },
 }
 
 impl CurrentSessionRefresh {
     pub fn credential(self) -> Option<String> {
         match self {
             Self::Credential(value) => Some(value),
-            Self::LoginRequired { .. } | Self::RetryLater { .. } => None,
+            Self::SignInRequired { .. } | Self::LoginRequired { .. } | Self::RetryLater { .. } => {
+                None
+            }
         }
     }
 
@@ -121,16 +137,17 @@ pub fn invalidate_current_session(reason: impl Into<String>) {
 /// single in-flight refresh.
 ///
 /// Returns the current credential on success, or `None` when the richer
-/// refresh result did not produce a credential. Callers that need to decide
-/// whether to route to login should use [`refresh_current_session`] instead.
+/// refresh result did not produce a credential. Callers that need to
+/// distinguish terminal invalidation from retryable or sign-in-required
+/// outcomes should use [`refresh_current_session`] instead.
 pub async fn refresh_current_session_credential() -> Option<String> {
     refresh_current_session().await.credential()
 }
 
 /// Refresh the current session and preserve the reason when no credential can
-/// be produced. Callers that decide whether to route to login should use this
-/// instead of the legacy `Option<String>` helper so transient Account Authority
-/// failures are not treated as definite logout.
+/// be produced. Callers should use this instead of the legacy
+/// `Option<String>` helper so missing refresh material and transient Account
+/// Authority failures are not treated as definite logout.
 pub async fn refresh_current_session() -> CurrentSessionRefresh {
     let Some(refresher) = REFRESHER.with(|slot| slot.borrow().clone()) else {
         return no_refresher_result();

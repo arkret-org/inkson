@@ -7,19 +7,20 @@ use crate::views::View;
 /// Each variant maps to a URL path and a corresponding View.
 #[derive(Clone, Debug, PartialEq, Routable)]
 pub enum Route {
-    #[route("/", crate::app::RouterView)]
+    #[layout(crate::app::RouterView)]
+    #[route("/", RoutePage)]
     Dashboard,
 
-    #[route("/login", crate::app::RouterView)]
+    #[route("/login", RoutePage)]
     Login,
 
-    #[route("/auth/callback", crate::app::RouterView)]
+    #[route("/auth/callback", RoutePage)]
     AuthCallback,
 
-    #[route("/timeline", crate::app::RouterView)]
+    #[route("/timeline", RoutePage)]
     Timeline,
 
-    #[route("/realms/manage", crate::app::RouterView)]
+    #[route("/realms/manage", RoutePage)]
     RealmsManage,
 
     #[route("/realms/:realm_id", RealmPage)]
@@ -40,48 +41,48 @@ pub enum Route {
     #[route("/direct/:realm_id/:strand_id", DirectConversationPage)]
     DirectConversation { realm_id: String, strand_id: String },
 
-    #[route("/directory", crate::app::RouterView)]
+    #[route("/directory", RoutePage)]
     Directory,
 
-    #[route("/contacts/manage", crate::app::RouterView)]
+    #[route("/contacts/manage", RoutePage)]
     ContactsManage,
 
-    #[route("/contacts", crate::app::RouterView)]
+    #[route("/contacts", RoutePage)]
     Contacts,
 
-    #[route("/files", crate::app::RouterView)]
+    #[route("/files", RoutePage)]
     FileTransfer,
 
-    #[route("/setup", crate::app::RouterView)]
+    #[route("/setup", RoutePage)]
     Setup,
 
     #[route("/setup/:section", SetupSectionPage)]
     SetupSection { section: String },
 
-    #[route("/settings", crate::app::RouterView)]
+    #[route("/settings", RoutePage)]
     Settings,
 
     /// G3.Y1 — device management (list + revoke). Static segment so
     /// dioxus-router matches this before `/settings/:section` falls
     /// through to the generic `SettingsPanel`.
-    #[route("/settings/devices", crate::app::RouterView)]
+    #[route("/settings/devices", RoutePage)]
     SettingsDevices,
 
     /// G3.Y1 — QR-driven pairing for a sibling device. Live on its
     /// own URL so the e2e harness can deep-link into the pair strand
     /// without scrolling through the device list.
-    #[route("/settings/devices/pair", crate::app::RouterView)]
+    #[route("/settings/devices/pair", RoutePage)]
     SettingsDevicesPair,
 
     /// Recovery settings. Hosts the broader recovery-options aggregator
     /// under the Settings shell.
-    #[route("/settings/recovery", crate::app::RouterView)]
+    #[route("/settings/recovery", RoutePage)]
     SettingsRecovery,
 
     #[route("/settings/:section", SettingsSectionPage)]
     SettingsSection { section: String },
 
-    #[route("/devices/verify", crate::app::RouterView)]
+    #[route("/devices/verify", RoutePage)]
     VerifyDevice,
 
     #[route("/realms/:realm_id/members", RealmMembersPage)]
@@ -93,16 +94,16 @@ pub enum Route {
     #[route("/realms/:realm_id/settings/:section", RealmAdminSectionPage)]
     RealmAdminSection { realm_id: String, section: String },
 
-    #[route("/audit", crate::app::RouterView)]
+    #[route("/audit", RoutePage)]
     Audit,
 
     /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
     /// protocol-level details (schema ids, event kinds, raw event log,
     /// profile id, conformance) that used to leak into the main strand.
-    #[route("/developer", crate::app::RouterView)]
+    #[route("/developer", RoutePage)]
     Developer,
 
-    #[route("/kanban", crate::app::RouterView)]
+    #[route("/kanban", RoutePage)]
     Kanban,
 
     #[route("/kanban/:realm_id", KanbanRealmPage)]
@@ -133,16 +134,16 @@ pub enum Route {
     #[route("/kanban/:realm_id/task/:task_id", KanbanTaskPage)]
     KanbanTask { realm_id: String, task_id: String },
 
-    #[route("/notifications", crate::app::RouterView)]
+    #[route("/notifications", RoutePage)]
     Notifications,
 
     #[route("/notifications/settings", NotificationsSettingsPage)]
     NotificationsSettings,
 
-    #[route("/document", crate::app::RouterView)]
+    #[route("/document", RoutePage)]
     Document,
 
-    #[route("/document/new", crate::app::RouterView)]
+    #[route("/document/new", RoutePage)]
     DocumentNew,
 
     #[route("/document/:realm_id", DocumentRealmPage)]
@@ -162,19 +163,19 @@ pub enum Route {
         incoming: String,
     },
 
-    #[route("/recovery", crate::app::RouterView)]
+    #[route("/recovery", RoutePage)]
     Recovery,
 
-    #[route("/onboarding", crate::app::RouterView)]
+    #[route("/onboarding", RoutePage)]
     Onboarding,
 
-    #[route("/quarantine", crate::app::RouterView)]
+    #[route("/quarantine", RoutePage)]
     Quarantine,
 
-    #[route("/applets", crate::app::RouterView)]
+    #[route("/applets", RoutePage)]
     Applets,
 
-    #[route("/agents", crate::app::RouterView)]
+    #[route("/agents", RoutePage)]
     Agents,
 
     /// A6.1 — global cross-Space message search. Triggered by Cmd+F
@@ -182,103 +183,108 @@ pub enum Route {
     /// directly navigating to `/search`. The current Cokret catalog has no
     /// spec-defined HTTP endpoint for global index search, so the panel fails
     /// closed until a catalog entry lands.
-    #[route("/search", crate::app::RouterView)]
+    #[route("/search", RoutePage)]
     Search,
+}
+
+#[component]
+fn RoutePage() -> Element {
+    rsx! {}
 }
 
 #[component]
 fn TimelineRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn TimelineMessagePage(realm_id: String, message_id: String) -> Element {
     let _ = (realm_id, message_id);
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn ChatRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn DirectConversationPage(realm_id: String, strand_id: String) -> Element {
     let _ = (realm_id, strand_id);
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn RealmPage(realm_id: String) -> Element {
     let _ = realm_id;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn RealmMembersPage(realm_id: String) -> Element {
     let _ = realm_id;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn SettingsSectionPage(section: String) -> Element {
     let _ = section;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn SetupSectionPage(section: String) -> Element {
     let _ = section;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn RealmAdminPage(realm_id: String) -> Element {
     let _ = realm_id;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn RealmAdminSectionPage(realm_id: String, section: String) -> Element {
     let _ = (realm_id, section);
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn KanbanRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn KanbanTaskPage(realm_id: String, task_id: String) -> Element {
     let _ = (realm_id, task_id);
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn KanbanBoardPage(realm_id: String, board_id: String) -> Element {
     let _ = (realm_id, board_id);
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn KanbanBoardTaskPage(realm_id: String, board_id: String, task_id: String) -> Element {
     let _ = (realm_id, board_id, task_id);
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn DocumentRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
 fn NotificationsSettingsPage() -> Element {
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 #[component]
@@ -290,7 +296,7 @@ fn CallPage(
     incoming: String,
 ) -> Element {
     let _ = (call_id, peer, realm_id, video, incoming);
-    rsx! { crate::app::RouterView {} }
+    rsx! {}
 }
 
 impl Route {

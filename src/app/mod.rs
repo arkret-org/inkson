@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::*;
-use dioxus_router::{Link, Navigator, Router};
+use dioxus_router::{Link, Navigator, Outlet, Router};
 use serde_json::Value;
 
 use crate::api::{CokretApi, is_auth_expired_error};
@@ -198,7 +198,7 @@ pub fn RouterView() -> Element {
     // Install the app-wide, single-flight session credential refresher exactly once.
     // Every auth-expired handler (connect, sync, chat send, Realm create,
     // the account-menu button, the background poller) routes through
-    // this one closure via `crate::session::refresh_current_session_credential()`, so
+    // this one closure via `crate::session::refresh_current_session()`, so
     // refresh policy lives in a single place and concurrent rollovers
     // coalesce instead of racing.
     use_hook(move || {
@@ -560,7 +560,6 @@ pub fn RouterView() -> Element {
         let mut status = status;
         let mut last_error = last_error;
         let state_store = state_store;
-        let account_did = account_did;
         let token = token;
         let mut session_boot_state = session_boot_state;
         move || async move {
@@ -581,19 +580,25 @@ pub fn RouterView() -> Element {
                         status.set("Restoring session...".to_owned());
                         session_boot_state.set(SessionBootState::Restoring);
                     }
-                    match crate::session::refresh_current_session_credential().await {
-                        Some(_) => {
+                    match crate::session::refresh_current_session().await {
+                        crate::session::CurrentSessionRefresh::Credential(_) => {
                             status.set("Online".to_owned());
                             session_boot_state.set(SessionBootState::Authenticated);
                             last_error.set(None);
                         }
-                        None => {
+                        crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                            last_error.set(Some(reason));
+                        }
+                        crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                            last_error.set(Some(reason));
+                        }
+                        crate::session::CurrentSessionRefresh::RetryLater { reason } => {
                             // Keep the current credential alive; a reactive 401
-                            // (or the login strand) handles a genuinely dead
-                            // session. Surface the last issue for dev tools.
-                            last_error.set(Some(
-                                "background session refresh produced no new credential".to_owned(),
-                            ));
+                            // handles a genuinely dead session. Surface the
+                            // transient issue for dev tools.
+                            last_error.set(Some(format!(
+                                "background session refresh pending: {reason}"
+                            )));
                         }
                     }
                 }
@@ -860,7 +865,6 @@ pub fn RouterView() -> Element {
                     account_has_other_devices,
                     sync_bootstrap_complete,
                     session_boot_state,
-                    navigator,
                     call_signal_hub,
                     did_cache,
                 },
@@ -994,6 +998,11 @@ pub fn RouterView() -> Element {
             let has_encrypted_realm_projection =
                 local_state_has_encrypted_realm(&state_for_detection_key);
             let local_mls_epoch_floor = local_mls_epoch_floor_all(&state_for_detection_key);
+            let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
+                &state_for_detection_key,
+                &actor,
+            )
+            .unwrap_or_default();
             drop(state_for_detection_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
@@ -1002,12 +1011,13 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let detection_key = format!(
-                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}"
+                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}"
             );
             if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
                 return;
             }
-            seen_detection_key.set(Some(detection_key));
+            seen_detection_key.set(Some(detection_key.clone()));
+            let seen_detection_key_for_result = seen_detection_key;
 
             spawn(async move {
                 match crate::views::helpers::with_authed_api(
@@ -1020,6 +1030,11 @@ pub fn RouterView() -> Element {
                 .await
                 {
                     Ok(payload) => {
+                        if seen_detection_key_for_result().as_deref()
+                            != Some(detection_key.as_str())
+                        {
+                            return;
+                        }
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("yougen");
                         let configured_backup_id =
@@ -1204,6 +1219,7 @@ pub fn RouterView() -> Element {
                     device_check_complete: device_authorization_check_complete(),
                     // Route doesn't gate this one-time nudge; the guards do.
                     on_recovery_route: false,
+                    recovery_check_complete: account_recovery_configured.is_some(),
                     needs_device_authorization: needs_device_authorization(),
                     needs_mls_unlock: needs_mls_unlock(),
                     needs_mls_backup: needs_mls_backup(),
@@ -1445,6 +1461,11 @@ pub fn RouterView() -> Element {
                 &state_for_bootstrap_key,
                 &bootstrap_realm_id,
             );
+            let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
+                &state_for_bootstrap_key,
+                &actor,
+            )
+            .unwrap_or_default();
             drop(state_for_bootstrap_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
@@ -1453,12 +1474,13 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}"
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;
             }
-            seen_bootstrap_key.set(Some(bootstrap_key));
+            seen_bootstrap_key.set(Some(bootstrap_key.clone()));
+            let seen_bootstrap_key_for_probe = seen_bootstrap_key;
 
             let state_store_task = state_store_for_bootstrap;
             let mut crypto_state_task = crypto_state_for_bootstrap;
@@ -1516,6 +1538,10 @@ pub fn RouterView() -> Element {
                 .await
                 {
                     Ok(payload) => {
+                        if seen_bootstrap_key_for_probe().as_deref() != Some(bootstrap_key.as_str())
+                        {
+                            return;
+                        }
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("yougen");
                         let configured_backup_id =
@@ -1944,6 +1970,7 @@ pub fn RouterView() -> Element {
                         },
                     }
                 }
+                Outlet::<Route> {}
             }
         };
     }
@@ -1962,6 +1989,7 @@ pub fn RouterView() -> Element {
         let actor = account_did();
         let local_recovery_configured =
             crate::views::recovery::recovery_options_configured(&store, &actor);
+        let account_recovery_configured = account_recovery_configured();
         crate::account_health::AccountHealthInputs {
             has_session,
             sync_bootstrap_complete: sync_bootstrap_complete(),
@@ -1970,6 +1998,7 @@ pub fn RouterView() -> Element {
                 &content_route,
                 Route::Recovery | Route::SettingsRecovery
             ),
+            recovery_check_complete: account_recovery_configured.is_some(),
             needs_device_authorization: needs_device_authorization(),
             needs_mls_unlock: needs_mls_unlock(),
             needs_mls_backup: needs_mls_backup(),
@@ -1979,7 +2008,7 @@ pub fn RouterView() -> Element {
                     &store, &actor,
                 ),
             recovery_unconfigured: recovery_setup_prompt_required_for_account_state(
-                account_recovery_configured(),
+                account_recovery_configured,
                 local_recovery_configured,
                 account_has_other_devices(),
             ),
@@ -2109,6 +2138,7 @@ pub fn RouterView() -> Element {
             // policy-deny dispatcher. Renders nothing when no error
             // is queued.
             crate::components::CircleErrorToast { i18n: i18n_signal }
+            Outlet::<Route> {}
             crate::components::DeviceAuthorizationPrompt {
                 needs_device_authorization,
             }
@@ -2219,6 +2249,7 @@ pub fn RouterView() -> Element {
                     device_id,
                     state_store,
                     needs_mls_backup,
+                    account_recovery_configured,
                     personal_handles,
                 }
             }
@@ -2334,7 +2365,6 @@ pub fn RouterView() -> Element {
                                     account_has_other_devices,
                                     sync_bootstrap_complete,
                                     session_boot_state,
-                                    navigator,
                                     call_signal_hub,
                                     did_cache,
                                 },
@@ -2515,7 +2545,6 @@ pub fn RouterView() -> Element {
                                                         account_has_other_devices,
                                                         sync_bootstrap_complete,
                                                         session_boot_state,
-                                                        navigator,
                                                         call_signal_hub,
                                                         did_cache,
                                                     },
@@ -3816,50 +3845,53 @@ pub fn RouterView() -> Element {
                                                                         // dead — clicking "Refresh session" must
                                                                         // keep the user signed in, not bounce them to
                                                                         // login on a routine credential rotation.
-                                                                        if let Some(fresh) = crate::session::refresh_current_session_credential().await {
-                                                                            let canonical_actor = match self_authed_api(&base, fresh) {
-                                                                                Ok(api) => api
-                                                                                    .account_me()
-                                                                                    .await
-                                                                                    .ok()
-                                                                                    .and_then(|account| {
-                                                                                        if let Some(personal_handle) =
-                                                                                            personal_handle_from_account_handle(&account.handle, &base)
-                                                                                        {
-                                                                                            personal_handles.set(vec![personal_handle]);
-                                                                                            personal_handles_status
-                                                                                                .set("1 handle".to_owned());
-                                                                                        } else {
-                                                                                            personal_handles.set(Vec::new());
-                                                                                            personal_handles_status
-                                                                                                .set("Not published".to_owned());
-                                                                                        }
-                                                                                        (!account.did.trim().is_empty())
-                                                                                            .then_some(account.did)
-                                                                                    }),
-                                                                                Err(_) => None,
+                                                                        match crate::session::refresh_current_session().await {
+                                                                            crate::session::CurrentSessionRefresh::Credential(fresh) => {
+                                                                                let canonical_actor = match self_authed_api(&base, fresh) {
+                                                                                    Ok(api) => api
+                                                                                        .account_me()
+                                                                                        .await
+                                                                                        .ok()
+                                                                                        .and_then(|account| {
+                                                                                            if let Some(personal_handle) =
+                                                                                                personal_handle_from_account_handle(&account.handle, &base)
+                                                                                            {
+                                                                                                personal_handles.set(vec![personal_handle]);
+                                                                                                personal_handles_status
+                                                                                                    .set("1 handle".to_owned());
+                                                                                            } else {
+                                                                                                personal_handles.set(Vec::new());
+                                                                                                personal_handles_status
+                                                                                                    .set("Not published".to_owned());
+                                                                                            }
+                                                                                            (!account.did.trim().is_empty())
+                                                                                                .then_some(account.did)
+                                                                                        }),
+                                                                                    Err(_) => None,
+                                                                                }
+                                                                                .unwrap_or_else(|| actor.clone());
+                                                                                account_did.set(canonical_actor.clone());
+                                                                                account_session_state.set(format!(
+                                                                                    "Session refresh ok: {canonical_actor}"
+                                                                                ));
                                                                             }
-                                                                            .unwrap_or_else(|| actor.clone());
-                                                                            account_did.set(canonical_actor.clone());
-                                                                            account_session_state.set(format!(
-                                                                                "Session refresh ok: {canonical_actor}"
-                                                                            ));
-                                                                        } else {
-                                                                            token.set(String::new());
-                                                                            persist_config(
-                                                                                config_store,
-                                                                                base.clone(),
-                                                                                actor.clone(),
-                                                                                device.clone(),
-                                                                                String::new(),
-                                                                            );
-                                                                            status.set("Session expired; sign in again".to_owned());
-                                                                            last_error.set(Some("auth_expired: session expired".to_owned()));
-                                                                            account_session_state.set(
-                                                                                "Session expired. Sign in again.".to_owned()
-                                                                            );
-                                                                            session_boot_state.set(SessionBootState::Unauthenticated);
-                                                                            redirect_to_login(navigator);
+                                                                            crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                                                                                last_error.set(Some(reason));
+                                                                                account_session_state.set(
+                                                                                    "Sign in again to refresh this session.".to_owned()
+                                                                                );
+                                                                            }
+                                                                            crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                                                                last_error.set(Some(reason));
+                                                                                account_session_state.set(
+                                                                                    "Session expired. Sign in again.".to_owned()
+                                                                                );
+                                                                            }
+                                                                            crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                                                                                account_session_state.set(format!(
+                                                                                    "Session refresh pending: {reason}"
+                                                                                ));
+                                                                            }
                                                                         }
                                                                     } else {
                                                                         account_session_state.set(format!(
