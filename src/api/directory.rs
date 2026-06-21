@@ -172,7 +172,8 @@ impl CokretApi {
             organization_did: None,
             source_realm_id: None,
             requester: None,
-            proofs: Vec::new(),
+            proof_challenge: None,
+            claim_presentations: Vec::new(),
             cursor: next_cursor.map(ToOwned::to_owned),
             limit: Some(20),
         };
@@ -193,7 +194,8 @@ impl CokretApi {
             invite_token: None,
             signed_link: None,
             requester: None,
-            proofs: Vec::new(),
+            proof_challenge: None,
+            claim_presentations: Vec::new(),
         };
         self.post_json("_cokret/find/directory/resolve-realm", &body)
             .await
