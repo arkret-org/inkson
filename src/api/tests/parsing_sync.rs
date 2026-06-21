@@ -98,17 +98,71 @@ fn parses_server_and_sync_payloads() {
 
     let directory = parse_directory_describe(json!({
         "service_did": "did:web:server.local",
-        "resource_types": ["space", "organization", "actor"],
-        "discovery_profiles": ["ck.profile.directory.v1"],
-        "restricted_query_proof": false
+        "trust_domain": "ck:trust_domain:server.local",
+        "service_type": "directory_service",
+        "protocol_version": "1.0",
+        "supported_profiles": ["ck.profile.directory_service.v1"],
+        "supported_operations": ["ck.find.directory.query.describe"],
+        "supported_bindings": [{"kind": "http_json"}],
+        "supported_features": [],
+        "auth_metadata": {"mode": "public_no_auth"},
+        "limits": {},
+        "plaintext_visibility": {},
+        "rate_limit_policy": {},
+        "implemented_features": [],
+        "claimed_profiles": [],
+        "verified_profiles": [],
+        "experimental_features": [],
+        "compat_surfaces": [],
+        "development_mode": false,
+        "resource_types": ["realm", "organization", "actor"],
+        "discovery_profiles": ["ck.profile.directory_service.v1"],
+        "restricted_query_proof": false,
+        "ingest_modes": ["push"],
+        "accept_policy_kind": "open",
+        "default_ttl_seconds": 86400,
+        "max_ttl_seconds": 604800,
+        "revalidation_grace_seconds": 3600,
+        "accepted_resource_kinds": ["realm", "organization", "actor"],
+        "accepted_did_methods": ["did:web"],
+        "rate_limits": {}
     }))
     .unwrap();
-    assert!(directory.resource_types.contains(&"space".to_owned()));
+    assert!(
+        directory
+            .resource_types
+            .contains(&cokret_sdk::models::DirectoryResourceKind::Realm)
+    );
 
     let directory = parse_directory_describe(json!({
         "service_did": "did:web:server.local",
-        "resource_types": ["space"],
-        "discovery_profiles": ["ck.profile.directory.v1"]
+        "trust_domain": "ck:trust_domain:server.local",
+        "service_type": "directory_service",
+        "protocol_version": "1.0",
+        "supported_profiles": ["ck.profile.directory_service.v1"],
+        "supported_operations": ["ck.find.directory.query.describe"],
+        "supported_bindings": [{"kind": "http_json"}],
+        "supported_features": [],
+        "auth_metadata": {"mode": "public_no_auth"},
+        "limits": {},
+        "plaintext_visibility": {},
+        "rate_limit_policy": {},
+        "implemented_features": [],
+        "claimed_profiles": [],
+        "verified_profiles": [],
+        "experimental_features": [],
+        "compat_surfaces": [],
+        "development_mode": false,
+        "resource_types": ["realm"],
+        "discovery_profiles": ["ck.profile.directory_service.v1"],
+        "ingest_modes": ["push"],
+        "accept_policy_kind": "open",
+        "default_ttl_seconds": 86400,
+        "max_ttl_seconds": 604800,
+        "revalidation_grace_seconds": 3600,
+        "accepted_resource_kinds": ["realm"],
+        "accepted_did_methods": ["did:web"],
+        "rate_limits": {}
     }))
     .unwrap();
     assert_eq!(directory.restricted_query_proof, None);
