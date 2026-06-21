@@ -267,12 +267,23 @@ pub fn TimelinePanel(
     let composer_blocked = realm_is_destroyed || epoch_update_required;
 
     rsx! {
-        div {
-            class: "timeline",
-            "data-testid": "timeline",
-            role: "feed",
-            "aria-label": "Timeline events",
-            "aria-live": "polite",
+        div { class: "timeline-shell", "data-testid": "timeline-shell",
+            div { class: "timeline-toolbar", "data-testid": "timeline-toolbar",
+                Input {
+                    r#type: "text",
+                    "data-testid": "timeline-search",
+                    placeholder: "Search messages...",
+                    value: "{search_query}",
+                    oninput: move |event: FormEvent| search_query.set(event.value()),
+                }
+            }
+
+            div {
+                class: "timeline",
+                "data-testid": "timeline",
+                role: "feed",
+                "aria-label": "Timeline events",
+                "aria-live": "polite",
 
             if realm_is_destroyed {
                 div {
@@ -303,16 +314,6 @@ pub fn TimelinePanel(
                     div { class: "muted",
                         "Membership changed in this encrypted Realm. Sending is paused until an MLS Remove/Commit covers the latest governance frontier."
                     }
-                }
-            }
-
-            div { class: "composer", style: "margin-bottom: 8px;",
-                Input {
-                    r#type: "text",
-                    "data-testid": "timeline-search",
-                    placeholder: "Search messages...",
-                    value: "{search_query}",
-                    oninput: move |event: FormEvent| search_query.set(event.value()),
                 }
             }
 
@@ -985,64 +986,67 @@ pub fn TimelinePanel(
                     div { "No timeline events yet. Compose a dev-mode message." }
                 }
             }
-        }
-
-        if let Some((decision_event_id, target_ref)) = moderation_appeal_target.clone() {
-            crate::views::moderation_appeal::AppealEntrypoint {
-                realm_id: selected_realm_c.clone(),
-                appellant: account_did_c.clone(),
-                decision_event_id,
-                target_ref,
-                base_url: base_url.clone(),
-                api_token: token(),
-                current_state: crate::views::moderation_appeal::AppealState::None,
             }
-        }
 
-        if !write_status().is_empty() {
-            div { class: "muted", "data-testid": "write-status", "{write_status}" }
-        }
-
-        if !blob_status().is_empty() {
-            div { class: "muted", "data-testid": "blob-status", "{blob_status}" }
-        }
-
-        div { class: "muted", "data-testid": "read-cursor-status", "{read_cursor_status}" }
-        div { class: "muted", "data-testid": "read-receipt-status", "{receipt_status}" }
-
-        if !read_receipts().is_empty() {
-            div { class: "muted", "data-testid": "read-receipts",
-                "Read by: {read_receipts:?}"
+            if let Some((decision_event_id, target_ref)) = moderation_appeal_target.clone() {
+                crate::views::moderation_appeal::AppealEntrypoint {
+                    realm_id: selected_realm_c.clone(),
+                    appellant: account_did_c.clone(),
+                    decision_event_id,
+                    target_ref,
+                    base_url: base_url.clone(),
+                    api_token: token(),
+                    current_state: crate::views::moderation_appeal::AppealState::None,
+                }
             }
-        }
 
-        TimelineComposer {
-            timeline,
-            draft,
-            state_store,
-            write_status,
-            frontier_state,
-            token,
-            sync_cursor,
-            base_url_sig,
-            encrypt_toggle,
-            reply_to_index,
-            compose_dragover,
-            compose_upload_status,
-            blob_status,
-            attached_blob,
-            selected_realm_id: selected_realm_c.clone(),
-            account_did: account_did_c.clone(),
-            device_id: device_id_c.clone(),
-            timeline_incident_priority: timeline_incident_priority.clone(),
-            plaintext_blocked,
-            realm_is_destroyed,
-            epoch_update_required,
-            composer_blocked,
-            timeline_public_update_guard,
-            timeline_private_plaintext,
-            timeline_plaintext_ack,
-            events_for_composer_lookup: events_for_composer_lookup.clone(),
+            div { class: "timeline-status-strip", "data-testid": "timeline-status-strip",
+                if !write_status().is_empty() {
+                    div { class: "muted", "data-testid": "write-status", "{write_status}" }
+                }
+
+                if !blob_status().is_empty() {
+                    div { class: "muted", "data-testid": "blob-status", "{blob_status}" }
+                }
+
+                div { class: "muted", "data-testid": "read-cursor-status", "{read_cursor_status}" }
+                div { class: "muted", "data-testid": "read-receipt-status", "{receipt_status}" }
+
+                if !read_receipts().is_empty() {
+                    div { class: "muted", "data-testid": "read-receipts",
+                        "Read by: {read_receipts:?}"
+                    }
+                }
+            }
+
+            TimelineComposer {
+                timeline,
+                draft,
+                state_store,
+                write_status,
+                frontier_state,
+                token,
+                sync_cursor,
+                base_url_sig,
+                encrypt_toggle,
+                reply_to_index,
+                compose_dragover,
+                compose_upload_status,
+                blob_status,
+                attached_blob,
+                selected_realm_id: selected_realm_c.clone(),
+                account_did: account_did_c.clone(),
+                device_id: device_id_c.clone(),
+                timeline_incident_priority: timeline_incident_priority.clone(),
+                plaintext_blocked,
+                realm_is_destroyed,
+                epoch_update_required,
+                composer_blocked,
+                timeline_public_update_guard,
+                timeline_private_plaintext,
+                timeline_plaintext_ack,
+                events_for_composer_lookup: events_for_composer_lookup.clone(),
+            }
         }
     }
 }

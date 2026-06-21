@@ -304,6 +304,54 @@
   gap: 16px;
 }
 
+.workspace-body > .timeline-shell {
+  min-width: 0;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.timeline-shell > .timeline-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.timeline-toolbar input:not([type="checkbox"]):not([type="radio"]) {
+  width: 100%;
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  padding: 8px 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.timeline-shell > .timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  align-content: start;
+  gap: 16px;
+}
+
+.timeline-shell > .timeline-status-strip {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 4px 12px;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.timeline-shell > .composer[data-testid="composer"] {
+  flex: 0 0 auto;
+}
+
 .compose-safety-banner {
   min-height: 34px;
   display: flex;
@@ -730,4 +778,3 @@ label.avatar-upload-button .ui-icon {
 .sidebar .muted {
   color: var(--text-3);
 }
-

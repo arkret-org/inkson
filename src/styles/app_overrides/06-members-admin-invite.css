@@ -535,6 +535,21 @@
     margin-top: 12px;
   }
 
+  .workspace-body > .timeline-shell {
+    min-height: auto;
+    overflow: visible;
+    gap: 12px;
+  }
+
+  .timeline-shell > .timeline {
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .timeline-shell > .timeline-status-strip {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-two-col {
     grid-template-columns: 1fr;
   }
