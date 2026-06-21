@@ -429,6 +429,21 @@ pub fn RouterView() -> Element {
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
     let mut notifications_drawer_open = use_signal(|| false);
+    let mut previous_unread_notification_count = use_signal(|| Option::<usize>::None);
+    {
+        let state_store_for_notification_sound = state_store;
+        use_effect(move || {
+            let unread =
+                unread_notification_count(&state_store_for_notification_sound.read().load());
+            let previous = *previous_unread_notification_count.peek();
+            if previous.is_some_and(|previous| unread > previous) {
+                crate::notification_sound::play_notification_sound();
+            }
+            if previous != Some(unread) {
+                previous_unread_notification_count.set(Some(unread));
+            }
+        });
+    }
     let mut sync_bootstrap_complete = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
@@ -634,7 +649,11 @@ pub fn RouterView() -> Element {
             let session = token();
             let actor = account_did();
             let generation = sync_generation();
-            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+            if !matches!(session_boot_state(), SessionBootState::Authenticated)
+                || base.trim().is_empty()
+                || session.trim().is_empty()
+                || actor.trim().is_empty()
+            {
                 account_recovery_configured.set(None);
                 account_recovery_detection_key_seen.set(None);
                 return;
@@ -952,11 +971,20 @@ pub fn RouterView() -> Element {
             let actor = account_did();
             let device = device_id();
             let generation = sync_generation();
+            if !matches!(session_boot_state(), SessionBootState::Authenticated) {
+                needs_mls_unlock.set(false);
+                needs_mls_backup.set(false);
+                needs_mls_recovery_setup.set(false);
+                restore_payload_cache.set(None);
+                seen_detection_key.set(None);
+                return;
+            }
             if session.trim().is_empty() {
                 needs_mls_unlock.set(false);
                 needs_mls_backup.set(false);
                 needs_mls_recovery_setup.set(false);
                 restore_payload_cache.set(None);
+                seen_detection_key.set(None);
                 return;
             }
             // X10.1: do NOT gate on `sync_bootstrap_complete()` here. A fresh
