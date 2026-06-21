@@ -95,6 +95,29 @@ pub(super) async fn remint_principal_bearer(
         }
     }
 
+    if token().trim().is_empty() {
+        let live_grant = {
+            let store = state_store.read();
+            store.session_grant().and_then(|grant| {
+                (crate::session_refresh::grant_matches_principal_server(&grant, &base)
+                    && !crate::session_refresh::grant_is_dead(&grant))
+                .then_some(grant)
+            })
+        };
+        if let Some(grant) = live_grant {
+            let access_token = grant.grant_jwt.clone();
+            token.set(access_token.clone());
+            persist_config(
+                config_store,
+                base.clone(),
+                actor.clone(),
+                device.clone(),
+                access_token.clone(),
+            );
+            return Some(access_token);
+        }
+    }
+
     // ②(A+②): multi-day sliding session. The held credential is the grant
     // itself; when it is near its own expiry the refresh path rotates it (DPoP
     // holder proof signed by the durable device key bound into `cnf.jkt`) onto a
@@ -200,6 +223,42 @@ pub(super) fn redirect_to_login(navigator: Navigator) {
     let _ = navigator.push(Route::Login);
 }
 
+fn attach_current_session_material(
+    api: CokretApi,
+    store: &crate::local_state::LocalStateStore,
+) -> CokretApi {
+    let Some(handle) = crate::auth_dpop::load_device_key(store).ok().flatten() else {
+        return api;
+    };
+    let mut api = api.with_dpop_device(handle.clone());
+    if let Some(grant) = store.session_grant()
+        && let Ok(proof) = handle.mint_session_grant_introspection_proof(
+            &grant.grant_id,
+            &grant.grant_jwt,
+            &grant.audience,
+        )
+    {
+        api = api.with_session_grant_proof(proof);
+    }
+    api
+}
+
+fn current_base_api(base: &str, state_store: Signal<LocalStateStore>) -> anyhow::Result<CokretApi> {
+    let api = CokretApi::new(base)?;
+    let store = state_store.read();
+    Ok(attach_current_session_material(api, &store))
+}
+
+fn current_authed_api(
+    base: &str,
+    access_token: &str,
+    state_store: Signal<LocalStateStore>,
+) -> anyhow::Result<CokretApi> {
+    let api = CokretApi::new(base)?.with_bearer(access_token.to_owned());
+    let store = state_store.read();
+    Ok(attach_current_session_material(api, &store))
+}
+
 /// ②(A+②) — build a `/_cokret/self/*`-ready client: the credential
 /// (`ck.session.grant` JWT) as the bearer plus the device DPoP holder key so
 /// each request carries a per-request `DPoP` proof (api-conventions.md §3.3).
@@ -211,19 +270,25 @@ pub(super) fn self_authed_api(
     grant_or_bearer: impl Into<String>,
 ) -> anyhow::Result<CokretApi> {
     let api = CokretApi::new(base)?.with_bearer(grant_or_bearer);
-    Ok(crate::views::helpers::attach_device_dpop(api))
+    let store = crate::local_state::LocalStateStore::default();
+    Ok(attach_current_session_material(api, &store))
 }
 
 pub(super) fn adopt_live_token_for_api(
-    api: &CokretApi,
+    base: &str,
+    state_store: Signal<LocalStateStore>,
     live_token: Signal<String>,
     session_token: &mut String,
     authed: &mut CokretApi,
 ) {
     let latest = live_token();
     if !latest.trim().is_empty() && latest != *session_token {
-        *session_token = latest;
-        *authed = api.clone().with_bearer(session_token.clone());
+        *session_token = latest.clone();
+        if let Ok(api) = current_authed_api(base, &latest, state_store) {
+            *authed = api;
+        } else {
+            *authed = authed.clone().with_bearer(latest);
+        }
     }
 }
 
@@ -332,40 +397,8 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         status.set(ConnectionState::Loading.label().to_owned());
         network_state.set("reconnecting".to_owned());
         last_error.set(None);
-        match CokretApi::new(&base) {
-            Ok(api) => {
-                // ②(A+②) — bind the device DPoP holder key so every clone of
-                // this base client attaches a per-request `DPoP` proof to
-                // `/_cokret/self/*` requests (api-conventions.md §3.3). The grant
-                // (set later via `with_bearer`) is the credential; the DPoP key
-                // sender-constrains it. `with_bearer` preserves this field, so all
-                // `api.clone().with_bearer(grant)` sites below inherit the DPoP
-                // device. Falls back to bearer-only if no device key is available.
-                let device_handle = crate::auth_dpop::load_device_key(&state_store.read())
-                    .ok()
-                    .flatten();
-                let persisted_grant = state_store.read().session_grant();
-                let api = match device_handle {
-                    Some(handle) => {
-                        let mut api = api.with_dpop_device(handle.clone());
-                        // Attach the session-grant holder proof (minted from the
-                        // persisted grant + device key) so the Principal Server's
-                        // grant introspection passes on cache-miss / restore, not
-                        // just within the ≤120s introspection cache window seeded
-                        // by the initial login.
-                        if let Some(grant) = persisted_grant
-                            && let Ok(proof) = handle.mint_session_grant_introspection_proof(
-                                &grant.grant_id,
-                                &grant.grant_jwt,
-                                &grant.audience,
-                            )
-                        {
-                            api = api.with_session_grant_proof(proof);
-                        }
-                        api
-                    }
-                    None => api,
-                };
+        match current_base_api(&base, state_store) {
+            Ok(mut api) => {
                 // Probe `/server/describe` for status text, but treat failure
                 // as non-fatal: a transient describe error (CORS preflight,
                 // server warming up, brief 5xx) must not block the sync below
@@ -436,15 +469,12 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 };
 
                 let mut session_token = token();
-                if !session_token.trim().is_empty()
-                    && let Some(refreshed) = crate::session::refresh_current_bearer().await
-                {
-                    session_token = refreshed;
-                    session_boot_state.set(SessionBootState::Checking);
-                }
                 if session_token.trim().is_empty() {
                     if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                         session_token = refreshed;
+                        if let Ok(rebound) = current_base_api(&base, state_store) {
+                            api = rebound;
+                        }
                         session_boot_state.set(SessionBootState::Checking);
                     } else {
                         let probe_label = description
@@ -473,8 +503,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     }
                 }
 
-                let mut authed = api.clone().with_bearer(session_token.clone());
-                adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
+                let mut authed = current_authed_api(&base, &session_token, state_store)
+                    .unwrap_or_else(|_| api.clone().with_bearer(session_token.clone()));
+                adopt_live_token_for_api(
+                    &base,
+                    state_store,
+                    token,
+                    &mut session_token,
+                    &mut authed,
+                );
                 // Resolve the canonical actor DID from the account viewer. Three
                 // outcomes:
                 //   1. Ok with non-empty DID -> use it as canonical_actor.
@@ -501,7 +538,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     Err(error) if is_auth_expired_error(&error) => {
                         if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                             session_token = refreshed;
-                            authed = api.clone().with_bearer(session_token.clone());
+                            if let Ok(rebound) = current_base_api(&base, state_store) {
+                                api = rebound;
+                            }
+                            authed = current_authed_api(&base, &session_token, state_store)
+                                .unwrap_or_else(|_| api.clone().with_bearer(session_token.clone()));
                             match authed.account_me().await {
                                 Ok(account) if !account.did.trim().is_empty() => {
                                     account_personal_handle =
@@ -632,7 +673,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         .write()
                         .stamp_account_scope_owner(&canonical_actor);
                 }
-                adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
+                adopt_live_token_for_api(
+                    &base,
+                    state_store,
+                    token,
+                    &mut session_token,
+                    &mut authed,
+                );
                 match authed.list_devices().await {
                     Ok(viewer) => {
                         account_has_other_devices.set(
@@ -688,7 +735,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 // Idempotent: skipped when already authorized, and a no-op-on-retry
                 // because the submit is a CAS on `actor_seq`.
                 if needs_device_authorization() {
-                    adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
+                    adopt_live_token_for_api(
+                        &base,
+                        state_store,
+                        token,
+                        &mut session_token,
+                        &mut authed,
+                    );
                     match enroll_current_session_device(
                         &base,
                         &canonical_actor,
@@ -729,13 +782,23 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 // "re-establish the world from scratch". The SyncEngine
                 // (see crate::sync_engine) owns the long-poll loop that
                 // threads the cursor for incremental deltas.
-                adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
+                adopt_live_token_for_api(
+                    &base,
+                    state_store,
+                    token,
+                    &mut session_token,
+                    &mut authed,
+                );
                 let sync_result = match authed.account_subscribe_snapshot(None).await {
                     Ok(sync) => Ok(sync),
                     Err(error) if is_auth_expired_error(&error) => {
                         if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                             session_token = refreshed;
-                            authed = api.clone().with_bearer(session_token.clone());
+                            if let Ok(rebound) = current_base_api(&base, state_store) {
+                                api = rebound;
+                            }
+                            authed = current_authed_api(&base, &session_token, state_store)
+                                .unwrap_or_else(|_| api.clone().with_bearer(session_token.clone()));
                             authed.account_subscribe_snapshot(None).await
                         } else {
                             Err(error)
@@ -745,7 +808,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 };
                 match sync_result {
                     Ok(sync) => {
-                        adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
+                        adopt_live_token_for_api(
+                            &base,
+                            state_store,
+                            token,
+                            &mut session_token,
+                            &mut authed,
+                        );
                         let invite_notifications = match authed.invites().await {
                             Ok(response) => Some(response.invites),
                             Err(error) if is_auth_expired_error(&error) => {
@@ -753,7 +822,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     crate::session::refresh_current_bearer().await
                                 {
                                     session_token = refreshed;
-                                    authed = api.clone().with_bearer(session_token.clone());
+                                    if let Ok(rebound) = current_base_api(&base, state_store) {
+                                        api = rebound;
+                                    }
+                                    authed = current_authed_api(&base, &session_token, state_store)
+                                        .unwrap_or_else(|_| {
+                                            api.clone().with_bearer(session_token.clone())
+                                        });
                                     authed.invites().await.ok().map(|response| response.invites)
                                 } else {
                                     None
@@ -1143,13 +1218,23 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         last_error.set(Some(format!("sync: {error}")));
                     }
                 }
-                adopt_live_token_for_api(&api, token, &mut session_token, &mut authed);
+                adopt_live_token_for_api(
+                    &base,
+                    state_store,
+                    token,
+                    &mut session_token,
+                    &mut authed,
+                );
                 let events_result = match authed.events_describe().await {
                     Ok(events) => Ok(events),
                     Err(error) if is_auth_expired_error(&error) => {
                         if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                             session_token = refreshed;
-                            authed = api.clone().with_bearer(session_token.clone());
+                            if let Ok(rebound) = current_base_api(&base, state_store) {
+                                api = rebound;
+                            }
+                            authed = current_authed_api(&base, &session_token, state_store)
+                                .unwrap_or_else(|_| api.clone().with_bearer(session_token.clone()));
                             authed.events_describe().await
                         } else {
                             Err(error)

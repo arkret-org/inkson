@@ -572,7 +572,7 @@ fn boot_session_token_uses_fresh_session_grant_bearer() {
 
     assert_eq!(
         initial_session_token_from_state(&state, &config, now),
-        "bridge-token"
+        "grant.jwt"
     );
 }
 
@@ -593,15 +593,54 @@ fn boot_session_token_falls_back_to_session_grant_when_oidc_is_expired() {
 
     assert_eq!(
         initial_session_token_from_state(&state, &config, now),
-        "bridge-token"
+        "grant.jwt"
     );
 }
 
 #[test]
-fn boot_session_token_ignores_expired_session_grant_bearer() {
+fn boot_session_token_uses_session_grant_when_cached_bearer_expired() {
     let now = chrono::Utc::now().timestamp();
     let state = ClientLocalState {
         session_grant: Some(session_grant(-1, 3600)),
+        ..Default::default()
+    };
+    let config = ClientConfig::from_fields(
+        "https://local.host",
+        "did:web:alice.example",
+        "ck:device:01964137-0000-7000-8000-000000000001",
+        "bridge-token",
+    );
+
+    assert_eq!(
+        initial_session_token_from_state(&state, &config, now),
+        "grant.jwt"
+    );
+}
+
+#[test]
+fn boot_session_token_ignores_expired_session_grant() {
+    let now = chrono::Utc::now().timestamp();
+    let state = ClientLocalState {
+        session_grant: Some(session_grant(-1, -1)),
+        ..Default::default()
+    };
+    let config = ClientConfig::from_fields(
+        "https://local.host",
+        "did:web:alice.example",
+        "ck:device:01964137-0000-7000-8000-000000000001",
+        "bridge-token",
+    );
+
+    assert_eq!(initial_session_token_from_state(&state, &config, now), "");
+}
+
+#[test]
+fn boot_session_token_ignores_session_grant_for_other_server() {
+    let now = chrono::Utc::now().timestamp();
+    let mut grant = session_grant(120, 3600);
+    grant.principal_server_url = "https://other.local.host".to_owned();
+    let state = ClientLocalState {
+        session_grant: Some(grant),
         ..Default::default()
     };
     let config = ClientConfig::from_fields(

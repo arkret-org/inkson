@@ -257,59 +257,20 @@ pub fn LoginPanel(
                                     "data-testid": "refresh-now-button",
                                     disabled: is_busy(),
                                     onclick: move |_| {
-                                        let principal = base_url();
-                                        let actor = account_did();
-                                        let device = device_id();
                                         is_busy.set(true);
                                         auth_status.set("Refreshing session...".to_owned());
                                         spawn(async move {
-                                            let prepared = {
-                                                let mut store = state_store_write.write();
-                                                crate::session_refresh::prepare_refresh_for_server(
-                                                    &mut store,
-                                                    &principal,
-                                                )
-                                            };
-                                            let outcome = match prepared {
-                                                crate::session_refresh::RefreshPrepared::Done(o) => o,
-                                                crate::session_refresh::RefreshPrepared::Ready { grant, device_handle } => {
-                                                    let result = crate::session_refresh::exchange_refresh(&grant, &device_handle).await;
-                                                    let mut store = state_store_write.write();
-                                                    crate::session_refresh::commit_refresh(&mut store, result)
-                                                }
-                                            };
-                                            match outcome {
-                                                crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
-                                                    token.set(access_token.clone());
-                                                    persist_config(
-                                                        config_store,
-                                                        principal.clone(),
-                                                        actor.clone(),
-                                                        device.clone(),
-                                                        access_token,
-                                                    );
-                                                    auth_status.set("Session refreshed".to_owned());
-                                                }
-                                                crate::session_refresh::RefreshOutcome::Fresh => {
-                                                    auth_status.set("Session still fresh".to_owned());
-                                                }
-                                                crate::session_refresh::RefreshOutcome::NoGrant => {
-                                                    auth_status.set("No persisted session grant; sign in first".to_owned());
-                                                }
-                                                crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
-                                                    token.set(String::new());
-                                                    persist_config(
-                                                        config_store,
-                                                        principal.clone(),
-                                                        actor.clone(),
-                                                        device.clone(),
-                                                        String::new(),
-                                                    );
-                                                    auth_status.set(format!("Session expired: {reason}"));
-                                                }
-                                                crate::session_refresh::RefreshOutcome::Transient { reason } => {
-                                                    auth_status.set(format!("Refresh failed transiently: {reason}"));
-                                                }
+                                            if let Some(access_token) =
+                                                crate::session::refresh_current_bearer().await
+                                            {
+                                                token.set(access_token);
+                                                auth_status.set("Session restored".to_owned());
+                                                on_login.call(());
+                                            } else {
+                                                auth_status.set(
+                                                    "Session could not be restored; sign in again"
+                                                        .to_owned(),
+                                                );
                                             }
                                             is_busy.set(false);
                                         });

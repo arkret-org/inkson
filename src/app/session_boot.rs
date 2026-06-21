@@ -10,12 +10,14 @@ pub(super) fn oidc_access_token_boot_usable(bundle: &OidcTokenBundle, now_unix: 
     }
 }
 
-pub(super) fn session_grant_access_token_boot_usable(
+pub(super) fn session_grant_boot_usable(
     grant: &PersistedSessionGrant,
-    access_token: &str,
+    principal_server_url: &str,
     now_unix: i64,
 ) -> bool {
-    if access_token.trim().is_empty() {
+    if grant.grant_jwt.trim().is_empty()
+        || !crate::session_refresh::grant_matches_principal_server(grant, principal_server_url)
+    {
         return false;
     }
     if grant
@@ -24,9 +26,7 @@ pub(super) fn session_grant_access_token_boot_usable(
     {
         return false;
     }
-    grant
-        .session_expires_at
-        .is_some_and(|expires_at| now_unix + BOOT_ACCESS_TOKEN_SKEW_SECS < expires_at.timestamp())
+    true
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,8 +138,8 @@ pub(super) fn initial_session_token_from_state(
         }
     }
     if let Some(grant) = local_state.session_grant.as_ref() {
-        return if session_grant_access_token_boot_usable(grant, &config.session_token, now_unix) {
-            config.session_token.clone()
+        return if session_grant_boot_usable(grant, &config.server_url, now_unix) {
+            grant.grant_jwt.clone()
         } else {
             String::new()
         };

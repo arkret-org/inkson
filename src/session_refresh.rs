@@ -268,17 +268,17 @@ async fn rotate_session_grant(
     grant: &PersistedSessionGrant,
     device_handle: &DpopHandle,
 ) -> anyhow::Result<PersistedSessionGrant> {
-    let auth_server_url =
+    let gate_account_base =
         crate::coauth::resolve_principal_auth_server_url(&grant.principal_server_url)
             .await
-            .map_err(|error| anyhow::anyhow!("resolve auth server: {error}"))?;
-    let coauth = crate::coauth::CoauthApi::new(&auth_server_url)?;
-    let htu = coauth.endpoint_url("_cokret/gate/account/session-grants/refresh")?;
+            .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
+    let coauth = crate::coauth::CoauthApi::new(&gate_account_base)?;
+    let htu = coauth.endpoint_url("session-grants/refresh")?;
     let dpop_proof = device_handle
         .mint_proof("POST", &htu, Some(&grant.grant_jwt))
         .map_err(|error| anyhow::anyhow!("mint rotation DPoP proof: {error}"))?;
     let outcome = refresh_session_grant(
-        &auth_server_url,
+        &gate_account_base,
         &grant.grant_jwt,
         Some(&grant.audience),
         &dpop_proof,
@@ -398,7 +398,15 @@ fn is_grant_dead_error(error: &anyhow::Error) -> bool {
         let message = api_error.error.message().to_ascii_lowercase();
         if matches!(
             code,
-            "invalid_grant" | "grant_expired" | "grant_revoked" | "session_grant_revoked"
+            "invalid_grant"
+                | "grant_expired"
+                | "grant_revoked"
+                | "session_grant_revoked"
+                | "grant_already_consumed"
+                | "session_grant_not_found"
+                | "session_logged_out"
+                | "invalid_signature"
+                | "did_proof_required"
         ) {
             return true;
         }
@@ -408,8 +416,13 @@ fn is_grant_dead_error(error: &anyhow::Error) -> bool {
     }
     let chain = format!("{error}").to_ascii_lowercase();
     chain.contains("invalid_grant")
+        || chain.contains("grant_already_consumed")
         || chain.contains("grant_expired")
         || chain.contains("grant_revoked")
+        || chain.contains("session_grant_not_found")
+        || chain.contains("session_logged_out")
+        || chain.contains("invalid_signature")
+        || chain.contains("did_proof_required")
         || terminal_session_grant_message(&chain)
 }
 
@@ -522,6 +535,44 @@ mod tests {
             error: crate::api::decode_cokret_error(
                 reqwest::StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
+            ),
+        }
+        .into();
+
+        let outcome = commit_refresh(&mut store, Err(error));
+
+        assert!(matches!(outcome, RefreshOutcome::LoginRequired { .. }));
+        assert!(store.session_grant().is_none());
+    }
+
+    #[test]
+    fn commit_clears_grant_when_refresh_reports_already_consumed() {
+        let mut store = isolated_store("consumed-grant");
+        store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
+        let error: anyhow::Error = crate::api::CokretApiError {
+            status: reqwest::StatusCode::BAD_REQUEST,
+            error: crate::api::decode_cokret_error(
+                reqwest::StatusCode::BAD_REQUEST,
+                br#"{"ok":false,"error":{"code":"grant_already_consumed","message":"session grant already consumed; its rotation chain cannot continue"}}"#,
+            ),
+        }
+        .into();
+
+        let outcome = commit_refresh(&mut store, Err(error));
+
+        assert!(matches!(outcome, RefreshOutcome::LoginRequired { .. }));
+        assert!(store.session_grant().is_none());
+    }
+
+    #[test]
+    fn commit_clears_grant_when_refresh_rejects_holder_proof() {
+        let mut store = isolated_store("invalid-proof-grant");
+        store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
+        let error: anyhow::Error = crate::api::CokretApiError {
+            status: reqwest::StatusCode::UNAUTHORIZED,
+            error: crate::api::decode_cokret_error(
+                reqwest::StatusCode::UNAUTHORIZED,
+                br#"{"ok":false,"error":{"code":"invalid_signature","message":"DPoP proof key does not match grant cnf.jkt"}}"#,
             ),
         }
         .into();

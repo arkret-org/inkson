@@ -20,11 +20,14 @@ fn endpoint_appends_relative_path_to_bare_gate_account_base() {
         api.endpoint("logout").unwrap().as_str(),
         "https://local.host/_cokret/gate/account/logout"
     );
+    assert_eq!(
+        api.endpoint("session-grants/refresh").unwrap().as_str(),
+        "https://local.host/_cokret/gate/account/session-grants/refresh"
+    );
 }
 
-/// An origin-rooted base (used by refresh/revoke with full paths) already
-/// ends in `/`, so the slash-normalisation is a no-op and full paths resolve
-/// from the origin root unchanged.
+/// An origin-rooted base already ends in `/`, so the slash-normalisation is a
+/// no-op and full paths resolve from the origin root unchanged.
 #[test]
 fn endpoint_preserves_full_path_on_origin_base() {
     let api = CoauthApi::new("https://auth.local.host").unwrap();

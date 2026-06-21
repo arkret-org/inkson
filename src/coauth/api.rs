@@ -228,14 +228,6 @@ impl CoauthApi {
         .await
     }
 
-    /// Private coauth session-grant refresh is intentionally unavailable to yougen.
-    /// with a DPoP proof and the prior grant JWT. On success returns
-    /// the rotated grant (single-use semantics: the old grant is now
-    /// revoked).
-    ///
-    /// The DPoP proof MUST be minted against `htu` = absolute URL of
-    /// the refresh endpoint and `htm` = `"POST"`, signed by the same
-    /// key whose thumbprint is bound to the prior grant's `cnf.jkt`.
     /// Rotate a near-expiry, DPoP-bound session grant onto a fresh one without
     /// re-running OIDC. This is the `/_cokret` protocol operation
     /// (`gate/account/session-grants/refresh`, service-http-binding session-grants
@@ -258,12 +250,8 @@ impl CoauthApi {
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned),
         })?;
-        self.post_json_with_dpop(
-            "_cokret/gate/account/session-grants/refresh",
-            body,
-            Some(dpop_proof),
-        )
-        .await
+        self.post_json_with_dpop("session-grants/refresh", body, Some(dpop_proof))
+            .await
     }
 
     /// Hard-logout revocation at the Auth Server (account-lifecycle §4.1):
