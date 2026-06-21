@@ -52,11 +52,13 @@ pub fn moderation_appeal_submit(
         created_at: chrono::Utc::now(),
     };
     cokret_sdk::ModerationAppealPayload::Submit(payload.clone()).validate_minimal()?;
-    Ok(
-        OperationBuilder::new(envelope_realm_id, actor, "ck.moderation.appeal.submit")
-            .target_ref(appeal_id)
-            .body(serde_json::to_value(&payload)?),
+    Ok(OperationBuilder::new(
+        envelope_realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ModerationAppealSubmit,
     )
+    .target_ref(appeal_id)
+    .body(serde_json::to_value(&payload)?))
 }
 
 /// `ck.moderation.decision` — seal a moderation disposition. Writes the
@@ -73,17 +75,21 @@ pub fn moderation_decision(
     reason_code: &str,
 ) -> OperationBuilder {
     let realm = trim_realm_id(realm_id);
-    OperationBuilder::new(&realm, actor, "ck.moderation.decision")
-        .target_ref(target_ref)
-        .body(json!({
-            "decision_id": decision_id,
-            "realm_id": realm,
-            "issuer": actor,
-            "target_ref": target_ref,
-            "verdict": verdict,
-            "reason_code": reason_code,
-            "decided_at": crate::clock::now_rfc3339_secs(),
-        }))
+    OperationBuilder::new(
+        &realm,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ModerationDecision,
+    )
+    .target_ref(target_ref)
+    .body(json!({
+        "decision_id": decision_id,
+        "realm_id": realm,
+        "issuer": actor,
+        "target_ref": target_ref,
+        "verdict": verdict,
+        "reason_code": reason_code,
+        "decided_at": crate::clock::now_rfc3339_secs(),
+    }))
 }
 
 /// `ck.moderation.decision.lift` — observed-remove / supersede a
@@ -96,15 +102,19 @@ pub fn moderation_decision_lift(
     reason_code: &str,
 ) -> OperationBuilder {
     let realm = trim_realm_id(realm_id);
-    OperationBuilder::new(&realm, actor, "ck.moderation.decision.lift")
-        .target_ref(decision_ref)
-        .body(json!({
-            "decision_ref": decision_ref,
-            "realm_id": realm,
-            "issuer": actor,
-            "reason_code": reason_code,
-            "lifted_at": crate::clock::now_rfc3339_secs(),
-        }))
+    OperationBuilder::new(
+        &realm,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ModerationDecisionLift,
+    )
+    .target_ref(decision_ref)
+    .body(json!({
+        "decision_ref": decision_ref,
+        "realm_id": realm,
+        "issuer": actor,
+        "reason_code": reason_code,
+        "lifted_at": crate::clock::now_rfc3339_secs(),
+    }))
 }
 
 /// `ck.moderation.appeal.review` — reviewer takes an appeal under
@@ -127,9 +137,13 @@ pub fn moderation_appeal_review(
     if let Some(notes_ref) = notes_ref {
         body["notes_ref"] = json!(notes_ref);
     }
-    OperationBuilder::new(&realm, actor, "ck.moderation.appeal.review")
-        .target_ref(appeal_id)
-        .body(body)
+    OperationBuilder::new(
+        &realm,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ModerationAppealReview,
+    )
+    .target_ref(appeal_id)
+    .body(body)
 }
 
 /// `ck.moderation.appeal.decision` — reviewer verdict
@@ -159,9 +173,13 @@ pub fn moderation_appeal_decision(
     if let Some(modify_decision_ref) = modify_decision_ref {
         body["modify_decision_ref"] = json!(modify_decision_ref);
     }
-    OperationBuilder::new(&realm, actor, "ck.moderation.appeal.decision")
-        .target_ref(appeal_id)
-        .body(body)
+    OperationBuilder::new(
+        &realm,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ModerationAppealDecision,
+    )
+    .target_ref(appeal_id)
+    .body(body)
 }
 
 /// `ck.moderation.appeal.close` — terminal close of an appeal from
@@ -184,7 +202,11 @@ pub fn moderation_appeal_close(
     if let Some(close_reason) = close_reason {
         body["close_reason"] = json!(close_reason);
     }
-    OperationBuilder::new(&realm, actor, "ck.moderation.appeal.close")
-        .target_ref(appeal_id)
-        .body(body)
+    OperationBuilder::new(
+        &realm,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ModerationAppealClose,
+    )
+    .target_ref(appeal_id)
+    .body(body)
 }

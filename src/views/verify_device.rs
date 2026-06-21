@@ -657,7 +657,7 @@ pub fn VerifyDevicePanel(
                                         match pair.compute_shared_secret(&peer_pub) {
                                             Ok(shared) => (
                                                 cokret_sdk::key_verification::derive_sas_bytes(
-                                                    &shared,
+                                                    shared.as_ref(),
                                                     info.as_bytes(),
                                                 ),
                                                 "real X25519 shared secret",

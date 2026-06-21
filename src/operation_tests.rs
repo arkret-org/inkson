@@ -67,9 +67,13 @@ fn proof_mode_labels_are_distinct() {
 
 #[test]
 fn operation_builder_generates_valid_envelope() {
-    let op = OperationBuilder::new("ck:realm:test", "did:web:alice", "ck.message.create")
-        .body(json!({"content": {"kind": "ck.content.text", "body": "hello"}}))
-        .build("test_node");
+    let op = OperationBuilder::new(
+        "ck:realm:test",
+        "did:web:alice",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(json!({"content": {"kind": "ck.content.text", "body": "hello"}}))
+    .build("test_node");
 
     assert!(!op.local_operation_id().is_empty());
     assert_eq!(op.realm_id, "ck:realm:test");
@@ -84,9 +88,13 @@ fn operation_builder_generates_valid_envelope() {
 
 #[test]
 fn operation_round_trip_serde() {
-    let op = OperationBuilder::new("ck:realm:s1", "did:web:bob", "ck.message.create")
-        .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
-        .build("node");
+    let op = OperationBuilder::new(
+        "ck:realm:s1",
+        "did:web:bob",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+    .build("node");
     let json = serde_json::to_string(&op).unwrap();
     let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
     assert_eq!(op, parsed);
@@ -94,11 +102,15 @@ fn operation_round_trip_serde() {
 
 #[test]
 fn operation_builder_can_emit_signed_authorization_binding() {
-    let op = OperationBuilder::new("ck:realm:s1", "did:web:bob", "ck.message.create")
-        .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
-        .executed_by("did:web:agent.example")
-        .authorization_ref("ck:grant:0196419b-0000-7000-8000-000000000001")
-        .build("node");
+    let op = OperationBuilder::new(
+        "ck:realm:s1",
+        "did:web:bob",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+    .executed_by("did:web:agent.example")
+    .authorization_ref("ck:grant:0196419b-0000-7000-8000-000000000001")
+    .build("node");
 
     assert_eq!(op.executed_by.as_deref(), Some("did:web:agent.example"));
     assert_eq!(
@@ -121,9 +133,13 @@ fn operation_builder_can_emit_signed_authorization_binding() {
 
 #[test]
 fn event_envelope_accepts_current_optional_top_level_fields() {
-    let op = OperationBuilder::new("ck:realm:s1", "did:web:bob", "ck.message.create")
-        .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
-        .build("node");
+    let op = OperationBuilder::new(
+        "ck:realm:s1",
+        "did:web:bob",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+    .build("node");
     let mut value = serde_json::to_value(&op).unwrap();
     let object = value.as_object_mut().unwrap();
     object.insert(
@@ -152,9 +168,13 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
 
 #[test]
 fn event_envelope_rejects_unknown_top_level_fields() {
-    let op = OperationBuilder::new("ck:realm:s1", "did:web:bob", "ck.message.create")
-        .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
-        .build("node");
+    let op = OperationBuilder::new(
+        "ck:realm:s1",
+        "did:web:bob",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+    .build("node");
     let mut value = serde_json::to_value(&op).unwrap();
     value
         .as_object_mut()
@@ -670,9 +690,13 @@ fn space_create_emits_canonical_space_object() {
 
 #[test]
 fn canonical_digest_is_stable_across_key_order() {
-    let mut op_a = OperationBuilder::new("ck:realm:s1", "did:web:alice", "ck.message.create")
-        .body(json!({"b": 2, "a": 1}))
-        .build("node");
+    let mut op_a = OperationBuilder::new(
+        "ck:realm:s1",
+        "did:web:alice",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(json!({"b": 2, "a": 1}))
+    .build("node");
     op_a.event_id = "fixed".into();
     op_a.hlc = "000000000000-0000-00000000".into();
     op_a.actor_seq = 1;
@@ -692,7 +716,7 @@ fn sign_ed25519_attaches_typed_proof() {
     let mut op = OperationBuilder::new(
         "ck:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice",
-        "ck.message.create",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"body": "hi"}))
     .build("node");
@@ -713,7 +737,7 @@ fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
     let op = OperationBuilder::new(
         "ck:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        "ck.message.create",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"kind": "ck.content.text", "body": "hi"}))
     .build("node");
@@ -732,7 +756,7 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
     let mut op = OperationBuilder::new(
         "ck:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        "ck.message.create",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"kind": "ck.content.text", "body": "hi"}))
     .build("node");
@@ -753,9 +777,13 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
 
 #[test]
 fn require_proof_fails_when_unsigned() {
-    let mut op = OperationBuilder::new("ck:realm:s1", "did:web:alice", "ck.message.create")
-        .body(json!({"body": "hi"}))
-        .build("node");
+    let mut op = OperationBuilder::new(
+        "ck:realm:s1",
+        "did:web:alice",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(json!({"body": "hi"}))
+    .build("node");
     op.proofs.clear();
     assert!(op.require_proof().is_err());
 }

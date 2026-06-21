@@ -27,7 +27,12 @@ pub fn build_account_data_set(
         "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
     });
     payload[value_field] = value;
-    OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(payload)
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AccountDataSet,
+    )
+    .body(payload)
 }
 
 pub fn build_account_data_tombstone(
@@ -35,7 +40,12 @@ pub fn build_account_data_tombstone(
     actor: &str,
     key: &AccountDataKey,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(serde_json::json!({
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AccountDataSet,
+    )
+    .body(serde_json::json!({
         "key": key.as_wire(),
         "owner": actor,
         "tombstone": true,
@@ -158,7 +168,12 @@ pub fn build_private_account_data_set_with_cas(
         validate_sha256_digest(expected_state_digest)?;
         payload["expected_state_digest"] = Value::String(expected_state_digest.to_owned());
     }
-    Ok(OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(payload))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AccountDataSet,
+    )
+    .body(payload))
 }
 
 pub fn build_private_account_data_tombstone(
@@ -167,14 +182,17 @@ pub fn build_private_account_data_tombstone(
     key: &str,
 ) -> anyhow::Result<OperationBuilder> {
     validate_private_account_data_key(key)?;
-    Ok(
-        OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(serde_json::json!({
-            "key": key,
-            "owner": actor,
-            "tombstone": true,
-            "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        })),
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AccountDataSet,
     )
+    .body(serde_json::json!({
+        "key": key,
+        "owner": actor,
+        "tombstone": true,
+        "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    })))
 }
 
 fn validate_sha256_digest(value: &str) -> anyhow::Result<()> {

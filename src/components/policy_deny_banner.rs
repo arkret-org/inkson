@@ -105,19 +105,21 @@ pub fn take_policy_deny() -> Option<PolicyDenyEvent> {
 /// NOT classified — that path has its own session-death handling in
 /// `is_auth_expired_error` and would race the redirect-to-login.
 pub fn is_policy_deny_code(code: &str) -> bool {
-    matches!(
-        code,
-        "policy_denied"
-            | "policy_blocked"
-            | "policy_timeout"
-            | "capability_denied"
-            | "capability_revoked"
-            | "missing_capability"
-            | "consent_required"
-            | "consent_denied"
-            | "delegation_exceeds_grantor_expiry"
-            | "capability_not_held"
-    )
+    use cokret_sdk::error::{ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_POLICY_DENIED};
+
+    code == ERROR_CODE_POLICY_DENIED
+        || code == ERROR_CODE_CAPABILITY_DENIED
+        || matches!(
+            code,
+            "policy_blocked"
+                | "policy_timeout"
+                | "capability_revoked"
+                | "missing_capability"
+                | "consent_required"
+                | "consent_denied"
+                | "delegation_exceeds_grantor_expiry"
+                | "capability_not_held"
+        )
 }
 
 /// Auto-dismiss window in milliseconds. The banner hides itself after

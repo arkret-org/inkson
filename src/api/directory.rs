@@ -180,7 +180,7 @@ impl CokretApi {
             .await
     }
 
-    pub async fn directory_describe(&self) -> anyhow::Result<SolandDirectoryDescribeResBody> {
+    pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescription> {
         self.get_json("_cokret/find/directory/describe").await
     }
 

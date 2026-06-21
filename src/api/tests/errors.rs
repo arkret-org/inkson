@@ -143,13 +143,8 @@ fn recognizes_auth_expired_errors() {
     .into();
     assert!(!is_auth_expired_error(&bare));
 
-    // Common aliases for the same condition should all trigger.
-    for code in [
-        "unauthenticated",
-        "soft_logged_out",
-        "invalid_token",
-        "token_expired",
-    ] {
+    // Registry session-loss aliases for the same condition should all trigger.
+    for code in ["unauthenticated", "soft_logged_out"] {
         let body =
             format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
         let aliased: anyhow::Error = CokretApiError {

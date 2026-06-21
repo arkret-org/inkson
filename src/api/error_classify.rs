@@ -66,7 +66,7 @@ impl std::error::Error for AccountSubscribeReconnectAfter {}
 /// True when the server has *definitively* told us the session is dead.
 ///
 /// We require an explicit error envelope code that names session loss
-/// (`auth_expired`, `unauthenticated`, `invalid_token`, `token_expired`)
+/// (`auth_expired`, `unauthenticated`, `soft_logged_out`)
 /// on HTTP 401, or a session-grant-specific terminal denial such as
 /// `capability_denied` / `session grant is not active: revoked`.
 ///
@@ -78,6 +78,10 @@ impl std::error::Error for AccountSubscribeReconnectAfter {}
 /// often a reverse-proxy hiccup, a clock skew, or a server-side temp deny
 /// — not a permanently dead token.
 pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
+    use cokret_sdk::error::{
+        ERROR_CODE_AUTH_EXPIRED, ERROR_CODE_SOFT_LOGGED_OUT, ERROR_CODE_UNAUTHENTICATED,
+    };
+
     if is_terminal_session_grant_error(error) {
         return true;
     }
@@ -89,11 +93,9 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
             }
             matches!(
                 api_error.error.code(),
-                "auth_expired"
-                    | "unauthenticated"
-                    | "soft_logged_out"
-                    | "invalid_token"
-                    | "token_expired"
+                code if code == ERROR_CODE_AUTH_EXPIRED
+                    || code == ERROR_CODE_UNAUTHENTICATED
+                    || code == ERROR_CODE_SOFT_LOGGED_OUT
             )
         })
 }
@@ -141,19 +143,17 @@ pub fn is_terminal_session_grant_error(error: &anyhow::Error) -> bool {
 }
 
 fn is_terminal_session_grant_api_error(api_error: &CokretApiError) -> bool {
+    use cokret_sdk::error::{
+        ERROR_CODE_AUTH_EXPIRED, ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_UNAUTHENTICATED,
+    };
+
     let code = api_error.error.code();
-    if matches!(
-        code,
-        "invalid_grant" | "grant_expired" | "grant_revoked" | "session_grant_revoked"
-    ) {
-        return true;
-    }
     let message = api_error.error.message().to_ascii_lowercase();
     (api_error.status == StatusCode::FORBIDDEN || api_error.status == StatusCode::UNAUTHORIZED)
-        && (code == "capability_denied"
+        && (code == ERROR_CODE_CAPABILITY_DENIED
             || code.ends_with(".capability_denied")
-            || code == "unauthenticated"
-            || code == "auth_expired")
+            || code == ERROR_CODE_UNAUTHENTICATED
+            || code == ERROR_CODE_AUTH_EXPIRED)
         && terminal_session_grant_message(&message)
 }
 
@@ -191,7 +191,9 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
 /// clearing the local cursor and redoing initial sync.
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
     use cokret_sdk::error::{ERROR_CODE_CURSOR_INTEGRITY_INVALID, ERROR_CODE_CURSOR_UNRECOGNIZED};
-    use cokret_sdk::{ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM};
+    use cokret_sdk::{
+        ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_CURSOR_INVALID, ERROR_CODE_INVALID_PARAM,
+    };
     error
         .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
@@ -205,7 +207,7 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
                     || code == ERROR_CODE_CURSOR_INTEGRITY_INVALID
                     || code == ERROR_CODE_CURSOR_UNRECOGNIZED
             ) || (cursor_message
-                && matches!(code, code if code == ERROR_CODE_INVALID_PARAM || code == "invalid_cursor"))
+                && matches!(code, code if code == ERROR_CODE_INVALID_PARAM || code == ERROR_CODE_CURSOR_INVALID))
         })
 }
 
@@ -222,6 +224,11 @@ pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
 }
 
 pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
+    use cokret_sdk::error::{
+        ERROR_CODE_NOT_FOUND, ERROR_CODE_NOT_IMPLEMENTED, ERROR_CODE_SNAPSHOT_UNAVAILABLE,
+        ERROR_CODE_UNRECOGNIZED_ENDPOINT, ERROR_CODE_UNSUPPORTED_FEATURE,
+    };
+
     error
         .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
@@ -229,23 +236,25 @@ pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
             api_error.status == StatusCode::NOT_FOUND
                 || matches!(
                     code,
-                    "not_implemented"
-                        | "snapshot_unavailable"
-                        | "not_found"
-                        | "unrecognized_endpoint"
-                        | "unsupported_feature"
+                    code if code == ERROR_CODE_NOT_IMPLEMENTED
+                        || code == ERROR_CODE_SNAPSHOT_UNAVAILABLE
+                        || code == ERROR_CODE_NOT_FOUND
+                        || code == ERROR_CODE_UNRECOGNIZED_ENDPOINT
+                        || code == ERROR_CODE_UNSUPPORTED_FEATURE
                 )
         })
 }
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
+    use cokret_sdk::error::{ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_POLICY_DENIED};
+
     error
         .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
             let code = api_error.error.code();
             api_error.status == StatusCode::FORBIDDEN
-                && (code == "policy_denied"
-                    || code == "capability_denied"
+                && (code == ERROR_CODE_POLICY_DENIED
+                    || code == ERROR_CODE_CAPABILITY_DENIED
                     || code.ends_with(".capability_denied"))
                 && api_error
                     .error
@@ -255,13 +264,15 @@ pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
 }
 
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
+    use cokret_sdk::error::ERROR_CODE_CAPABILITY_DENIED;
+
     error
         .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
             let code = api_error.error.code();
             let message = api_error.error.message().to_ascii_lowercase();
             api_error.status == StatusCode::FORBIDDEN
-                && (code == "capability_denied" || code.ends_with(".capability_denied"))
+                && (code == ERROR_CODE_CAPABILITY_DENIED || code.ends_with(".capability_denied"))
                 && message.contains("not a member")
         })
 }

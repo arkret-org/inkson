@@ -14,14 +14,22 @@ pub fn relation_create(
     from_ref: &str,
     to_ref: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
-        .target_ref(from_ref)
-        .body(relation_create_payload_value(kind, from_ref, to_ref)?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RelationCreate,
+    )
+    .target_ref(from_ref)
+    .body(relation_create_payload_value(kind, from_ref, to_ref)?))
 }
 
 /// Build a `ck.relation.tombstone` event targeting an existing Relation.
 pub fn relation_tombstone(realm_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.relation.tombstone")
-        .target_ref(relation_id)
-        .body(json!({ "relation_id": relation_id }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RelationTombstone,
+    )
+    .target_ref(relation_id)
+    .body(json!({ "relation_id": relation_id }))
 }

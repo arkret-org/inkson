@@ -679,7 +679,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     let event = OperationBuilder::new(
         "ck:realm:contract",
         "did:web:local.example",
-        "ck.message.create",
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({
         "body": "hello",
@@ -837,15 +837,9 @@ fn bare_401_does_not_count_as_session_loss() {
     // A 401 with an unrelated error code (e.g. rate-limit / policy_denied
     // wrapped at the 401 layer) must also stay transient. Only explicit
     // session-death codes from the spec — auth_expired / unauthenticated /
-    // soft_logged_out / invalid_token / token_expired —
+    // soft_logged_out —
     // should drop the session.
-    for code in [
-        "auth_expired",
-        "unauthenticated",
-        "soft_logged_out",
-        "invalid_token",
-        "token_expired",
-    ] {
+    for code in ["auth_expired", "unauthenticated", "soft_logged_out"] {
         let body =
             format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
         let envelope: anyhow::Error = CokretApiError {

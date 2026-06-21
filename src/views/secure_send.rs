@@ -340,9 +340,13 @@ pub(crate) fn build_secure_send(
     let msg_payload_value = message_payload
         .to_value()
         .map_err(|err| format!("Send Secure payload encode failed: {err}"))?;
-    let message_envelope = OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .body(msg_payload_value)
-        .build_sdk_event("yougen");
+    let message_envelope = OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(msg_payload_value)
+    .build_sdk_event("yougen");
 
     let commit_event = commit_envelope;
     let message_event = message_envelope

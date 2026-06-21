@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use super::data::SPACE_KIND_OPTIONS;
+use cokret_sdk::events::EventKind;
 use crate::local_state::LocalStateStore;
 use crate::models::{RealmTreeNode, RealmTreeNodeKind};
 use crate::ui::button::{Button, ButtonVariant};
@@ -510,7 +511,7 @@ pub(super) fn NewSpaceSection(
                                         spawn(async move {
                                             match authed_api(&base, api_token) {
                                                 Ok(api) => match api.change_space_lifecycle(
-                                                    &space_id, &realm_id, &actor, "ck.space.archive",
+                                                    &space_id, &realm_id, &actor, EventKind::SpaceArchive,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(
                                                         "Archived {}",
@@ -541,7 +542,7 @@ pub(super) fn NewSpaceSection(
                                         spawn(async move {
                                             match authed_api(&base, api_token) {
                                                 Ok(api) => match api.change_space_lifecycle(
-                                                    &space_id, &realm_id, &actor, "ck.space.restore",
+                                                    &space_id, &realm_id, &actor, EventKind::SpaceRestore,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(
                                                         "Restored {}",
@@ -572,7 +573,7 @@ pub(super) fn NewSpaceSection(
                                         spawn(async move {
                                             match authed_api(&base, api_token) {
                                                 Ok(api) => match api.change_space_lifecycle(
-                                                    &space_id, &realm_id, &actor, "ck.space.tombstone",
+                                                    &space_id, &realm_id, &actor, EventKind::SpaceTombstone,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(
                                                         "Tombstoned {} (irreversible)",

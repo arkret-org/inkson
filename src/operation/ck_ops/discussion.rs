@@ -33,9 +33,13 @@ pub fn discussion_strand_create(
     let payload = cokret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.strand.create payload serialize: {e}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.strand.create")
-        .target_ref(strand_id)
-        .body(payload))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::StrandCreate,
+    )
+    .target_ref(strand_id)
+    .body(payload))
 }
 
 /// Build a canonical `ck.circle.create` operation for a private
@@ -61,9 +65,13 @@ pub fn discussion_circle_create(
         did_id(actor)?,
     );
     let body = object_create_payload_value(circle, "ck.circle.create payload serialize")?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.circle.create")
-        .target_ref(circle_id)
-        .body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::CircleCreate,
+    )
+    .target_ref(circle_id)
+    .body(body))
 }
 
 /// Build a `ck.strand.create` operation whose full Strand scope is a
@@ -91,9 +99,13 @@ pub fn scoped_discussion_strand_create(
     let payload = cokret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.strand.create payload serialize: {e}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.strand.create")
-        .target_ref(strand_id)
-        .body(payload))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::StrandCreate,
+    )
+    .target_ref(strand_id)
+    .body(payload))
 }
 
 /// Build the private-side relation from a Circle-scoped discussion Strand
@@ -109,11 +121,15 @@ pub fn confidential_discussion_relation_create(
     // additionalProperties:false and the private-side scope is already
     // carried by the Circle-scoped Strand itself.
     let _ = circle_id;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
-        .target_ref(private_strand_id)
-        .body(relation_create_payload_value(
-            "confidential_discussion_of",
-            private_strand_id,
-            public_seal_ref,
-        )?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RelationCreate,
+    )
+    .target_ref(private_strand_id)
+    .body(relation_create_payload_value(
+        "confidential_discussion_of",
+        private_strand_id,
+        public_seal_ref,
+    )?))
 }

@@ -18,8 +18,8 @@ use sha2::{Digest, Sha256};
 use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::operation::{
-    Effect, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate, trim_realm_id,
-    uuid_v7,
+    Effect, EventKind, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
+    trim_realm_id, uuid_v7,
 };
 
 /// RFC3339 timestamp in the canonical wire form soland's
@@ -161,26 +161,26 @@ pub fn build_realm_bootstrap_events(
         events.push(build_realm_state_event(
             realm_id,
             actor_id,
-            "ck.realm.policy_components",
+            EventKind::RealmPolicyComponents,
             policy_components,
         )?);
     }
     events.push(build_realm_state_event(
         realm_id,
         actor_id,
-        "ck.realm.join_rule",
+        EventKind::RealmJoinRule,
         json!(join_rule),
     )?);
     events.push(build_realm_state_event(
         realm_id,
         actor_id,
-        "ck.realm.history_visibility",
+        EventKind::RealmHistoryVisibility,
         json!(history_visibility),
     )?);
     events.push(build_realm_state_event(
         realm_id,
         actor_id,
-        "ck.realm.discovery",
+        EventKind::RealmDiscovery,
         json!(discoverability),
     )?);
 
@@ -299,18 +299,22 @@ pub fn build_realm_create_event(
     let realm_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.realm.create payload serialize: {e}"))?;
-    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.realm.create")
-        .target_ref(realm_id)
-        .body(realm_body)
-        .preconditions(preconditions)
-        .effects(effects)
-        .requirements(EventRequirements {
-            schema: vec!["ck.schema.realm.v1".to_owned()],
-            reducer: None,
-            features: Vec::new(),
-            critical_extensions: Vec::new(),
-        })
-        .build_sdk_event("yougen")?;
+    let mut event = OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::RealmCreate,
+    )
+    .target_ref(realm_id)
+    .body(realm_body)
+    .preconditions(preconditions)
+    .effects(effects)
+    .requirements(EventRequirements {
+        schema: vec!["ck.schema.realm.v1".to_owned()],
+        reducer: None,
+        features: Vec::new(),
+        critical_extensions: Vec::new(),
+    })
+    .build_sdk_event("yougen")?;
     set_sdk_event_created_at(&mut event, &created_at_for_object)?;
     Ok(event)
 }
@@ -472,18 +476,22 @@ pub fn build_space_create_event(
     let space_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.space.create payload serialize: {e}"))?;
-    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.space.create")
-        .target_ref(space_id)
-        .body(space_body)
-        .preconditions(preconditions)
-        .effects(effects)
-        .requirements(EventRequirements {
-            schema: vec!["ck.schema.space.v1".to_owned()],
-            reducer: None,
-            features: Vec::new(),
-            critical_extensions: Vec::new(),
-        })
-        .build_sdk_event("yougen")?;
+    let mut event = OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::SpaceCreate,
+    )
+    .target_ref(space_id)
+    .body(space_body)
+    .preconditions(preconditions)
+    .effects(effects)
+    .requirements(EventRequirements {
+        schema: vec!["ck.schema.space.v1".to_owned()],
+        reducer: None,
+        features: Vec::new(),
+        critical_extensions: Vec::new(),
+    })
+    .build_sdk_event("yougen")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -497,20 +505,21 @@ pub fn build_space_lifecycle_event(
     space_id: &str,
     realm_id: &str,
     actor_id: &str,
-    kind: &str,
+    kind: EventKind,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    let (prior_state, next_state) = match kind {
-        "ck.space.archive" => ("active", "archived"),
-        "ck.space.restore" => ("archived", "active"),
+    let (prior_state, next_state) = match &kind {
+        EventKind::SpaceArchive => ("active", "archived"),
+        EventKind::SpaceRestore => ("archived", "active"),
         // For tombstone, prior state may be either active or archived.
         // We assert via head_in {active, archived}, but the typed
         // helper only knows head_eq — so we model the explicit head_eq
         // against the most common source state (active). Reducer-side
         // FSM logic accepts the transition regardless of head form.
-        "ck.space.tombstone" => ("active", "tombstoned"),
+        EventKind::SpaceTombstone => ("active", "tombstoned"),
         other => {
             return Err(anyhow::anyhow!(
-                "unsupported Space lifecycle event kind {other}"
+                "unsupported Space lifecycle event kind {}",
+                other.as_str()
             ));
         }
     };
@@ -554,20 +563,21 @@ pub fn build_space_lifecycle_event(
 pub fn build_realm_state_event(
     realm_id: &str,
     actor_id: &str,
-    kind: &str,
+    kind: EventKind,
     value: Value,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    let cell_family = match kind {
-        "ck.realm.join_rule" => "ck.component.realm.join_rule.v1",
-        "ck.realm.history_visibility" => "ck.component.realm.history_visibility.v1",
-        "ck.realm.history_sharing_policy" => "ck.component.realm.history_sharing_policy.v1",
-        "ck.realm.preview_policy" => "ck.component.realm.preview_policy.v1",
-        "ck.realm.discovery" => "ck.component.realm.discovery.v1",
-        "ck.realm.schema" => "ck.component.realm.schema.v1",
-        "ck.realm.policy_components" => "ck.component.realm.policy_components.v1",
+    let cell_family = match &kind {
+        EventKind::RealmJoinRule => "ck.component.realm.join_rule.v1",
+        EventKind::RealmHistoryVisibility => "ck.component.realm.history_visibility.v1",
+        EventKind::RealmHistorySharingPolicy => "ck.component.realm.history_sharing_policy.v1",
+        EventKind::RealmPreviewPolicy => "ck.component.realm.preview_policy.v1",
+        EventKind::RealmDiscovery => "ck.component.realm.discovery.v1",
+        EventKind::RealmSchema => "ck.component.realm.schema.v1",
+        EventKind::RealmPolicyComponents => "ck.component.realm.policy_components.v1",
         other => {
             return Err(anyhow::anyhow!(
-                "unsupported Realm state event kind {other}"
+                "unsupported Realm state event kind {}",
+                other.as_str()
             ));
         }
     };
@@ -604,7 +614,7 @@ pub fn build_realm_state_event(
     // conditional are checked at construction; the cell effect keeps the bare
     // enum string. Other facets (`join_rule`/`discovery`/...) have no dedicated
     // spec payload def and keep the generic `{value}` body.
-    let body = if kind == "ck.realm.history_visibility" {
+    let body = if kind == EventKind::RealmHistoryVisibility {
         let visibility = value
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("history_visibility value must be a string"))?;
@@ -656,10 +666,14 @@ pub fn build_realm_archive_event(
             predecessor: None,
         },
     }];
-    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.realm.archive")
-        .body(payload)
-        .effects(effects)
-        .build_sdk_event("yougen")?;
+    let mut event = OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::RealmArchive,
+    )
+    .body(payload)
+    .effects(effects)
+    .build_sdk_event("yougen")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -705,10 +719,14 @@ pub fn build_realm_tombstone_event(
             predecessor: None,
         },
     }];
-    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.realm.tombstone")
-        .body(payload)
-        .effects(effects)
-        .build_sdk_event("yougen")?;
+    let mut event = OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::RealmTombstone,
+    )
+    .body(payload)
+    .effects(effects)
+    .build_sdk_event("yougen")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -744,10 +762,14 @@ pub fn build_realm_destroy_event(
             predecessor: None,
         },
     }];
-    let mut event = OperationBuilder::new(realm_id, actor_id, "ck.realm.destroy")
-        .body(payload)
-        .effects(effects)
-        .build_sdk_event("yougen")?;
+    let mut event = OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::RealmDestroy,
+    )
+    .body(payload)
+    .effects(effects)
+    .build_sdk_event("yougen")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -760,7 +782,7 @@ pub fn build_realm_history_sharing_policy_event(
     build_realm_state_event(
         realm_id,
         actor_id,
-        "ck.realm.history_sharing_policy",
+        EventKind::RealmHistorySharingPolicy,
         policy,
     )
 }
@@ -770,7 +792,7 @@ pub fn build_realm_preview_policy_event(
     actor_id: &str,
     policy: Value,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    build_realm_state_event(realm_id, actor_id, "ck.realm.preview_policy", policy)
+    build_realm_state_event(realm_id, actor_id, EventKind::RealmPreviewPolicy, policy)
 }
 
 /// Build a `ck.realm.plaintext_visible_services` event when the caller
@@ -846,12 +868,15 @@ pub fn build_plaintext_visible_services_event(
     }];
     // Builder takes `Value` by move; reuse the value we already built for
     // the effect rather than cloning `services` a second time.
-    let mut event =
-        OperationBuilder::new(realm_id, actor_id, "ck.realm.plaintext_visible_services")
-            .body(body_value)
-            .preconditions(preconditions)
-            .effects(effects)
-            .build_sdk_event("yougen")?;
+    let mut event = OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::RealmPlaintextVisibleServices,
+    )
+    .body(body_value)
+    .preconditions(preconditions)
+    .effects(effects)
+    .build_sdk_event("yougen")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(Some(event))
 }
@@ -1005,12 +1030,16 @@ fn build_member_state_transition_event_with_binding(
             predecessor: None,
         },
     }];
-    OperationBuilder::new(realm_id, actor_id, "ck.member.state")
-        .target_ref(member_actor_id)
-        .body(payload)
-        .preconditions(preconditions)
-        .effects(effects)
-        .build_sdk_event("yougen")
+    OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::MemberState,
+    )
+    .target_ref(member_actor_id)
+    .body(payload)
+    .preconditions(preconditions)
+    .effects(effects)
+    .build_sdk_event("yougen")
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {

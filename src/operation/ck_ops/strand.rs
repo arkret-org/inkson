@@ -35,11 +35,13 @@ pub fn strand_watch_set(
     // allOf forbidding level_public when level is null). The typed
     // constructors keep the clear path (level:null) free of level_public.
     let payload = strand_watch_set_payload_value(strand_id, target_actor_id, level, level_public)?;
-    Ok(
-        OperationBuilder::new(realm_id, sender_actor, "ck.strand.watch.set")
-            .target_ref(strand_id)
-            .body(payload),
+    Ok(OperationBuilder::new(
+        realm_id,
+        sender_actor,
+        cokret_sdk::events::kinds::EventKind::StrandWatchSet,
     )
+    .target_ref(strand_id)
+    .body(payload))
 }
 
 /// Build a `ck.strand.tracks.update` operation. Spec:
@@ -66,11 +68,13 @@ pub fn strand_tracks_update(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(
-        OperationBuilder::new(realm_id, actor, "ck.strand.tracks.update")
-            .target_ref(strand_id)
-            .body(strand_tracks_update_payload_value(strand_id, patch)?),
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::StrandTracksUpdate,
     )
+    .target_ref(strand_id)
+    .body(strand_tracks_update_payload_value(strand_id, patch)?))
 }
 
 /// Convenience wrapper: enable `track` on `strand_id`. Emits the unified
@@ -124,9 +128,13 @@ pub fn strand_archive(
     actor: &str,
     strand_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    Ok(OperationBuilder::new(realm_id, actor, "ck.strand.archive")
-        .target_ref(strand_id)
-        .body(object_lifecycle_payload_value(strand_id)?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::StrandArchive,
+    )
+    .target_ref(strand_id)
+    .body(object_lifecycle_payload_value(strand_id)?))
 }
 
 /// Build a `ck.strand.restore` operation. Reverses [`strand_archive`]
@@ -138,9 +146,13 @@ pub fn strand_restore(
     actor: &str,
     strand_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    Ok(OperationBuilder::new(realm_id, actor, "ck.strand.restore")
-        .target_ref(strand_id)
-        .body(object_lifecycle_payload_value(strand_id)?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::StrandRestore,
+    )
+    .target_ref(strand_id)
+    .body(object_lifecycle_payload_value(strand_id)?))
 }
 
 /// Build a `ck.strand.update` delta operation using the canonical
@@ -154,9 +166,13 @@ pub fn strand_update_patch(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.strand.update")
-        .target_ref(strand_id)
-        .body(strand_object_patch_payload_value(strand_id, patch)?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::StrandUpdate,
+    )
+    .target_ref(strand_id)
+    .body(strand_object_patch_payload_value(strand_id, patch)?))
 }
 
 /// Strand position update (kanban card position) via the canonical
@@ -226,9 +242,13 @@ pub fn strand_position_cas_update(
                 &effect_rank,
                 expected_rank.as_deref(),
             )?;
-            Ok(OperationBuilder::new(realm_id, actor, "ck.strand.reorder")
-                .target_ref(strand_id)
-                .body(payload))
+            Ok(OperationBuilder::new(
+                realm_id,
+                actor,
+                cokret_sdk::events::kinds::EventKind::StrandReorder,
+            )
+            .target_ref(strand_id)
+            .body(payload))
         }
         _ => {
             // expected_position is only emitted when BOTH a prior
@@ -245,9 +265,13 @@ pub fn strand_position_cas_update(
                 expected_space.as_deref(),
                 expected,
             )?;
-            Ok(OperationBuilder::new(realm_id, actor, "ck.strand.move")
-                .target_ref(strand_id)
-                .body(payload))
+            Ok(OperationBuilder::new(
+                realm_id,
+                actor,
+                cokret_sdk::events::kinds::EventKind::StrandMove,
+            )
+            .target_ref(strand_id)
+            .body(payload))
         }
     }
 }

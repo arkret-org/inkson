@@ -23,9 +23,13 @@ pub fn capability_grant(
     if !constraints.is_null() {
         body["constraints"] = constraints;
     }
-    OperationBuilder::new(realm_id, actor, "ck.capability.grant")
-        .target_ref(grant_id)
-        .body(body)
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::CapabilityGrant,
+    )
+    .target_ref(grant_id)
+    .body(body)
 }
 
 /// `ck.capability.revoke` event. `reason` shows up in the audit
@@ -44,9 +48,13 @@ pub fn capability_revoke(
     if let Some(reason) = reason {
         body["reason"] = json!(reason);
     }
-    OperationBuilder::new(realm_id, actor, "ck.capability.revoke")
-        .target_ref(grant_id)
-        .body(body)
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::CapabilityRevoke,
+    )
+    .target_ref(grant_id)
+    .body(body)
 }
 
 /// `ck.capability.grant` event carrying the canonical
@@ -91,10 +99,14 @@ pub fn capability_grant_actions(
     if !constraints.is_null() {
         grant["constraints"] = constraints;
     }
-    OperationBuilder::new(&realm, actor, "ck.capability.grant")
-        .target_ref(grant_id)
-        .body(json!({
-            "grant_id": grant_id,
-            "grant": grant,
-        }))
+    OperationBuilder::new(
+        &realm,
+        actor,
+        cokret_sdk::events::kinds::EventKind::CapabilityGrant,
+    )
+    .target_ref(grant_id)
+    .body(json!({
+        "grant_id": grant_id,
+        "grant": grant,
+    }))
 }

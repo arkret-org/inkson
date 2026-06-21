@@ -410,13 +410,17 @@ pub fn build_poll_create_op(
         sdk_payload_value(content.to_value(), "poll create content serialize")?,
     )
     .with_message_id(poll_id);
-    let mut event = OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .target_ref(strand_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "poll ck.message.create payload serialize",
-        )?)
-        .build_sdk_event("yougen")?;
+    let mut event = OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .target_ref(strand_id)
+    .body(sdk_payload_value(
+        payload.to_value(),
+        "poll ck.message.create payload serialize",
+    )?)
+    .build_sdk_event("yougen")?;
     let message_ref = event
         .event_id
         .as_str()
@@ -444,13 +448,17 @@ pub fn build_poll_vote_op(
         "discussion",
         sdk_payload_value(content.to_value(), "poll vote content serialize")?,
     );
-    OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .target_ref(poll_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "poll vote ck.message.create payload serialize",
-        )?)
-        .build_sdk_event("yougen")
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .target_ref(poll_id)
+    .body(sdk_payload_value(
+        payload.to_value(),
+        "poll vote ck.message.create payload serialize",
+    )?)
+    .build_sdk_event("yougen")
 }
 
 /// Build the `ck.content.poll.close` event.
@@ -467,13 +475,17 @@ pub fn build_poll_close_op(
         "discussion",
         sdk_payload_value(content.to_value(), "poll close content serialize")?,
     );
-    OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .target_ref(poll_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "poll close ck.message.create payload serialize",
-        )?)
-        .build_sdk_event("yougen")
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .target_ref(poll_id)
+    .body(sdk_payload_value(
+        payload.to_value(),
+        "poll close ck.message.create payload serialize",
+    )?)
+    .build_sdk_event("yougen")
 }
 
 /// Generate a fresh poll id (`poll-<uuid>`).

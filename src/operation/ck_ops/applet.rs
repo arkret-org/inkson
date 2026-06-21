@@ -22,13 +22,17 @@ pub fn applet_registration(
     namespace: &str,
     capabilities: &[&str],
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.applet.registration")
-        .target_ref(service_did)
-        .body(json!({
-            "service_did": service_did,
-            "namespace": namespace,
-            "capabilities": capabilities,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AppletRegistration,
+    )
+    .target_ref(service_did)
+    .body(json!({
+        "service_did": service_did,
+        "namespace": namespace,
+        "capabilities": capabilities,
+    }))
 }
 
 /// `ck.applet.discovery` — the network discovery surface that lists
@@ -40,12 +44,16 @@ pub fn applet_discovery(
     service_did: &str,
     manifest: serde_json::Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.applet.discovery")
-        .target_ref(service_did)
-        .body(json!({
-            "service_did": service_did,
-            "manifest": manifest,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AppletDiscovery,
+    )
+    .target_ref(service_did)
+    .body(json!({
+        "service_did": service_did,
+        "manifest": manifest,
+    }))
 }
 
 /// Round 4 (spec a77b995) — validate an `applet_id` against the
@@ -80,13 +88,17 @@ pub fn applet_interop_session_start(
     session_id: &str,
     params: serde_json::Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.applet.interop_session.start")
-        .target_ref(session_id)
-        .body(json!({
-            "applet_id": applet_id,
-            "session_id": session_id,
-            "params": params,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AppletInteropSessionStart,
+    )
+    .target_ref(session_id)
+    .body(json!({
+        "applet_id": applet_id,
+        "session_id": session_id,
+        "params": params,
+    }))
 }
 
 /// `ck.applet.interop_session.status` — applet → caller status push
@@ -98,13 +110,17 @@ pub fn applet_interop_session_status(
     status: &str,
     detail: serde_json::Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.applet.interop_session.status")
-        .target_ref(session_id)
-        .body(json!({
-            "session_id": session_id,
-            "status": status,
-            "detail": detail,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AppletInteropSessionStatus,
+    )
+    .target_ref(session_id)
+    .body(json!({
+        "session_id": session_id,
+        "status": status,
+        "detail": detail,
+    }))
 }
 
 /// `ck.applet.bridge_error` — emitted by the applet bridge when a
@@ -116,11 +132,15 @@ pub fn applet_bridge_error(
     error_code: &str,
     message: &str,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.applet.bridge_error")
-        .target_ref(session_id)
-        .body(json!({
-            "session_id": session_id,
-            "error_code": error_code,
-            "message": message,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AppletBridgeError,
+    )
+    .target_ref(session_id)
+    .body(json!({
+        "session_id": session_id,
+        "error_code": error_code,
+        "message": message,
+    }))
 }

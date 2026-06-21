@@ -26,12 +26,16 @@ pub fn document_morph_create(
     .with_title(title)
     .with_facet("documentable", json!({}))
     .with_field("document", document_body);
-    Ok(OperationBuilder::new(&realm_id, actor, "ck.morph.create")
-        .target_ref(morph_id)
-        .body(sdk_payload_value(
-            object.to_create_payload_value(),
-            "ck.morph.create document payload serialize",
-        )?))
+    Ok(OperationBuilder::new(
+        &realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MorphCreate,
+    )
+    .target_ref(morph_id)
+    .body(sdk_payload_value(
+        object.to_create_payload_value(),
+        "ck.morph.create document payload serialize",
+    )?))
 }
 
 /// Build a `ck.morph.update` carrying a new document body.
@@ -89,12 +93,16 @@ pub fn document_comment_create(
     if let Some(parent) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
         payload = payload.with_reply_to(parent);
     }
-    Ok(OperationBuilder::new(&realm_id, actor, "ck.message.create")
-        .target_ref(morph_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "ck.message.create document comment payload serialize",
-        )?))
+    Ok(OperationBuilder::new(
+        &realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .target_ref(morph_id)
+    .body(sdk_payload_value(
+        payload.to_value(),
+        "ck.message.create document comment payload serialize",
+    )?))
 }
 
 /// Build a Relation linking a document Morph to another object.
@@ -104,13 +112,17 @@ pub fn document_relation_create(
     morph_id: &str,
     target_ref: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
-        .target_ref(morph_id)
-        .body(relation_create_payload_value(
-            "references",
-            morph_id,
-            target_ref,
-        )?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RelationCreate,
+    )
+    .target_ref(morph_id)
+    .body(relation_create_payload_value(
+        "references",
+        morph_id,
+        target_ref,
+    )?))
 }
 
 /// Build a `ck.morph.update` patch operation. Mirrors
@@ -124,7 +136,11 @@ pub fn morph_update_patch(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.morph.update")
-        .target_ref(morph_id)
-        .body(object_patch_payload_value(morph_id, patch)?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MorphUpdate,
+    )
+    .target_ref(morph_id)
+    .body(object_patch_payload_value(morph_id, patch)?))
 }

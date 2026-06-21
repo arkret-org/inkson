@@ -39,12 +39,16 @@ pub fn incident_strand_create(
         "discussion",
         cokret_sdk::StrandTrackConfig::new().with_profile("war_room"),
     );
-    Ok(OperationBuilder::new(&realm_id, actor, "ck.strand.create")
-        .target_ref(strand_id)
-        .body(object_create_payload_value(
-            object,
-            "ck.strand.create incident payload serialize",
-        )?))
+    Ok(OperationBuilder::new(
+        &realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::StrandCreate,
+    )
+    .target_ref(strand_id)
+    .body(object_create_payload_value(
+        object,
+        "ck.strand.create incident payload serialize",
+    )?))
 }
 
 /// Build a `ck.strand.update` for the incident `fields.status` FSM.
@@ -90,10 +94,14 @@ pub fn kanban_card_strand_create(
             .primary()
             .with_profile("kanban_card"),
     );
-    Ok(OperationBuilder::new(&realm_id, actor, "ck.strand.create")
-        .target_ref(strand_id)
-        .body(object_create_payload_value(
-            object,
-            "ck.strand.create kanban card payload serialize",
-        )?))
+    Ok(OperationBuilder::new(
+        &realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::StrandCreate,
+    )
+    .target_ref(strand_id)
+    .body(object_create_payload_value(
+        object,
+        "ck.strand.create kanban card payload serialize",
+    )?))
 }

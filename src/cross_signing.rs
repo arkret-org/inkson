@@ -523,10 +523,14 @@ impl CrossSigningSetupOutput {
     ) -> anyhow::Result<cokret_sdk::Event> {
         let body = serde_json::to_value(&self.publish_content)
             .context("serialize cross_signing publish content")?;
-        OperationBuilder::new(realm_id, actor, "ck.cross_signing.publish")
-            .target_ref(self.publish_content.principal_id.as_str())
-            .body(body)
-            .build_sdk_event("yougen")
+        OperationBuilder::new(
+            realm_id,
+            actor,
+            cokret_sdk::events::kinds::EventKind::CrossSigningPublish,
+        )
+        .target_ref(self.publish_content.principal_id.as_str())
+        .body(body)
+        .build_sdk_event("yougen")
     }
 }
 

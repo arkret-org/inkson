@@ -753,10 +753,13 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event =
-            OperationBuilder::new(TEST_REALM_ID, "did:web:bob.example", "ck.message.create")
-                .body(json!({"body": "hi"}))
-                .build("test_node");
+        let mut event = OperationBuilder::new(
+            TEST_REALM_ID,
+            "did:web:bob.example",
+            cokret_sdk::events::kinds::EventKind::MessageCreate,
+        )
+        .body(json!({"body": "hi"}))
+        .build("test_node");
         set_proof_mode(prior_mode);
 
         // RealEd25519 mode skips placeholder attach.
@@ -790,10 +793,13 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event =
-            OperationBuilder::new(TEST_REALM_ID, "did:web:alice.example", "ck.message.create")
-                .body(json!({"body": "actor-rooted"}))
-                .build("test_node");
+        let mut event = OperationBuilder::new(
+            TEST_REALM_ID,
+            "did:web:alice.example",
+            cokret_sdk::events::kinds::EventKind::MessageCreate,
+        )
+        .body(json!({"body": "actor-rooted"}))
+        .build("test_node");
         set_proof_mode(prior_mode);
 
         signer.sign_envelope(&mut event).expect("sign");
@@ -820,10 +826,13 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event =
-            OperationBuilder::new(TEST_REALM_ID, "did:web:carol.example", "ck.message.create")
-                .body(json!({"body": "verifiable"}))
-                .build("test_node");
+        let mut event = OperationBuilder::new(
+            TEST_REALM_ID,
+            "did:web:carol.example",
+            cokret_sdk::events::kinds::EventKind::MessageCreate,
+        )
+        .body(json!({"body": "verifiable"}))
+        .build("test_node");
         set_proof_mode(prior_mode);
 
         signer.sign_envelope(&mut event).expect("sign");
@@ -870,10 +879,13 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event =
-            OperationBuilder::new(TEST_REALM_ID, "did:web:carol.example", "ck.message.create")
-                .body(json!({"body": "bound"}))
-                .build("test_node");
+        let mut event = OperationBuilder::new(
+            TEST_REALM_ID,
+            "did:web:carol.example",
+            cokret_sdk::events::kinds::EventKind::MessageCreate,
+        )
+        .body(json!({"body": "bound"}))
+        .build("test_node");
         set_proof_mode(prior_mode);
 
         let context = EventProofContext::new()
@@ -978,10 +990,13 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event =
-            OperationBuilder::new(TEST_REALM_ID, "did:web:dave.example", "ck.message.create")
-                .body(json!({"body": "auto"}))
-                .build("test_node");
+        let mut event = OperationBuilder::new(
+            TEST_REALM_ID,
+            "did:web:dave.example",
+            cokret_sdk::events::kinds::EventKind::MessageCreate,
+        )
+        .body(json!({"body": "auto"}))
+        .build("test_node");
         sign_with_active(&mut event).expect("auto sign");
         set_proof_mode(prior_mode);
 
@@ -996,10 +1011,13 @@ mod tests {
     #[test]
     fn sign_with_active_returns_missing_signer_when_none_installed() {
         let _g = reset();
-        let mut event =
-            OperationBuilder::new(TEST_REALM_ID, "did:web:eve.example", "ck.message.create")
-                .body(json!({"body": "no"}))
-                .build("test_node");
+        let mut event = OperationBuilder::new(
+            TEST_REALM_ID,
+            "did:web:eve.example",
+            cokret_sdk::events::kinds::EventKind::MessageCreate,
+        )
+        .body(json!({"body": "no"}))
+        .build("test_node");
         let err = sign_with_active(&mut event).unwrap_err();
         assert!(matches!(err, EventSignerError::MissingSigner { .. }));
     }

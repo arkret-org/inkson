@@ -22,15 +22,19 @@ pub fn device_revoke(
     revoked_by_device_id: &str,
     reason: &str,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.device.revoke")
-        .target_ref(target_device_id)
-        .body(json!({
-            "principal_id": actor,
-            "device_id": target_device_id,
-            "revoked_by": revoked_by_device_id,
-            "revoked_at": crate::clock::now_rfc3339_secs(),
-            "reason": reason,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::DeviceRevoke,
+    )
+    .target_ref(target_device_id)
+    .body(json!({
+        "principal_id": actor,
+        "device_id": target_device_id,
+        "revoked_by": revoked_by_device_id,
+        "revoked_at": crate::clock::now_rfc3339_secs(),
+        "reason": reason,
+    }))
 }
 
 /// `ck.mls.commit` event carrying the current wire-schema MLS
@@ -45,9 +49,13 @@ pub fn mls_commit_with_governance(
 ) -> anyhow::Result<OperationBuilder> {
     let group_id = payload.mls_group_id().to_owned();
     let body = serde_json::to_value(payload)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.mls.commit")
-        .target_ref(group_id)
-        .body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MlsCommit,
+    )
+    .target_ref(group_id)
+    .body(body))
 }
 
 /// `ck.mls.proposal` event for a durable MLS membership-change intent.
@@ -58,9 +66,13 @@ pub fn mls_proposal_with_governance(
     payload: &cokret_sdk::MlsProposalPayload,
 ) -> anyhow::Result<OperationBuilder> {
     let body = serde_json::to_value(payload)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.mls.proposal")
-        .target_ref(group_id.to_owned())
-        .body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MlsProposal,
+    )
+    .target_ref(group_id.to_owned())
+    .body(body))
 }
 
 /// `ck.mls.genesis` event installing an MLS group at epoch 0. Emitted
@@ -78,7 +90,11 @@ pub fn mls_genesis_with_governance(
     group_id: &str,
     payload: &Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.mls.genesis")
-        .target_ref(group_id.to_owned())
-        .body(payload.clone())
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MlsGenesis,
+    )
+    .target_ref(group_id.to_owned())
+    .body(payload.clone())
 }

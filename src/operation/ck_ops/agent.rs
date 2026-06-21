@@ -30,12 +30,16 @@ pub fn agent_endpoint(
         "protocol": protocol,
         "capabilities": capabilities,
     }]);
-    OperationBuilder::new(realm_id, actor, "ck.agent.endpoint")
-        .target_ref(agent_id)
-        .body(json!({
-            "agent_id": agent_id,
-            "endpoints": endpoints,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AgentEndpoint,
+    )
+    .target_ref(agent_id)
+    .body(json!({
+        "agent_id": agent_id,
+        "endpoints": endpoints,
+    }))
 }
 
 /// `ck.agent.interop_session.start` — kick off an agent
@@ -50,15 +54,19 @@ pub fn agent_interop_session_start(
     params: serde_json::Value,
     capability_grant: &str,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.agent.interop_session.start")
-        .target_ref(session_id)
-        .body(json!({
-            "counterparty_agent": counterparty_agent,
-            "session_id": session_id,
-            "protocol": protocol,
-            "params": params,
-            "capability_grant": capability_grant,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AgentInteropSessionStart,
+    )
+    .target_ref(session_id)
+    .body(json!({
+        "counterparty_agent": counterparty_agent,
+        "session_id": session_id,
+        "protocol": protocol,
+        "params": params,
+        "capability_grant": capability_grant,
+    }))
 }
 
 /// `ck.agent.interop_session.status` — agent progress signal.
@@ -69,13 +77,17 @@ pub fn agent_interop_session_status(
     status: &str,
     detail: serde_json::Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.agent.interop_session.status")
-        .target_ref(session_id)
-        .body(json!({
-            "session_id": session_id,
-            "status": status,
-            "detail": detail,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AgentInteropSessionStatus,
+    )
+    .target_ref(session_id)
+    .body(json!({
+        "session_id": session_id,
+        "status": status,
+        "detail": detail,
+    }))
 }
 
 /// `ck.agent.interop_session.result` — terminal event carrying the
@@ -87,11 +99,15 @@ pub fn agent_interop_session_result(
     result: serde_json::Value,
     audit_binding: serde_json::Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.agent.interop_session.result")
-        .target_ref(session_id)
-        .body(json!({
-            "session_id": session_id,
-            "result": result,
-            "audit_binding": audit_binding,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AgentInteropSessionResult,
+    )
+    .target_ref(session_id)
+    .body(json!({
+        "session_id": session_id,
+        "result": result,
+        "audit_binding": audit_binding,
+    }))
 }

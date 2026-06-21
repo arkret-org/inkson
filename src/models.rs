@@ -408,6 +408,10 @@ pub struct SyncDescribeView {
     pub frontier: Value,
 }
 
+/// Directory `describe` response. The SDK's `DirectoryDescribeOutcome` is a
+/// transparent wrapper over this exact wire body, so yougen consumes the SDK
+/// authority directly instead of maintaining a flat local mirror.
+pub use cokret_sdk::models::DirectoryDescription;
 /// Wire-shape sync response — re-exports the SDK's canonical
 /// [`cokret_sdk::models::SyncOutcome`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
@@ -416,20 +420,6 @@ pub struct SyncDescribeView {
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
 pub use cokret_sdk::models::SyncOutcome as ClientSyncOutcome;
-
-/// soland's directory `describe` wire body. Named distinctly from the SDK
-/// core `cokret_sdk::models::DirectoryDescribeOutcome` (which wraps a typed
-/// `DirectoryDescription`) because this soland surface has a different,
-/// flat shape; sharing the SDK name would mislead readers into expecting
-/// the same wire contract.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SolandDirectoryDescribeResBody {
-    pub service_did: String,
-    pub resource_types: Vec<String>,
-    pub discovery_profiles: Vec<String>,
-    pub restricted_query_proof: bool,
-}
-
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
 // byte-compatible with soland's `DirectoryRealmResolutionOutcome` response. A
 // yougen-local duplicate previously drifted from the wire (a required

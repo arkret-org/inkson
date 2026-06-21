@@ -268,7 +268,7 @@ impl CokretApi {
         &self,
         sdk_events: &[cokret_sdk::Event],
         idempotency_key: Option<&str>,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
         // body is one of the three spec-defined `ck.self.events.command.submit`
@@ -292,7 +292,6 @@ impl CokretApi {
         let response: cokret_sdk::EventsSubmitOutcome = self
             .send_json_retryable(self.prepare_request(request), Method::POST)
             .await?;
-        let response = serde_json::to_value(response)?;
         ensure_events_submit_batch_accepted(&response)?;
         Ok(response)
     }

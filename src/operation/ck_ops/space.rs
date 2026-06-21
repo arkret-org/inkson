@@ -36,9 +36,13 @@ pub fn space_create(
         object.rank = Some(rank.to_owned());
     }
     let body = object_create_payload_value(object, "ck.space.create payload serialize")?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.space.create")
-        .target_ref(container_space_id)
-        .body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::SpaceCreate,
+    )
+    .target_ref(container_space_id)
+    .body(body))
 }
 
 /// Build a `ck.space.restore` operation. Reverses `realm_archive`
@@ -46,9 +50,13 @@ pub fn space_create(
 /// at apply time; tombstoned container Spaces MUST NOT be restored. Spec:
 /// `models/realm-and-space.md` §4.4, `common-fields.md §5`.
 pub fn space_restore(realm_id: &str, actor: &str, container_space_id: &str) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.space.restore")
-        .target_ref(container_space_id)
-        .body(json!({ "space_id": container_space_id }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::SpaceRestore,
+    )
+    .target_ref(container_space_id)
+    .body(json!({ "space_id": container_space_id }))
 }
 
 /// Build a `ck.space.update` patch operation for structural Space
@@ -61,7 +69,11 @@ pub fn space_update_patch(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.space.update")
-        .target_ref(space_id)
-        .body(object_patch_payload_value(space_id, patch)?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::SpaceUpdate,
+    )
+    .target_ref(space_id)
+    .body(object_patch_payload_value(space_id, patch)?))
 }

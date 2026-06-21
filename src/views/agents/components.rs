@@ -281,7 +281,7 @@ pub fn ActionApproveDialog(
                                 let op = crate::operation::OperationBuilder::new(
                                     &space,
                                     &actor,
-                                    "ck.agent.action_approve",
+                                    cokret_sdk::events::kinds::EventKind::AgentActionApprove,
                                 )
                                 .body(payload)
                                 .build_sdk_event("yougen");
@@ -510,7 +510,7 @@ pub fn DraftApprovalPanel(
                                                     let op = crate::operation::OperationBuilder::new(
                                                         &realm,
                                                         &actor,
-                                                        "ck.agent.action_approve",
+                                                        cokret_sdk::events::kinds::EventKind::AgentActionApprove,
                                                     )
                                                     .body(payload)
                                                     .build_sdk_event("yougen");
@@ -573,7 +573,7 @@ pub fn DraftApprovalPanel(
                                                     let op = crate::operation::OperationBuilder::new(
                                                         &realm,
                                                         &actor,
-                                                        "ck.agent.action_reject",
+                                                        cokret_sdk::events::kinds::EventKind::AgentActionReject,
                                                     )
                                                     .body(payload)
                                                     .build_sdk_event("yougen");

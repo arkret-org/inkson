@@ -51,14 +51,18 @@ pub fn build_audit_accessed(
     // device is carried inside `purpose` (a free-form string) rather than as an
     // illegal top-level `reader_device` field, which the server rejects with
     // schema_violation.
-    OperationBuilder::new(realm_id, actor, "ck.audit.accessed")
-        .target_ref(target_event_id)
-        .body(json!({
-            "target_ref": target_event_id,
-            "actor_id": actor,
-            "purpose": format!("e2ee_read;reader_device={device_id}"),
-            "accessed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AuditAccessed,
+    )
+    .target_ref(target_event_id)
+    .body(json!({
+        "target_ref": target_event_id,
+        "actor_id": actor,
+        "purpose": format!("e2ee_read;reader_device={device_id}"),
+        "accessed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    }))
 }
 
 /// Build a `ck.audit.ryw_receipt` event. Emitted by the writer after a
@@ -83,14 +87,18 @@ pub fn build_audit_ryw_receipt(
             delivered_to_devices.join(",")
         )
     };
-    OperationBuilder::new(realm_id, actor, "ck.audit.ryw_receipt")
-        .target_ref(source_event_id)
-        .body(json!({
-            "target_ref": source_event_id,
-            "actor_id": actor,
-            "purpose": purpose,
-            "accessed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::AuditRywReceipt,
+    )
+    .target_ref(source_event_id)
+    .body(json!({
+        "target_ref": source_event_id,
+        "actor_id": actor,
+        "purpose": purpose,
+        "accessed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    }))
 }
 
 /// Build a `ck.identity.disclosure_policy` event — declares what a connection
@@ -98,7 +106,12 @@ pub fn build_audit_ryw_receipt(
 ///
 /// `policy` is the structured policy document; the reducer enforces shape.
 pub fn build_disclosure_policy(realm_id: &str, actor: &str, policy: Value) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.identity.disclosure_policy").body(json!({
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::IdentityDisclosurePolicy,
+    )
+    .body(json!({
         "policy": policy,
     }))
 }
@@ -111,12 +124,16 @@ pub fn build_presentation_request(
     target: &str,
     requested_claims: Vec<String>,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.identity.presentation_request")
-        .target_ref(target)
-        .body(json!({
-            "target": target,
-            "requested_claims": requested_claims,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::IdentityPresentationRequest,
+    )
+    .target_ref(target)
+    .body(json!({
+        "target": target,
+        "requested_claims": requested_claims,
+    }))
 }
 
 /// Build a `ck.identity.presentation_response` event — reply with a signed
@@ -127,12 +144,16 @@ pub fn build_presentation_response(
     request_id: &str,
     presentation: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.identity.presentation_response")
-        .target_ref(request_id)
-        .body(json!({
-            "request_id": request_id,
-            "presentation": presentation,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::IdentityPresentationResponse,
+    )
+    .target_ref(request_id)
+    .body(json!({
+        "request_id": request_id,
+        "presentation": presentation,
+    }))
 }
 
 /// Build a `ck.identity.disclosure_receipt` event — actor-private record of
@@ -144,13 +165,17 @@ pub fn build_disclosure_receipt(
     counterparty: &str,
     disclosed_claims: Vec<String>,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.identity.disclosure_receipt")
-        .target_ref(request_id)
-        .body(json!({
-            "request_id": request_id,
-            "counterparty": counterparty,
-            "disclosed_claims": disclosed_claims,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::IdentityDisclosureReceipt,
+    )
+    .target_ref(request_id)
+    .body(json!({
+        "request_id": request_id,
+        "counterparty": counterparty,
+        "disclosed_claims": disclosed_claims,
+    }))
 }
 
 #[cfg(test)]

@@ -711,10 +711,14 @@ pub fn build_act_on_behalf_message_operation(
         object.insert("approval_request_id".to_owned(), json!(approval_request_id));
         object.insert("approval_nonce".to_owned(), json!(approval_nonce));
     }
-    crate::operation::OperationBuilder::new(realm_id, controller_principal_id, "ck.message.create")
-        .target_ref(strand_id)
-        .executed_by(agent_principal_id)
-        .authorization_ref(authorization_ref)
-        .body(payload)
-        .build_sdk_event("yougen")
+    crate::operation::OperationBuilder::new(
+        realm_id,
+        controller_principal_id,
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .target_ref(strand_id)
+    .executed_by(agent_principal_id)
+    .authorization_ref(authorization_ref)
+    .body(payload)
+    .build_sdk_event("yougen")
 }

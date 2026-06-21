@@ -63,13 +63,17 @@ pub fn build_call_state(
     state: CallState,
     reason: Option<&str>,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.call.state")
-        .target_ref(call_id)
-        .body(json!({
-            "call_id": call_id,
-            "state": state.as_wire(),
-            "reason": reason,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::CallState,
+    )
+    .target_ref(call_id)
+    .body(json!({
+        "call_id": call_id,
+        "state": state.as_wire(),
+        "reason": reason,
+    }))
 }
 
 /// Round 4 — outcome of feeding an incoming `ck.call.signal` envelope
@@ -167,16 +171,20 @@ pub fn build_call_recording_start(
     mode: cokret_sdk::RecordingMode,
     visible_notice: bool,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.call.recording.start")
-        .target_ref(call_id)
-        .body(json!({
-            "call_id": call_id,
-            "recording_id": recording_id,
-            "recording_agent": actor,
-            "capture_kind": capture_kind,
-            "mode": mode,
-            "visible_notice": visible_notice,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::CallRecordingStart,
+    )
+    .target_ref(call_id)
+    .body(json!({
+        "call_id": call_id,
+        "recording_id": recording_id,
+        "recording_agent": actor,
+        "capture_kind": capture_kind,
+        "mode": mode,
+        "visible_notice": visible_notice,
+    }))
 }
 
 #[cfg(test)]

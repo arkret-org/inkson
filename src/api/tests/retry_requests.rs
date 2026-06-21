@@ -61,16 +61,15 @@ fn self_request_pop_signature_roundtrips_with_sdk_verifier() {
 
 #[test]
 fn events_batch_response_rejects_partial_acceptance() {
-    ensure_events_submit_batch_accepted(&json!({
+    let accepted: cokret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "accepted",
-        "accepted": ["ck:event:1"],
         "rejected": []
     }))
-    .expect("fully accepted batch should pass");
+    .unwrap();
+    ensure_events_submit_batch_accepted(&accepted).expect("fully accepted batch should pass");
 
-    let err = ensure_events_submit_batch_accepted(&json!({
+    let partial: cokret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "partial",
-        "accepted": ["ck:event:1"],
         "rejected": [
             {
                 "id": "ck:event:2",
@@ -79,7 +78,9 @@ fn events_batch_response_rejects_partial_acceptance() {
             }
         ]
     }))
-    .expect_err("partial batch must fail fast");
+    .unwrap();
+    let err =
+        ensure_events_submit_batch_accepted(&partial).expect_err("partial batch must fail fast");
     assert!(err.to_string().contains("capability_denied"));
 }
 

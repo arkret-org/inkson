@@ -110,12 +110,16 @@ pub(crate) fn message_create_operation_with_expiry(
     if let Some(expiry) = expiry {
         payload = payload.with_expiry(expiry);
     }
-    OperationBuilder::new(realm_id, actor, "ck.message.create")
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "timeline ck.message.create payload serialize",
-        )?)
-        .build_sdk_event("yougen")
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(sdk_payload_value(
+        payload.to_value(),
+        "timeline ck.message.create payload serialize",
+    )?)
+    .build_sdk_event("yougen")
 }
 
 pub(super) fn message_revise_operation(
@@ -124,13 +128,17 @@ pub(super) fn message_revise_operation(
     event_id: &str,
     body: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    OperationBuilder::new(realm_id, actor, "ck.message.revise")
-        .target_ref(event_id)
-        .body(json!({
-            "content": text_content(body)?,
-            "target_ref": event_id,
-        }))
-        .build_sdk_event("yougen")
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageRevise,
+    )
+    .target_ref(event_id)
+    .body(json!({
+        "content": text_content(body)?,
+        "target_ref": event_id,
+    }))
+    .build_sdk_event("yougen")
 }
 
 pub(super) fn pending_send_error_is_permanent(error: &str) -> bool {
@@ -181,13 +189,17 @@ pub(super) fn message_redact_operation(
     event_id: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    OperationBuilder::new(realm_id, actor, "ck.message.redact")
-        .target_ref(event_id)
-        .body(json!({
-            "reason": reason,
-            "target_event_id": event_id,
-        }))
-        .build_sdk_event("yougen")
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageRedact,
+    )
+    .target_ref(event_id)
+    .body(json!({
+        "reason": reason,
+        "target_event_id": event_id,
+    }))
+    .build_sdk_event("yougen")
 }
 
 pub(super) fn reaction_add_operation(
@@ -196,11 +208,15 @@ pub(super) fn reaction_add_operation(
     event_id: &str,
     key: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
-        .target_ref(event_id)
-        .body(json!({
-            "target_ref": event_id,
-            "key": key,
-        }))
-        .build_sdk_event("yougen")
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ReactionAdd,
+    )
+    .target_ref(event_id)
+    .body(json!({
+        "target_ref": event_id,
+        "key": key,
+    }))
+    .build_sdk_event("yougen")
 }

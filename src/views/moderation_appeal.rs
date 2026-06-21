@@ -119,11 +119,13 @@ pub fn build_appeal_submit_op(
     cokret_sdk::ModerationAppealPayload::Submit(payload.clone()).validate_minimal()?;
 
     let body = serde_json::to_value(&payload)?;
-    Ok(
-        OperationBuilder::new(&realm_id, appellant, "ck.moderation.appeal.submit")
-            .target_ref(decision_event_id)
-            .body(body),
+    Ok(OperationBuilder::new(
+        &realm_id,
+        appellant,
+        cokret_sdk::events::kinds::EventKind::ModerationAppealSubmit,
     )
+    .target_ref(decision_event_id)
+    .body(body))
 }
 
 /// Build a fresh `ck:appeal:<uuidv7>` id for a new appeal. UUIDv7 inherits

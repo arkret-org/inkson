@@ -36,7 +36,12 @@ pub fn invite_create_structured(
     let body = payload
         .to_value()
         .map_err(|err| anyhow::anyhow!("invite create payload: {err}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.invite.create").body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::InviteCreate,
+    )
+    .body(body))
 }
 
 pub fn invite_accept(
@@ -45,9 +50,13 @@ pub fn invite_accept(
     invite_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let body = invite_ref_payload_value(invite_id, None)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.invite.accept")
-        .target_ref(invite_id)
-        .body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::InviteAccept,
+    )
+    .target_ref(invite_id)
+    .body(body))
 }
 
 pub fn invite_cancel(
@@ -57,7 +66,11 @@ pub fn invite_cancel(
     reason: Option<&str>,
 ) -> anyhow::Result<OperationBuilder> {
     let body = invite_ref_payload_value(invite_id, reason)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.invite.cancel")
-        .target_ref(invite_id)
-        .body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::InviteCancel,
+    )
+    .target_ref(invite_id)
+    .body(body))
 }

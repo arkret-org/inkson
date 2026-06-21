@@ -425,7 +425,7 @@ pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeView> {
     Ok(serde_json::from_value(value)?)
 }
 
-pub fn parse_directory_describe(value: Value) -> anyhow::Result<SolandDirectoryDescribeResBody> {
+pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescription> {
     Ok(serde_json::from_value(value)?)
 }
 

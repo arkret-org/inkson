@@ -26,9 +26,13 @@ pub fn rsvp_set(
     cokret_sdk::schema::event_payload_validator_catalog()
         .validate_payload("ck.rsvp.set", &payload)
         .map_err(|err| anyhow::anyhow!("ck.rsvp.set payload is not schema-valid: {err}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.rsvp.set")
-        .target_ref(strand_id)
-        .body(payload))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RsvpSet,
+    )
+    .target_ref(strand_id)
+    .body(payload))
 }
 
 fn rsvp_status_value(status: &str) -> anyhow::Result<cokret_sdk::RsvpStatus> {

@@ -25,9 +25,13 @@ pub fn build_morph_create(
     let body = cokret_sdk::ObjectCreatePayload::new(morph)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.morph.create payload serialize: {e}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.morph.create")
-        .target_ref(morph.id.as_str())
-        .body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MorphCreate,
+    )
+    .target_ref(morph.id.as_str())
+    .body(body))
 }
 
 /// Build a `ck.morph.update` operation. `patch` is a JSON object of fields to
@@ -44,9 +48,13 @@ pub fn build_morph_update(
     morph_id: &str,
     patch: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.morph.update")
-        .target_ref(morph_id)
-        .body(json!({"target_ref": morph_id, "patch": patch}))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MorphUpdate,
+    )
+    .target_ref(morph_id)
+    .body(json!({"target_ref": morph_id, "patch": patch}))
 }
 
 /// Build a `ck.relation.create` operation. `kind` is a registered
@@ -70,16 +78,24 @@ pub fn build_relation_create(
     let body = cokret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
         .to_value()
         .map_err(|err| anyhow::anyhow!("invalid relation_create_payload: {err}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.relation.create")
-        .target_ref(relation_id)
-        .body(body))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RelationCreate,
+    )
+    .target_ref(relation_id)
+    .body(body))
 }
 
 /// Build a `ck.relation.tombstone` operation by id.
 pub fn build_relation_delete(realm_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.relation.tombstone")
-        .target_ref(relation_id)
-        .body(json!({"relation_id": relation_id}))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RelationTombstone,
+    )
+    .target_ref(relation_id)
+    .body(json!({"relation_id": relation_id}))
 }
 
 /// Build a `ck.container.move_item` operation. Payload shape mirrors
@@ -93,14 +109,18 @@ pub fn build_container_move_item(
     target_ref: &str,
     rank: &str,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.container.move_item")
-        .target_ref(container_ref)
-        .body(json!({
-            "container_ref": container_ref,
-            "source_ref": source_ref,
-            "target_ref": target_ref,
-            "rank": rank,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ContainerMoveItem,
+    )
+    .target_ref(container_ref)
+    .body(json!({
+        "container_ref": container_ref,
+        "source_ref": source_ref,
+        "target_ref": target_ref,
+        "rank": rank,
+    }))
 }
 
 /// Build a `ck.container.rebalance` operation. The required position fields
@@ -118,15 +138,19 @@ pub fn build_container_rebalance(
         .into_iter()
         .map(|(item_ref, rank)| json!({"item_ref": item_ref, "rank": rank}))
         .collect();
-    OperationBuilder::new(realm_id, actor, "ck.container.rebalance")
-        .target_ref(container_ref)
-        .body(json!({
-            "container_ref": container_ref,
-            "source_ref": source_ref,
-            "target_ref": target_ref,
-            "rank": rank,
-            "items": items,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::ContainerRebalance,
+    )
+    .target_ref(container_ref)
+    .body(json!({
+        "container_ref": container_ref,
+        "source_ref": source_ref,
+        "target_ref": target_ref,
+        "rank": rank,
+        "items": items,
+    }))
 }
 
 #[cfg(test)]

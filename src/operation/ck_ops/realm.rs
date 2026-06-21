@@ -9,9 +9,13 @@ use super::{OperationBuilder, object_patch_payload_value, patch_from_value};
 /// `space_restore`. Spec: `models/realm-and-space.md` §4.4. The wire
 /// payload uses canonical `space_id`.
 pub fn realm_archive(realm_id: &str, actor: &str, container_space_id: &str) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.space.archive")
-        .target_ref(container_space_id)
-        .body(json!({ "space_id": container_space_id }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::SpaceArchive,
+    )
+    .target_ref(container_space_id)
+    .body(json!({ "space_id": container_space_id }))
 }
 
 /// Build a `ck.message.revise` patch operation. Spec: revise is
@@ -24,12 +28,16 @@ pub fn message_revise_patch(
     message_id: &str,
     patch: serde_json::Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.message.revise")
-        .target_ref(message_id)
-        .body(json!({
-            "message_id": message_id,
-            "patch": patch,
-        }))
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MessageRevise,
+    )
+    .target_ref(message_id)
+    .body(json!({
+        "message_id": message_id,
+        "patch": patch,
+    }))
 }
 
 /// Build a `ck.realm.update` patch operation. The reducer accepts
@@ -43,11 +51,13 @@ pub fn realm_update_patch(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(
-        OperationBuilder::new(envelope_realm_id, actor, "ck.realm.update")
-            .target_ref(realm_id)
-            .body(object_patch_payload_value(realm_id, patch)?),
+    Ok(OperationBuilder::new(
+        envelope_realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RealmUpdate,
     )
+    .target_ref(realm_id)
+    .body(object_patch_payload_value(realm_id, patch)?))
 }
 
 /// `ck.realm.update` patch event on the organization cell. Mirrors the
@@ -59,7 +69,11 @@ pub fn realm_organization_update(
     value: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(value)?;
-    Ok(OperationBuilder::new(realm_id, actor, "ck.realm.update")
-        .target_ref(realm_id)
-        .body(object_patch_payload_value(realm_id, patch)?))
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::RealmUpdate,
+    )
+    .target_ref(realm_id)
+    .body(object_patch_payload_value(realm_id, patch)?))
 }

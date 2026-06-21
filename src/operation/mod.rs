@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+pub use cokret_sdk::events::kinds::EventKind;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -313,15 +314,11 @@ pub struct OperationBuilder {
 }
 
 impl OperationBuilder {
-    pub fn new(
-        realm_id: impl Into<String>,
-        actor: impl Into<String>,
-        op_type: impl Into<String>,
-    ) -> Self {
+    pub fn new(realm_id: impl Into<String>, actor: impl Into<String>, op_type: EventKind) -> Self {
         Self {
             realm_id: realm_id.into(),
             actor: actor.into(),
-            op_type: op_type.into(),
+            op_type: op_type.as_str().to_owned(),
             target_ref: None,
             body: Value::Null,
             authz_ref: None,

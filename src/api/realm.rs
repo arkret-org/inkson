@@ -167,7 +167,7 @@ impl CokretApi {
         space_id: &str,
         realm_id: &str,
         actor_id: &str,
-        kind: &str,
+        kind: EventKind,
     ) -> anyhow::Result<()> {
         let actor_id = actor_id.trim();
         let space_id = space_id.trim();
@@ -290,7 +290,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<()> {
-        self.change_space_lifecycle(space_id, realm_id, actor_id, "ck.space.archive")
+        self.change_space_lifecycle(space_id, realm_id, actor_id, EventKind::SpaceArchive)
             .await
     }
 
@@ -302,7 +302,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<()> {
-        self.change_space_lifecycle(space_id, realm_id, actor_id, "ck.space.tombstone")
+        self.change_space_lifecycle(space_id, realm_id, actor_id, EventKind::SpaceTombstone)
             .await
     }
 
@@ -330,11 +330,16 @@ impl CokretApi {
         }
         let join_rule = canonical_space_join_rule_v1(join_rule);
         let mut events = vec![
-            build_realm_state_event(realm_id, actor_id, "ck.realm.join_rule", json!(join_rule))?,
             build_realm_state_event(
                 realm_id,
                 actor_id,
-                "ck.realm.history_visibility",
+                EventKind::RealmJoinRule,
+                json!(join_rule),
+            )?,
+            build_realm_state_event(
+                realm_id,
+                actor_id,
+                EventKind::RealmHistoryVisibility,
                 json!(history_visibility),
             )?,
         ];
@@ -350,7 +355,7 @@ impl CokretApi {
             events.push(build_realm_state_event(
                 realm_id,
                 actor_id,
-                "ck.realm.policy_components",
+                EventKind::RealmPolicyComponents,
                 policy_components,
             )?);
         }
@@ -704,7 +709,7 @@ impl CokretApi {
         decision_ref: &str,
         reason_text_ref: &str,
         lift_reason_code: &str,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
         let appeal_event = crate::operation::ck_ops::moderation_appeal_decision(
             realm_id,
             actor_id,
@@ -744,7 +749,7 @@ impl CokretApi {
         new_verdict: &str,
         new_reason_code: &str,
         appeal_reason_text_ref: &str,
-    ) -> anyhow::Result<(String, Value)> {
+    ) -> anyhow::Result<(String, cokret_sdk::EventsSubmitOutcome)> {
         let new_decision_id = format!("ck:event:{}", crate::operation::uuid_v7());
         let mut new_decision = crate::operation::ck_ops::moderation_decision(
             realm_id,
@@ -783,7 +788,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         mut events: Vec<cokret_sdk::Event>,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
         let seal = self.current_seal_for(realm_id).await?;
         let seal = cokret_sdk::SealId::new(seal)
             .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?;

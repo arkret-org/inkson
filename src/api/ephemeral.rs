@@ -31,26 +31,31 @@ pub(crate) fn validate_outgoing_registered_event_payload(
 pub fn build_read_cursor_advance_event(
     marker: &crate::local_state::ReadMarkerRecord,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    OperationBuilder::new(&marker.body.realm_id, &marker.actor, &marker.marker_type)
+    let kind = EventKind::try_new(&marker.marker_type).ok_or_else(|| {
+        anyhow::anyhow!(
+            "read marker kind {:?} is not in the SDK event-kind registry",
+            marker.marker_type
+        )
+    })?;
+    OperationBuilder::new(&marker.body.realm_id, &marker.actor, kind)
         .body(marker.ck_read_cursor_payload())
         .build_sdk_event(&marker.device_id)
 }
 
-pub(crate) fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {
-    let status = response
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("accepted");
-    let rejected = response
-        .get("rejected")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    if rejected.is_empty() && matches!(status, "accepted" | "duplicate") {
+pub(crate) fn ensure_events_submit_batch_accepted(
+    response: &cokret_sdk::EventsSubmitOutcome,
+) -> anyhow::Result<()> {
+    if response.rejected.is_empty()
+        && matches!(
+            response.status,
+            cokret_sdk::EventsSubmitStatus::Accepted | cokret_sdk::EventsSubmitStatus::Duplicate
+        )
+    {
         return Ok(());
     }
 
-    let details = rejected
+    let details = response
+        .rejected
         .iter()
         .map(|item| {
             let id = item.get("id").and_then(Value::as_str).unwrap_or("unknown");
@@ -67,6 +72,12 @@ pub(crate) fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::R
         })
         .collect::<Vec<_>>()
         .join("; ");
+    let status = match response.status {
+        cokret_sdk::EventsSubmitStatus::Accepted => "accepted",
+        cokret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
+        cokret_sdk::EventsSubmitStatus::Partial => "partial",
+        cokret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
+    };
     anyhow::bail!(
         "events batch submit was not fully accepted: status={status}, rejected=[{details}]"
     );

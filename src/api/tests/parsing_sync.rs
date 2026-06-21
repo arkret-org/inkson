@@ -104,6 +104,14 @@ fn parses_server_and_sync_payloads() {
     }))
     .unwrap();
     assert!(directory.resource_types.contains(&"space".to_owned()));
+
+    let directory = parse_directory_describe(json!({
+        "service_did": "did:web:server.local",
+        "resource_types": ["space"],
+        "discovery_profiles": ["ck.profile.directory.v1"]
+    }))
+    .unwrap();
+    assert_eq!(directory.restricted_query_proof, None);
 }
 
 #[test]

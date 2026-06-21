@@ -94,16 +94,16 @@ use crate::identity_handle::parse_user_handle;
 use crate::models::{
     AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ClientSyncOutcome,
     ContactListView, CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
-    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, DeviceTrustView, EphemeralSubmitResult,
-    GrantList, HealthOutcome, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchView,
-    InvitesView, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, MediaIceConfigOutcome,
-    MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD, OkOutcome,
-    PushRegisterView, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ReceiptResult,
-    ResolveHandleView, ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView,
-    ServerDescription, SessionLoginOutcome, SolandDirectoryDescribeResBody, SpaceCreateResult,
+    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, DeviceTrustView, DirectoryDescription,
+    EphemeralSubmitResult, GrantList, HealthOutcome, IdentityDescribeOutcome,
+    IdentityResolveOutcome, IndexSearchView, InvitesView, KeysClaimOutcome, KeysQueryOutcome,
+    KeysUploadOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody, ModerationReportOutcome,
+    OP_SNAPSHOT_HEAD, OkOutcome, PushRegisterView, RealmCreateResult, RealmJoinCandidate,
+    RealmPolicyResult, ReceiptResult, ResolveHandleView, ResolveRealmOutcome, SearchActorsView,
+    SearchOrganizationsView, ServerDescription, SessionLoginOutcome, SpaceCreateResult,
     SubmitEventResult, SyncDescribeView, TypingResult, VerifyDeviceResult,
 };
-use crate::operation::{OperationBuilder, trim_realm_id, uuid_v7};
+use crate::operation::{EventKind, OperationBuilder, trim_realm_id, uuid_v7};
 
 #[derive(Clone)]
 pub struct CokretApi {

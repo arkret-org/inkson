@@ -130,9 +130,12 @@ pub(crate) async fn run_device_revoke_from_snapshot(
         .unwrap_or("yougen-operator")
         .to_owned();
     let target_ref = full.output.commit_operation.object_id.clone();
-    let mut envelope_builder =
-        crate::operation::OperationBuilder::new(realm_id.clone(), actor, "mls_commit")
-            .body(full.output.commit_operation.payload.clone());
+    let mut envelope_builder = crate::operation::OperationBuilder::new(
+        realm_id.clone(),
+        actor,
+        cokret_sdk::events::kinds::EventKind::MlsCommit,
+    )
+    .body(full.output.commit_operation.payload.clone());
     if let Some(tref) = target_ref {
         envelope_builder = envelope_builder.target_ref(tref);
     }
