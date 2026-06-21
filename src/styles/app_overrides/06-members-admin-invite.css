@@ -12,6 +12,19 @@
   font-size: 12px;
 }
 
+.invite-by-handle {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border, var(--ck-line));
+  border-radius: 8px;
+  background: var(--surface-2, var(--ck-surface));
+}
+
+.invite-by-handle input {
+  width: 100%;
+}
+
 .member-list-card .event-head {
   align-items: center;
 }

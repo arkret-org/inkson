@@ -350,16 +350,22 @@ pub fn RealmMembersPanel(
 
                             div { class: "invite-divider muted", "data-testid": "realm-invite-divider", {crate::i18n::tr("realm_admin.invite_divider")} }
 
-                            Label { html_for: "invite-target-input", "Invite target" }
-                            Input {
-                                id: "invite-target-input",
-                                "data-testid": "invite-target-input",
-                                value: "{invite_target}",
-                                placeholder: "Handle, locator link, or DID + server DID",
-                                oninput: move |event: FormEvent| invite_target.set(event.value()),
-                            }
-                            div { class: "muted members-invite-hint",
-                                {crate::i18n::tr("realm_admin.invite_hint")}
+                            div { class: "invite-by-handle", "data-testid": "realm-invite-by-handle",
+                                div { class: "event-head",
+                                    span { {crate::i18n::tr("realm_admin.invite_by_handle")} }
+                                    span { {crate::i18n::tr("realm_admin.invite_handle_opt_in")} }
+                                }
+                                Label { html_for: "invite-target-input", {crate::i18n::tr("realm_admin.invite_target_label")} }
+                                Input {
+                                    id: "invite-target-input",
+                                    "data-testid": "invite-target-input",
+                                    value: "{invite_target}",
+                                    placeholder: "alice:example.com",
+                                    oninput: move |event: FormEvent| invite_target.set(event.value()),
+                                }
+                                div { class: "muted members-invite-hint",
+                                    {crate::i18n::tr("realm_admin.invite_hint")}
+                                }
                             }
                         }
                         div { class: "modal-foot",

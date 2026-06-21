@@ -1004,6 +1004,9 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "已邀请 {ok}/{total} 位联系人;部分失败:{error}",
     );
     dict.set("realm_admin.invite_selected", "邀请所选联系人");
-    dict.set("realm_admin.invite_divider", "或邀请陌生人(粘贴邀请链接)");
+    dict.set("realm_admin.invite_divider", "或通过 handle 添加");
+    dict.set("realm_admin.invite_by_handle", "通过 handle 添加");
+    dict.set("realm_admin.invite_handle_opt_in", "需对方允许");
+    dict.set("realm_admin.invite_target_label", "Handle 或邀请地址");
     dict.set("realm_admin.invite_bad_server", "无效的服务器地址:{error}");
 }

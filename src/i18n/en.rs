@@ -1205,9 +1205,12 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "Invited {ok}/{total} contact(s); some failed: {error}",
     );
     dict.set("realm_admin.invite_selected", "Invite selected contacts");
+    dict.set("realm_admin.invite_divider", "Or add by handle");
+    dict.set("realm_admin.invite_by_handle", "Add by handle");
+    dict.set("realm_admin.invite_handle_opt_in", "Recipient opt-in");
     dict.set(
-        "realm_admin.invite_divider",
-        "Or invite a stranger (paste an invite link)",
+        "realm_admin.invite_target_label",
+        "Handle or invite address",
     );
     dict.set(
         "realm_admin.invite_bad_server",
