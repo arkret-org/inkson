@@ -171,7 +171,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("login.soft_logout", "软登出");
     dict.set("login.no_token", "无活跃令牌");
     dict.set("login.token_active", "令牌活跃");
-    dict.set("login.refresh_token", "刷新令牌");
+    dict.set("login.session_credential", "会话凭证");
     dict.set("login.re_login", "重新登录");
     dict.set(
         "login.session_expired",

@@ -1,6 +1,5 @@
 pub use cokret_sdk::{
-    ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, SessionLoginOutcome,
-    VerifiedProfileEntry,
+    ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

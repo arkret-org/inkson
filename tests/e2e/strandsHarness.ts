@@ -109,7 +109,7 @@ export async function writeLocalConfig(
     server_url: string;
     account_did: string;
     device_id: string;
-    session_token: string;
+    session_credential: string;
   }>,
 ) {
   await page.evaluate((nextConfig) => {
@@ -121,7 +121,7 @@ export async function writeLocalConfig(
         server_url: "https://local.host",
         account_did: "did:web:alice.example",
         device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
-        session_token: "sx:e2e-token",
+        session_credential: "sx:e2e-token",
         ...parsed,
         ...nextConfig,
       }),
@@ -135,7 +135,7 @@ export async function writeLocalConfigAndReload(
     server_url: string;
     account_did: string;
     device_id: string;
-    session_token: string;
+    session_credential: string;
   }>,
 ) {
   await page.evaluate((nextConfig) => {
@@ -147,7 +147,7 @@ export async function writeLocalConfigAndReload(
         server_url: "https://local.host",
         account_did: "did:web:alice.example",
         device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
-        session_token: "sx:e2e-token",
+        session_credential: "sx:e2e-token",
         ...parsed,
         ...nextConfig,
       }),
@@ -239,7 +239,7 @@ export function registerStrandsBeforeEach() {
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
           device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
-          session_token: "sx:e2e-token",
+          session_credential: "sx:e2e-token",
         }),
       );
     });
@@ -251,7 +251,7 @@ export function registerStrandsBeforeEach() {
         JSON.stringify({
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
-          session_token: "sx:e2e-token",
+          session_credential: "sx:e2e-token",
           ...parsed,
           device_id: deviceId,
         }),

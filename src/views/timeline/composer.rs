@@ -514,7 +514,7 @@ pub(super) fn TimelineComposer(
                         div { class: "muted", "Digest: {blob.content_digest}" }
                         div { class: "muted", "Size: {blob.size_bytes} bytes" }
                         div { class: "muted", "Policy: {media_type_preview_policy(&blob.media_type).label()}" }
-                        div { class: "muted", "Download path uses Authorization header; bearer token is never placed in the blob URL." }
+                        div { class: "muted", "Download path uses Authorization header; session credential is never placed in the blob URL." }
                         div { class: "actions",
                             Button {
                                 variant: ButtonVariant::Secondary,

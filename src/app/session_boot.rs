@@ -1,15 +1,5 @@
 use super::*;
 
-pub(super) fn oidc_access_token_boot_usable(bundle: &OidcTokenBundle, now_unix: i64) -> bool {
-    if bundle.access_token.trim().is_empty() {
-        return false;
-    }
-    match bundle.expires_at_unix {
-        Some(expires_at) => now_unix + BOOT_ACCESS_TOKEN_SKEW_SECS < expires_at,
-        None => true,
-    }
-}
-
 pub(super) fn session_grant_boot_usable(
     grant: &PersistedSessionGrant,
     principal_server_url: &str,
@@ -38,8 +28,8 @@ pub(super) enum SessionBootState {
 }
 
 impl SessionBootState {
-    pub(super) fn from_boot_material(session_token: &str, can_restore_session: bool) -> Self {
-        if !session_token.trim().is_empty() {
+    pub(super) fn from_boot_material(credential: &str, can_restore_session: bool) -> Self {
+        if !credential.trim().is_empty() {
             Self::Checking
         } else if can_restore_session {
             Self::Restoring
@@ -54,49 +44,49 @@ impl SessionBootState {
 }
 
 pub(super) fn should_wait_for_secure_store_session_restore(
-    session_token: &str,
+    credential: &str,
     can_restore_session: bool,
     account_did: &str,
     secure_store_ready: bool,
 ) -> bool {
-    session_token.trim().is_empty()
+    credential.trim().is_empty()
         && !can_restore_session
         && !account_did.trim().is_empty()
         && !secure_store_ready
 }
 
 pub(super) fn session_boot_state_from_bootstrap_material(
-    session_token: &str,
+    credential: &str,
     can_restore_session: bool,
     account_did: &str,
     secure_store_ready: bool,
 ) -> SessionBootState {
     if should_wait_for_secure_store_session_restore(
-        session_token,
+        credential,
         can_restore_session,
         account_did,
         secure_store_ready,
     ) {
         SessionBootState::Restoring
     } else {
-        SessionBootState::from_boot_material(session_token, can_restore_session)
+        SessionBootState::from_boot_material(credential, can_restore_session)
     }
 }
 
-pub(super) fn rehydrated_session_token_for_active_config(
+pub(super) fn rehydrated_session_credential_for_active_config(
     config: &ClientConfig,
     base_url: &str,
     account_did: &str,
     device_id: &str,
 ) -> Option<String> {
-    if config.session_token.trim().is_empty()
+    if config.session_credential.trim().is_empty()
         || normalize_server_url(&config.server_url) != normalize_server_url(base_url)
         || config.account_did.trim() != account_did.trim()
         || config.device_id.trim() != device_id.trim()
     {
         None
     } else {
-        Some(config.session_token.clone())
+        Some(config.session_credential.clone())
     }
 }
 
@@ -124,19 +114,11 @@ pub(super) fn auth_surface_for_route(
     }
 }
 
-pub(super) fn initial_session_token_from_state(
+pub(super) fn initial_session_credential_from_state(
     local_state: &ClientLocalState,
     config: &ClientConfig,
     now_unix: i64,
 ) -> String {
-    if let Some(bundle) = local_state.oidc_tokens.as_ref() {
-        // Access tokens are short-lived cache material. On a hard page
-        // reload, let the refresh-token/session-grant poller mint a fresh
-        // bearer instead of racing boot API calls with an expired one.
-        if oidc_access_token_boot_usable(bundle, now_unix) {
-            return bundle.access_token.clone();
-        }
-    }
     if let Some(grant) = local_state.session_grant.as_ref() {
         return if session_grant_boot_usable(grant, &config.server_url, now_unix) {
             grant.grant_jwt.clone()
@@ -232,13 +214,11 @@ pub(super) fn inject_test_session_grant(
         // MUST match the active server so the bootstrap does not discard the
         // grant as stale (see `grant_matches_principal_server`).
         principal_server_url: server_url.to_owned(),
-        session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
         grant_expires_at: Some(now + chrono::Duration::hours(8)),
-        session_expires_at: Some(now + chrono::Duration::hours(8)),
         stored_at: now,
     };
     state_store.write().set_session_grant(Some(grant));
-    // Mirror the grant into the persisted config bearer slot so a re-render /
+    // Mirror the grant into the persisted config credential slot so a re-render /
     // reload rehydrates the same session instead of bouncing to /login.
     persist_config(
         config_store,

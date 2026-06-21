@@ -334,16 +334,6 @@ fn yougen_accepts_server_contract_payloads() {
         .is_err()
     );
 
-    let login: yougen::models::SessionLoginOutcome = serde_json::from_value(json!({
-        "access_token": "sx_token",
-        "token_type": "Bearer",
-        "actor": "did:web:alice.example",
-        "device_id": "ck:device:01964137-0000-7000-8000-000000000001",
-        "expires_at": "2026-04-28T12:00:00Z"
-    }))
-    .unwrap();
-    assert_eq!(login.token_type, "Bearer");
-
     let authz: yougen::models::AuthzCheckOutcome = serde_json::from_value(json!({
         "decision": "allow",
         "reason_code": null,

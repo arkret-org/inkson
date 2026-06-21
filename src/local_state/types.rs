@@ -560,16 +560,9 @@ pub struct ClientLocalState {
     /// Private ck.read_cursor.advance cursors keyed by Realm + read_scope.
     #[serde(default)]
     pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
-    /// Persisted OIDC token bundle - access_token, expiry, audience and
-    /// optional id_token. `refresh_token` is always stripped before this
-    /// state is flushed; callers with an actor DID must use the
-    /// SecureKeyStore helper to retain the refresh credential.
-    #[serde(default)]
-    pub oidc_tokens: Option<OidcTokenBundle>,
-    /// Persisted coauth `session_grant` payload. Lets the refresh
-    /// poller re-mint a principal session without bouncing the user
-    /// through OIDC again. Cleared on logout or when a re-exchange
-    /// surfaces a definitive "grant is dead" error.
+    /// Persisted coauth `session_grant` payload. It is the client-visible
+    /// session credential for `/_cokret/self/*` and is rotated through the
+    /// Account Authority refresh endpoint when it nears expiry.
     #[serde(default)]
     pub session_grant: Option<PersistedSessionGrant>,
     /// Client-side telemetry log buffer. Mirrors sodmin's
@@ -698,7 +691,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub member_handle_cache: BTreeMap<String, MemberHandleCacheEntry>,
     /// Actor DID that the currently-persisted account-scoped state
-    /// (sync cursor, realm-tree projections, session grant, OIDC bundle, …)
+    /// (sync cursor, realm-tree projections, session grant, …)
     /// belongs to. Stamped by [`LocalStateStore::adopt_account_scope`]
     /// whenever a session is established. When a new session's actor
     /// disagrees with this owner, every account-scoped record is wiped
@@ -759,7 +752,7 @@ pub struct UserActionLogEntry {
     /// device DID (or `did:anon` when the user hasn't logged in yet).
     pub actor: String,
     /// Verb-style action name (e.g. `message.create`,
-    /// `oidc.refresh`, `device.revoke.confirm`).
+    /// `session.refresh`, `device.revoke.confirm`).
     pub action: String,
     /// Result of the action; mirrors sodmin's `AdminAuditOutcome`.
     pub outcome: String,
@@ -775,8 +768,8 @@ pub struct UserActionLogEntry {
 /// Persisted `ck.session.grant` issued by the Account Authority during login.
 ///
 /// ②(A+②) model (api-conventions.md §3.3): the grant itself is the live
-/// credential for `/_cokret/self/*` — there is no grant→bearer exchange and no
-/// soland-minted local bearer. Each request presents `Authorization: Bearer
+/// credential for `/_cokret/self/*`; soland does not mint a second
+/// client-visible local session credential. Each request presents `Authorization: Bearer
 /// <grant_jwt>` + a per-request `DPoP` proof bound to the device key. Keeping
 /// the grant on disk lets the client keep using it directly and rotate it (DPoP
 /// holder proof → fresh grant) before its own expiry — no user-visible re-login
@@ -801,49 +794,13 @@ pub struct PersistedSessionGrant {
     pub principal_id: String,
     /// Device id bound to the grant.
     pub device_id: String,
-    /// Principal-server base URL where the grant is exchanged.
+    /// Principal-server base URL whose `/_cokret/self/*` surface accepts this grant.
     pub principal_server_url: String,
-    /// `session_grant_exchange_path` for the canonical
-    /// `/_cokret/gate/account/session-grants` operation.
-    pub session_grant_exchange_path: String,
     /// When the grant itself stops being usable. Once we pass this the
     /// next refresh attempt will fail and the user must re-login.
     #[serde(default)]
     pub grant_expires_at: Option<DateTime<Utc>>,
-    /// When the *current* minted principal session token expires (per
-    /// the most recent exchange response). Used by the refresh poller
-    /// to decide whether a re-exchange is due.
-    #[serde(default)]
-    pub session_expires_at: Option<DateTime<Utc>>,
     /// RFC 3339 timestamp of when this record was last written.
-    pub stored_at: DateTime<Utc>,
-}
-
-/// Persisted OIDC token bundle. Stored next to the device identity so a
-/// single boot sequence can rehydrate both. Fields mirror the `oauth2`
-/// token endpoint response shape.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OidcTokenBundle {
-    pub access_token: String,
-    #[serde(default)]
-    pub refresh_token: Option<String>,
-    /// `Bearer` per RFC 6750; recorded verbatim for future use.
-    pub token_type: String,
-    /// Unix epoch seconds at which `access_token` expires. `None` when
-    /// the token endpoint did not return `expires_in`.
-    #[serde(default)]
-    pub expires_at_unix: Option<i64>,
-    /// `id_token` JWT — present when the OIDC scope was granted.
-    #[serde(default)]
-    pub id_token: Option<String>,
-    /// `scope` claim from the token response (whitespace-separated).
-    #[serde(default)]
-    pub scope: Option<String>,
-    /// `audience` claim — typically the principal-server URL the token
-    /// is bound to; recorded so the client knows where it can present.
-    #[serde(default)]
-    pub audience: Option<String>,
-    /// RFC 3339 timestamp of when the bundle was persisted (debug aid).
     pub stored_at: DateTime<Utc>,
 }
 
@@ -875,7 +832,6 @@ impl Default for ClientLocalState {
             move_submissions: BTreeMap::new(),
             private_data: BTreeMap::new(),
             read_cursors: BTreeMap::new(),
-            oidc_tokens: None,
             session_grant: None,
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),

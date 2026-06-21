@@ -28,7 +28,7 @@
 //!     floria_gateway_url: "https://push.example/_cokret/edge/push/notify".into(),
 //!     device_id: "dev-yougen".into(),
 //!     principal_id: Some("did:web:alice.example".into()),
-//!     bearer_token: Some(api_token),
+//!     authorization_credential: Some(api_token),
 //!     session_grant: None,
 //!     active_circle_id: None,
 //! }, &mut local_state_store).await?;
@@ -90,7 +90,8 @@ pub enum PushRegistrationError {
 }
 
 /// Inputs to [`register_via_chime`]. Tracked as a struct (vs a 6-arg
-/// fn) so call sites stay readable when `principal_id` / `bearer_token`
+/// fn) so call sites stay readable when `principal_id` /
+/// `authorization_credential`
 /// flip from `None` to `Some` after coauth lands.
 #[derive(Clone, Debug)]
 pub struct RegisterContext {
@@ -108,8 +109,9 @@ pub struct RegisterContext {
     /// Owning actor DID. `None` for the pre-login boot path; populated
     /// once OIDC / coauth resolves.
     pub principal_id: Option<String>,
-    /// API access token (chime client posts `Authorization: Bearer …`).
-    pub bearer_token: Option<String>,
+    /// API authorization credential (chime client posts it in the standard
+    /// `Authorization: Bearer ...` HTTP scheme).
+    pub authorization_credential: Option<String>,
     /// X-Cokret-Session-Grant header (coauth-issued grant). `None`
     /// means yougen loads the persisted coauth session grant from
     /// `LocalStateStore`, mints the matching introspection proof headers,
@@ -159,7 +161,7 @@ pub async fn register_via_chime(
 
     let mut client =
         CokretPushClient::new(ctx.principal_server_url.as_str()).with_required_session_grant(true);
-    if let Some(token) = ctx.bearer_token.as_deref() {
+    if let Some(token) = ctx.authorization_credential.as_deref() {
         client = client.with_bearer_token(token);
     }
     client = client
@@ -419,7 +421,7 @@ mod tests {
             floria_gateway_url: "https://push.example/_cokret/edge/push/notify".to_owned(),
             device_id: device.to_owned(),
             principal_id: Some("did:web:alice.example".to_owned()),
-            bearer_token: Some("session-secret".to_owned()),
+            authorization_credential: Some("session-secret".to_owned()),
             session_grant: None,
             active_circle_id: None,
         }
@@ -439,9 +441,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: device.to_owned(),
             principal_server_url: "https://principal.example/".to_owned(),
-            session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
             grant_expires_at: Some(Utc::now() + Duration::hours(1)),
-            session_expires_at: None,
             stored_at: Utc::now(),
         }
     }

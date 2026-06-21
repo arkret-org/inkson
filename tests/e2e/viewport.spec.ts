@@ -21,7 +21,7 @@ async function bootAuthenticatedShell(page: Page, viewport = MOBILE_VIEWPORT) {
         server_url: "https://local.host",
         account_did: "did:web:alice.example",
         device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
-        session_token: "sx:e2e-token",
+        session_credential: "sx:e2e-token",
       }),
     );
   });

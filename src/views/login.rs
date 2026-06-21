@@ -11,9 +11,7 @@ use crate::coauth::{
     restore_oidc_scaffold,
 };
 use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
-use crate::local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant};
-#[cfg(test)]
-use crate::models::SessionLoginOutcome;
+use crate::local_state::{LocalStateStore, PersistedSessionGrant};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
 use crate::ui::input::Input;
@@ -25,16 +23,9 @@ struct CompletedLogin {
     principal_server_url: String,
     actor: String,
     device_id: String,
-    access_token: String,
-    /// OAuth bearer bundle accepted directly by the principal server.
-    /// When present, this is the durable refresh path.
-    oidc_tokens: Option<OidcTokenBundle>,
-    /// Persisted principal session grant (grant JWT + session signing key +
-    /// expiry). This is the refresh credential for the OIDC-bridge login: the
-    /// short access bearer is re-minted by re-exchanging this grant at the
-    /// principal server until the grant's own (minutes-to-hours) TTL elapses.
-    /// Without persisting it, the refresh machinery in `session_refresh` is
-    /// dead and the session dies the moment the first short bearer expires.
+    session_credential: String,
+    /// Persisted principal session grant. This is the live credential for
+    /// `/_cokret/self/*`; refresh rotates this grant before its own expiry.
     session_grant: Option<PersistedSessionGrant>,
 }
 
@@ -110,26 +101,20 @@ pub fn LoginPanel(
                     if server_changed && !wiped {
                         store.clear_account_scoped();
                         store.set_session_grant(None);
-                        store.set_oidc_tokens(None);
                     }
                 }
                 base_url.set(principal_server_url.clone());
                 account_did.set(completed.actor.clone());
                 device_id.set(completed.device_id.clone());
-                token.set(completed.access_token.clone());
+                token.set(completed.session_credential.clone());
                 persist_config(
                     config_store,
                     principal_server_url,
                     completed.actor.clone(),
                     completed.device_id.clone(),
-                    completed.access_token.clone(),
+                    completed.session_credential.clone(),
                 );
-                persist_completed_login_state(
-                    state_store_write,
-                    &completed.actor,
-                    completed.oidc_tokens,
-                    completed.session_grant,
-                );
+                persist_completed_login_state(state_store_write, completed.session_grant);
                 status.set("Online".to_owned());
                 auth_status.set("Signed in".to_owned());
                 on_login.call(());
@@ -260,10 +245,10 @@ pub fn LoginPanel(
                                         is_busy.set(true);
                                         auth_status.set("Refreshing session...".to_owned());
                                         spawn(async move {
-                                            if let Some(access_token) =
-                                                crate::session::refresh_current_bearer().await
+                                            if let Some(session_credential) =
+                                                crate::session::refresh_current_session_credential().await
                                             {
-                                                token.set(access_token);
+                                                token.set(session_credential);
                                                 auth_status.set("Session restored".to_owned());
                                                 on_login.call(());
                                             } else {
@@ -288,31 +273,23 @@ pub fn LoginPanel(
 
 fn persist_completed_login_state(
     mut state_store: Signal<LocalStateStore>,
-    actor_id: &str,
-    oidc_tokens: Option<OidcTokenBundle>,
     session_grant: Option<PersistedSessionGrant>,
 ) {
     let mut store = state_store.write();
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    store.set_oidc_tokens_with_secure_store(oidc_tokens, actor_id, secure_store.as_ref());
-    // Persist the principal session grant as the refresh credential. Clearing
-    // it (the old behaviour) is what left `session_refresh` with nothing to
-    // re-exchange — the session then died at the first short-bearer expiry.
     store.set_session_grant(session_grant);
 }
 
 /// Compute the value of the `session-status` testid. The four states
 /// the cotest harness asserts against:
 ///
-/// * `signed-in` — an access token is present and a session grant is persisted.
+/// * `signed-in` — a live credential is present and a session grant is persisted.
 /// * `signed-out` — no token, no grant.
-/// * `session-expired` — no live token but a session grant is still persisted (the soft-logout
-///   state — the user can re-mint via `refresh-now-button` without going through OIDC).
+/// * `session-expired` — no live credential but a session grant is still persisted.
 fn compute_session_status(
-    access_token: &str,
+    session_credential: &str,
     session_grant: Option<&PersistedSessionGrant>,
 ) -> &'static str {
-    let has_token = !access_token.trim().is_empty();
+    let has_token = !session_credential.trim().is_empty();
     let has_grant = session_grant.is_some();
     match (has_token, has_grant) {
         (true, _) => "signed-in",
@@ -335,10 +312,8 @@ pub(crate) async fn start_oidc_strand(
         .map_err(|error| format_sign_in_discovery_error(principal_server_url, &error))?;
     let resolver = AuthorityResolver::from_description(principal_server_url, &description)
         .map_err(|error| format!("Account Authority discovery failed: {error}"))?;
-    // Pick an OIDC method; fall back to the legacy auth_server_url alias for
-    // old servers that predate methods[].
     let method = resolver
-        .oidc_method(Some(&description.auth_metadata))
+        .oidc_method()
         .map_err(|error| format!("No OIDC sign-in method available: {error}"))?;
     let discovery_url = oidc_discovery_url(&method).ok_or_else(|| {
         "OIDC method published neither openid_configuration nor an issuer.".to_owned()
@@ -448,11 +423,7 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("Callback did not include an authorization code: {error}"))?;
     // T1.Y4 — every gate/account call routes through the resolved
     // `gate_account_base` persisted in the scaffold (service-surface §2.5.1).
-    let gate_account_base = if scaffold.gate_account_base.trim().is_empty() {
-        scaffold.auth_server_url.clone()
-    } else {
-        scaffold.gate_account_base.clone()
-    };
+    let gate_account_base = scaffold.gate_account_base.clone();
     if gate_account_base.trim().is_empty() {
         return Err("Sign-in state is missing the Account Authority base.".to_owned());
     }
@@ -528,12 +499,11 @@ async fn finish_oidc_callback(
     if actor.trim().is_empty() {
         return Err("Account Authority did not return an account DID.".to_owned());
     }
-    // ②(A+②): there is no grant→bearer exchange. The held credential is the
+    // ②(A+②): the held credential is the
     // `ck.session.grant` itself; every `/_cokret/self/*` request presents it as
     // `Authorization: Bearer <grant>` + a per-request `DPoP` proof bound to the
     // grant's `cnf.jkt`. Verify the credential up front by reading the account
     // viewer through a grant+DPoP-bound client (api-conventions.md §3.3).
-    let session_grant_exchange_path = "_cokret/gate/account/session-grants";
     // Mint the session-grant holder proof presented on every `/_cokret/self/*`
     // call: coauth's grant introspection (which the Principal Server invokes)
     // requires it to confirm possession of the grant's session key, otherwise it
@@ -563,15 +533,12 @@ async fn finish_oidc_callback(
     let resolved_device = device;
     // Persist the principal session grant as the live credential. The refresh
     // path keeps it fresh by rotating it (DPoP holder proof → fresh grant) when
-    // near expiry; there is no short bearer to re-mint any more.
+    // near expiry.
     let persisted_session_grant = persisted_session_grant_from_parts(
         &session_grant,
         &principal_target,
         &canonical_actor,
         &resolved_device,
-        session_grant_exchange_path,
-        // ②(A+②): the credential is the grant itself; its expiry == grant expiry.
-        parse_rfc3339_utc(&session_grant.expires_at),
     )
     .ok();
 
@@ -580,8 +547,7 @@ async fn finish_oidc_callback(
         actor: canonical_actor,
         device_id: resolved_device,
         // The grant JWT is now the live credential carried in the `token` signal.
-        access_token: session_grant.grant_jwt.clone(),
-        oidc_tokens: None,
+        session_credential: session_grant.grant_jwt.clone(),
         session_grant: persisted_session_grant,
     })
 }
@@ -626,31 +592,11 @@ fn session_grant_info_from_outcome(
     })
 }
 
-#[cfg(test)]
-fn persisted_session_grant_from_login(
-    grant: &CoauthSessionGrantInfo,
-    session: &SessionLoginOutcome,
-    principal_server_url: &str,
-    actor: &str,
-    session_grant_exchange_path: &str,
-) -> Result<PersistedSessionGrant, String> {
-    persisted_session_grant_from_parts(
-        grant,
-        principal_server_url,
-        actor,
-        session.device_id.as_str(),
-        session_grant_exchange_path,
-        Some(session.expires_at),
-    )
-}
-
 fn persisted_session_grant_from_parts(
     grant: &CoauthSessionGrantInfo,
     principal_server_url: &str,
     actor: &str,
     device_id: &str,
-    session_grant_exchange_path: &str,
-    session_expires_at: Option<DateTime<Utc>>,
 ) -> Result<PersistedSessionGrant, String> {
     let grant_id = grant
         .id
@@ -670,9 +616,7 @@ fn persisted_session_grant_from_parts(
         principal_id: actor.to_owned(),
         device_id: device_id.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
-        session_grant_exchange_path: session_grant_exchange_path.to_owned(),
         grant_expires_at: parse_rfc3339_utc(&grant.expires_at),
-        session_expires_at,
         stored_at: Utc::now(),
     })
 }
@@ -697,9 +641,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
-            session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
             grant_expires_at: Some(now + chrono::Duration::seconds(3600)),
-            session_expires_at: Some(now + chrono::Duration::seconds(60)),
             stored_at: now,
         }
     }
@@ -713,8 +655,8 @@ mod tests {
 
     #[test]
     fn session_status_session_expired_when_grant_outlives_token() {
-        // Soft-logout state: the access token died but the grant is
-        // still good. Refresh button should re-mint.
+        // Soft-logout state: the live credential is absent but the grant is
+        // still present. Refresh button can restore/rotate it.
         let grant = dummy_grant();
         assert_eq!(compute_session_status("", Some(&grant)), "session-expired");
     }
@@ -743,21 +685,11 @@ mod tests {
             scopes: vec!["urn:cokret:principal-server:session.bind".to_owned()],
             principal_server: None,
         };
-        let session = SessionLoginOutcome {
-            access_token: "sx-bridge".to_owned(),
-            token_type: "Bearer".to_owned(),
-            actor: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
-            device_id: cokret_sdk::DeviceId::new("ck:device:01964137-0000-7000-8000-000000000001")
-                .unwrap(),
-            expires_at: parse_rfc3339_utc("2026-05-29T11:05:00Z").unwrap(),
-        };
-
-        let persisted = persisted_session_grant_from_login(
+        let persisted = persisted_session_grant_from_parts(
             &grant,
-            &session,
             "https://local.host",
             "did:web:alice.example",
-            "_cokret/gate/account/session-grants",
+            "ck:device:01964137-0000-7000-8000-000000000001",
         )
         .expect("persistable grant");
 
@@ -772,22 +704,11 @@ mod tests {
         );
         assert_eq!(persisted.principal_server_url, "https://local.host");
         assert_eq!(
-            persisted.session_grant_exchange_path,
-            "_cokret/gate/account/session-grants"
-        );
-        assert_eq!(
             persisted
                 .grant_expires_at
                 .expect("grant expiry")
                 .to_rfc3339(),
             "2026-05-29T12:00:00+00:00"
-        );
-        assert_eq!(
-            persisted
-                .session_expires_at
-                .expect("session expiry")
-                .to_rfc3339(),
-            "2026-05-29T11:05:00+00:00"
         );
     }
 }

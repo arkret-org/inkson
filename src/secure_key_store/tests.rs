@@ -60,13 +60,7 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
         "yougen_mls_account_secret"
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
-        "coauth.refresh_token.did:example:alice"
-    ));
-    assert!(is_wasm_indexeddb_required_secret_key(
-        "coauth.access_token.did:example:alice"
-    ));
-    assert!(is_wasm_indexeddb_required_secret_key(
-        "coauth.session_token.did:example:alice"
+        "coauth.session_credential.did:example:alice"
     ));
     // The hard-logout journal embeds a holder seed → seed-grade: both
     // IndexedDB-required and excluded from the localStorage mirror.
@@ -78,7 +72,7 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     ));
     assert!(is_wasm_no_localstorage_mirror_key(SIGNING_SEED_KEY));
     assert!(!is_wasm_no_localstorage_mirror_key(
-        "coauth.refresh_token.did:example:alice"
+        "coauth.session_credential.did:example:alice"
     ));
 
     assert!(!is_wasm_indexeddb_required_secret_key(
@@ -152,15 +146,15 @@ fn memory_store_round_trips_a_secret() {
     assert!(store.is_empty());
 
     store
-        .store_secret("oidc.refresh_token", "rt-secret-value")
+        .store_secret("test.session_secret", "session-secret-value")
         .expect("store");
     assert_eq!(store.len(), 1);
 
     let loaded = store
-        .get_secret("oidc.refresh_token")
+        .get_secret("test.session_secret")
         .expect("get")
         .expect("present");
-    assert_eq!(loaded, "rt-secret-value");
+    assert_eq!(loaded, "session-secret-value");
 }
 
 #[test]
@@ -200,7 +194,7 @@ fn memory_store_clones_share_state() {
 fn memory_store_debug_does_not_leak_secret_values() {
     let store = MemorySecureKeyStore::new();
     store
-        .store_secret("oidc.refresh_token", "extremely-sensitive-token")
+        .store_secret("test.session_secret", "extremely-sensitive-token")
         .unwrap();
     let debug = format!("{store:?}");
     assert!(
@@ -208,7 +202,7 @@ fn memory_store_debug_does_not_leak_secret_values() {
         "Debug must NEVER include secret values, got: {debug}"
     );
     assert!(
-        !debug.contains("oidc.refresh_token"),
+        !debug.contains("test.session_secret"),
         "Debug should not leak key names either, got: {debug}"
     );
 }
@@ -280,13 +274,15 @@ fn android_keystore_via_bridge_round_trips_secrets() {
     let store = AndroidKeystoreSecureKeyStore::new_with_bridge("yougen.test.unit", bridge);
     assert_eq!(store.service_name(), "yougen.test.unit");
     assert_eq!(store.backend_name(), "android-keystore");
-    store.store_secret("refresh_token", "rt-123").unwrap();
+    store
+        .store_secret("session_credential", "credential-123")
+        .unwrap();
     assert_eq!(
-        store.get_secret("refresh_token").unwrap().as_deref(),
-        Some("rt-123")
+        store.get_secret("session_credential").unwrap().as_deref(),
+        Some("credential-123")
     );
-    store.delete_secret("refresh_token").unwrap();
-    assert_eq!(store.get_secret("refresh_token").unwrap(), None);
+    store.delete_secret("session_credential").unwrap();
+    assert_eq!(store.get_secret("session_credential").unwrap(), None);
 }
 
 /// Matching iOS test — same rationale as the Android case above.
@@ -300,13 +296,15 @@ fn ios_keychain_via_bridge_round_trips_secrets() {
     let store = IosKeychainSecureKeyStore::new_with_bridge("yougen.test.unit", bridge);
     assert_eq!(store.service_name(), "yougen.test.unit");
     assert_eq!(store.backend_name(), "ios-keychain");
-    store.store_secret("refresh_token", "rt-123").unwrap();
+    store
+        .store_secret("session_credential", "credential-123")
+        .unwrap();
     assert_eq!(
-        store.get_secret("refresh_token").unwrap().as_deref(),
-        Some("rt-123")
+        store.get_secret("session_credential").unwrap().as_deref(),
+        Some("credential-123")
     );
-    store.delete_secret("refresh_token").unwrap();
-    assert_eq!(store.get_secret("refresh_token").unwrap(), None);
+    store.delete_secret("session_credential").unwrap();
+    assert_eq!(store.get_secret("session_credential").unwrap(), None);
 }
 
 /// HostBridgeSecureKeyStore wires the right service_name + key

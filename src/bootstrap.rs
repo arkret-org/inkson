@@ -36,17 +36,9 @@ pub(crate) const ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY: &str =
 pub(crate) fn has_bootstrap_refresh_material(
     store: &LocalStateStore,
     principal_server_url: &str,
-    actor_id: &str,
+    _actor_id: &str,
 ) -> bool {
     let state = store.load();
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    if store
-        .load_oidc_tokens_with_secure_store(actor_id, secure_store.as_ref())
-        .as_ref()
-        .is_some_and(crate::oidc::lifecycle::has_refresh_token)
-    {
-        return true;
-    }
     state.session_grant.as_ref().is_some_and(|grant| {
         crate::session_refresh::grant_matches_principal_server(grant, principal_server_url)
             && !crate::session_refresh::grant_is_dead(grant)
@@ -316,7 +308,7 @@ pub(crate) fn mls_recovery_setup_missing(
 
 pub(crate) fn mls_welcome_bootstrap_key(
     base_url: &str,
-    session_token: &str,
+    session_credential: &str,
     account_did: &str,
     device_id: &str,
     realm_id: &str,
@@ -327,7 +319,7 @@ pub(crate) fn mls_welcome_bootstrap_key(
         return None;
     }
     let base = server_key(base_url);
-    let session = session_token.trim();
+    let session = session_credential.trim();
     let actor = account_did.trim();
     let device = device_id.trim();
     let realm = realm_id.trim();
@@ -369,20 +361,20 @@ fn should_ack_mls_welcome_batch(
 
 pub(crate) async fn bootstrap_mls_welcome_for_realm(
     base_url: String,
-    session_token: String,
+    session_credential: String,
     actor_id: String,
     device_id: String,
     realm_id: String,
     mut state_store: Signal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
-    if session_token.trim().is_empty() || realm_id.trim().is_empty() {
+    if session_credential.trim().is_empty() || realm_id.trim().is_empty() {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
 
     let messages = crate::views::helpers::with_authed_api(
         &base_url,
-        session_token.clone(),
+        session_credential.clone(),
         |api| async move { api.receive_device_messages().await },
     )
     .await
@@ -444,7 +436,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         // cached recovery public key when available, otherwise surface the prompt.
         crate::components::maybe_auto_backup_mls_after_encrypted_write(
             base_url.clone(),
-            session_token.clone(),
+            session_credential.clone(),
             actor_id.clone(),
             device_id.clone(),
             state_store,
@@ -462,7 +454,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     let realm_for_backup = realm_id.clone();
     let backup_id = crate::views::helpers::with_authed_api(
         &base_url,
-        session_token.clone(),
+        session_credential.clone(),
         |api| async move {
             // §7.10: applying a Welcome lands a fresh epoch — chain the upload
             // onto the Realm's existing mls_history series (successor
@@ -491,7 +483,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     {
         if let Err(error) = crate::views::helpers::with_authed_api(
             &base_url,
-            session_token.clone(),
+            session_credential.clone(),
             |api| async move { api.ack_device_messages(&ack_token).await },
         )
         .await

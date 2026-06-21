@@ -189,7 +189,7 @@ pub fn SettingsDevicesPanel(
     let rename_status = use_signal(String::new);
 
     // Auto-load guard so the device list populates on mount (and once a
-    // session token arrives) without the user clicking Refresh first.
+    // session credential arrives) without the user clicking Refresh first.
     let mut auto_loaded = use_signal(|| false);
 
     // ── Pair (current device side) state ─────────────────────────────
@@ -237,7 +237,7 @@ pub fn SettingsDevicesPanel(
         };
 
     // Auto-load the device list on mount. Reads `token()` so it re-runs
-    // when the session token arrives; the `auto_loaded` guard keeps it to
+    // when the session credential arrives; the `auto_loaded` guard keeps it to
     // a single fetch. Skipped in pair mode (which has no list).
     {
         let base = base_url();

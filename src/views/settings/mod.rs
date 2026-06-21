@@ -1812,7 +1812,7 @@ pub fn SettingsPanel(
                                             floria_gateway_url: crate::push::floria_gateway_url(),
                                             device_id: dev,
                                             principal_id,
-                                            bearer_token: Some(api_token),
+                                            authorization_credential: Some(api_token),
                                             session_grant: None,
                                             active_circle_id: None,
                                         };

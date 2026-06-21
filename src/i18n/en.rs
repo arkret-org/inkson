@@ -53,7 +53,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("login.soft_logout", "soft-logout");
     dict.set("login.no_token", "No active token");
     dict.set("login.token_active", "Token active");
-    dict.set("login.refresh_token", "Refresh Token");
+    dict.set("login.session_credential", "Session Credential");
     dict.set("login.re_login", "Re-Login");
     dict.set(
         "login.session_expired",

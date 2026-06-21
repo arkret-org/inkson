@@ -2,8 +2,8 @@
 //! and key-package claim strands.
 //!
 //! Spec sources:
-//! - `identity/session-grants.md` — every grant exchange MUST carry a proof binding the request to
-//!   a client-held keypair so a stolen bearer token can't be replayed elsewhere.
+//! - `identity/session-grants.md` — every grant issuance MUST carry a proof binding the request to
+//!   a client-held keypair so a stolen authorization credential can't be replayed elsewhere.
 //! - `crypto-media/key-packages.md §3` — `claim_keys` requests must present DPoP-style proofs to
 //!   prevent token substitution attacks across recipients.
 //!
@@ -80,10 +80,10 @@ pub struct DpopClaims {
     /// detect replay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
-    /// Access-token hash (RFC 9449 §4.2). When a proof accompanies an
-    /// access token, callers set this to
-    /// `base64url-no-pad(sha256(access_token))` so the proof cannot be
-    /// replayed with a different bearer.
+    /// Authorization credential hash (RFC 9449 §4.2). When a proof
+    /// accompanies a credential, callers set this to
+    /// `base64url-no-pad(sha256(credential))` so the proof cannot be
+    /// replayed with a different credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ath: Option<String>,
 }
@@ -137,8 +137,8 @@ pub fn build_dpop_proof_ed25519(
 /// (`crv`, `kty`, `x`), serialized in lex-min key order without
 /// whitespace. Soland's `ck.session.grant` verifier rebuilds the
 /// same string and compares — the value is what gets bound to the
-/// access token (`jkt` claim) so a proof from a different
-/// keypair is rejected.
+/// session grant (`jkt` claim) so a proof from a different keypair is
+/// rejected.
 pub fn jwk_thumbprint_ed25519(verifying_key: &VerifyingKey) -> String {
     let x = URL_SAFE_NO_PAD.encode(verifying_key.to_bytes());
     // Members are inlined in lex-min order — RFC 7638 mandates

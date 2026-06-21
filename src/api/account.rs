@@ -47,10 +47,9 @@ impl CokretApi {
         )
     }
 
-    // ②(A+②): removed `exchange_session_grant*`. The Principal Server no longer
-    // mints a local bearer and there is no grant→principal-bearer exchange
-    // endpoint (api-conventions.md §3.3). The held credential is the
-    // `ck.session.grant` itself, presented per-request as
+    // ②(A+②): the Principal Server does not mint a second client-visible
+    // credential. The held credential is the `ck.session.grant` itself,
+    // presented per-request as
     // `Authorization: Bearer <grant>` + a `DPoP` proof (see
     // `CokretApi::with_bearer` / `with_dpop_device`).
 
@@ -351,12 +350,11 @@ impl CokretApi {
         .await
     }
 
-    /// Hard logout at the Principal Server: revoke this session's bearer, mark
-    /// its local device session record revoked, and drop the device's queued
-    /// to-device messages (account-lifecycle §4.1). This is the device-logout
-    /// operation, distinct from `ck.gate.account.command.revoke_session` (which
-    /// only revokes a session token and preserves the device session). Returns
-    /// whether a live session was revoked.
+    /// Single hard logout (account-lifecycle §4.1): the client presents the
+    /// current session grant + DPoP proof to `/_cokret/gate/account/logout`.
+    /// The Account Authority/Principal Server path terminates the Auth-side
+    /// grant chain and the Principal-side device session. Returns whether the
+    /// server reports a session was revoked.
     pub async fn logout(&self) -> anyhow::Result<bool> {
         // Spec strong types for the POST body + response, so the wire shape
         // stays in lockstep with the OpenAPI/DTO contract.

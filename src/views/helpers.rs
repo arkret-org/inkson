@@ -8,27 +8,27 @@ use crate::api::{
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::ui::button::{Button, ButtonVariant};
 
-/// Create an authenticated API client from a base URL and optional access token.
-pub fn authed_api(base_url: &str, access_token: String) -> anyhow::Result<CokretApi> {
-    authed_api_with_sync(base_url, access_token, None)
+/// Create an authenticated API client from a base URL and optional session credential.
+pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<CokretApi> {
+    authed_api_with_sync(base_url, session_credential, None)
 }
 
 /// Create an authenticated API client that also forwards the latest sync token
 /// for read-your-writes consistency on subsequent reads.
 ///
-/// ②(A+②): `access_token` is the `ck.session.grant` JWT (the live credential).
+/// ②(A+②): `session_credential` is the `ck.session.grant` JWT.
 /// The client also binds the device DPoP holder key so every `/_cokret/self/*`
 /// request carries a per-request `DPoP` proof bound to the grant
 /// (api-conventions.md §3.3). This is the centralized self-path credential
 /// builder used across views.
 pub fn authed_api_with_sync(
     base_url: &str,
-    access_token: String,
+    session_credential: String,
     wait_for_sync_token: Option<String>,
 ) -> anyhow::Result<CokretApi> {
     let mut api = CokretApi::new(base_url)?;
-    if !access_token.is_empty() {
-        api = api.with_bearer(access_token);
+    if !session_credential.is_empty() {
+        api = api.with_bearer(session_credential);
     }
     api = attach_device_dpop(api);
     if let Some(sync_token) = wait_for_sync_token {
@@ -41,7 +41,7 @@ pub fn authed_api_with_sync(
 /// `/_cokret/self/*` requests are sender-constrained (api-conventions.md §3.3).
 /// In production the seed is read from the secure key store (independent of the
 /// passed state store); in tests no key is present and the client stays
-/// bearer-only.
+/// without device proof material.
 pub fn attach_device_dpop(api: CokretApi) -> CokretApi {
     let store = crate::local_state::LocalStateStore::default();
     let Some(handle) = crate::auth_dpop::load_device_key(&store).ok().flatten() else {
@@ -116,13 +116,13 @@ pub fn persist_config(
     server_url: String,
     account_did: String,
     device_id: String,
-    session_token: String,
+    session_credential: String,
 ) {
     config_store.write().save(ClientConfig::from_fields(
         server_url,
         account_did,
         device_id,
-        session_token,
+        session_credential,
     ));
 }
 
@@ -259,24 +259,24 @@ impl ApiCallError {
 /// surrounding component scope.
 pub async fn with_authed_api<F, Fut, T>(
     base_url: &str,
-    mut access_token: String,
+    mut session_credential: String,
     f: F,
 ) -> Result<T, ApiCallError>
 where
     F: FnOnce(CokretApi) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
-    if access_token.trim().is_empty() {
+    if session_credential.trim().is_empty() {
         return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
             "missing authenticated session"
         )));
     }
-    if let Some(refreshed) = crate::session::wait_for_current_bearer_refresh().await
+    if let Some(refreshed) = crate::session::wait_for_current_session_credential_refresh().await
         && !refreshed.trim().is_empty()
     {
-        access_token = refreshed;
+        session_credential = refreshed;
     }
-    let api = authed_api(base_url, access_token).map_err(ApiCallError::Unavailable)?;
+    let api = authed_api(base_url, session_credential).map_err(ApiCallError::Unavailable)?;
     match f(api).await {
         Ok(value) => Ok(value),
         Err(err) => Err(classify_api_call_error(err).await),
@@ -289,7 +289,7 @@ where
 /// [`active_sync_token`] as `wait_for_sync_token`.
 pub async fn with_authed_api_with_sync<F, Fut, T>(
     base_url: &str,
-    mut access_token: String,
+    mut session_credential: String,
     wait_for_sync_token: Option<String>,
     f: F,
 ) -> Result<T, ApiCallError>
@@ -297,17 +297,17 @@ where
     F: FnOnce(CokretApi) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
-    if access_token.trim().is_empty() {
+    if session_credential.trim().is_empty() {
         return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
             "missing authenticated session"
         )));
     }
-    if let Some(refreshed) = crate::session::wait_for_current_bearer_refresh().await
+    if let Some(refreshed) = crate::session::wait_for_current_session_credential_refresh().await
         && !refreshed.trim().is_empty()
     {
-        access_token = refreshed;
+        session_credential = refreshed;
     }
-    let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token)
+    let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token)
         .map_err(ApiCallError::Unavailable)?;
     match f(api).await {
         Ok(value) => Ok(value),
@@ -321,10 +321,10 @@ async fn classify_api_call_error(err: anyhow::Error) -> ApiCallError {
         return ApiCallError::AuthExpired(err);
     }
     if is_auth_expired_error(&err) {
-        // Run the single-flight remint path so views that ignore the
+        // Run the single-flight refresh path so views that ignore the
         // returned AuthExpired error still converge on a fresh token (or
         // a cleared session on terminal failure) before their next poll.
-        let _ = crate::session::refresh_current_bearer().await;
+        let _ = crate::session::refresh_current_session_credential().await;
         ApiCallError::AuthExpired(err)
     } else {
         ApiCallError::Failed(err)

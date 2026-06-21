@@ -23,8 +23,8 @@ use super::{
 /// `crypto-media/secret-storage.md` §3 — the "lukewarm" tier).
 ///
 /// This backend is only for non-sensitive first-paint secrets. Ed25519
-/// signing seeds, local identity seeds, account MLS secrets, and bearer
-/// tokens are refused so they cannot land in localStorage. The IndexedDB
+/// signing seeds, local identity seeds, account MLS secrets, and session
+/// credentials are refused so they cannot land in localStorage. The IndexedDB
 /// + non-extractable SubtleCrypto tier uses the same
 /// `yougen.secret.<service_name>.<key>` namespace after async upgrade.
 pub struct LocalStorageSecureKeyStore {

@@ -316,79 +316,6 @@ fn local_state_store_persists_push_registration_state() {
     assert!(reader.push_registration().is_none());
 }
 
-/// `set_oidc_tokens_with_secure_store`
-/// MUST move the `refresh_token` AND the `access_token` out of the
-/// disk-backed `state.json` into the supplied `SecureKeyStore`
-/// keyed by `coauth.refresh_token.<actor_id>` /
-/// `coauth.access_token.<actor_id>`. The companion `load_*`
-/// helper reads them back. The on-disk JSON MUST NOT contain
-/// either bearer credential after the migration.
-#[test]
-fn oidc_tokens_migrate_into_secure_key_store_and_round_trip() {
-    use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
-    let path = temp_state_path("h3-refresh-token");
-    let mut store = LocalStateStore::with_path(path.clone());
-    let secure = MemorySecureKeyStore::default();
-    let actor = "did:web:alice.example";
-
-    let bundle = OidcTokenBundle {
-        access_token: "atok".to_owned(),
-        refresh_token: Some("rtok-secret".to_owned()),
-        token_type: "Bearer".to_owned(),
-        expires_at_unix: Some(2_000_000_000),
-        id_token: None,
-        scope: None,
-        audience: None,
-        stored_at: Utc::now(),
-    };
-    let stripped = store
-        .set_oidc_tokens_with_secure_store(Some(bundle), actor, &secure)
-        .expect("bundle persisted");
-    // Post-migration: in-state bundle MUST NOT carry either bearer
-    // credential any more (the secure store is the new authority).
-    assert!(stripped.refresh_token.is_none());
-    assert!(stripped.access_token.is_empty());
-
-    // The disk-backed bundle agrees.
-    let on_disk = store.oidc_tokens().expect("bundle still on disk");
-    assert!(on_disk.refresh_token.is_none());
-    assert!(on_disk.access_token.is_empty());
-
-    // Secure store holds the secrets under the per-actor keys.
-    let secret = secure
-        .get_secret(&format!("coauth.refresh_token.{actor}"))
-        .expect("read ok")
-        .expect("secret present");
-    assert_eq!(secret, "rtok-secret");
-    let access = secure
-        .get_secret(&format!("coauth.access_token.{actor}"))
-        .expect("read ok")
-        .expect("access secret present");
-    assert_eq!(access, "atok");
-
-    // Load helper reattaches both tokens from the store.
-    let reattached = store
-        .load_oidc_tokens_with_secure_store(actor, &secure)
-        .expect("bundle visible");
-    assert_eq!(reattached.refresh_token.as_deref(), Some("rtok-secret"));
-    assert_eq!(reattached.access_token, "atok");
-
-    // Clearing the bundle deletes the secure-store entries too.
-    store.set_oidc_tokens_with_secure_store(None, actor, &secure);
-    assert!(
-        secure
-            .get_secret(&format!("coauth.refresh_token.{actor}"))
-            .expect("read ok after clear")
-            .is_none()
-    );
-    assert!(
-        secure
-            .get_secret(&format!("coauth.access_token.{actor}"))
-            .expect("read ok after clear")
-            .is_none()
-    );
-}
-
 #[test]
 fn dpop_device_key_migrates_into_secure_key_store() {
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
@@ -434,7 +361,7 @@ fn dpop_device_key_migrates_into_secure_key_store() {
 }
 
 #[test]
-fn clear_account_scoped_preserves_device_level_and_token_state() {
+fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
     let path = temp_state_path("clear-account");
     let mut store = LocalStateStore::with_path(path);
     // Account-scoped projections.
@@ -468,18 +395,18 @@ fn clear_account_scoped_preserves_device_level_and_token_state() {
     let identity = store
         .ensure_local_identity()
         .expect("ensure_local_identity should succeed in plaintext mode");
-    // Auth-token state that clear_account_scoped MUST preserve too.
-    let bundle = OidcTokenBundle {
-        access_token: "at".to_owned(),
-        refresh_token: Some("rt".to_owned()),
-        token_type: "Bearer".to_owned(),
-        expires_at_unix: None,
-        id_token: None,
-        scope: None,
-        audience: None,
+    let grant = PersistedSessionGrant {
+        grant_jwt: "alice.grant".to_owned(),
+        session_private_key_pem: "pem".to_owned(),
+        grant_id: "g-alice".to_owned(),
+        audience: "https://principal.example/api".to_owned(),
+        principal_id: "did:web:alice.example".to_owned(),
+        device_id: "device-1".to_owned(),
+        principal_server_url: "https://principal.example".to_owned(),
+        grant_expires_at: None,
         stored_at: chrono::Utc::now(),
     };
-    store.set_oidc_tokens(Some(bundle.clone()));
+    store.set_session_grant(Some(grant.clone()));
 
     store.clear_account_scoped();
 
@@ -510,26 +437,15 @@ fn clear_account_scoped_preserves_device_level_and_token_state() {
         state.local_identity.as_ref().unwrap().did_key,
         identity.local_signing_did,
     );
-    assert!(
-        state.oidc_tokens.is_some(),
-        "OIDC tokens must survive — login strand owns them",
-    );
-    assert!(
-        state.oidc_tokens.as_ref().unwrap().access_token.is_empty(),
-        "access_token must not be serialised to state.json",
-    );
-    assert!(
-        state.oidc_tokens.as_ref().unwrap().refresh_token.is_none(),
-        "refresh_token must not be serialised to state.json",
-    );
+    assert_eq!(state.session_grant.as_ref(), Some(&grant));
 }
 
 #[test]
-fn adopt_account_scope_resets_grant_cursor_and_oidc_on_identity_change() {
+fn adopt_account_scope_resets_grant_and_cursor_on_identity_change() {
     let path = temp_state_path("adopt-account-scope");
     let mut store = LocalStateStore::with_path(path);
 
-    // Establish alice's scope with a grant + OIDC + cursor + projection.
+    // Establish alice's scope with a grant + cursor + projection.
     assert!(
         store.adopt_account_scope("did:web:alice.example"),
         "first adopt (owner None) stamps and reports a reset"
@@ -539,16 +455,6 @@ fn adopt_account_scope_resets_grant_cursor_and_oidc_on_identity_change() {
         .expect("ensure_local_identity should succeed in plaintext mode");
     store.save_sync_cursor("sx:alice");
     store.save_realm_tree_projection("ck:space:a", serde_json::json!({}));
-    store.set_oidc_tokens(Some(OidcTokenBundle {
-        access_token: "alice-at".to_owned(),
-        refresh_token: Some("alice-rt".to_owned()),
-        token_type: "Bearer".to_owned(),
-        expires_at_unix: None,
-        id_token: None,
-        scope: None,
-        audience: None,
-        stored_at: chrono::Utc::now(),
-    }));
     store.set_session_grant(Some(PersistedSessionGrant {
         grant_jwt: "alice.grant".to_owned(),
         session_private_key_pem: "pem".to_owned(),
@@ -557,9 +463,7 @@ fn adopt_account_scope_resets_grant_cursor_and_oidc_on_identity_change() {
         principal_id: "did:web:alice.example".to_owned(),
         device_id: "device-1".to_owned(),
         principal_server_url: "https://principal.example".to_owned(),
-        session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
         grant_expires_at: None,
-        session_expires_at: None,
         stored_at: chrono::Utc::now(),
     }));
 
@@ -581,10 +485,6 @@ fn adopt_account_scope_resets_grant_cursor_and_oidc_on_identity_change() {
     assert!(
         state.session_grant.is_none(),
         "previous identity's grant must be wiped, not preserved"
-    );
-    assert!(
-        state.oidc_tokens.is_none(),
-        "previous OIDC bundle must be wiped"
     );
     assert_eq!(
         state.account_scope_owner.as_deref(),

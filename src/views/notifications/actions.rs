@@ -23,7 +23,7 @@ pub(crate) async fn optional_invite_notifications(api: &CokretApi) -> anyhow::Re
     match api.invites().await {
         Ok(response) => Ok(response.invites),
         Err(error) if is_auth_expired_error(&error) => {
-            let Some(refreshed) = crate::session::refresh_current_bearer().await else {
+            let Some(refreshed) = crate::session::refresh_current_session_credential().await else {
                 return Err(error);
             };
             let refreshed_api = api.clone().with_bearer(refreshed);
@@ -41,14 +41,14 @@ pub(crate) async fn optional_invite_notifications(api: &CokretApi) -> anyhow::Re
 
 pub(crate) fn refresh_notifications(
     base_url: String,
-    access_token: Signal<String>,
+    session_credential: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
 ) {
     spawn(async move {
-        let access_token = access_token();
-        match with_authed_api(&base_url, access_token, |api| async move {
+        let session_credential = session_credential();
+        match with_authed_api(&base_url, session_credential, |api| async move {
             let response = api.account_subscribe_snapshot(None).await?;
             let invite_notifications = optional_invite_notifications(&api).await?;
             Ok::<_, anyhow::Error>((response, invite_notifications))
@@ -91,7 +91,7 @@ pub(crate) fn refresh_notifications(
 
 pub(crate) fn mark_all_notifications_read(
     base_url: String,
-    access_token: String,
+    session_credential: String,
     actor_id: String,
     device_id: String,
     mut state_store: Signal<LocalStateStore>,
@@ -144,7 +144,7 @@ pub(crate) fn mark_all_notifications_read(
     ));
     spawn(async move {
         let marker_count = markers.len();
-        match with_authed_api(&base_url, access_token, |api| async move {
+        match with_authed_api(&base_url, session_credential, |api| async move {
             for marker in markers {
                 api.submit_read_cursor_advance(&marker).await?;
             }
@@ -165,7 +165,7 @@ pub(crate) fn mark_all_notifications_read(
 
 pub(crate) fn run_notification_action(
     base_url: String,
-    access_token: Signal<String>,
+    session_credential: Signal<String>,
     state_store: Signal<LocalStateStore>,
     notifications: Signal<Vec<Notification>>,
     status_msg: Signal<String>,
@@ -179,7 +179,7 @@ pub(crate) fn run_notification_action(
             realm_label,
         } => accept_invite_notification(
             base_url,
-            access_token,
+            session_credential,
             state_store,
             notifications,
             status_msg,
@@ -194,7 +194,7 @@ pub(crate) fn run_notification_action(
 #[allow(clippy::too_many_arguments)]
 fn accept_invite_notification(
     base_url: String,
-    access_token: Signal<String>,
+    session_credential: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
@@ -210,8 +210,8 @@ fn accept_invite_notification(
     ));
     spawn(async move {
         let accepted_realm_for_api = accepted_realm.clone();
-        let access_token = access_token();
-        match with_authed_api(&base_url, access_token, |api| async move {
+        let session_credential = session_credential();
+        match with_authed_api(&base_url, session_credential, |api| async move {
             let account = api.account_me().await?;
             let submit = api
                 .join_realm_from_invite(&accepted_realm_for_api, &account.did, &invite_id)

@@ -1,6 +1,5 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use url::Url;
 
 mod api;
@@ -63,8 +62,6 @@ pub struct CoauthLoginOutcome {
     #[serde(default)]
     pub session_grant: Option<CoauthSessionGrantInfo>,
     #[serde(default)]
-    pub oidc_tokens: Option<OidcTokenResponse>,
-    #[serde(default)]
     pub warnings: Vec<String>,
 }
 
@@ -105,64 +102,6 @@ pub struct CoauthPrincipalServerInfo {
     pub endpoint: String,
 }
 
-/// Canonical OIDC token endpoint response shape. Used by
-/// [`CoauthApi::exchange_pkce_code_for_tokens`] and
-/// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
-/// Wire shape of coauth's private session-grant refresh response.
-/// OpenID Connect Core §3.1.3.3 - extra provider-specific fields
-/// strand through `extras` so tokens minted by Auth0 / Keycloak / etc.
-/// don't fail to deserialize on a one-off `provider_session_id` claim.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct OidcTokenResponse {
-    pub access_token: String,
-    #[serde(default)]
-    pub token_type: Option<String>,
-    #[serde(default)]
-    pub expires_in: Option<i64>,
-    #[serde(default)]
-    pub refresh_token: Option<String>,
-    #[serde(default)]
-    pub id_token: Option<String>,
-    #[serde(default)]
-    pub scope: Option<String>,
-    /// Catches provider-specific extras (`audience`, `nonce`, …).
-    #[serde(flatten)]
-    pub extras: serde_json::Map<String, Value>,
-}
-
-impl OidcTokenResponse {
-    /// Map into the persisted [`crate::local_state::OidcTokenBundle`].
-    /// `audience` is sourced from the `audience` extra field if present
-    /// or supplied by the caller (the principal-server URL the token is
-    /// expected to authenticate against).
-    pub fn to_persisted_bundle(
-        &self,
-        audience_hint: Option<&str>,
-    ) -> crate::local_state::OidcTokenBundle {
-        let now = chrono::Utc::now();
-        let expires_at_unix = self.expires_in.map(|secs| now.timestamp() + secs);
-        let audience = self
-            .extras
-            .get("audience")
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned)
-            .or_else(|| audience_hint.map(ToOwned::to_owned));
-        crate::local_state::OidcTokenBundle {
-            access_token: self.access_token.clone(),
-            refresh_token: self.refresh_token.clone(),
-            token_type: self
-                .token_type
-                .clone()
-                .unwrap_or_else(|| "Bearer".to_owned()),
-            expires_at_unix,
-            id_token: self.id_token.clone(),
-            scope: self.scope.clone(),
-            audience,
-            stored_at: now,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct OidcScaffoldBundle {
     pub client_id: String,
@@ -184,11 +123,6 @@ pub struct PersistedOidcScaffold {
     pub code_verifier: String,
     #[serde(default)]
     pub client_id: String,
-    /// Retained field name for back-compat; holds the resolved
-    /// `gate_account_base` (the Account Authority origin all `gate/account`
-    /// calls are routed to), not a private auth-server bridge base.
-    pub auth_server_url: String,
-    #[serde(default)]
     pub principal_server_url: String,
     #[serde(default)]
     pub principal_actor_id: String,
@@ -209,12 +143,13 @@ pub struct PersistedOidcScaffold {
 #[cfg(target_arch = "wasm32")]
 pub(crate) const OIDC_SCAFFOLD_STORAGE_KEY: &str = "yougen.oidc_scaffold.v1";
 
-/// Result of a hard-logout session-grant revocation at the Auth Server.
-/// Distinguishes "the grant chain is provably gone" from "the call failed and
-/// must be retried" so durable logout never clears its journal on a real error.
+/// Result of running the single client-visible hard logout at the Account
+/// Authority. Distinguishes "the server-side logout is terminal" from "the
+/// call failed and must be retried" so durable logout never clears its journal
+/// on a real error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionGrantRevokeOutcome {
-    /// The grant was revoked (or was already gone): the rotation chain is dead.
+pub enum AccountLogoutRunOutcome {
+    /// The Account Authority reports logout completion, or the target session is already gone.
     Terminated,
 }
 

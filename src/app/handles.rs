@@ -164,7 +164,6 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
         store.clear_account_scoped();
         if server_changed {
             store.set_session_grant(None);
-            store.set_oidc_tokens(None);
         }
     }
     // Retire the previous server's SyncEngine. The use_effect's

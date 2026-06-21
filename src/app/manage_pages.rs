@@ -126,7 +126,7 @@ pub(super) fn RealmsManagePage(
                                             return;
                                         }
                                         // Membership events are authored by the account/principal
-                                        // DID (the bearer session actor), not the local device DID,
+                                        // DID (the authenticated session actor), not the local device DID,
                                         // or the server rejects them with `actor_session_mismatch`.
                                         let actor_id = actor_account_did.clone();
                                         if actor_id.trim().is_empty() {

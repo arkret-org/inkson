@@ -157,7 +157,6 @@ pub fn build_persisted_oidc_scaffold(
         expected_nonce: bundle.nonce.clone(),
         code_verifier: bundle.code_verifier.clone(),
         client_id: bundle.client_id.clone(),
-        auth_server_url: gate_account_base.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
         principal_actor_id: principal_actor_id.to_owned(),
         device_id: device_id.to_owned(),

@@ -31,7 +31,7 @@
 //! boot path starts with the synchronous localStorage wrapper and
 //! upgrades to the IndexedDB/SubtleCrypto tier via
 //! `upgrade_wasm_secure_key_store_async`, so the DPoP seed follows the
-//! same handoff as OIDC refresh tokens. Tests keep using plaintext
+//! same handoff as session credentials. Tests keep using plaintext
 //! state records to remain deterministic and dependency-free.
 
 use base64::Engine as _;
@@ -110,8 +110,8 @@ impl DpopHandle {
     /// Used after a DPoP-bound session-grant rotation: the rotated grant's
     /// `session_public_key` is this device key (the grant binds to the same key
     /// the rotation proof proved possession of), so the principal-server
-    /// exchange proof must be signed with this key. Persisting it as the
-    /// rotated grant's `session_private_key_pem` lets the existing exchange path
+    /// introspection proof must be signed with this key. Persisting it as the
+    /// rotated grant's `session_private_key_pem` lets the existing proof path
     /// (`session_grant_signing_key_from_pem`) sign with the right key, uniformly
     /// with the first-login flow.
     pub fn session_signing_key_pkcs8_pem(&self) -> Result<String, AuthDpopError> {
@@ -123,9 +123,9 @@ impl DpopHandle {
     }
 
     /// Mint a fresh DPoP proof JWS for the given `(htm, htu)` pair.
-    /// `ath` carries the raw access token when the proof accompanies a
-    /// bearer token (refresh, grant-using calls); this helper hashes it
-    /// into the RFC 9449 `ath` claim. Pass `None` for grant issuance.
+    /// `ath` carries the raw authorization credential when the proof
+    /// accompanies a protected call; this helper hashes it into the
+    /// RFC 9449 `ath` claim. Pass `None` for grant issuance.
     pub fn mint_proof(
         &self,
         htm: &str,
@@ -133,7 +133,7 @@ impl DpopHandle {
         ath: Option<&str>,
     ) -> Result<String, AuthDpopError> {
         let mut claims: DpopClaims = fresh_dpop_claims(htm.to_owned(), htu.to_owned(), None);
-        claims.ath = ath.map(dpop_access_token_hash);
+        claims.ath = ath.map(dpop_authorization_credential_hash);
         build_dpop_proof_ed25519(&self.signing_key, &claims).map_err(AuthDpopError::Mint)
     }
 
@@ -156,10 +156,10 @@ impl DpopHandle {
     }
 }
 
-/// RFC 9449 access-token hash:
-/// `base64url-no-pad(sha256(access_token))`.
-pub fn dpop_access_token_hash(access_token: &str) -> String {
-    URL_SAFE_NO_PAD.encode(Sha256::digest(access_token.as_bytes()))
+/// RFC 9449 `ath` hash:
+/// `base64url-no-pad(sha256(authorization_credential))`.
+pub fn dpop_authorization_credential_hash(authorization_credential: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(authorization_credential.as_bytes()))
 }
 
 /// Generate or load the device DPoP key. Calls return the same handle
@@ -404,30 +404,33 @@ mod tests {
     }
 
     #[test]
-    fn access_token_hash_matches_rfc9449_ath_encoding() {
+    fn authorization_credential_hash_matches_rfc9449_ath_encoding() {
         assert_eq!(
-            dpop_access_token_hash("access-token-1"),
-            URL_SAFE_NO_PAD.encode(Sha256::digest(b"access-token-1"))
+            dpop_authorization_credential_hash("session-credential-1"),
+            URL_SAFE_NO_PAD.encode(Sha256::digest(b"session-credential-1"))
         );
     }
 
     #[test]
-    fn handle_mints_ath_when_access_token_supplied() {
+    fn handle_mints_ath_when_authorization_credential_supplied() {
         let mut store = isolated_store("mint-ath");
         let handle = ensure_device_key(&mut store).unwrap();
         let proof = handle
             .mint_proof(
                 "POST",
                 "https://example.test/_cokret/gate/account/session-grants",
-                Some("access-token-1"),
+                Some("session-credential-1"),
             )
             .unwrap();
         let payload = proof_payload(&proof);
-        assert_eq!(payload["ath"], dpop_access_token_hash("access-token-1"));
+        assert_eq!(
+            payload["ath"],
+            dpop_authorization_credential_hash("session-credential-1")
+        );
     }
 
     #[test]
-    fn handle_omits_ath_when_no_access_token_supplied() {
+    fn handle_omits_ath_when_no_authorization_credential_supplied() {
         let mut store = isolated_store("mint-no-ath");
         let handle = ensure_device_key(&mut store).unwrap();
         let proof = handle

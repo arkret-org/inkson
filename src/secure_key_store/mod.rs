@@ -5,9 +5,7 @@
 //! arbitrary short-string secrets that should land in the OS keychain
 //! rather than `state.json`. Today's callers:
 //!
-//! * OIDC `refresh_token` moved out of [`crate::local_state::OidcTokenBundle`] before disk
-//!   persistence.
-//! * coauth-issued session grant (short-lived but useful between `register_device` retries).
+//! * coauth-issued session credential and session-grant holder material.
 //! * Push provider auth bundles for FCM / APNs once the host adapters land.
 //!
 //! ## Backends
@@ -15,7 +13,7 @@
 //! | Target          | Default backend         | Notes |
 //! |-----------------|-------------------------|-------|
 //! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the `keyring` crate (Keychain / Secret Service / Credential Manager). |
-//! | wasm32          | [`LocalStorageSecureKeyStore`] for low-value first-paint secrets, then [`IndexedDbSecureKeyStore`] after async upgrade | Ed25519 signing seeds, account MLS secrets, and bearer tokens require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before upgrade. |
+//! | wasm32          | [`LocalStorageSecureKeyStore`] for low-value first-paint secrets, then [`IndexedDbSecureKeyStore`] after async upgrade | Ed25519 signing seeds, account MLS secrets, and session credentials require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before upgrade. |
 //! | iOS / Android   | [`HostBridgeSecureKeyStore`] when the host installs a bridge; otherwise [`MemorySecureKeyStore`] | Mobile artifacts are outside the local 1.0 milestone. |
 //!
 //! ## Why not reuse `crate::key_store::KeyStore`?
@@ -93,11 +91,11 @@ const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds r
      localStorage seed read/write is disabled";
 
 #[cfg(target_arch = "wasm32")]
-const WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED: &str = "wasm account secrets and bearer tokens require IndexedDbSecureKeyStore with a \
+const WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED: &str = "wasm account secrets and session credentials require IndexedDbSecureKeyStore with a \
      non-extractable SubtleCrypto AES-GCM wrapping key; localStorage read/write is disabled";
 
 /// localStorage flag that opts OUT of the wasm IndexedDB-only secure-secret
-/// hardening, allowing seeds / account secrets / bearer tokens to live in the
+/// hardening, allowing seeds / account secrets / session credentials to live in the
 /// AEAD-wrapped `localStorage` tier instead of requiring IndexedDB +
 /// non-extractable SubtleCrypto.
 ///
@@ -143,9 +141,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key == PENDING_LOGOUT_SECRET_KEY
         || key.starts_with("yougen.mls_snapshot.account_secret.")
         || key.starts_with("yougen_mls_account_secret")
-        || key.starts_with("coauth.refresh_token.")
-        || key.starts_with("coauth.access_token.")
-        || key.starts_with("coauth.session_token.")
+        || key.starts_with("coauth.session_credential.")
 }
 
 /// Keys that MUST NOT be mirrored to the transient localStorage unload-race

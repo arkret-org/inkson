@@ -1,7 +1,5 @@
-//! OIDC client-side strands: callback parsing + token lifecycle.
+//! OIDC sign-in support lives in `crate::coauth` and `crate::views::login`.
 //!
-//! Grouped from the former top-level `oidc_callback` / `oidc_lifecycle`
-//! files.
-
-pub mod callback;
-pub mod lifecycle;
+//! The client opens a standard OIDC authorization URL, then submits the returned
+//! authorization code to the Account Authority `session-grants` endpoint. It does
+//! not keep OAuth access or refresh tokens as app session material.

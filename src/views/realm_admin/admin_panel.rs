@@ -987,7 +987,7 @@ pub fn RealmAdminPanel(
                                 let realm = realm.clone();
                                 let api_token = token();
                                 // Membership events are authored by the account/principal DID
-                                // (the bearer session actor), not the device DID, or the server
+                                // (the authenticated session actor), not the device DID, or the server
                                 // rejects them with `actor_session_mismatch`.
                                 let actor_id = actor_account_did.trim().to_owned();
                                 if actor_id.is_empty() {

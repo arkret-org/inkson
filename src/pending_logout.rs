@@ -11,7 +11,7 @@
 //! that grant. The Account Authority internally terminates BOTH the Auth-side
 //! grant rotation chain + `browser_session` AND the Principal-side
 //! account/device session + to-device drop. The client MUST NOT fan out to two
-//! origins (the old coauth-grant-logout + soland-logout pair is collapsed).
+//! origins or call Auth-side sub-operations directly.
 //!
 //! The old implementation fired two calls from a detached `spawn` after
 //! the local wipe. If the tab closed mid-flight, or the server was briefly
@@ -71,12 +71,12 @@ pub struct PendingLogout {
     /// `principal_server_url` at retry time.
     #[serde(default)]
     pub gate_account_base: Option<String>,
-    /// Principal-server base URL (diagnostics / legacy field).
+    /// Principal-server base URL for diagnostics.
     pub base_url: String,
-    /// Short principal bearer (diagnostics / legacy field). The single hard
-    /// logout authenticates with the grant + DPoP, not this bearer.
+    /// Last in-memory session credential captured for diagnostics. The single
+    /// hard logout authenticates with the grant + DPoP, not this value.
     #[serde(default)]
-    pub bearer: String,
+    pub session_credential: String,
     /// Account DID, for diagnostics only.
     #[serde(default)]
     pub account_did: String,
@@ -137,7 +137,7 @@ pub async fn execute_pending_logout(
     match hard_logout_at_authority(record).await {
         // `account_logout` already classifies the HTTP result: a terminal
         // outcome (revoked / already-gone) → `Ok`, any real failure → `Err`.
-        Ok(crate::coauth::SessionGrantRevokeOutcome::Terminated) => {
+        Ok(crate::coauth::AccountLogoutRunOutcome::Terminated) => {
             let _ = clear_pending_logout(store);
             LogoutRunOutcome::Completed
         }
@@ -152,12 +152,12 @@ pub async fn execute_pending_logout(
 }
 
 /// T1.Y3 — single hard logout to `{gate_account_base}/logout` with the grant
-/// bearer + a DPoP holder proof minted from the stashed device seed (the live
+/// plus a DPoP holder proof minted from the stashed device seed (the live
 /// key is already wiped). The DPoP `htu` MUST equal the `/logout` URL and `ath`
 /// MUST bind the grant.
 async fn hard_logout_at_authority(
     record: &PendingLogout,
-) -> anyhow::Result<crate::coauth::SessionGrantRevokeOutcome> {
+) -> anyhow::Result<crate::coauth::AccountLogoutRunOutcome> {
     let grant_jwt = record
         .grant_jwt
         .as_deref()
@@ -181,7 +181,7 @@ async fn hard_logout_at_authority(
             let principal_server_url = record.principal_server_url.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("pending logout missing gate_account_base and principal_server_url")
             })?;
-            crate::coauth::resolve_principal_auth_server_url(principal_server_url)
+            crate::coauth::resolve_principal_gate_account_base(principal_server_url)
                 .await
                 .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?
         }
@@ -280,7 +280,7 @@ mod tests {
             principal_server_url: Some("https://soland.example".to_owned()),
             gate_account_base: Some("https://soland.example/_cokret/gate/account".to_owned()),
             base_url: "https://soland.example".to_owned(),
-            bearer: "bearer".to_owned(),
+            session_credential: "session-credential".to_owned(),
             account_did: "did:web:soland.example:users:01".to_owned(),
             created_at,
         }

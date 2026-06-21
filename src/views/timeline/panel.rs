@@ -435,7 +435,7 @@ pub fn TimelinePanel(
                                 div { class: "muted", "data-testid": "blob-attachment",
                                     div { "Blob: {blob_ref}" }
                                     div {
-                                        "Downloaded through the authenticated blob API; bearer tokens are not embedded in media URLs."
+                                        "Downloaded through the authenticated blob API; session credentials are not embedded in media URLs."
                                     }
                                 }
                             }

@@ -158,64 +158,6 @@ fn s256_challenge_matches_rfc7636_test_vector() {
     );
 }
 
-/// The token-response -> persisted-bundle adapter MUST translate
-/// `expires_in` into an absolute `expires_at_unix` and preserve
-/// refresh_token / id_token / scope verbatim. Production callers persist
-/// the result via `LocalStateStore::set_oidc_tokens`.
-#[test]
-fn oidc_token_response_to_bundle_round_trips_fields() {
-    let response = OidcTokenResponse {
-        access_token: "at-1234".to_owned(),
-        token_type: Some("Bearer".to_owned()),
-        expires_in: Some(3600),
-        refresh_token: Some("rt-abcd".to_owned()),
-        id_token: Some("eyJ...".to_owned()),
-        scope: Some("openid offline_access".to_owned()),
-        extras: serde_json::Map::new(),
-    };
-    let bundle = response.to_persisted_bundle(Some("https://principal.example/api"));
-    assert_eq!(bundle.access_token, "at-1234");
-    assert_eq!(bundle.refresh_token.as_deref(), Some("rt-abcd"));
-    assert_eq!(bundle.token_type, "Bearer");
-    assert_eq!(bundle.id_token.as_deref(), Some("eyJ..."));
-    assert_eq!(bundle.scope.as_deref(), Some("openid offline_access"));
-    assert_eq!(
-        bundle.audience.as_deref(),
-        Some("https://principal.example/api")
-    );
-    // expires_at_unix should be ~now+3600 (within a few seconds).
-    let expected_min = chrono::Utc::now().timestamp() + 3500;
-    let expected_max = chrono::Utc::now().timestamp() + 3700;
-    let actual = bundle.expires_at_unix.expect("expires_at_unix present");
-    assert!(
-        actual > expected_min && actual < expected_max,
-        "expires_at_unix={actual} out of expected window [{expected_min}, {expected_max}]"
-    );
-}
-
-/// Audience supplied as an `extras` field on the token response
-/// SHOULD win over the caller-supplied hint — providers that mint
-/// audience-scoped tokens (Auth0 RBAC) always emit it on the wire.
-#[test]
-fn oidc_token_response_audience_extras_wins_over_hint() {
-    let mut extras = serde_json::Map::new();
-    extras.insert(
-        "audience".to_owned(),
-        Value::String("https://wire.example/api".to_owned()),
-    );
-    let response = OidcTokenResponse {
-        access_token: "at".to_owned(),
-        token_type: None,
-        expires_in: None,
-        refresh_token: None,
-        id_token: None,
-        scope: None,
-        extras,
-    };
-    let bundle = response.to_persisted_bundle(Some("https://hint.example/api"));
-    assert_eq!(bundle.audience.as_deref(), Some("https://wire.example/api"));
-}
-
 /// The introspection proof MUST be a valid Ed25519 JWS over the
 /// canonical claims, MUST embed `ck.session_grant.introspection_proof.v1`
 /// as `type`, MUST hash the grant JWT into `grant_jwt_hash`, and MUST
@@ -536,23 +478,7 @@ fn authorize_url_falls_back_to_native_client_id() {
     );
 }
 
-/// The legacy alias fallback synthesises an oidc method from
-/// `auth_server_url` / `oauth_issuer` when `methods[]` is empty.
-#[test]
-fn synthesizes_oidc_method_from_legacy_aliases() {
-    let mut metadata = cokret_sdk::AuthMetadata::minimal("production");
-    metadata.auth_server_url = Some("https://auth.example".to_owned());
-    let method = synthesize_oidc_method_from_aliases(&metadata).expect("synthesized method");
-    assert_eq!(method.method, cokret_sdk::AuthMethodKind::Oidc);
-    assert_eq!(method.issuer.as_deref(), Some("https://auth.example"));
-    assert_eq!(
-        method.openid_configuration.as_deref(),
-        Some("https://auth.example/.well-known/openid-configuration")
-    );
-}
-
-/// `gate_account_base` derivation: prefer the strong account_authority,
-/// then the legacy auth_server_url alias, else the principal origin.
+/// `gate_account_base` derivation uses the strong `account_authority`.
 #[test]
 fn resolve_gate_account_base_prefers_account_authority() {
     let mut metadata = cokret_sdk::AuthMetadata::minimal("production");
@@ -565,16 +491,23 @@ fn resolve_gate_account_base_prefers_account_authority() {
 }
 
 #[test]
-fn resolve_gate_account_base_falls_back_to_auth_server_url() {
+fn resolve_gate_account_base_derives_from_account_authority_origin() {
     let mut metadata = cokret_sdk::AuthMetadata::minimal("production");
-    metadata.auth_server_url = Some("https://auth.example".to_owned());
+    metadata.account_authority = Some(cokret_sdk::AccountAuthority {
+        origin: "https://aa.example".to_owned(),
+        gate_account_base: String::new(),
+    });
     let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
-    assert_eq!(base, "https://auth.example/_cokret/gate/account");
+    assert_eq!(base, "https://aa.example/_cokret/gate/account");
 }
 
 #[test]
-fn resolve_gate_account_base_falls_back_to_principal_origin() {
+fn resolve_gate_account_base_fails_closed_without_account_authority() {
     let metadata = cokret_sdk::AuthMetadata::minimal("production");
-    let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
-    assert_eq!(base, "https://principal.example/_cokret/gate/account");
+    let error = resolve_gate_account_base("https://principal.example", &metadata).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("auth_metadata.account_authority")
+    );
 }

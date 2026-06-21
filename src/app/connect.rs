@@ -1,29 +1,19 @@
 use super::*;
 
-pub(super) fn oidc_refresh_error_invalidates_grant(error: &anyhow::Error) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    message.contains("invalid_grant")
-        || (message.contains("refresh endpoint returned 400")
-            && (message.contains("expired")
-                || message.contains("revoked")
-                || message.contains("provided access grant is invalid")
-                || (message.contains("refresh") && message.contains("invalid"))))
-}
-
-/// The single source of truth for re-minting the principal bearer.
+/// The single source of truth for restoring or rotating the current session credential.
 ///
 /// Registered once at the app root and reached everywhere through
-/// [`crate::session::refresh_current_bearer`]. Reads the live
+/// [`crate::session::refresh_current_session_credential`]. Reads the live
 /// base/actor/device from their signals (so it always targets the active
-/// session), tries the OIDC `refresh_token` path first, then the
-/// session-grant exchange. On success it writes the fresh bearer into the
-/// `token` signal and persisted config and returns it; on definitive
-/// failure it returns `None` and the caller routes to login.
+/// session), then either adopts the current grant JWT or rotates the grant.
+/// On success it writes the current credential into the `token` signal and
+/// persisted config and returns it; on definitive failure it returns `None`
+/// and the caller routes to login.
 ///
 /// Concurrency is handled by `crate::session`: callers coalesce onto one
 /// in-flight invocation, so this never runs twice in parallel for a single
 /// rollover.
-pub(super) async fn remint_principal_bearer(
+pub(super) async fn refresh_session_credential_for_active_context(
     base_url: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
@@ -37,64 +27,6 @@ pub(super) async fn remint_principal_bearer(
     let device = device_id();
     let generation = session_generation();
 
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    let oidc_bundle = {
-        let store = state_store.read();
-        store.load_oidc_tokens_with_secure_store(&actor, secure_store.as_ref())
-    };
-    if let Some(bundle) = oidc_bundle
-        && crate::oidc::lifecycle::has_refresh_token(&bundle)
-    {
-        match refresh_oidc_bearer_for_server(&base, &actor, &device, &bundle).await {
-            Ok(next) => {
-                // Abandon if the user switched servers while the refresh was in
-                // flight, or if a logout invalidated this refresh generation.
-                // Committing here would resurrect stale credentials over the
-                // freshly selected or logged-out session.
-                if !same_server_url(&base, &base_url()) || session_generation() != generation {
-                    return None;
-                }
-                let access_token = next.access_token.clone();
-                state_store.write().set_oidc_tokens_with_secure_store(
-                    Some(next),
-                    &actor,
-                    secure_store.as_ref(),
-                );
-                token.set(access_token.clone());
-                persist_config(
-                    config_store,
-                    base.clone(),
-                    actor.clone(),
-                    device.clone(),
-                    access_token.clone(),
-                );
-                return Some(access_token);
-            }
-            Err(error) if oidc_refresh_error_invalidates_grant(&error) => {
-                if !same_server_url(&base, &base_url()) || session_generation() != generation {
-                    return None;
-                }
-                tracing::warn!(
-                    ?error,
-                    actor = %actor,
-                    "OIDC refresh_token was rejected permanently; clearing persisted OIDC bundle before fallback",
-                );
-                state_store.write().set_oidc_tokens_with_secure_store(
-                    None,
-                    &actor,
-                    secure_store.as_ref(),
-                );
-            }
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    actor = %actor,
-                    "OIDC refresh attempt failed without invalidating the stored refresh_token",
-                );
-            }
-        }
-    }
-
     if token().trim().is_empty() {
         let live_grant = {
             let store = state_store.read();
@@ -105,26 +37,26 @@ pub(super) async fn remint_principal_bearer(
             })
         };
         if let Some(grant) = live_grant {
-            let access_token = grant.grant_jwt.clone();
-            token.set(access_token.clone());
+            let session_credential = grant.grant_jwt.clone();
+            token.set(session_credential.clone());
             persist_config(
                 config_store,
                 base.clone(),
                 actor.clone(),
                 device.clone(),
-                access_token.clone(),
+                session_credential.clone(),
             );
-            return Some(access_token);
+            return Some(session_credential);
         }
     }
 
     // ②(A+②): multi-day sliding session. The held credential is the grant
     // itself; when it is near its own expiry the refresh path rotates it (DPoP
     // holder proof signed by the durable device key bound into `cnf.jkt`) onto a
-    // fresh grant, and the rotated grant JWT becomes the live credential. There
-    // is no longer a grant→bearer exchange. `prepare_refresh_for_server_after_unauthorized`
-    // forces a rotation attempt even when the local expiry metadata looks fresh
-    // (the server may have rotated/revoked the grant early).
+    // fresh grant, and the rotated grant JWT becomes the live credential.
+    // `prepare_refresh_for_server_after_unauthorized` forces a rotation attempt
+    // even when the local expiry metadata looks fresh (the server may have
+    // rotated/revoked the grant early).
     let prepared = {
         let mut store = state_store.write();
         crate::session_refresh::prepare_refresh_for_server_after_unauthorized(&mut store, &base)
@@ -136,9 +68,8 @@ pub(super) async fn remint_principal_bearer(
             device_handle,
         } => {
             let result = crate::session_refresh::exchange_refresh(&grant, &device_handle).await;
-            // Same server-switch guard as the OIDC path: don't write the
-            // old server's grant outcome onto a session that just moved or
-            // logged out.
+            // Server-switch guard: don't write the old server's grant outcome
+            // onto a session that just moved or logged out.
             if !same_server_url(&base, &base_url()) || session_generation() != generation {
                 return None;
             }
@@ -147,19 +78,19 @@ pub(super) async fn remint_principal_bearer(
         }
     };
     match outcome {
-        crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
+        crate::session_refresh::RefreshOutcome::Refreshed { session_credential } => {
             if session_generation() != generation {
                 return None;
             }
-            token.set(access_token.clone());
+            token.set(session_credential.clone());
             persist_config(
                 config_store,
                 base.clone(),
                 actor.clone(),
                 device.clone(),
-                access_token.clone(),
+                session_credential.clone(),
             );
-            Some(access_token)
+            Some(session_credential)
         }
         crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
             crate::session::invalidate_current_session(reason);
@@ -251,25 +182,26 @@ fn current_base_api(base: &str, state_store: Signal<LocalStateStore>) -> anyhow:
 
 fn current_authed_api(
     base: &str,
-    access_token: &str,
+    session_credential: &str,
     state_store: Signal<LocalStateStore>,
 ) -> anyhow::Result<CokretApi> {
-    let api = CokretApi::new(base)?.with_bearer(access_token.to_owned());
+    let api = CokretApi::new(base)?.with_bearer(session_credential.to_owned());
     let store = state_store.read();
     Ok(attach_current_session_material(api, &store))
 }
 
 /// ②(A+②) — build a `/_cokret/self/*`-ready client: the credential
-/// (`ck.session.grant` JWT) as the bearer plus the device DPoP holder key so
-/// each request carries a per-request `DPoP` proof (api-conventions.md §3.3).
+/// (`ck.session.grant` JWT) in the HTTP Bearer authorization slot plus the
+/// device DPoP holder key so each request carries a per-request `DPoP` proof
+/// (api-conventions.md §3.3).
 /// Used by standalone (non-`connect`) self-path call sites that build their own
-/// `CokretApi`. Best-effort on the DPoP key: if it cannot be loaded the bearer
-/// is still attached (dev-login / OAuth-introspection inbound paths).
+/// `CokretApi`. Best-effort on the DPoP key: if it cannot be loaded the
+/// credential is still attached for compatibility inbound paths.
 pub(super) fn self_authed_api(
     base: &str,
-    grant_or_bearer: impl Into<String>,
+    session_credential: impl Into<String>,
 ) -> anyhow::Result<CokretApi> {
-    let api = CokretApi::new(base)?.with_bearer(grant_or_bearer);
+    let api = CokretApi::new(base)?.with_bearer(session_credential);
     let store = crate::local_state::LocalStateStore::default();
     Ok(attach_current_session_material(api, &store))
 }
@@ -278,12 +210,12 @@ pub(super) fn adopt_live_token_for_api(
     base: &str,
     state_store: Signal<LocalStateStore>,
     live_token: Signal<String>,
-    session_token: &mut String,
+    session_credential: &mut String,
     authed: &mut CokretApi,
 ) {
     let latest = live_token();
-    if !latest.trim().is_empty() && latest != *session_token {
-        *session_token = latest.clone();
+    if !latest.trim().is_empty() && latest != *session_credential {
+        *session_credential = latest.clone();
         if let Ok(api) = current_authed_api(base, &latest, state_store) {
             *authed = api;
         } else {
@@ -319,7 +251,7 @@ async fn enroll_current_session_device(
         .map_err(|error| anyhow::anyhow!("ensure device signing seed: {error}"))?;
     let device_public_key = crate::device_enrollment::device_public_key_multibase(&material);
 
-    let gate_account_base = crate::coauth::resolve_principal_auth_server_url(base)
+    let gate_account_base = crate::coauth::resolve_principal_gate_account_base(base)
         .await
         .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?;
     let coauth = crate::coauth::CoauthApi::new(&gate_account_base)?;
@@ -468,10 +400,12 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     }
                 };
 
-                let mut session_token = token();
-                if session_token.trim().is_empty() {
-                    if let Some(refreshed) = crate::session::refresh_current_bearer().await {
-                        session_token = refreshed;
+                let mut session_credential = token();
+                if session_credential.trim().is_empty() {
+                    if let Some(refreshed) =
+                        crate::session::refresh_current_session_credential().await
+                    {
+                        session_credential = refreshed;
                         if let Ok(rebound) = current_base_api(&base, state_store) {
                             api = rebound;
                         }
@@ -503,13 +437,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     }
                 }
 
-                let mut authed = current_authed_api(&base, &session_token, state_store)
-                    .unwrap_or_else(|_| api.clone().with_bearer(session_token.clone()));
+                let mut authed = current_authed_api(&base, &session_credential, state_store)
+                    .unwrap_or_else(|_| api.clone().with_bearer(session_credential.clone()));
                 adopt_live_token_for_api(
                     &base,
                     state_store,
                     token,
-                    &mut session_token,
+                    &mut session_credential,
                     &mut authed,
                 );
                 // Resolve the canonical actor DID from the account viewer. Three
@@ -536,13 +470,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         actor.clone()
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        if let Some(refreshed) = crate::session::refresh_current_bearer().await {
-                            session_token = refreshed;
+                        if let Some(refreshed) =
+                            crate::session::refresh_current_session_credential().await
+                        {
+                            session_credential = refreshed;
                             if let Ok(rebound) = current_base_api(&base, state_store) {
                                 api = rebound;
                             }
-                            authed = current_authed_api(&base, &session_token, state_store)
-                                .unwrap_or_else(|_| api.clone().with_bearer(session_token.clone()));
+                            authed = current_authed_api(&base, &session_credential, state_store)
+                                .unwrap_or_else(|_| {
+                                    api.clone().with_bearer(session_credential.clone())
+                                });
                             match authed.account_me().await {
                                 Ok(account) if !account.did.trim().is_empty() => {
                                     account_personal_handle =
@@ -677,7 +615,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &base,
                     state_store,
                     token,
-                    &mut session_token,
+                    &mut session_credential,
                     &mut authed,
                 );
                 match authed.list_devices().await {
@@ -691,9 +629,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         device_authorization_check_complete.set(true);
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        if let Some(refreshed) = crate::session::refresh_current_bearer().await {
-                            session_token = refreshed;
-                            authed = api.clone().with_bearer(session_token.clone());
+                        if let Some(refreshed) =
+                            crate::session::refresh_current_session_credential().await
+                        {
+                            session_credential = refreshed;
+                            if let Ok(rebound) = current_base_api(&base, state_store) {
+                                api = rebound;
+                            }
+                            authed = current_authed_api(&base, &session_credential, state_store)
+                                .unwrap_or_else(|_| {
+                                    api.clone().with_bearer(session_credential.clone())
+                                });
                             match authed.list_devices().await {
                                 Ok(viewer) => {
                                     account_has_other_devices.set(
@@ -739,7 +685,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         &base,
                         state_store,
                         token,
-                        &mut session_token,
+                        &mut session_credential,
                         &mut authed,
                     );
                     match enroll_current_session_device(
@@ -772,7 +718,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     base.clone(),
                     canonical_actor.clone(),
                     device.clone(),
-                    session_token.clone(),
+                    session_credential.clone(),
                 );
                 crypto_state.set("Session active".to_owned());
 
@@ -786,19 +732,23 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &base,
                     state_store,
                     token,
-                    &mut session_token,
+                    &mut session_credential,
                     &mut authed,
                 );
                 let sync_result = match authed.account_subscribe_snapshot(None).await {
                     Ok(sync) => Ok(sync),
                     Err(error) if is_auth_expired_error(&error) => {
-                        if let Some(refreshed) = crate::session::refresh_current_bearer().await {
-                            session_token = refreshed;
+                        if let Some(refreshed) =
+                            crate::session::refresh_current_session_credential().await
+                        {
+                            session_credential = refreshed;
                             if let Ok(rebound) = current_base_api(&base, state_store) {
                                 api = rebound;
                             }
-                            authed = current_authed_api(&base, &session_token, state_store)
-                                .unwrap_or_else(|_| api.clone().with_bearer(session_token.clone()));
+                            authed = current_authed_api(&base, &session_credential, state_store)
+                                .unwrap_or_else(|_| {
+                                    api.clone().with_bearer(session_credential.clone())
+                                });
                             authed.account_subscribe_snapshot(None).await
                         } else {
                             Err(error)
@@ -812,23 +762,24 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             &base,
                             state_store,
                             token,
-                            &mut session_token,
+                            &mut session_credential,
                             &mut authed,
                         );
                         let invite_notifications = match authed.invites().await {
                             Ok(response) => Some(response.invites),
                             Err(error) if is_auth_expired_error(&error) => {
                                 if let Some(refreshed) =
-                                    crate::session::refresh_current_bearer().await
+                                    crate::session::refresh_current_session_credential().await
                                 {
-                                    session_token = refreshed;
+                                    session_credential = refreshed;
                                     if let Ok(rebound) = current_base_api(&base, state_store) {
                                         api = rebound;
                                     }
-                                    authed = current_authed_api(&base, &session_token, state_store)
-                                        .unwrap_or_else(|_| {
-                                            api.clone().with_bearer(session_token.clone())
-                                        });
+                                    authed =
+                                        current_authed_api(&base, &session_credential, state_store)
+                                            .unwrap_or_else(|_| {
+                                                api.clone().with_bearer(session_credential.clone())
+                                            });
                                     authed.invites().await.ok().map(|response| response.invites)
                                 } else {
                                     None
@@ -1222,19 +1173,23 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &base,
                     state_store,
                     token,
-                    &mut session_token,
+                    &mut session_credential,
                     &mut authed,
                 );
                 let events_result = match authed.events_describe().await {
                     Ok(events) => Ok(events),
                     Err(error) if is_auth_expired_error(&error) => {
-                        if let Some(refreshed) = crate::session::refresh_current_bearer().await {
-                            session_token = refreshed;
+                        if let Some(refreshed) =
+                            crate::session::refresh_current_session_credential().await
+                        {
+                            session_credential = refreshed;
                             if let Ok(rebound) = current_base_api(&base, state_store) {
                                 api = rebound;
                             }
-                            authed = current_authed_api(&base, &session_token, state_store)
-                                .unwrap_or_else(|_| api.clone().with_bearer(session_token.clone()));
+                            authed = current_authed_api(&base, &session_credential, state_store)
+                                .unwrap_or_else(|_| {
+                                    api.clone().with_bearer(session_credential.clone())
+                                });
                             authed.events_describe().await
                         } else {
                             Err(error)

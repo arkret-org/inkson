@@ -15,8 +15,7 @@ use crate::conformance::{
 };
 use crate::i18n::{Locale, TextDirection};
 use crate::local_state::{
-    ClientLocalState, LocalStateStore, OidcTokenBundle, PersistedSessionGrant,
-    default_strand_id_for_realm,
+    ClientLocalState, LocalStateStore, PersistedSessionGrant, default_strand_id_for_realm,
 };
 use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServerDescription, ServerDescriptionExt,
@@ -90,7 +89,6 @@ pub(crate) use sidebar_width::*;
 
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
-const BOOT_ACCESS_TOKEN_SKEW_SECS: i64 = 30;
 const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
 const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.query.list_handles_for_subject";
 const MIN_SIDEBAR_WIDTH: f64 = 280.0;
@@ -153,7 +151,7 @@ pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
-    let initial_session_token = initial_session_token_from_state(
+    let initial_session_credential = initial_session_credential_from_state(
         &initial_local_state,
         &initial_config,
         chrono::Utc::now().timestamp(),
@@ -165,7 +163,7 @@ pub fn RouterView() -> Element {
     );
     let initial_secure_store_bootstrap_ready = !cfg!(target_arch = "wasm32");
     let initial_session_boot_state = session_boot_state_from_bootstrap_material(
-        &initial_session_token,
+        &initial_session_credential,
         initial_can_restore_session,
         &initial_config.account_did,
         initial_secure_store_bootstrap_ready,
@@ -193,19 +191,19 @@ pub fn RouterView() -> Element {
     let base_url = use_signal(move || initial_server_url);
     let mut account_did = use_signal(move || initial_account_did);
     let device_id = use_signal(move || initial_device_id);
-    let mut token = use_signal(move || initial_session_token);
+    let mut token = use_signal(move || initial_session_credential);
     let mut session_boot_state = use_signal(move || initial_session_boot_state);
     let mut session_generation = use_signal(|| 0_u64);
 
-    // Install the app-wide, single-flight bearer refresher exactly once.
+    // Install the app-wide, single-flight session credential refresher exactly once.
     // Every auth-expired handler (connect, sync, chat send, Realm create,
-    // the account-menu button, the background poller) re-mints through
-    // this one closure via `crate::session::refresh_current_bearer()`, so
+    // the account-menu button, the background poller) routes through
+    // this one closure via `crate::session::refresh_current_session_credential()`, so
     // refresh policy lives in a single place and concurrent rollovers
     // coalesce instead of racing.
     use_hook(move || {
         crate::session::register_session_refresher(std::rc::Rc::new(move || {
-            Box::pin(remint_principal_bearer(
+            Box::pin(refresh_session_credential_for_active_context(
                 base_url,
                 account_did,
                 device_id,
@@ -293,7 +291,7 @@ pub fn RouterView() -> Element {
                         .load_with_secure_store(secure_store.as_ref());
                     let held_token = token_for_secure_upgrade.peek().trim().to_owned();
                     if held_token.is_empty() {
-                        if let Some(rehydrated) = rehydrated_session_token_for_active_config(
+                        if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
                             &loaded_config,
                             &base_url_for_secure_upgrade(),
                             &account_did_for_secure_upgrade(),
@@ -302,13 +300,12 @@ pub fn RouterView() -> Element {
                             token_for_secure_upgrade.set(rehydrated);
                         }
                     } else {
-                        // A bearer is already held in memory: sign-in completed
+                        // A credential is already held in memory: sign-in completed
                         // BEFORE this IndexedDB secure-store upgrade was ready, so
-                        // `config.rs` could only reach the localStorage tier — which
-                        // refuses bearer tokens — and the bearer was never persisted
-                        // (`config persisted without bearer`). Now that the upgraded
-                        // store is installed, re-persist it so the session survives a
-                        // reload / re-render instead of bouncing back to /login.
+                        // `config.rs` could only reach the localStorage tier, which
+                        // refuses session credentials. Now that the upgraded store is
+                        // installed, re-persist it so the session survives a reload /
+                        // re-render instead of bouncing back to /login.
                         persist_config(
                             config_store_for_secure_upgrade,
                             base_url_for_secure_upgrade(),
@@ -554,9 +551,9 @@ pub fn RouterView() -> Element {
     // then signs in (on the same mount) would never auto-connect, since
     // the one-shot would have already been spent during the empty-session
     // first render.
-    // Background session-refresh poller. Proactively re-mints the bearer
+    // Background session-refresh poller. Proactively rotates the grant
     // a little before it expires so requests rarely hit a cold 401. The
-    // re-mint itself goes through the shared single-flight refresher
+    // refresh itself goes through the shared single-flight refresher
     // (`crate::session`), so this poller and any reactive 401-retry can
     // never fire two competing refreshes for the same rollover.
     use_future({
@@ -567,51 +564,35 @@ pub fn RouterView() -> Element {
         let token = token;
         let mut session_boot_state = session_boot_state;
         move || async move {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
             loop {
-                // Freshness gate — only re-mint when the active credential
-                // is actually near expiry. We key off *both* signals and
-                // refresh if either is due:
-                //   * the OIDC access token's own `expires_at` (when the IdP advertised
-                //     `expires_in`), and
-                //   * the session grant's `session_expires_at`, which tracks the short-lived
-                //     principal bearer itself.
-                // The grant signal is what saves IdPs that omit
-                // `expires_in` (where `due_for_refresh` can never fire) —
-                // we still proactively refresh before the principal bearer
-                // dies instead of waiting for a cold 401. (Read-only
-                // borrow, dropped before any await, so concurrent
-                // `state_store.write()` callers never hit
-                // `AlreadyBorrowedMut`.)
+                // Freshness gate — only refresh when the persisted grant is
+                // near its own expiry. The read borrow is dropped before any
+                // await, so concurrent `state_store.write()` callers never hit
+                // `AlreadyBorrowedMut`.
                 let due = {
                     let store = state_store.read();
-                    let oidc_due = store
-                        .load_oidc_tokens_with_secure_store(&account_did(), secure_store.as_ref())
-                        .map(|bundle| crate::oidc::lifecycle::due_for_refresh(&bundle))
-                        .unwrap_or(false);
-                    let grant_due = matches!(
+                    matches!(
                         crate::session_refresh::refresh_decision(&store),
                         crate::session_refresh::RefreshDecision::Due
-                    );
-                    oidc_due || grant_due
+                    )
                 };
                 if due {
                     if token().trim().is_empty() {
                         status.set("Restoring session...".to_owned());
                         session_boot_state.set(SessionBootState::Restoring);
                     }
-                    match crate::session::refresh_current_bearer().await {
+                    match crate::session::refresh_current_session_credential().await {
                         Some(_) => {
                             status.set("Online".to_owned());
                             session_boot_state.set(SessionBootState::Authenticated);
                             last_error.set(None);
                         }
                         None => {
-                            // Keep the current bearer alive; a reactive 401
+                            // Keep the current credential alive; a reactive 401
                             // (or the login strand) handles a genuinely dead
                             // session. Surface the last issue for dev tools.
                             last_error.set(Some(
-                                "background session refresh produced no new bearer".to_owned(),
+                                "background session refresh produced no new credential".to_owned(),
                             ));
                         }
                     }
@@ -708,7 +689,7 @@ pub fn RouterView() -> Element {
     // Lower-level API helpers cannot directly mutate app signals, but they
     // can receive terminal auth errors (notably `session grant is not
     // active: revoked`) from background pollers. Register one soft-logout
-    // hook so those paths can clear the live bearer and stop retry loops.
+    // hook so those paths can clear the live credential and stop retry loops.
     {
         let mut invalidator_token = token;
         let mut invalidator_sync_cursor = sync_cursor;
@@ -738,7 +719,7 @@ pub fn RouterView() -> Element {
                 invalidator_session_generation.set(invalidator_session_generation() + 1);
                 invalidator_state_store.write().set_session_grant(None);
                 invalidator_token.set(String::new());
-                crate::config::clear_session_token_secret(&invalidator_account_did());
+                crate::config::clear_session_credential_secret(&invalidator_account_did());
                 persist_config(
                     invalidator_config_store,
                     invalidator_base_url(),
@@ -800,7 +781,7 @@ pub fn RouterView() -> Element {
         if session.trim().is_empty() && secure_store_ready {
             let rehydrated = {
                 let loaded = config_store.read().load();
-                rehydrated_session_token_for_active_config(
+                rehydrated_session_credential_for_active_config(
                     &loaded,
                     &base,
                     &account_did(),
@@ -813,19 +794,16 @@ pub fn RouterView() -> Element {
             }
         }
         if !session.trim().is_empty() {
-            let (has_oidc_bundle, stale_for_selected_server) = {
+            let stale_for_selected_server = {
                 let store = state_store.read();
-                let has_oidc_bundle = store.oidc_tokens().is_some();
-                let stale_grant = store
+                store
                     .session_grant()
                     .as_ref()
                     .map(|grant| {
                         !crate::session_refresh::grant_matches_principal_server(grant, &base)
                     })
-                    .unwrap_or(false);
-                (has_oidc_bundle, stale_grant)
+                    .unwrap_or(false)
             };
-            let stale_for_selected_server = !has_oidc_bundle && stale_for_selected_server;
             if stale_for_selected_server {
                 token.set(String::new());
                 session_boot_state.set(SessionBootState::Unauthenticated);
@@ -1204,7 +1182,7 @@ pub fn RouterView() -> Element {
             // the account recovery policy needs this device authorized as a
             // key-management device, which goes through the account authority
             // (coauth) and therefore requires an active `ck.session.grant`. A
-            // grant-less session (e.g. a dev-login bearer) can never pass that
+            // grant-less compatibility session can never pass that
             // gate, so auto-prompting it only loops on `recovery_policy_device_
             // not_authorized` and blocks the UI behind the modal. Don't prompt.
             if state_store.read().session_grant().is_none() {
@@ -3770,12 +3748,12 @@ pub fn RouterView() -> Element {
                                     div { class: "account-menu__section",
                                         div { class: "account-menu__section-head",
                                             span { "Session" }
-                                            span { "bearer" }
+                                            span { "credential" }
                                         }
                                         div { class: "account-menu__rows",
                                             div { class: "account-menu__row",
-                                                strong { "Token" }
-                                                span { class: "mono", "data-testid": "account-menu-session-token", if has_session { "Token loaded" } else { "No authenticated session" } }
+                                                strong { "Credential" }
+                                                span { class: "mono", "data-testid": "account-menu-session-token", if has_session { "Credential loaded" } else { "No authenticated session" } }
                                             }
                                             div { class: "account-menu__row",
                                                 strong { "Crypto" }
@@ -3832,14 +3810,13 @@ pub fn RouterView() -> Element {
                                                                 }
                                                                 Err(error) => {
                                                                     if is_auth_expired_error(&error) {
-                                                                        // The bearer expired between background
-                                                                        // refresh ticks. Try a silent re-mint
-                                                                        // (OIDC refresh_token / session-grant
-                                                                        // exchange) before declaring the session
+                                                                        // The credential expired between background
+                                                                        // refresh ticks. Try the session-grant
+                                                                        // refresh path before declaring the session
                                                                         // dead — clicking "Refresh session" must
-                                                                        // *keep* the user signed in, not bounce
-                                                                        // them to login on a routine token rollover.
-                                                                        if let Some(fresh) = crate::session::refresh_current_bearer().await {
+                                                                        // keep the user signed in, not bounce them to
+                                                                        // login on a routine credential rotation.
+                                                                        if let Some(fresh) = crate::session::refresh_current_session_credential().await {
                                                                             let canonical_actor = match self_authed_api(&base, fresh) {
                                                                                 Ok(api) => api
                                                                                     .account_me()
@@ -3954,7 +3931,7 @@ pub fn RouterView() -> Element {
                                                         // describe.auth_metadata.
                                                         gate_account_base: None,
                                                         base_url: base.clone(),
-                                                        bearer: api_token.clone(),
+                                                        session_credential: api_token.clone(),
                                                         account_did: actor.clone(),
                                                         created_at: chrono::Utc::now(),
                                                     };
@@ -3976,12 +3953,10 @@ pub fn RouterView() -> Element {
                                                 let logout_generation = session_generation() + 1;
                                                 account_session_state.set("Logging out".to_owned());
                                                 session_generation.set(logout_generation);
-                                                // Clear OIDC + session-grant state up
-                                                // front so a refresh-token-based silent
-                                                // re-auth cannot resurrect the session
-                                                // if the server-side logout call later
-                                                // fails or is cancelled.
-                                                state_store.write().set_oidc_tokens(None);
+                                                // Clear session-grant state up front so
+                                                // a local retry cannot resurrect the
+                                                // session if the server-side logout call
+                                                // later fails or is cancelled.
                                                 state_store.write().set_session_grant(None);
                                                 // Then wipe every account-scoped local
                                                 // projection cache (Realm tree, drafts,
@@ -4020,7 +3995,7 @@ pub fn RouterView() -> Element {
                                                 personal_handles_lookup_key.set(String::new());
                                                 last_error.set(None);
                                                 token.set(String::new());
-                                                crate::config::clear_session_token_secret(&actor);
+                                                crate::config::clear_session_credential_secret(&actor);
                                                 persist_config(
                                                     config_store,
                                                     base.clone(),

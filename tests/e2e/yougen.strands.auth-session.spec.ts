@@ -89,7 +89,7 @@ test("connect refresh canonicalizes stale account DID but preserves device overr
 
   await latestTestId(page, "account-menu-button").click();
   await expect(latestTestId(page, "account-menu-session-crypto")).not.toContainText(
-    "session token loaded",
+    "session credential loaded",
   );
   await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice:local.host");
   await expect(latestTestId(page, "account-menu-did")).toContainText("did:web:alice.example");

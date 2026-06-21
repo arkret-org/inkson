@@ -23,7 +23,7 @@ use crate::secure_key_store::SigningSeedMaterial;
 /// a struct so the wasm bootstrap site stays readable and the assembly is unit
 /// testable without a live session.
 pub struct DeviceEnrollmentRequest {
-    /// Active `ck.session.grant` JWT (bearer for the enrollment endpoint).
+    /// Active `ck.session.grant` JWT used for the enrollment endpoint.
     pub grant_jwt: String,
     /// Device holder DPoP proof bound to the grant `cnf.jkt`, minted for
     /// `POST <gate_account_base>/device-enroll`.

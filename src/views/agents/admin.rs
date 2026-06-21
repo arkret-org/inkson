@@ -532,7 +532,7 @@ pub fn PersonalAgentAdminPanel(
                                     span { class: "{pairing_badge}", "{pairing_label}" }
                                 }
                                 div { class: "muted",
-                                    "Hand these one-time, short-lived values to your agent runtime so it can pair its key and come online. They are not a session token and cannot be reused after pairing."
+                                    "Hand these one-time, short-lived values to your agent runtime so it can pair its key and come online. They are not a session credential and cannot be reused after pairing."
                                 }
                                 if pairing_expired {
                                     div {

@@ -458,7 +458,7 @@ impl CokretApi {
         }
 
         let mut routed = CokretApi::new(endpoint)?;
-        if let Some(token) = self.access_token.as_deref() {
+        if let Some(token) = self.authorization_credential.as_deref() {
             routed = routed.with_bearer(token.to_owned());
         }
         if let Some(sync_token) = self.wait_for_sync_token.as_deref() {

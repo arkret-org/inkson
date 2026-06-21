@@ -1,10 +1,10 @@
-//! App-wide, single-flight principal-bearer refresher.
+//! App-wide, single-flight session-credential refresher.
 //!
-//! The principal bearer (`token` signal, sent with every API call) is
-//! short-lived. When a request comes back `auth_expired` the app must
-//! silently re-mint a fresh bearer (OIDC `refresh_token` → coauth, or the
-//! session-grant exchange) and only fall back to the login page when that
-//! recovery genuinely fails.
+//! The current credential (`token` signal, sent with every API call) is the
+//! active `ck.session.grant` JWT. When a request comes back `auth_expired`, the
+//! app either restores the still-valid grant into memory or rotates it through
+//! the Account Authority refresh endpoint. It falls back to the login page only
+//! when that recovery genuinely fails.
 //!
 //! That recovery used to be hand-rolled at each call site — `connect()`,
 //! the sync bootstrap, chat send, Realm create, the account-menu button —
@@ -12,16 +12,14 @@
 //! didn't refresh at all). This module is the single source of truth:
 //!
 //! * The app root registers one refresher closure ([`register_session_refresher`]) that captures
-//!   the session signals and knows how to mint a fresh bearer.
-//! * Every auth-expired handler anywhere reaches it through [`refresh_current_bearer`] — no signal
-//!   threading, no duplicated policy.
+//!   the session signals and knows how to restore or rotate the grant.
+//! * Every auth-expired handler anywhere reaches it through [`refresh_current_session_credential`]
+//!   — no signal threading, no duplicated policy.
 //!
 //! Concurrent callers **coalesce onto a single in-flight refresh**. A
-//! short-lived bearer rolling over while several requests are in flight
-//! would otherwise fire N competing refreshes; with a rotating upstream
-//! refresh token those refreshes invalidate each other and exactly one
-//! survives — the rest see `invalid_grant` and bounce the user to login.
-//! Single-flight removes that race.
+//! single-use grant rotation while several requests are in flight would
+//! otherwise fire N competing refreshes; the first consumes the prior grant and
+//! the rest see terminal grant errors. Single-flight removes that race.
 //!
 //! The refresher lives at the app layer (not the HTTP client) on purpose:
 //! the refresh future captures Dioxus signals and wasm `reqwest`, both of
@@ -46,7 +44,7 @@ type RefreshFn = Rc<dyn Fn() -> LocalRefreshFuture>;
 /// Registered soft-logout hook. The app root owns the actual Dioxus
 /// signals, so lower layers call this when they receive a terminal
 /// session-grant denial and need live pollers to stop using the old
-/// bearer.
+/// credential.
 type InvalidateFn = Rc<RefCell<dyn FnMut(String)>>;
 
 thread_local! {
@@ -74,7 +72,7 @@ impl Drop for InFlightGuard {
 
 /// Install the app-wide refresher. Called once from the app root with a
 /// closure that captures the session signals and performs the silent
-/// re-mint, updating the live `token` signal + persisted config on success.
+/// restore/rotation, updating the live `token` signal + persisted config on success.
 pub fn register_session_refresher(refresher: RefreshFn) {
     REFRESHER.with(|slot| *slot.borrow_mut() = Some(refresher));
 }
@@ -97,13 +95,13 @@ pub fn invalidate_current_session(reason: impl Into<String>) {
     });
 }
 
-/// Re-mint the principal bearer, coalescing concurrent callers onto a
+/// Refresh the current session credential, coalescing concurrent callers onto a
 /// single in-flight refresh.
 ///
-/// Returns the fresh bearer on success, or `None` when no refresher is
+/// Returns the current credential on success, or `None` when no refresher is
 /// registered or the session is genuinely dead (the caller routes to
 /// login). Safe to call from any auth-expired handler.
-pub async fn refresh_current_bearer() -> Option<String> {
+pub async fn refresh_current_session_credential() -> Option<String> {
     let refresher = REFRESHER.with(|slot| slot.borrow().clone())?;
 
     if IN_FLIGHT.with(Cell::get) {
@@ -117,9 +115,9 @@ pub async fn refresh_current_bearer() -> Option<String> {
     result
 }
 
-/// If a bearer refresh is already running, wait for it and return the
-/// resulting bearer. Does not start a new refresh.
-pub async fn wait_for_current_bearer_refresh() -> Option<String> {
+/// If a credential refresh is already running, wait for it and return the
+/// resulting credential. Does not start a new refresh.
+pub async fn wait_for_current_session_credential_refresh() -> Option<String> {
     if IN_FLIGHT.with(Cell::get) {
         wait_for_in_flight_refresh_result().await
     } else {
@@ -145,11 +143,11 @@ mod tests {
     #[tokio::test]
     async fn returns_registered_refresher_result() {
         register_session_refresher(Rc::new(|| {
-            Box::pin(async { Some("fresh-bearer".to_owned()) })
+            Box::pin(async { Some("fresh-credential".to_owned()) })
         }));
         assert_eq!(
-            refresh_current_bearer().await,
-            Some("fresh-bearer".to_owned())
+            refresh_current_session_credential().await,
+            Some("fresh-credential".to_owned())
         );
     }
 
@@ -169,7 +167,10 @@ mod tests {
             })
         }));
 
-        let (first, second) = tokio::join!(refresh_current_bearer(), refresh_current_bearer());
+        let (first, second) = tokio::join!(
+            refresh_current_session_credential(),
+            refresh_current_session_credential()
+        );
 
         assert_eq!(first, Some("tok".to_owned()));
         assert_eq!(second, Some("tok".to_owned()));

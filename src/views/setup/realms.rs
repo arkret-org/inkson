@@ -932,12 +932,11 @@ pub(super) fn RealmsSection(
                                                     }
                                                     Err(error) => {
                                                         let message = if is_auth_expired_error(&error) {
-                                                            // The short-lived principal bearer may have
-                                                            // simply rolled over between background-poller
-                                                            // ticks. Try the same silent re-mint every
-                                                            // other path uses before wiping the session
-                                                            // and bouncing to login.
-                                                            if crate::session::refresh_current_bearer()
+                                                            // The session credential may have rotated
+                                                            // between background-poller ticks. Try the same
+                                                            // silent refresh every other path uses before
+                                                            // wiping the session and bouncing to login.
+                                                            if crate::session::refresh_current_session_credential()
                                                                 .await
                                                                 .is_some()
                                                             {

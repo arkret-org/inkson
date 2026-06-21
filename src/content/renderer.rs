@@ -436,7 +436,7 @@ fn markdown_to_safe_html(src: &str) -> String {
 
 async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow::Result<String> {
     let config = LocalConfigStore::default().load();
-    let token = config.session_token.trim().to_owned();
+    let token = config.session_credential.trim().to_owned();
     if token.is_empty() {
         anyhow::bail!("no authenticated session for blob download");
     }

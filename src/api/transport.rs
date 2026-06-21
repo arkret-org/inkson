@@ -22,7 +22,7 @@ impl CokretApi {
         Ok(Self {
             base_url,
             http: http.build()?,
-            access_token: None,
+            authorization_credential: None,
             wait_for_sync_token: None,
             retry: options.retry,
             chime_session_grant: None,
@@ -54,27 +54,25 @@ impl CokretApi {
     /// Set the credential presented as `Authorization: Bearer <…>` on
     /// `/_cokret/self/*` requests.
     ///
-    /// ②(A+②) model (api-conventions.md §3.3): the Principal Server no longer
-    /// mints a local bearer and there is no grant→bearer exchange. The held
-    /// credential is the `ck.session.grant` itself, so callers pass the grant
-    /// JWT here. Combined with [`Self::with_dpop_device`], each request then
-    /// carries `Authorization: Bearer <grant>` plus a per-request `DPoP` proof
-    /// bound to that grant (`ath=hash(grant)`).
+    /// ②(A+②) model (api-conventions.md §3.3): the held credential is the
+    /// `ck.session.grant` itself, so callers pass the grant JWT here. Combined
+    /// with [`Self::with_dpop_device`], each request then carries
+    /// `Authorization: Bearer <grant>` plus a per-request `DPoP` proof bound to
+    /// that grant (`ath=hash(grant)`).
     ///
-    /// The dev-login bare bearer and coauth OAuth access-token introspection
-    /// paths remain valid inbound credentials server-side, so passing a raw
-    /// bearer here (with no DPoP device) still works for those legacy paths.
-    pub fn with_bearer(mut self, access_token: impl Into<String>) -> Self {
-        self.access_token = Some(access_token.into());
+    /// Compatibility inbound credentials can still be placed in the HTTP Bearer
+    /// slot when no DPoP device is bound.
+    pub fn with_bearer(mut self, authorization_credential: impl Into<String>) -> Self {
+        self.authorization_credential = Some(authorization_credential.into());
         self
     }
 
     /// ②(A+②) — bind the device DPoP holder key so every `/_cokret/self/*`
     /// request mints a fresh per-request `DPoP` proof (RFC 9449) bound to the
-    /// grant in `access_token`. Centralized minting happens in the request
-    /// pipeline ([`Self::attach_self_path_dpop`]); call sites only attach the
-    /// key once. The grant must already be set via [`Self::with_bearer`] for the
-    /// `ath` binding to be present.
+    /// grant in `authorization_credential`. Centralized minting happens in the
+    /// request pipeline ([`Self::attach_self_path_dpop`]); call sites only attach
+    /// the key once. The grant must already be set via [`Self::with_bearer`] for
+    /// the `ath` binding to be present.
     /// ②(A+②) — attach the session-grant holder proof presented on every
     /// `/_cokret/self/*` request (headers `X-Cokret-Session-Grant-Challenge` +
     /// `-Proof`). coauth's grant introspection requires it to confirm the caller
@@ -93,7 +91,7 @@ impl CokretApi {
 
     /// SPEC-CR-001 — bind the `ck.session.grant` session key so requests to
     /// `/_cokret/self/*` are RFC 9421 PoP-signed. `session_private_key_pem` is
-    /// the PKCS#8 PEM returned by the grant exchange; the keyid is the key's
+    /// the PKCS#8 PEM returned by grant issuance; the keyid is the key's
     /// RFC 7638 thumbprint, which soland accepts for the binding check.
     pub fn with_session_signing_key(
         mut self,
@@ -163,7 +161,7 @@ impl CokretApi {
     ) -> CokretPushClient {
         let mut client =
             CokretPushClient::new(self.base_url.as_str()).with_required_session_grant(true);
-        if let Some(token) = self.access_token.as_deref() {
+        if let Some(token) = self.authorization_credential.as_deref() {
             client = client.with_bearer_token(token);
         }
         if let Some(grant) = self.chime_session_grant.as_deref()
@@ -344,7 +342,7 @@ impl CokretApi {
             // 401 handling lives at the app layer (`crate::session`): a
             // refresh future capturing Dioxus signals + wasm `reqwest` is
             // `!Send`, so the HTTP client can't own it. The client just
-            // surfaces the 401; the caller re-mints and retries.
+            // surfaces the 401; the caller refreshes the session credential and retries.
             let built = self.attach_self_path_dpop(self.sign_request(candidate.build()?)?)?;
             match self.http.execute(built).await {
                 Ok(response) => {
@@ -487,13 +485,13 @@ impl CokretApi {
     /// requests (api-conventions.md §3.3). Centralized single mint point: every
     /// request builder funnels through `send_with_retry`, so binding the device
     /// key once via [`Self::with_dpop_device`] is enough to cover every self-path
-    /// call. No-op when no DPoP device key is bound (dev-login / OAuth bearer
-    /// paths) or for non-self surfaces.
+    /// call. No-op when no DPoP device key is bound or for non-self surfaces.
     ///
     /// Binding (RFC 9449): `htm` = request method, `htu` = the absolute request
-    /// URL, `ath` = base64url(sha256(grant)) where the grant is the bearer in
-    /// `access_token`. Minted on the fully-built request so `htu` is the final
-    /// URL and re-minted per attempt so the proof's `iat`/`jti` stay fresh.
+    /// URL, `ath` = base64url(sha256(grant)) where the grant is the HTTP Bearer
+    /// credential in `authorization_credential`. Minted on the fully-built
+    /// request so `htu` is the final URL and refreshed per attempt so the
+    /// proof's `iat`/`jti` stay fresh.
     fn attach_self_path_dpop(
         &self,
         mut request: reqwest::Request,
@@ -507,9 +505,9 @@ impl CokretApi {
         }
         let htm = request.method().as_str().to_owned();
         let htu = request.url().as_str().to_owned();
-        // `ath` binds the proof to the grant being presented as the bearer; the
-        // mint helper hashes it (base64url(sha256(grant))) per RFC 9449.
-        let ath = self.access_token.as_deref();
+        // `ath` binds the proof to the grant in the HTTP Bearer slot; the mint
+        // helper hashes it (base64url(sha256(grant))) per RFC 9449.
+        let ath = self.authorization_credential.as_deref();
         let proof = handle
             .mint_proof(&htm, &htu, ath)
             .map_err(|error| anyhow::anyhow!("mint self-path DPoP proof: {error}"))?;
@@ -533,7 +531,7 @@ impl CokretApi {
     }
 
     fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.access_token {
+        match &self.authorization_credential {
             Some(token) => request.bearer_auth(token),
             None => request,
         }

@@ -27,7 +27,7 @@ pub struct ClientConfig {
     pub server_url: String,
     pub account_did: String,
     pub device_id: String,
-    pub session_token: String,
+    pub session_credential: String,
 }
 
 impl Default for ClientConfig {
@@ -36,7 +36,7 @@ impl Default for ClientConfig {
             server_url: DEFAULT_SERVER_URL.to_owned(),
             account_did: DEFAULT_ACCOUNT_DID.to_owned(),
             device_id: new_device_id(),
-            session_token: String::new(),
+            session_credential: String::new(),
         }
     }
 }
@@ -46,13 +46,13 @@ impl ClientConfig {
         server_url: impl Into<String>,
         account_did: impl Into<String>,
         device_id: impl Into<String>,
-        session_token: impl Into<String>,
+        session_credential: impl Into<String>,
     ) -> Self {
         Self {
             server_url: server_url.into(),
             account_did: account_did.into(),
             device_id: device_id.into(),
-            session_token: session_token.into(),
+            session_credential: session_credential.into(),
         }
         .normalized()
     }
@@ -66,13 +66,13 @@ impl ClientConfig {
         }
 
         self.device_id = new_device_id();
-        self.session_token.clear();
+        self.session_credential.clear();
         self
     }
 }
 
 /// CKP-0007 P3B.4 — multi-account profile primitive. A profile is the
-/// (server_url, account_did, device_id, session_token) tuple that the
+/// (server_url, account_did, device_id, session_credential) tuple that the
 /// existing single-profile `ClientConfig` already carries, plus a
 /// stable `profile_id` so the switcher UI can address profiles by a
 /// non-secret handle (account_did + device_id could rotate; profile_id
@@ -106,7 +106,7 @@ pub struct AccountProfile {
     pub server_url: String,
     pub account_did: String,
     pub device_id: String,
-    pub session_token: String,
+    pub session_credential: String,
 }
 
 impl AccountProfile {
@@ -114,7 +114,7 @@ impl AccountProfile {
         server_url: impl Into<String>,
         account_did: impl Into<String>,
         device_id: impl Into<String>,
-        session_token: impl Into<String>,
+        session_credential: impl Into<String>,
     ) -> Self {
         Self {
             profile_id: format!("ck:profile:{}", uuid_v7()),
@@ -122,7 +122,7 @@ impl AccountProfile {
             server_url: server_url.into(),
             account_did: account_did.into(),
             device_id: device_id.into(),
-            session_token: session_token.into(),
+            session_credential: session_credential.into(),
         }
     }
 
@@ -173,7 +173,7 @@ impl MultiProfileConfig {
             .find(|p| (p.account_did.clone(), p.server_url.clone()) == key)
         {
             existing.device_id = profile.device_id;
-            existing.session_token = profile.session_token;
+            existing.session_credential = profile.session_credential;
             if !profile.label.is_empty() {
                 existing.label = profile.label;
             }
@@ -217,7 +217,7 @@ impl MultiProfileConfig {
             active.server_url.as_str(),
             active.account_did.as_str(),
             active.device_id.as_str(),
-            active.session_token.as_str(),
+            active.session_credential.as_str(),
         ))
     }
 
@@ -243,7 +243,7 @@ impl MultiProfileConfig {
 ///
 /// CKP-0007 P3B.4.3 — the sync engine, push registration, offline
 /// drain worker, and chat subscription paths each subscribe to this
-/// event so they can rotate per-profile cursors / bearer tokens /
+/// event so they can rotate per-profile cursors / session credentials /
 /// gateway registrations atomically. The previous "each subsystem
 /// peeks at `ClientConfig`" pattern raced when two of them refreshed
 /// out of order across a single user click.
@@ -253,7 +253,7 @@ pub struct ProfileSwitchEvent {
     /// first activation after a fresh install.
     pub prior_profile_id: Option<String>,
     /// Profile the shell is switching into. Carries the resolved
-    /// `(server_url, account_did, device_id, session_token)` tuple so
+    /// `(server_url, account_did, device_id, session_credential)` tuple so
     /// reactors don't need a follow-up store read.
     pub next_profile: AccountProfile,
 }
@@ -267,18 +267,14 @@ impl ProfileSwitchEvent {
     }
 }
 
-/// SecureKeyStore key for the principal-server session bearer of
-/// `account_did`. Mirrors the `coauth.refresh_token.<actor_id>` /
-/// `coauth.access_token.<actor_id>` naming used by
-/// `LocalStateStore::set_oidc_tokens_with_secure_store`. Like those
-/// keys, the namespace is per-DID — two profiles for the same DID on
-/// different servers share one slot (the active one wins), the same
-/// pre-existing limitation the refresh_token convention has.
-fn session_token_secret_key(account_did: &str) -> String {
-    format!("coauth.session_token.{account_did}")
+/// SecureKeyStore key for the current session credential of `account_did`.
+/// The namespace is per-DID — two profiles for the same DID on different
+/// servers share one slot, matching the existing single-active-profile model.
+fn session_credential_secret_key(account_did: &str) -> String {
+    format!("coauth.session_credential.{account_did}")
 }
 
-/// Process-wide secure store handle used to keep `session_token` out
+/// Process-wide secure store handle used to keep `session_credential` out
 /// of the plaintext `config.json` / `profiles.json` / localStorage
 /// blobs. Unit tests run against a process-local in-memory store so
 /// they stay hermetic (no OS keyring access) — same precedent as
@@ -301,8 +297,8 @@ fn config_secure_store() -> std::sync::Arc<dyn crate::secure_key_store::SecureKe
 
 /// In-process read-through cache so the hot `LocalConfigStore::load()`
 /// path doesn't hit the OS keyring / localStorage AEAD unwrap on every
-/// call. `None` values negative-cache "no bearer stored" for the DID.
-fn session_token_cache()
+/// call. `None` values negative-cache "no credential stored" for the DID.
+fn session_credential_cache()
 -> &'static std::sync::Mutex<std::collections::HashMap<String, Option<String>>> {
     static CACHE: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
@@ -310,94 +306,94 @@ fn session_token_cache()
     CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-/// Move `session_token` into the SecureKeyStore. Returns `true` when
+/// Move `session_credential` into the SecureKeyStore. Returns `true` when
 /// the on-disk copy must be redacted. If the secure store rejects the
-/// write, persistence still proceeds without the bearer.
-fn persist_session_token_secret(account_did: &str, session_token: &str) -> bool {
+/// write, persistence still proceeds without the plaintext credential.
+fn persist_session_credential_secret(account_did: &str, session_credential: &str) -> bool {
     if account_did.is_empty() {
         // No namespace to key the secret under; only an empty token is
         // "safe" to drop from the persisted blob.
-        return session_token.is_empty();
+        return session_credential.is_empty();
     }
     let store = config_secure_store();
-    let key = session_token_secret_key(account_did);
-    if session_token.is_empty() {
+    let key = session_credential_secret_key(account_did);
+    if session_credential.is_empty() {
         // Empty config writes also happen during first-paint restore and
         // profile/bootstrap churn. Do not treat them as logout; explicit
-        // session invalidation calls `clear_session_token_secret`.
+        // session invalidation calls `clear_session_credential_secret`.
         return true;
     }
-    match store.store_secret(&key, session_token) {
+    match store.store_secret(&key, session_credential) {
         Ok(()) => {
-            if let Ok(mut cache) = session_token_cache().lock() {
-                cache.insert(account_did.to_owned(), Some(session_token.to_owned()));
+            if let Ok(mut cache) = session_credential_cache().lock() {
+                cache.insert(account_did.to_owned(), Some(session_credential.to_owned()));
             }
             true
         }
         Err(error) => {
             tracing::warn!(
                 ?error,
-                "secure_key_store session_token write failed; config persisted without bearer",
+                "secure_key_store session_credential write failed; config persisted without credential",
             );
             true
         }
     }
 }
 
-pub(crate) fn clear_session_token_secret(account_did: &str) {
+pub(crate) fn clear_session_credential_secret(account_did: &str) {
     if account_did.is_empty() {
         return;
     }
     let store = config_secure_store();
-    let _ = store.delete_secret(&session_token_secret_key(account_did));
-    if let Ok(mut cache) = session_token_cache().lock() {
+    let _ = store.delete_secret(&session_credential_secret_key(account_did));
+    if let Ok(mut cache) = session_credential_cache().lock() {
         cache.insert(account_did.to_owned(), None);
     }
 }
 
-/// Companion read: the session bearer for `account_did`, from the
+/// Companion read: the session credential for `account_did`, from the
 /// in-process cache first, then the SecureKeyStore.
-fn restore_session_token_secret_from_store(
+fn restore_session_credential_secret_from_store(
     account_did: &str,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<String> {
     if account_did.is_empty() {
         return None;
     }
-    if let Ok(cache) = session_token_cache().lock()
+    if let Ok(cache) = session_credential_cache().lock()
         && let Some(entry) = cache.get(account_did)
     {
         return entry.clone();
     }
-    let result = match store.get_secret(&session_token_secret_key(account_did)) {
+    let result = match store.get_secret(&session_credential_secret_key(account_did)) {
         Ok(value) => value,
         Err(error) => {
             tracing::warn!(
                 ?error,
-                "secure_key_store session_token read failed; config loaded without bearer",
+                "secure_key_store session_credential read failed; config loaded without credential",
             );
             // Don't negative-cache a transient backend error.
             return None;
         }
     };
-    if let Ok(mut cache) = session_token_cache().lock() {
+    if let Ok(mut cache) = session_credential_cache().lock() {
         cache.insert(account_did.to_owned(), result.clone());
     }
     result
 }
 
-fn restore_session_token_secret(account_did: &str) -> Option<String> {
+fn restore_session_credential_secret(account_did: &str) -> Option<String> {
     let store = config_secure_store();
-    restore_session_token_secret_from_store(account_did, store.as_ref())
+    restore_session_credential_secret_from_store(account_did, store.as_ref())
 }
 
 /// Build the copy of `config` that is allowed to touch the plaintext
-/// persistence layer: the `session_token` is moved into the
+/// persistence layer: the `session_credential` is moved into the
 /// SecureKeyStore and blanked.
 fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
     let mut redacted = config.clone();
-    if persist_session_token_secret(&redacted.account_did, &redacted.session_token) {
-        redacted.session_token = String::new();
+    if persist_session_credential_secret(&redacted.account_did, &redacted.session_credential) {
+        redacted.session_credential = String::new();
     }
     redacted
 }
@@ -406,8 +402,8 @@ fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
 fn redact_profiles_for_disk(profiles: &MultiProfileConfig) -> MultiProfileConfig {
     let mut redacted = profiles.clone();
     for profile in &mut redacted.profiles {
-        if persist_session_token_secret(&profile.account_did, &profile.session_token) {
-            profile.session_token = String::new();
+        if persist_session_credential_secret(&profile.account_did, &profile.session_credential) {
+            profile.session_credential = String::new();
         }
     }
     redacted
@@ -511,10 +507,10 @@ impl LocalConfigStore {
             .normalized()
     }
 
-    /// Load the active config while forcing session bearer rehydration
+    /// Load the active config while forcing session credential rehydration
     /// through an already-initialised secure-store backend. On wasm this lets
     /// the boot path use IndexedDB after async upgrade, without relaxing the
-    /// synchronous localStorage fallback that rejects bearer keys.
+    /// synchronous localStorage fallback that rejects credential keys.
     pub fn load_with_secure_store(
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -529,11 +525,11 @@ impl LocalConfigStore {
             .normalized()
     }
 
-    /// Reattach the session bearer to a config freshly read from the
+    /// Reattach the session credential to a config freshly read from the
     /// plaintext persistence layer (default secure store).
     fn rehydrate_config(&self, config: ClientConfig) -> ClientConfig {
         let store = config_secure_store();
-        self.reattach_session_bearer(config, store.as_ref())
+        self.reattach_session_credential(config, store.as_ref())
     }
 
     fn rehydrate_config_with_secure_store(
@@ -541,18 +537,18 @@ impl LocalConfigStore {
         config: ClientConfig,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> ClientConfig {
-        self.reattach_session_bearer(config, secure_store)
+        self.reattach_session_credential(config, secure_store)
     }
 
-    /// Reattach the session bearer to `config` through `store`: prefer the value
-    /// already in the SecureKeyStore; otherwise, if the bearer exists only in
+    /// Reattach the session credential to `config` through `store`: prefer the value
+    /// already in the SecureKeyStore; otherwise, if the credential exists only in
     /// the plaintext config blob (legacy persistence, or a test/old-browser
     /// injection), migrate it into `store` and use it. The store write is
     /// best-effort — when the wasm IndexedDB-only hardening is enforced it is
     /// refused and the token is still used in-memory for this load. Production
-    /// blobs never carry a bearer (redacted on save), so the migration branch is
+    /// blobs never carry a credential (redacted on save), so the migration branch is
     /// inert there.
-    fn reattach_session_bearer(
+    fn reattach_session_credential(
         &self,
         mut config: ClientConfig,
         store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -560,15 +556,20 @@ impl LocalConfigStore {
         if config.account_did.is_empty() {
             return config;
         }
-        let blob_token = std::mem::take(&mut config.session_token);
-        if let Some(token) = restore_session_token_secret_from_store(&config.account_did, store) {
-            config.session_token = token;
+        let blob_token = std::mem::take(&mut config.session_credential);
+        if let Some(token) =
+            restore_session_credential_secret_from_store(&config.account_did, store)
+        {
+            config.session_credential = token;
         } else if !blob_token.trim().is_empty() {
-            let _ = store.store_secret(&session_token_secret_key(&config.account_did), &blob_token);
-            if let Ok(mut cache) = session_token_cache().lock() {
+            let _ = store.store_secret(
+                &session_credential_secret_key(&config.account_did),
+                &blob_token,
+            );
+            if let Ok(mut cache) = session_credential_cache().lock() {
                 cache.insert(config.account_did.clone(), Some(blob_token.clone()));
             }
-            config.session_token = blob_token;
+            config.session_credential = blob_token;
         }
         config
     }
@@ -590,13 +591,13 @@ impl LocalConfigStore {
         server_url: String,
         account_did: String,
         device_id: String,
-        session_token: String,
+        session_credential: String,
     ) {
         self.save(ClientConfig::from_fields(
             server_url,
             account_did,
             device_id,
-            session_token,
+            session_credential,
         ));
     }
 
@@ -619,21 +620,21 @@ impl LocalConfigStore {
     }
 
     /// Profile-store analogue of [`Self::rehydrate_config`]: reattach
-    /// each profile's bearer from the SecureKeyStore.
+    /// each profile's credential from the SecureKeyStore.
     fn rehydrate_profiles(&self, mut profiles: MultiProfileConfig) -> MultiProfileConfig {
         for profile in &mut profiles.profiles {
             if profile.account_did.is_empty() {
                 continue;
             }
-            profile.session_token.clear();
-            if let Some(token) = restore_session_token_secret(&profile.account_did) {
-                profile.session_token = token;
+            profile.session_credential.clear();
+            if let Some(token) = restore_session_credential_secret(&profile.account_did) {
+                profile.session_credential = token;
             }
         }
         profiles
     }
 
-    /// P3B.4 — persist the multi-profile config. Session bearers are
+    /// P3B.4 — persist the multi-profile config. Session credentials are
     /// moved into the SecureKeyStore; the plaintext blob only carries
     /// redacted rows.
     pub fn save_profiles(&mut self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
@@ -651,7 +652,7 @@ impl LocalConfigStore {
         serde_json::from_slice(&bytes).ok()
     }
 
-    /// Persist the profiles blob with every `session_token` moved into
+    /// Persist the profiles blob with every `session_credential` moved into
     /// the SecureKeyStore (see [`redact_profiles_for_disk`]).
     fn write_persisted_profiles(&self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
         self.write_profiles_blob(&redact_profiles_for_disk(profiles))
@@ -698,9 +699,9 @@ impl LocalConfigStore {
             .and_then(|json| serde_json::from_str(&json).ok())
     }
 
-    /// Persist the config blob with the `session_token` moved into the
+    /// Persist the config blob with the `session_credential` moved into the
     /// SecureKeyStore (see [`redact_config_for_disk`]). The plaintext
-    /// `config.json` / localStorage blob never carries the bearer when
+    /// `config.json` / localStorage blob never carries the credential when
     /// a secure backend is available.
     fn write_persisted_config(&self, config: &ClientConfig) -> anyhow::Result<()> {
         self.write_config_blob(&redact_config_for_disk(config))
@@ -762,7 +763,7 @@ mod tests {
         assert!(config.account_did.is_empty());
         assert!(config.device_id.starts_with("ck:device:"));
         assert!(is_valid_device_id(&config.device_id));
-        assert!(config.session_token.is_empty());
+        assert!(config.session_credential.is_empty());
     }
 
     #[test]
@@ -856,7 +857,7 @@ mod tests {
         assert_eq!(config.account_did, "did:web:alice.example");
         assert!(is_valid_device_id(&config.device_id));
         assert_ne!(config.device_id, "dev_yougen");
-        assert!(config.session_token.is_empty());
+        assert!(config.session_credential.is_empty());
     }
 
     #[test]
@@ -900,7 +901,7 @@ mod tests {
 
         assert_eq!(multi.profiles.len(), 1);
         assert_eq!(first_id, updated_id);
-        assert_eq!(multi.active().unwrap().session_token, "token-b");
+        assert_eq!(multi.active().unwrap().session_credential, "token-b");
     }
 
     #[test]
@@ -957,7 +958,7 @@ mod tests {
         multi.upsert_and_activate(profile);
         let view = multi.active_as_client_config().expect("active config");
         assert_eq!(view.account_did, "did:web:alice.example");
-        assert_eq!(view.session_token, "token");
+        assert_eq!(view.session_credential, "token");
     }
 
     #[test]
@@ -980,29 +981,29 @@ mod tests {
         assert_eq!(loaded.profiles[0].account_did, "did:web:alice.example");
     }
 
-    // --- session_token SecureKeyStore redaction --------------------------
+    // --- session_credential SecureKeyStore redaction --------------------------
 
     #[test]
-    fn session_token_is_redacted_from_disk_blob() {
+    fn session_credential_is_redacted_from_disk_blob() {
         let path = temp_config_path("redacted");
         let mut store = LocalConfigStore::with_path(path.clone());
         store.save_fields(
             "https://redacted.example".to_owned(),
             "did:web:redacted.example".to_owned(),
             "ck:device:01964137-0000-7000-8000-00000000000c".to_owned(),
-            "sx_secret_bearer".to_owned(),
+            "sx_secret_credential".to_owned(),
         );
 
-        // The plaintext blob MUST NOT contain the bearer.
+        // The plaintext blob MUST NOT contain the credential.
         let raw = fs::read_to_string(&path).expect("config blob");
         assert!(
-            !raw.contains("sx_secret_bearer"),
-            "bearer leaked into plaintext config blob: {raw}"
+            !raw.contains("sx_secret_credential"),
+            "credential leaked into plaintext config blob: {raw}"
         );
 
         // A fresh store instance reattaches it from the secure store.
         let reader = LocalConfigStore::with_path(path);
-        assert_eq!(reader.load().session_token, "sx_secret_bearer");
+        assert_eq!(reader.load().session_credential, "sx_secret_credential");
     }
 
     #[test]
@@ -1023,20 +1024,22 @@ mod tests {
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::new();
         crate::secure_key_store::SecureKeyStore::store_secret(
             &secure_store,
-            &session_token_secret_key(account_did),
+            &session_credential_secret_key(account_did),
             "sx_from_supplied_store",
         )
         .expect("seed secure token");
 
         let reader = LocalConfigStore::with_path(path);
         assert_eq!(
-            reader.load_with_secure_store(&secure_store).session_token,
+            reader
+                .load_with_secure_store(&secure_store)
+                .session_credential,
             "sx_from_supplied_store"
         );
     }
 
     #[test]
-    fn profiles_blob_redacts_session_tokens() {
+    fn profiles_blob_redacts_session_credentials() {
         // Own subdirectory — `profiles_path()` derives `profiles.json`
         // next to the config path, which would collide with other
         // tests' blobs in the shared temp dir.
@@ -1053,28 +1056,31 @@ mod tests {
             "https://cokret.example",
             "did:web:profile-redacted.example",
             "ck:device:01964137-0000-7000-8000-00000000000e",
-            "sx_profile_bearer",
+            "sx_profile_credential",
         ));
         store.save_profiles(&multi).expect("write profiles");
 
         let profiles_raw =
             fs::read_to_string(path.with_file_name("profiles.json")).expect("profiles blob");
         assert!(
-            !profiles_raw.contains("sx_profile_bearer"),
-            "bearer leaked into plaintext profiles blob: {profiles_raw}"
+            !profiles_raw.contains("sx_profile_credential"),
+            "credential leaked into plaintext profiles blob: {profiles_raw}"
         );
 
-        // A fresh store reattaches the bearer per profile.
+        // A fresh store reattaches the credential per profile.
         let reader = LocalConfigStore::with_path(path);
         let loaded = reader.load_profiles();
         assert_eq!(loaded.profiles.len(), 1);
-        assert_eq!(loaded.profiles[0].session_token, "sx_profile_bearer");
+        assert_eq!(
+            loaded.profiles[0].session_credential,
+            "sx_profile_credential"
+        );
         assert_eq!(
             loaded
                 .active_as_client_config()
                 .expect("active config")
-                .session_token,
-            "sx_profile_bearer"
+                .session_credential,
+            "sx_profile_credential"
         );
     }
 

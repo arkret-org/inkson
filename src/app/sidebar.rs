@@ -154,7 +154,8 @@ pub(super) fn leave_sidebar_realm(
     mut status: Signal<String>,
 ) {
     // Realm membership events are authored by the account/principal DID — the
-    // server rejects any event whose `actor_id` differs from the bearer
+    // server rejects any event whose `actor_id` differs from the authenticated
+    // session actor
     // session actor (`actor_session_mismatch`). The local device DID is not the
     // session actor, so it must not be used here.
     let actor_id = account_did.trim().to_owned();

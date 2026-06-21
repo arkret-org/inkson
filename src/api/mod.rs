@@ -39,8 +39,6 @@ pub struct PrincipalAuthBridgeDescribeView {
 #[derive(Clone, Debug, Deserialize)]
 pub struct PrincipalAuthBridgeAuthDescriptor {
     pub dev_login_path: String,
-    pub session_grant_exchange_path: String,
-    pub bearer_auth_scheme: String,
     pub principal_id_body_field: String,
 }
 
@@ -56,7 +54,7 @@ pub struct PrincipalAuthBridgePushDescriptor {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct PrincipalAuthBridgeExamples {
     #[serde(default)]
-    pub session_grant_exchange_request: Value,
+    pub session_grant_issue_request: Value,
     #[serde(default)]
     pub register_device_request: Value,
     #[serde(default)]
@@ -109,7 +107,7 @@ use crate::operation::{EventKind, OperationBuilder, trim_realm_id, uuid_v7};
 pub struct CokretApi {
     base_url: Url,
     pub(crate) http: Client,
-    access_token: Option<String>,
+    authorization_credential: Option<String>,
     wait_for_sync_token: Option<String>,
     retry: RetryPolicy,
     /// Coauth-issued session grant and optional introspection proof headers
@@ -117,7 +115,7 @@ pub struct CokretApi {
     chime_session_grant: Option<String>,
     chime_session_grant_proof: Option<SessionGrantIntrospectionProof>,
     /// Session-grant holder proof presented on every `/_cokret/self/*` request
-    /// alongside the grant bearer + DPoP. coauth's grant introspection requires
+    /// alongside the grant credential + DPoP. coauth's grant introspection requires
     /// it (otherwise `proof_required`/inactive); soland forwards it verbatim.
     /// Minted from the same device key bound into the grant's `cnf.jkt`.
     session_grant_proof: Option<SessionGrantIntrospectionProof>,
@@ -129,11 +127,11 @@ pub struct CokretApi {
     session_signing_key: Option<ed25519_dalek::SigningKey>,
     session_key_id: Option<String>,
     /// ②(A+②) — device DPoP holder key. When set together with a grant in
-    /// `access_token`, every `/_cokret/self/*` request carries a freshly-minted
+    /// `authorization_credential`, every `/_cokret/self/*` request carries a freshly-minted
     /// per-request `DPoP` proof (RFC 9449) bound to `htm`/`htu`/`ath=hash(grant)`
     /// (api-conventions.md §3.3). This is the default `/_cokret/self/*` session
-    /// presentation under the no-local-bearer model: the held credential is the
-    /// grant in `access_token`, sender-constrained by this DPoP key.
+    /// presentation: the held credential is the
+    /// grant in `authorization_credential`, sender-constrained by this DPoP key.
     dpop_device: Option<crate::auth_dpop::DpopHandle>,
     /// Cached `GET /_cokret/self/events/describe` response (spec
     /// `ServiceDescribe` shape) so repeat callers avoid re-hitting the
@@ -149,8 +147,8 @@ impl fmt::Debug for CokretApi {
         f.debug_struct("CokretApi")
             .field("base_url", &self.base_url)
             .field(
-                "access_token",
-                &self.access_token.as_ref().map(|_| "<redacted>"),
+                "authorization_credential",
+                &self.authorization_credential.as_ref().map(|_| "<redacted>"),
             )
             .field("wait_for_sync_token", &self.wait_for_sync_token)
             .field("retry", &self.retry)

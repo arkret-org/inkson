@@ -27,8 +27,8 @@
 //! The engine deliberately does NOT trigger session refresh inline —
 //! that's owned by [`crate::session_refresh`] which runs in parallel.
 //! When an iteration hits `is_auth_expired_error` the engine just exits;
-//! the refresh poller mints a new bearer, the lifecycle bumps the
-//! generation, and a new engine spawn picks up. This keeps refresh
+//! the refresh poller updates the session credential, the lifecycle bumps
+//! the generation, and a new engine spawn picks up. This keeps refresh
 //! logic in one place.
 
 use std::collections::BTreeSet;

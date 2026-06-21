@@ -5,10 +5,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use super::proof::oidc_request_canonical_digest;
-use super::{
-    CoauthApi, OidcDiscoveryDocument, OidcTokenResponse, SessionGrantRevokeOutcome,
-    error_envelope_code,
-};
+use super::{AccountLogoutRunOutcome, CoauthApi, OidcDiscoveryDocument, error_envelope_code};
 use crate::config::validate_server_url;
 
 impl CoauthApi {
@@ -55,96 +52,6 @@ impl CoauthApi {
         )
     }
 
-    /// Real OIDC token-endpoint exchange. Drives the PKCE authorization-code
-    /// strand directly against the configured OIDC provider's `token_endpoint` -
-    /// no coauth bridge in between. Returns the parsed [`OidcTokenResponse`]
-    /// with access + refresh tokens + scope + id_token + expires_in.
-    ///
-    /// Spec refs: RFC 6749 §4.1.3 (token request), RFC 7636 §4.5
-    /// (PKCE verifier delivery), OpenID Connect Core §3.1.3 (response
-    /// parsing). The caller owns the redirect URI handling — usually
-    /// the browser's `/auth/callback` page extracts `?code=` then
-    /// invokes this function with the matching PKCE verifier.
-    pub async fn exchange_pkce_code_for_tokens(
-        &self,
-        token_endpoint: &str,
-        client_id: &str,
-        code: &str,
-        code_verifier: &str,
-        redirect_uri: &str,
-    ) -> anyhow::Result<OidcTokenResponse> {
-        let endpoint = Url::parse(token_endpoint)
-            .with_context(|| format!("invalid token endpoint: {token_endpoint}"))?;
-        // Token-endpoint requests use application/x-www-form-urlencoded
-        // per RFC 6749 §3.2 — JSON would be silently rejected by some
-        // providers (Okta, Azure AD) even when other endpoints accept JSON.
-        let form_params: [(&str, &str); 5] = [
-            ("grant_type", "authorization_code"),
-            ("client_id", client_id),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("code_verifier", code_verifier),
-        ];
-        let response = self
-            .http
-            .post(endpoint)
-            .form(&form_params)
-            .send()
-            .await
-            .context("token endpoint POST failed")?;
-        let status = response.status();
-        let body = response.text().await.context("read token response body")?;
-        if !status.is_success() {
-            anyhow::bail!(
-                "token endpoint returned {status}: {body}",
-                status = status,
-                body = body.chars().take(512).collect::<String>(),
-            );
-        }
-        // Parse as OAuth2 / OIDC token response. Tolerate extra fields
-        // (Auth0 / Keycloak / etc. add provider-specific keys).
-        serde_json::from_str(&body).context("parse OIDC token response")
-    }
-
-    /// Refresh-token grant against the upstream OIDC provider. Returns a
-    /// fresh [`OidcTokenResponse`]; the new `refresh_token` MAY be present
-    /// (rotating refresh tokens) or MAY be absent (the previous one stays
-    /// valid).
-    pub async fn refresh_oidc_tokens(
-        &self,
-        token_endpoint: &str,
-        client_id: &str,
-        refresh_token: &str,
-    ) -> anyhow::Result<OidcTokenResponse> {
-        let endpoint = Url::parse(token_endpoint)
-            .with_context(|| format!("invalid token endpoint: {token_endpoint}"))?;
-        let form_params: [(&str, &str); 3] = [
-            ("grant_type", "refresh_token"),
-            ("client_id", client_id),
-            ("refresh_token", refresh_token),
-        ];
-        let response = self
-            .http
-            .post(endpoint)
-            .form(&form_params)
-            .send()
-            .await
-            .context("refresh token endpoint POST failed")?;
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("read refresh response body")?;
-        if !status.is_success() {
-            anyhow::bail!(
-                "refresh endpoint returned {status}: {body}",
-                status = status,
-                body = body.chars().take(512).collect::<String>(),
-            );
-        }
-        serde_json::from_str(&body).context("parse OIDC refresh response")
-    }
-
     /// G3.Y0 — POST coauth's self-serve `passkey/register/start`
     /// ceremony. Returns the `CreationChallengeResponse` JSON the
     /// browser feeds into `navigator.credentials.create({ publicKey: ... })`.
@@ -170,7 +77,7 @@ impl CoauthApi {
     ///
     /// The response is typed as JSON because deployments can return
     /// either a credential-only admin result or a self-serve login
-    /// result that also includes bearer/session material. The login UI
+    /// result that also includes session material. The login UI
     /// ships the OIDC browser path locally and leaves passkeys to the
     /// coauth/IdP sign-in page.
     pub async fn passkey_register_finish(
@@ -235,7 +142,7 @@ impl CoauthApi {
     /// key bound into the grant's `cnf.jkt`, and gets back a new grant (same
     /// subject/scope/audience, `cnf.jkt` constant, fresh expiry). The old grant
     /// is single-use revoked server-side. This is what lets a device session
-    /// live for days while access bearers stay short.
+    /// live for days while the grant rotates in place.
     pub async fn refresh_session_grant(
         &self,
         grant_jwt: &str,
@@ -252,74 +159,6 @@ impl CoauthApi {
         })?;
         self.post_json_with_dpop("session-grants/refresh", body, Some(dpop_proof))
             .await
-    }
-
-    /// Hard-logout revocation at the Auth Server (account-lifecycle §4.1):
-    /// present the device holder proof bound into the grant's `cnf.jkt`, and the
-    /// server revokes the grant + finishes the underlying browser session so the
-    /// rotation chain cannot be resumed.
-    ///
-    /// Returns a structured [`SessionGrantRevokeOutcome`] so the durable-logout
-    /// retry can distinguish two cases that look alike at the HTTP layer:
-    ///
-    /// * **terminated** (2xx, or a 404 / `grant_already_consumed` / `session_logged_out` /
-    ///   `session_grant_not_found` envelope) — the grant chain is provably gone; the caller MAY
-    ///   clear its journal.
-    /// * **failure** (any other 4xx — `device_proof_required`, an invalid DPoP proof, a bad body,
-    ///   an `audience_mismatch` — or any 5xx / transport error) — the server did NOT terminate
-    ///   anything; the caller MUST keep the journal and retry. This is the key fix over
-    ///   string-matching the raw error: a 400 caused by a malformed proof is no longer mistaken for
-    ///   "already revoked".
-    pub async fn revoke_session_grant(
-        &self,
-        grant_jwt: &str,
-        dpop_proof: &str,
-    ) -> anyhow::Result<SessionGrantRevokeOutcome> {
-        let endpoint = self.endpoint("_cokret/gate/account/session-grants/logout")?;
-        let body = cokret_sdk::SessionGrantLogoutRequestBody {
-            grant_jwt: grant_jwt.to_owned(),
-        };
-        let response = self
-            .http
-            .post(endpoint)
-            .header("DPoP", dpop_proof)
-            .json(&body)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if status.is_success() {
-            return Ok(SessionGrantRevokeOutcome::Terminated);
-        }
-
-        // A missing grant means there is nothing left to revoke — terminal.
-        if status.as_u16() == 404 {
-            return Ok(SessionGrantRevokeOutcome::Terminated);
-        }
-
-        // Decode the structured error envelope (`{ error: { code } }`) and only
-        // treat *grant-already-gone* codes as terminal. Everything else (proof
-        // problems, audience mismatch, malformed body, server errors) keeps the
-        // journal so the logout is retried.
-        let body = response.text().await.unwrap_or_default();
-        let code = error_envelope_code(&body);
-        if let Some(code) = code.as_deref()
-            && matches!(
-                code,
-                "grant_already_consumed"
-                    | "session_logged_out"
-                    | "session_grant_not_found"
-                    | "authorized_grant_revoked"
-            )
-        {
-            return Ok(SessionGrantRevokeOutcome::Terminated);
-        }
-
-        Err(anyhow::anyhow!(
-            "coauth session-grant logout failed: status={} code={} body={body}",
-            status.as_u16(),
-            code.as_deref().unwrap_or("<none>"),
-        ))
     }
 
     /// Standard OIDC discovery (`/.well-known/openid-configuration`) for the
@@ -444,13 +283,13 @@ impl CoauthApi {
     /// client MUST NOT fan out to two origins.
     ///
     /// `self` MUST be rooted at the resolved `gate_account_base`. Returns a
-    /// [`SessionGrantRevokeOutcome`] so the durable journal can distinguish a
+    /// [`AccountLogoutRunOutcome`] so the durable journal can distinguish a
     /// provably-terminated chain (clear) from a retryable failure (retain).
     pub async fn account_logout(
         &self,
         grant_jwt: &str,
         dpop_proof: &str,
-    ) -> anyhow::Result<SessionGrantRevokeOutcome> {
+    ) -> anyhow::Result<AccountLogoutRunOutcome> {
         let endpoint = self.endpoint("logout")?;
         let response = self
             .http
@@ -463,11 +302,11 @@ impl CoauthApi {
 
         let status = response.status();
         if status.is_success() {
-            return Ok(SessionGrantRevokeOutcome::Terminated);
+            return Ok(AccountLogoutRunOutcome::Terminated);
         }
         // A missing grant means there is nothing left to revoke — terminal.
         if status.as_u16() == 404 {
-            return Ok(SessionGrantRevokeOutcome::Terminated);
+            return Ok(AccountLogoutRunOutcome::Terminated);
         }
         let body = response.text().await.unwrap_or_default();
         let code = error_envelope_code(&body);
@@ -480,7 +319,7 @@ impl CoauthApi {
                     | "authorized_grant_revoked"
             )
         {
-            return Ok(SessionGrantRevokeOutcome::Terminated);
+            return Ok(AccountLogoutRunOutcome::Terminated);
         }
         Err(anyhow::anyhow!(
             "account authority logout failed: status={} code={} body={body}",

@@ -445,13 +445,12 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
 }
 
 /// Submit a chat operation and, if the first attempt fails with a
-/// definitive `auth_expired` (the short-lived principal bearer died
-/// between background refresh ticks), silently re-mint the bearer through
+/// definitive `auth_expired`, silently refresh the session credential through
 /// the shared refresher and retry once before surfacing the error.
 ///
 /// The send paths used to bounce straight to `/login` on the first
 /// `auth_expired` — the "it randomly asks me to sign in mid-conversation"
-/// report. Routing through [`crate::session::refresh_current_bearer`]
+/// report. Routing through [`crate::session::refresh_current_session_credential`]
 /// keeps the user signed in across a routine token rollover; only a
 /// genuinely dead session (refresh material exhausted) still returns an
 /// `auth_expired` for the caller to route to login.
@@ -459,12 +458,12 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
     base_url: &str,
     actor_id: &str,
     realm_id: &str,
-    access_token: String,
+    session_credential: String,
     wait_for_sync_token: Option<String>,
     plaintext_visible_services: &[String],
     operation: &cokret_sdk::Event,
 ) -> anyhow::Result<SubmitEventResult> {
-    let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token.clone())?;
+    let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token.clone())?;
     let first = submit_chat_operation_with_plaintext_retry(
         &api,
         realm_id,
@@ -476,7 +475,7 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
     match first {
         Ok(response) => Ok(response),
         Err(error) if is_auth_expired_error(&error) => {
-            match crate::session::refresh_current_bearer().await {
+            match crate::session::refresh_current_session_credential().await {
                 Some(fresh_token) => {
                     let retry_api =
                         authed_api_with_sync(base_url, fresh_token, wait_for_sync_token)?;

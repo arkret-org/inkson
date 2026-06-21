@@ -3,19 +3,16 @@ use super::*;
 impl LocalStateStore {
     /// Wipe every account-scoped projection field while keeping
     /// device-level state (`local_identity`, `push_registration`,
-    /// `telemetry_log`) and the auth-token state (`oidc_tokens`,
-    /// `session_grant`). Called on logout, when the principal DID
+    /// `telemetry_log`) and the active session grant. Called on logout, when the principal DID
     /// changes between logins, or when the user switches servers —
     /// anything that means the cached *projection* no longer
     /// represents the current viewer.
     ///
-    /// The auth tokens are deliberately preserved here because the
+    /// The session grant is deliberately preserved here because the
     /// caller usually has its own opinion: a fresh-login strand has just
-    /// written the new account's tokens via `set_oidc_tokens` and would
-    /// be sad to see them disappear, while a `logout` strand follows up
-    /// with explicit `set_oidc_tokens(None)` + `set_session_grant(None)`
-    /// of its own. Bundling the token clear into this helper would have
-    /// made the account-change-during-connect path racy.
+    /// written the new account's grant, while a `logout` strand follows up
+    /// with explicit `set_session_grant(None)` of its own. Bundling the grant
+    /// clear into this helper would have made the account-change-during-connect path racy.
     ///
     /// Pairs with [`Self::retain_realm_tree_projections`] which only handles
     /// the steady-state sync reconcile case.
@@ -24,7 +21,6 @@ impl LocalStateStore {
         let preserved_identity = self.cached.local_identity.clone();
         let preserved_push = self.cached.push_registration.clone();
         let preserved_telemetry = std::mem::take(&mut self.cached.telemetry_log);
-        let preserved_oidc = self.cached.oidc_tokens.clone();
         let preserved_grant = self.cached.session_grant.clone();
         // G3.Y0 — the DPoP device key is device-level state, same
         // semantics as `local_identity`. Preserved across the
@@ -40,7 +36,6 @@ impl LocalStateStore {
             local_identity: preserved_identity,
             push_registration: preserved_push,
             telemetry_log: preserved_telemetry,
-            oidc_tokens: preserved_oidc,
             session_grant: preserved_grant,
             dpop_device_key: preserved_dpop,
             ..ClientLocalState::default()
@@ -67,7 +62,7 @@ impl LocalStateStore {
     /// Adopt the account-scope for `actor`. When the persisted scope
     /// belongs to a *different* — or unknown — actor, every account-scoped
     /// record is wiped first: sync cursor, projections, drafts, **and the
-    /// session grant + OIDC bundle** (which `clear_account_scoped` alone
+    /// session grant** (which `clear_account_scoped` alone
     /// preserves — wrong across an identity change). Device-level state
     /// (local identity, push registration, DPoP key) is preserved.
     ///
@@ -93,7 +88,6 @@ impl LocalStateStore {
         }
         self.clear_account_scoped();
         self.cached.session_grant = None;
-        self.cached.oidc_tokens = None;
         self.cached.account_scope_owner = (!actor.is_empty()).then(|| actor.to_owned());
         let _ = self.flush();
         true

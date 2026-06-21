@@ -29,7 +29,7 @@
 //!   `MessageCrypto`). Plaintext exists only inside the Rust process before encryption or after
 //!   decryption.
 //! * `LocalStorageSecureKeyStore` may still hold low-value first-paint browser secrets, but it
-//!   refuses Ed25519 signing seeds, account MLS secrets, and bearer tokens.
+//!   refuses Ed25519 signing seeds, account MLS secrets, and session credentials.
 //! * Push payloads are blind-wakeup metadata from chime; payload bodies are not exposed as
 //!   plaintext at the gateway boundary.
 //!

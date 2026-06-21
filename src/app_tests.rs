@@ -108,20 +108,7 @@ fn unread_notification_count_ignores_read_and_archived_items() {
     assert_eq!(unread_notification_count(&snapshot), 1);
 }
 
-fn oidc_bundle(access_token: &str, expires_at_unix: Option<i64>) -> OidcTokenBundle {
-    OidcTokenBundle {
-        access_token: access_token.to_owned(),
-        refresh_token: Some("rt-test".to_owned()),
-        token_type: "Bearer".to_owned(),
-        expires_at_unix,
-        id_token: None,
-        scope: None,
-        audience: Some("https://local.host".to_owned()),
-        stored_at: chrono::Utc::now(),
-    }
-}
-
-fn session_grant(session_expires_in: i64, grant_expires_in: i64) -> PersistedSessionGrant {
+fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
     let now = chrono::Utc::now();
     PersistedSessionGrant {
         grant_jwt: "grant.jwt".to_owned(),
@@ -131,30 +118,9 @@ fn session_grant(session_expires_in: i64, grant_expires_in: i64) -> PersistedSes
         principal_id: "did:web:alice.example".to_owned(),
         device_id: "ck:device:01964137-0000-7000-8000-000000000001".to_owned(),
         principal_server_url: "https://local.host".to_owned(),
-        session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
         grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
-        session_expires_at: Some(now + chrono::Duration::seconds(session_expires_in)),
         stored_at: now,
     }
-}
-
-#[test]
-fn oidc_refresh_error_invalidates_grant_for_invalid_grant_response() {
-    let error = anyhow::anyhow!(
-        "refresh endpoint returned 400 Bad Request: {{\"error\":\"invalid_grant\",\"error_description\":\"The provided access grant is invalid, expired, or revoked.\"}}"
-    );
-
-    assert!(oidc_refresh_error_invalidates_grant(&error));
-}
-
-#[test]
-fn oidc_refresh_error_keeps_bundle_for_transient_failures() {
-    let network_error = anyhow::anyhow!("refresh token endpoint POST failed");
-    let server_error =
-        anyhow::anyhow!("refresh endpoint returned 503 Service Unavailable: retry later");
-
-    assert!(!oidc_refresh_error_invalidates_grant(&network_error));
-    assert!(!oidc_refresh_error_invalidates_grant(&server_error));
 }
 
 #[test]
@@ -487,64 +453,7 @@ fn recovery_auto_prompt_local_only_key_is_prompted_once_per_fingerprint() {
 use crate::local_state::isolated_store_for_tests as isolated_store;
 
 #[test]
-fn boot_session_token_uses_fresh_oidc_access_token() {
-    let now = 1_000;
-    let state = ClientLocalState {
-        oidc_tokens: Some(oidc_bundle("sx-fresh", Some(now + 120))),
-        ..Default::default()
-    };
-    let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
-        "config-token",
-    );
-
-    assert_eq!(
-        initial_session_token_from_state(&state, &config, now),
-        "sx-fresh"
-    );
-}
-
-#[test]
-fn boot_session_token_ignores_expired_oidc_access_token() {
-    let now = 1_000;
-    let state = ClientLocalState {
-        oidc_tokens: Some(oidc_bundle("sx-expired", Some(now - 1))),
-        ..Default::default()
-    };
-    let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
-        "config-token",
-    );
-
-    assert_eq!(initial_session_token_from_state(&state, &config, now), "");
-}
-
-#[test]
-fn boot_session_token_ignores_nearly_expired_oidc_access_token() {
-    let now = 1_000;
-    let state = ClientLocalState {
-        oidc_tokens: Some(oidc_bundle(
-            "sx-nearly-expired",
-            Some(now + BOOT_ACCESS_TOKEN_SKEW_SECS),
-        )),
-        ..Default::default()
-    };
-    let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
-        "config-token",
-    );
-
-    assert_eq!(initial_session_token_from_state(&state, &config, now), "");
-}
-
-#[test]
-fn boot_session_token_ignores_config_token_without_boot_material() {
+fn boot_session_credential_ignores_config_token_without_boot_material() {
     let state = ClientLocalState::default();
     let config = ClientConfig::from_fields(
         "https://local.host",
@@ -553,14 +462,17 @@ fn boot_session_token_ignores_config_token_without_boot_material() {
         "config-token",
     );
 
-    assert_eq!(initial_session_token_from_state(&state, &config, 1_000), "");
+    assert_eq!(
+        initial_session_credential_from_state(&state, &config, 1_000),
+        ""
+    );
 }
 
 #[test]
-fn boot_session_token_uses_fresh_session_grant_bearer() {
+fn boot_session_credential_uses_fresh_session_grant() {
     let now = chrono::Utc::now().timestamp();
     let state = ClientLocalState {
-        session_grant: Some(session_grant(120, 3600)),
+        session_grant: Some(session_grant(3600)),
         ..Default::default()
     };
     let config = ClientConfig::from_fields(
@@ -571,17 +483,16 @@ fn boot_session_token_uses_fresh_session_grant_bearer() {
     );
 
     assert_eq!(
-        initial_session_token_from_state(&state, &config, now),
+        initial_session_credential_from_state(&state, &config, now),
         "grant.jwt"
     );
 }
 
 #[test]
-fn boot_session_token_falls_back_to_session_grant_when_oidc_is_expired() {
+fn boot_session_credential_ignores_expired_session_grant() {
     let now = chrono::Utc::now().timestamp();
     let state = ClientLocalState {
-        oidc_tokens: Some(oidc_bundle("sx-expired-oidc", Some(now - 1))),
-        session_grant: Some(session_grant(120, 3600)),
+        session_grant: Some(session_grant(-1)),
         ..Default::default()
     };
     let config = ClientConfig::from_fields(
@@ -592,52 +503,15 @@ fn boot_session_token_falls_back_to_session_grant_when_oidc_is_expired() {
     );
 
     assert_eq!(
-        initial_session_token_from_state(&state, &config, now),
-        "grant.jwt"
+        initial_session_credential_from_state(&state, &config, now),
+        ""
     );
 }
 
 #[test]
-fn boot_session_token_uses_session_grant_when_cached_bearer_expired() {
+fn boot_session_credential_ignores_session_grant_for_other_server() {
     let now = chrono::Utc::now().timestamp();
-    let state = ClientLocalState {
-        session_grant: Some(session_grant(-1, 3600)),
-        ..Default::default()
-    };
-    let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
-        "bridge-token",
-    );
-
-    assert_eq!(
-        initial_session_token_from_state(&state, &config, now),
-        "grant.jwt"
-    );
-}
-
-#[test]
-fn boot_session_token_ignores_expired_session_grant() {
-    let now = chrono::Utc::now().timestamp();
-    let state = ClientLocalState {
-        session_grant: Some(session_grant(-1, -1)),
-        ..Default::default()
-    };
-    let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
-        "bridge-token",
-    );
-
-    assert_eq!(initial_session_token_from_state(&state, &config, now), "");
-}
-
-#[test]
-fn boot_session_token_ignores_session_grant_for_other_server() {
-    let now = chrono::Utc::now().timestamp();
-    let mut grant = session_grant(120, 3600);
+    let mut grant = session_grant(3600);
     grant.principal_server_url = "https://other.local.host".to_owned();
     let state = ClientLocalState {
         session_grant: Some(grant),
@@ -650,31 +524,17 @@ fn boot_session_token_ignores_session_grant_for_other_server() {
         "bridge-token",
     );
 
-    assert_eq!(initial_session_token_from_state(&state, &config, now), "");
+    assert_eq!(
+        initial_session_credential_from_state(&state, &config, now),
+        ""
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn bootstrap_can_start_with_oidc_refresh_material_without_bearer() {
-    let mut store = isolated_store("bootstrap-oidc");
-    let state = ClientLocalState {
-        oidc_tokens: Some(oidc_bundle("sx-expired", Some(1))),
-        ..Default::default()
-    };
-    store.save(state);
-
-    assert!(has_bootstrap_refresh_material(
-        &store,
-        "https://local.host",
-        "did:web:alice.example"
-    ));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn bootstrap_can_start_with_session_grant_without_bearer() {
+fn bootstrap_can_start_with_session_grant_without_live_credential() {
     let mut store = isolated_store("bootstrap-grant");
-    store.set_session_grant(Some(session_grant(-1, 3600)));
+    store.set_session_grant(Some(session_grant(3600)));
 
     assert!(has_bootstrap_refresh_material(
         &store,
@@ -687,7 +547,7 @@ fn bootstrap_can_start_with_session_grant_without_bearer() {
 #[test]
 fn bootstrap_ignores_session_grant_for_other_server() {
     let mut store = isolated_store("bootstrap-other-server");
-    let mut grant = session_grant(-1, 3600);
+    let mut grant = session_grant(3600);
     grant.principal_server_url = "https://other.local.host".to_owned();
     store.set_session_grant(Some(grant));
 
@@ -740,7 +600,7 @@ fn boot_state_waits_for_secure_store_before_known_account_is_signed_out() {
 }
 
 #[test]
-fn rehydrated_session_token_only_matches_active_config() {
+fn rehydrated_session_credential_only_matches_active_config() {
     let config = ClientConfig::from_fields(
         "https://local.host",
         "did:web:alice.example",
@@ -749,7 +609,7 @@ fn rehydrated_session_token_only_matches_active_config() {
     );
 
     assert_eq!(
-        rehydrated_session_token_for_active_config(
+        rehydrated_session_credential_for_active_config(
             &config,
             "https://local.host",
             "did:web:alice.example",
@@ -759,7 +619,7 @@ fn rehydrated_session_token_only_matches_active_config() {
         Some("sx-live")
     );
     assert!(
-        rehydrated_session_token_for_active_config(
+        rehydrated_session_credential_for_active_config(
             &config,
             "https://other.local.host",
             "did:web:alice.example",
@@ -768,7 +628,7 @@ fn rehydrated_session_token_only_matches_active_config() {
         .is_none()
     );
     assert!(
-        rehydrated_session_token_for_active_config(
+        rehydrated_session_credential_for_active_config(
             &config,
             "https://local.host",
             "did:web:bob.example",

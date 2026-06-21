@@ -187,16 +187,6 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         body: "<!doctype html><main data-testid=\"coauth-login\"><h1>Sign in</h1><p>coauth</p><a href=\"/register\">Create account</a><a href=\"/recovery\">Lost password or account</a></main>",
       });
     }
-    if (url.hostname === "auth.local.host" && url.pathname === "/oauth/token") {
-      return json(route, {
-        access_token: "sx_playwright_oidc_token",
-        token_type: "Bearer",
-        expires_in: 3600,
-        refresh_token: "sx_playwright_oidc_refresh",
-        id_token: "sx_playwright_oidc_id",
-        scope: "openid profile",
-      });
-    }
     if (!url.pathname.startsWith("/_cokret/")) {
       return route.continue();
     }
@@ -208,22 +198,20 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           service_type: "auth_server",
           protocol_version: "1.0",
           auth_metadata: {
-            oauth_issuer: "https://auth.local.host/",
-            openid_configuration: "https://auth.local.host/.well-known/openid-configuration",
-            issuer_did: "did:web:auth.local.host",
-            supported_auth_methods: ["password", "oidc"],
-            supported_grant_types: ["authorization_code", "refresh_token"],
             did_binding_methods: ["did_controller_key", "device_key"],
-            required_audience: "https://auth.local.host/_cokret/gate",
-            session_grant_scope: "urn:cokret:principal-server:session.bind",
-            oidc_clients: [
+            mode: "development",
+            account_authority: {
+              origin: "https://auth.local.host",
+              gate_account_base: "https://auth.local.host/_cokret/gate/account",
+            },
+            methods: [
               {
-                id: "01GFWR28C4KNE04WG3HKXB7C9R",
+                method: "oidc",
+                issuer: "https://auth.local.host/",
+                openid_configuration: "https://auth.local.host/.well-known/openid-configuration",
                 client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
-                client_name: "Yougen Dev",
-                redirect_uris: ["http://127.0.0.1/auth/callback"],
-                grant_types: ["authorization_code", "refresh_token"],
-                token_endpoint_auth_method: "none",
+                scopes: ["openid", "profile", "urn:cokret:principal-server:session.bind"],
+                grant_exchange: { proof_kind: "oidc_code_exchange" },
               },
             ],
           },
@@ -340,8 +328,20 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         supported_bindings: [{ kind: "http_json" }],
         auth_metadata: {
           mode: "development",
-          supported_auth_methods: ["oauth2_bearer_introspection"],
-          auth_server_url: "https://auth.local.host",
+          account_authority: {
+            origin: "https://auth.local.host",
+            gate_account_base: "https://auth.local.host/_cokret/gate/account",
+          },
+          methods: [
+            {
+              method: "oidc",
+              issuer: "https://auth.local.host/",
+              openid_configuration: "https://auth.local.host/.well-known/openid-configuration",
+              client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
+              scopes: ["openid", "profile", "urn:cokret:principal-server:session.bind"],
+              grant_exchange: { proof_kind: "oidc_code_exchange" },
+            },
+          ],
         },
         limits: { storage: "memory" },
         rate_limit_policy: { writes_per_minute: 120 },
@@ -390,7 +390,20 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         supported_features: [],
         auth_metadata: {
           mode: "development",
-          supported_auth_methods: ["oauth2_bearer_introspection"],
+          account_authority: {
+            origin: "https://auth.local.host",
+            gate_account_base: "https://auth.local.host/_cokret/gate/account",
+          },
+          methods: [
+            {
+              method: "oidc",
+              issuer: "https://auth.local.host/",
+              openid_configuration: "https://auth.local.host/.well-known/openid-configuration",
+              client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
+              scopes: ["openid", "profile", "urn:cokret:principal-server:session.bind"],
+              grant_exchange: { proof_kind: "oidc_code_exchange" },
+            },
+          ],
         },
         limits: { storage: "memory" },
         rate_limit_policy: { writes_per_minute: 120 },
