@@ -23,11 +23,23 @@ pub(crate) async fn optional_invite_notifications(api: &CokretApi) -> anyhow::Re
     match api.invites().await {
         Ok(response) => Ok(response.invites),
         Err(error) if is_auth_expired_error(&error) => {
-            let Some(refreshed) = crate::session::refresh_current_session_credential().await else {
-                return Err(error);
-            };
-            let refreshed_api = api.clone().with_bearer(refreshed);
-            Ok(refreshed_api.invites().await?.invites)
+            match crate::session::refresh_current_session().await {
+                crate::session::CurrentSessionRefresh::Credential(refreshed) => {
+                    let refreshed_api = api.clone().with_bearer(refreshed);
+                    Ok(refreshed_api.invites().await?.invites)
+                }
+                crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                    Err(anyhow::anyhow!(
+                        "session refresh cannot continue locally: {reason}; invites: {error}"
+                    ))
+                }
+                crate::session::CurrentSessionRefresh::LoginRequired { reason } => Err(
+                    anyhow::anyhow!("session refresh requires login: {reason}; invites: {error}"),
+                ),
+                crate::session::CurrentSessionRefresh::RetryLater { reason } => Err(
+                    anyhow::anyhow!("session refresh pending: {reason}; invites: {error}"),
+                ),
+            }
         }
         Err(error) => {
             tracing::debug!(

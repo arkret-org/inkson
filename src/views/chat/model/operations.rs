@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::is_auth_expired_error;
 
 pub(crate) const CHAT_PRIVATE_SAVED_COLLECTION_TITLE: &str = "Saved";
 
@@ -450,10 +451,10 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
 ///
 /// The send paths used to bounce straight to `/login` on the first
 /// `auth_expired` — the "it randomly asks me to sign in mid-conversation"
-/// report. Routing through [`crate::session::refresh_current_session_credential`]
-/// keeps the user signed in across a routine token rollover; only a
-/// genuinely dead session (refresh material exhausted) still returns an
-/// `auth_expired` for the caller to route to login.
+/// report. Routing through [`crate::session::refresh_current_session`]
+/// keeps the user signed in across a routine token rollover. Only a terminal
+/// refresh-endpoint grant error clears the active session; other refresh
+/// failures are surfaced without dropping the current token.
 pub(crate) async fn submit_chat_operation_with_auth_refresh(
     base_url: &str,
     actor_id: &str,
@@ -475,8 +476,12 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
     match first {
         Ok(response) => Ok(response),
         Err(error) if is_auth_expired_error(&error) => {
-            match crate::session::refresh_current_session_credential().await {
-                Some(fresh_token) => {
+            if crate::api::is_terminal_session_grant_error(&error) {
+                crate::session::invalidate_current_session("session grant is no longer active");
+                return Err(error);
+            }
+            match crate::session::refresh_current_session().await {
+                crate::session::CurrentSessionRefresh::Credential(fresh_token) => {
                     let retry_api =
                         authed_api_with_sync(base_url, fresh_token, wait_for_sync_token)?;
                     submit_chat_operation_with_plaintext_retry(
@@ -488,10 +493,17 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
                     )
                     .await
                 }
-                // Refresh material is exhausted — the session is really
-                // dead. Hand the original auth_expired back so the caller
-                // routes to login.
-                None => Err(error),
+                crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                    Err(anyhow::anyhow!(
+                        "session refresh cannot continue locally: {reason}; send: {error}"
+                    ))
+                }
+                crate::session::CurrentSessionRefresh::LoginRequired { reason } => Err(
+                    anyhow::anyhow!("session refresh requires login: {reason}; send: {error}"),
+                ),
+                crate::session::CurrentSessionRefresh::RetryLater { reason } => Err(
+                    anyhow::anyhow!("session refresh pending: {reason}; send: {error}"),
+                ),
             }
         }
         Err(error) => Err(error),

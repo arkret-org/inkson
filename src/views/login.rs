@@ -245,17 +245,29 @@ pub fn LoginPanel(
                                         is_busy.set(true);
                                         auth_status.set("Refreshing session...".to_owned());
                                         spawn(async move {
-                                            if let Some(session_credential) =
-                                                crate::session::refresh_current_session_credential().await
-                                            {
-                                                token.set(session_credential);
-                                                auth_status.set("Session restored".to_owned());
-                                                on_login.call(());
-                                            } else {
-                                                auth_status.set(
-                                                    "Session could not be restored; sign in again"
-                                                        .to_owned(),
-                                                );
+                                            match crate::session::refresh_current_session().await {
+                                                crate::session::CurrentSessionRefresh::Credential(
+                                                    session_credential,
+                                                ) => {
+                                                    token.set(session_credential);
+                                                    auth_status.set("Session restored".to_owned());
+                                                    on_login.call(());
+                                                }
+                                                crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                                                    auth_status.set(format!(
+                                                        "Sign in required: {reason}"
+                                                    ));
+                                                }
+                                                crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                                    auth_status.set(format!(
+                                                        "Session could not be restored: {reason}"
+                                                    ));
+                                                }
+                                                crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                                                    auth_status.set(format!(
+                                                        "Session refresh pending: {reason}"
+                                                    ));
+                                                }
                                             }
                                             is_busy.set(false);
                                         });

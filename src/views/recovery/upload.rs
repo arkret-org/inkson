@@ -60,6 +60,7 @@ pub(crate) fn upload_recovery_key_account_backup(
     } else {
         Some(state_store.read().private_plaintext_snapshot_json())
     };
+    let needs_mls_backup_signal = crate::components::try_needs_mls_backup_signal();
     status.set(
         "Recovery Key generated — publishing recovery policy and DID recovery backup…".to_owned(),
     );
@@ -115,11 +116,19 @@ pub(crate) fn upload_recovery_key_account_backup(
                     &recovery_key,
                 );
                 if let Ok(mut store) = state_store.try_write() {
+                    let configured_backup_id = account_backup_id
+                        .as_deref()
+                        .unwrap_or(did_backup_id.as_str());
                     crate::components::mark_mls_recovery_backup_configured(
                         &mut store,
                         &actor_for_sidecar,
-                        &did_backup_id,
+                        configured_backup_id,
                     );
+                }
+                if account_backup_id.is_some()
+                    && let Some(mut needs_mls_backup) = needs_mls_backup_signal
+                {
+                    needs_mls_backup.set(false);
                 }
                 // Best-effort: also back up the encrypted local-plaintext sidecar
                 // so a fresh device recovers the author's own content. A failure

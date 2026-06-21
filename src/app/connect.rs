@@ -1,14 +1,16 @@
 use super::*;
+use crate::api::is_terminal_session_grant_error;
 
 /// The single source of truth for restoring or rotating the current session credential.
 ///
 /// Registered once at the app root and reached everywhere through
-/// [`crate::session::refresh_current_session_credential`]. Reads the live
+/// [`crate::session::refresh_current_session`]. Reads the live
 /// base/actor/device from their signals (so it always targets the active
 /// session), then either adopts the current grant JWT or rotates the grant.
 /// On success it writes the current credential into the `token` signal and
-/// persisted config and returns it; on definitive failure it returns `None`
-/// and the caller routes to login.
+/// persisted config and returns it. Only a terminal refresh-endpoint grant
+/// error invalidates the active session; missing local refresh material is
+/// reported without clearing the token.
 ///
 /// Concurrency is handled by `crate::session`: callers coalesce onto one
 /// in-flight invocation, so this never runs twice in parallel for a single
@@ -102,8 +104,7 @@ pub(super) async fn refresh_session_credential_for_active_context(
         }
         crate::session_refresh::RefreshOutcome::NoGrant => {
             let reason = "no session grant is available".to_owned();
-            crate::session::invalidate_current_session(reason.clone());
-            crate::session::CurrentSessionRefresh::LoginRequired { reason }
+            crate::session::CurrentSessionRefresh::SignInRequired { reason }
         }
         crate::session_refresh::RefreshOutcome::Transient { reason } => {
             crate::session::CurrentSessionRefresh::RetryLater { reason }
@@ -158,7 +159,6 @@ pub(super) struct ConnectContext {
     /// first full account-subscribe snapshot on the same render.
     pub(super) sync_bootstrap_complete: Signal<bool>,
     pub(super) session_boot_state: Signal<SessionBootState>,
-    pub(super) navigator: Navigator,
     /// Receive-side call-signaling hub. The full boot sync routes inbound
     /// `ck.call.signal` envelopes into it (dedup → incoming ring / per-call
     /// inbox); `CallPanel` drains it. See `crate::views::call_signals`.
@@ -316,7 +316,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         let mut sync_bootstrap_complete = ctx.sync_bootstrap_complete;
         let mut status = ctx.status;
         let mut sync_cursor = ctx.sync_cursor;
-        let mut token = ctx.token;
+        let token = ctx.token;
         let mut account_did = ctx.account_did;
         let mut selected_realm_id = ctx.selected_realm_id;
         let mut realm_tree_nodes = ctx.realm_tree_nodes;
@@ -333,7 +333,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         let mut personal_handles = ctx.personal_handles;
         let mut personal_handles_status = ctx.personal_handles_status;
         let mut theme = ctx.theme;
-        let navigator = ctx.navigator;
         let mut session_boot_state = ctx.session_boot_state;
         let mut needs_device_authorization = ctx.needs_device_authorization;
         let mut device_authorization_check_complete = ctx.device_authorization_check_complete;
@@ -423,38 +422,40 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
 
                 let mut session_credential = token();
                 if session_credential.trim().is_empty() {
-                    if let Some(refreshed) =
-                        crate::session::refresh_current_session_credential().await
-                    {
-                        session_credential = refreshed;
-                        if let Ok(rebound) = current_base_api(&base, state_store) {
-                            api = rebound;
+                    match crate::session::refresh_current_session().await {
+                        crate::session::CurrentSessionRefresh::Credential(refreshed) => {
+                            session_credential = refreshed;
+                            if let Ok(rebound) = current_base_api(&base, state_store) {
+                                api = rebound;
+                            }
+                            session_boot_state.set(SessionBootState::Checking);
                         }
-                        session_boot_state.set(SessionBootState::Checking);
-                    } else {
-                        let probe_label = description
-                            .as_ref()
-                            .map(|d| format!("{} / {}", d.service_type, d.protocol_version))
-                            .unwrap_or_else(|| "server probe unavailable".to_owned());
-                        status.set(format!("Refreshed: {probe_label}; sign-in required"));
-                        network_state.set("online".to_owned());
-                        sync_cursor.set("-".to_owned());
-                        realm_tree_nodes.set(Vec::new());
-                        timeline.set(Vec::new());
-                        device_queue.set(0);
-                        crypto_state.set("No authenticated session".to_owned());
-                        persist_config(
-                            config_store,
-                            base.clone(),
-                            actor.clone(),
-                            device.clone(),
-                            String::new(),
-                        );
-                        needs_device_authorization.set(false);
-                        device_authorization_check_complete.set(true);
-                        session_boot_state.set(SessionBootState::Unauthenticated);
-                        sync_bootstrap_complete.set(true);
-                        return;
+                        crate::session::CurrentSessionRefresh::SignInRequired { reason }
+                        | crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                            let probe_label = description
+                                .as_ref()
+                                .map(|d| format!("{} / {}", d.service_type, d.protocol_version))
+                                .unwrap_or_else(|| "server probe unavailable".to_owned());
+                            status.set(format!("Refreshed: {probe_label}; sign-in required"));
+                            network_state.set("online".to_owned());
+                            crypto_state.set("No authenticated session".to_owned());
+                            last_error.set(Some(reason));
+                            needs_device_authorization.set(false);
+                            device_authorization_check_complete.set(true);
+                            session_boot_state.set(SessionBootState::Unauthenticated);
+                            sync_bootstrap_complete.set(true);
+                            return;
+                        }
+                        crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                            status.set("Session refresh pending; retrying".to_owned());
+                            network_state.set("reconnecting".to_owned());
+                            last_error.set(Some(format!(
+                                "session credential restore pending: {reason}"
+                            )));
+                            session_boot_state.set(SessionBootState::Restoring);
+                            sync_bootstrap_complete.set(true);
+                            return;
+                        }
                     }
                 }
 
@@ -470,8 +471,8 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 // Resolve the canonical actor DID from the account viewer. Three
                 // outcomes:
                 //   1. Ok with non-empty DID -> use it as canonical_actor.
-                //   2. Err that looks like auth expiry -> wipe session, bounce to login. The
-                //      session is provably dead.
+                //   2. Err that looks like auth expiry -> try the shared session refresh path. Only
+                //      terminal refresh/grant errors invalidate the active session.
                 //   3. Anything else (Ok with empty DID, transient 5xx, parse error, network
                 //      failure) -> fall back to the locally stored actor, log a diagnostic to
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
@@ -522,56 +523,28 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         last_error.set(Some(format!("account_me: {retry_error}")));
                                         actor.clone()
                                     }
-                                    Err(_) => {
-                                        token.set(String::new());
-                                        persist_config(
-                                            config_store,
-                                            base.clone(),
-                                            actor.clone(),
-                                            device.clone(),
-                                            String::new(),
+                                    Err(retry_error)
+                                        if is_terminal_session_grant_error(&retry_error) =>
+                                    {
+                                        crate::session::invalidate_current_session(
+                                            "session grant is no longer active",
                                         );
-                                        sync_cursor.set("-".to_owned());
-                                        selected_realm_id.set(String::new());
-                                        realm_tree_nodes.set(Vec::new());
-                                        timeline.set(Vec::new());
-                                        device_queue.set(0);
-                                        crypto_state.set("Session expired".to_owned());
-                                        status.set("Session expired; sign in again".to_owned());
-                                        network_state.set("online".to_owned());
-                                        last_error
-                                            .set(Some("auth_expired: session expired".to_owned()));
-                                        needs_device_authorization.set(false);
-                                        device_authorization_check_complete.set(true);
-                                        session_boot_state.set(SessionBootState::Unauthenticated);
-                                        redirect_to_login(navigator);
                                         sync_bootstrap_complete.set(true);
                                         return;
                                     }
+                                    Err(retry_error) => {
+                                        status.set("Session refresh pending; retrying".to_owned());
+                                        network_state.set("reconnecting".to_owned());
+                                        last_error.set(Some(format!(
+                                            "account_me after session refresh: {retry_error}"
+                                        )));
+                                        actor.clone()
+                                    }
                                 }
                             }
-                            crate::session::CurrentSessionRefresh::LoginRequired { .. } => {
-                                token.set(String::new());
-                                persist_config(
-                                    config_store,
-                                    base.clone(),
-                                    actor.clone(),
-                                    device.clone(),
-                                    String::new(),
-                                );
-                                sync_cursor.set("-".to_owned());
-                                selected_realm_id.set(String::new());
-                                realm_tree_nodes.set(Vec::new());
-                                timeline.set(Vec::new());
-                                device_queue.set(0);
-                                crypto_state.set("Session expired".to_owned());
-                                status.set("Session expired; sign in again".to_owned());
-                                network_state.set("online".to_owned());
-                                last_error.set(Some("auth_expired: session expired".to_owned()));
-                                needs_device_authorization.set(false);
-                                device_authorization_check_complete.set(true);
-                                session_boot_state.set(SessionBootState::Unauthenticated);
-                                redirect_to_login(navigator);
+                            crate::session::CurrentSessionRefresh::SignInRequired { reason }
+                            | crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                last_error.set(Some(reason));
                                 sync_bootstrap_complete.set(true);
                                 return;
                             }
@@ -663,40 +636,54 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         device_authorization_check_complete.set(true);
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        if let Some(refreshed) =
-                            crate::session::refresh_current_session_credential().await
-                        {
-                            session_credential = refreshed;
-                            if let Ok(rebound) = current_base_api(&base, state_store) {
-                                api = rebound;
-                            }
-                            authed = current_authed_api(&base, &session_credential, state_store)
-                                .unwrap_or_else(|_| {
-                                    api.clone().with_bearer(session_credential.clone())
-                                });
-                            match authed.list_devices().await {
-                                Ok(viewer) => {
-                                    account_has_other_devices.set(
-                                        account_has_other_active_devices_from_account_viewer(
-                                            &viewer, &device,
-                                        ),
-                                    );
-                                    needs_device_authorization.set(
-                                        device_authorization_required_from_account_viewer(
-                                            &viewer, &device,
-                                        ),
-                                    );
+                        match crate::session::refresh_current_session().await {
+                            crate::session::CurrentSessionRefresh::Credential(refreshed) => {
+                                session_credential = refreshed;
+                                if let Ok(rebound) = current_base_api(&base, state_store) {
+                                    api = rebound;
                                 }
-                                Err(retry_error) => {
-                                    tracing::warn!(
-                                        ?retry_error,
-                                        "device authorization check failed after refresh"
-                                    );
-                                    needs_device_authorization.set(true);
+                                authed =
+                                    current_authed_api(&base, &session_credential, state_store)
+                                        .unwrap_or_else(|_| {
+                                            api.clone().with_bearer(session_credential.clone())
+                                        });
+                                match authed.list_devices().await {
+                                    Ok(viewer) => {
+                                        account_has_other_devices.set(
+                                            account_has_other_active_devices_from_account_viewer(
+                                                &viewer, &device,
+                                            ),
+                                        );
+                                        needs_device_authorization.set(
+                                            device_authorization_required_from_account_viewer(
+                                                &viewer, &device,
+                                            ),
+                                        );
+                                    }
+                                    Err(retry_error) => {
+                                        tracing::warn!(
+                                            ?retry_error,
+                                            "device authorization check failed after refresh"
+                                        );
+                                        needs_device_authorization.set(true);
+                                    }
                                 }
                             }
-                        } else {
-                            needs_device_authorization.set(true);
+                            crate::session::CurrentSessionRefresh::SignInRequired { reason }
+                            | crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                tracing::warn!(
+                                    %reason,
+                                    "device authorization check ended because session refresh requires login"
+                                );
+                                needs_device_authorization.set(false);
+                            }
+                            crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                                tracing::warn!(
+                                    %reason,
+                                    "device authorization check deferred while session refresh is pending"
+                                );
+                                needs_device_authorization.set(true);
+                            }
                         }
                         device_authorization_check_complete.set(true);
                     }
@@ -785,8 +772,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         });
                                 authed.account_subscribe_snapshot(None).await
                             }
-                            crate::session::CurrentSessionRefresh::LoginRequired { .. } => {
-                                Err(error)
+                            crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                                Err(anyhow::anyhow!(
+                                    "session refresh cannot continue locally: {reason}; sync: {error}"
+                                ))
+                            }
+                            crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                Err(anyhow::anyhow!(
+                                    "session refresh requires login: {reason}; sync: {error}"
+                                ))
                             }
                             crate::session::CurrentSessionRefresh::RetryLater { reason } => {
                                 Err(anyhow::anyhow!(
@@ -809,21 +803,33 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         let invite_notifications = match authed.invites().await {
                             Ok(response) => Some(response.invites),
                             Err(error) if is_auth_expired_error(&error) => {
-                                if let Some(refreshed) =
-                                    crate::session::refresh_current_session_credential().await
-                                {
-                                    session_credential = refreshed;
-                                    if let Ok(rebound) = current_base_api(&base, state_store) {
-                                        api = rebound;
+                                match crate::session::refresh_current_session().await {
+                                    crate::session::CurrentSessionRefresh::Credential(
+                                        refreshed,
+                                    ) => {
+                                        session_credential = refreshed;
+                                        if let Ok(rebound) = current_base_api(&base, state_store) {
+                                            api = rebound;
+                                        }
+                                        authed = current_authed_api(
+                                            &base,
+                                            &session_credential,
+                                            state_store,
+                                        )
+                                        .unwrap_or_else(|_| {
+                                            api.clone().with_bearer(session_credential.clone())
+                                        });
+                                        authed.invites().await.ok().map(|response| response.invites)
                                     }
-                                    authed =
-                                        current_authed_api(&base, &session_credential, state_store)
-                                            .unwrap_or_else(|_| {
-                                                api.clone().with_bearer(session_credential.clone())
-                                            });
-                                    authed.invites().await.ok().map(|response| response.invites)
-                                } else {
-                                    None
+                                    crate::session::CurrentSessionRefresh::SignInRequired {
+                                        ..
+                                    }
+                                    | crate::session::CurrentSessionRefresh::LoginRequired {
+                                        ..
+                                    }
+                                    | crate::session::CurrentSessionRefresh::RetryLater {
+                                        ..
+                                    } => None,
                                 }
                             }
                             Err(error) => {
@@ -1153,26 +1159,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         device_queue.set(sync.to_device.len());
                         sync_cursor.set(sync.cursor);
                     }
-                    Err(error) if is_auth_expired_error(&error) => {
-                        token.set(String::new());
-                        persist_config(
-                            config_store,
-                            base.clone(),
-                            canonical_actor.clone(),
-                            device.clone(),
-                            String::new(),
+                    Err(error) if is_terminal_session_grant_error(&error) => {
+                        crate::session::invalidate_current_session(
+                            "session grant is no longer active",
                         );
-                        sync_cursor.set("-".to_owned());
-                        selected_realm_id.set(String::new());
-                        realm_tree_nodes.set(Vec::new());
-                        timeline.set(Vec::new());
-                        device_queue.set(0);
-                        crypto_state.set("Session expired".to_owned());
-                        status.set("Session expired; sign in again".to_owned());
-                        network_state.set("online".to_owned());
-                        last_error.set(Some("auth_expired: session expired".to_owned()));
-                        session_boot_state.set(SessionBootState::Unauthenticated);
-                        redirect_to_login(navigator);
                         sync_bootstrap_complete.set(true);
                         return;
                     }
@@ -1233,8 +1223,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         });
                                 authed.events_describe().await
                             }
-                            crate::session::CurrentSessionRefresh::LoginRequired { .. } => {
-                                Err(error)
+                            crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                                Err(anyhow::anyhow!(
+                                    "session refresh cannot continue locally: {reason}; events_describe: {error}"
+                                ))
+                            }
+                            crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                Err(anyhow::anyhow!(
+                                    "session refresh requires login: {reason}; events_describe: {error}"
+                                ))
                             }
                             crate::session::CurrentSessionRefresh::RetryLater { reason } => {
                                 Err(anyhow::anyhow!(
@@ -1253,31 +1250,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             frontier_state.set(frontier.to_string());
                         }
                     }
-                    Err(error) if is_auth_expired_error(&error) => {
-                        // Same definitive-session-loss handling as the sync 401
-                        // branch above. Without this, an expired token that
-                        // passed sync (because sync was served from a cache or
-                        // a misrouted path) could silently leave the user with
-                        // a stale frontier and no session-expiry redirect.
-                        token.set(String::new());
-                        persist_config(
-                            config_store,
-                            base.clone(),
-                            canonical_actor.clone(),
-                            device.clone(),
-                            String::new(),
+                    Err(error) if is_terminal_session_grant_error(&error) => {
+                        crate::session::invalidate_current_session(
+                            "session grant is no longer active",
                         );
-                        sync_cursor.set("-".to_owned());
-                        selected_realm_id.set(String::new());
-                        realm_tree_nodes.set(Vec::new());
-                        timeline.set(Vec::new());
-                        device_queue.set(0);
-                        crypto_state.set("Session expired".to_owned());
-                        status.set("Session expired; sign in again".to_owned());
-                        network_state.set("online".to_owned());
-                        last_error.set(Some("auth_expired: session expired".to_owned()));
-                        session_boot_state.set(SessionBootState::Unauthenticated);
-                        redirect_to_login(navigator);
                         sync_bootstrap_complete.set(true);
                         return;
                     }

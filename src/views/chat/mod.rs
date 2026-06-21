@@ -6,8 +6,7 @@ use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
 use crate::api::{
-    CokretApi, is_auth_expired_error, is_plaintext_visibility_policy_error,
-    is_space_membership_denied_error,
+    CokretApi, is_plaintext_visibility_policy_error, is_space_membership_denied_error,
 };
 use crate::audit::build_audit_ryw_receipt;
 use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon};
@@ -1953,7 +1952,6 @@ pub fn ChatPanel(
                                                                 status_msg.set("Message sent".to_owned());
                                                             }
                                                             Err(error) => {
-                                                                let auth_expired = is_auth_expired_error(&error);
                                                                 let message = chat_send_error_message(&error);
                                                                 if let Some(found) = messages
                                                                     .write()
@@ -1965,9 +1963,6 @@ pub fn ChatPanel(
                                                                     found.error = Some(message.clone());
                                                                 }
                                                                 status_msg.set(format!("Message send failed: {message}"));
-                                                                if auth_expired {
-                                                                    let _ = navigator.push(Route::Login);
-                                                                }
                                                             }
                                                         }
                                                     });
@@ -3904,7 +3899,6 @@ pub fn ChatPanel(
                                             status_msg.set("Message sent".to_owned());
                                         }
                                         Err(error) => {
-                                            let auth_expired = is_auth_expired_error(&error);
                                             let membership_denied =
                                                 is_space_membership_denied_error(&error);
                                             let message = chat_send_error_message(&error);
@@ -3925,9 +3919,6 @@ pub fn ChatPanel(
                                                 found.error = Some(message.clone());
                                             }
                                             status_msg.set(format!("Message send failed: {message}"));
-                                            if auth_expired {
-                                                let _ = navigator.push(Route::Login);
-                                            }
                                         }
                                     }
                                 });

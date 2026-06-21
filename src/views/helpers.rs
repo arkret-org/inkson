@@ -200,9 +200,8 @@ pub fn display_name_for_did(
 ///
 /// * `Unavailable` — `CokretApi::new` rejected the base URL (bad scheme, parse error, etc.). The
 ///   session is intact; the user should fix the server URL.
-/// * `AuthExpired` — the server returned a definitive session-death code (per
-///   [`is_auth_expired_error`]). The caller MUST clear the session and bounce to login, exactly as
-///   the connect path does.
+/// * `AuthExpired` — the server returned a terminal session-grant code. The app-wide invalidator
+///   has already cleared the session; callers should stop the current flow.
 /// * `Failed` — every other error. Caller surfaces to status / last_error so the user sees a
 ///   retriable reason without losing the session.
 #[derive(Debug)]
@@ -248,15 +247,14 @@ impl ApiCallError {
 ///     api.list_key_backups().await
 /// }).await {
 ///     Ok(value) => status.set(format!("{value}")),
-///     Err(e) if e.is_auth_expired() => { /* redirect_to_login */ }
+///     Err(e) if e.is_auth_expired() => { /* stop current flow; invalidator owns cleanup */ }
 ///     Err(e) => last_error.set(Some(e.display())),
 /// }
 /// ```
 ///
 /// instead of the three-deep nested `match`. Doesn't perform side
-/// effects of its own — auth-expired cleanup (token reset, navigator
-/// redirect) stays with the caller because those signals live in the
-/// surrounding component scope.
+/// side effects of its own except terminal session invalidation through
+/// `crate::session`, because lower-level helpers cannot own app signals.
 pub async fn with_authed_api<F, Fut, T>(
     base_url: &str,
     mut session_credential: String,
@@ -322,10 +320,26 @@ async fn classify_api_call_error(err: anyhow::Error) -> ApiCallError {
     }
     if is_auth_expired_error(&err) {
         // Run the single-flight refresh path so views that ignore the
-        // returned AuthExpired error still converge on a fresh token (or
-        // a cleared session on terminal failure) before their next poll.
-        let _ = crate::session::refresh_current_session_credential().await;
-        ApiCallError::AuthExpired(err)
+        // returned error still converge on a fresh token before their next
+        // poll. Only the refresh path's terminal result clears the session.
+        match crate::session::refresh_current_session().await {
+            crate::session::CurrentSessionRefresh::Credential(_) => {
+                ApiCallError::Failed(anyhow::anyhow!("session refreshed; retry the operation"))
+            }
+            crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                ApiCallError::Failed(anyhow::anyhow!(
+                    "session refresh cannot continue locally: {reason}; {err}"
+                ))
+            }
+            crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                ApiCallError::AuthExpired(anyhow::anyhow!(
+                    "session refresh requires login: {reason}; {err}"
+                ))
+            }
+            crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                ApiCallError::Failed(anyhow::anyhow!("session refresh pending: {reason}; {err}"))
+            }
+        }
     } else {
         ApiCallError::Failed(err)
     }

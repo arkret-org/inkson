@@ -293,6 +293,7 @@ pub(crate) fn mls_recovery_setup_missing(
 ) -> bool {
     if crate::mls::account_recovery::select_preferred_mls_account_secret_backup(list_payload)
         .is_some()
+        || crate::mls::account_recovery::select_mls_account_secret_backup(list_payload).is_some()
     {
         return false;
     }

@@ -2,7 +2,6 @@
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use dioxus_router::hooks::use_navigator;
 
 use super::data::{
     ANCHOR_PROFILE_OPTIONS, DISCOVERABILITY_OPTIONS, ENCRYPTION_PROFILE_OPTIONS,
@@ -20,7 +19,7 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{authed_api, persist_config, short_protocol_id};
+use crate::views::helpers::{authed_api, short_protocol_id};
 
 #[component]
 pub(super) fn RealmsSection(
@@ -57,7 +56,6 @@ pub(super) fn RealmsSection(
     mut recovery_gate_acknowledged: Signal<bool>,
 ) -> Element {
     let has_session = !token().trim().is_empty();
-    let navigator = use_navigator();
 
     let realm_discoverability_selected = use_memo(move || Some(realm_discoverability()));
     let realm_policy_join_rule_selected = use_memo(move || Some(realm_policy_join_rule()));
@@ -934,24 +932,26 @@ pub(super) fn RealmsSection(
                                                         let message = if is_auth_expired_error(&error) {
                                                             // The session credential may have rotated
                                                             // between background-poller ticks. Try the same
-                                                            // silent refresh every other path uses before
-                                                            // wiping the session and bouncing to login.
-                                                            if crate::session::refresh_current_session_credential()
-                                                                .await
-                                                                .is_some()
-                                                            {
-                                                                "Session refreshed — retry creating the Realm.".to_owned()
-                                                            } else {
-                                                                token.set(String::new());
-                                                                persist_config(
-                                                                    config_store,
-                                                                    base.clone(),
-                                                                    actor.clone(),
-                                                                    device.clone(),
-                                                                    String::new(),
-                                                                );
-                                                                let _ = navigator.push(Route::Login);
-                                                                "Session expired. Sign in again before creating a Realm.".to_owned()
+                                                            // silent refresh every other path uses; only
+                                                            // terminal refresh-endpoint errors clear the
+                                                            // active session.
+                                                            match crate::session::refresh_current_session().await {
+                                                                crate::session::CurrentSessionRefresh::Credential(_) => {
+                                                                    "Session refreshed — retry creating the Realm.".to_owned()
+                                                                }
+                                                                crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                                                                    format!(
+                                                                        "Sign in again before creating a Realm: {reason}"
+                                                                    )
+                                                                }
+                                                                crate::session::CurrentSessionRefresh::LoginRequired { .. } => {
+                                                                    "Session expired. Sign in again before creating a Realm.".to_owned()
+                                                                }
+                                                                crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                                                                    format!(
+                                                                        "Session refresh pending: {reason}. Retry creating the Realm."
+                                                                    )
+                                                                }
                                                             }
                                                         } else {
                                                             format!("create failed: {error}")

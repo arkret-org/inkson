@@ -38,23 +38,26 @@ pub const POLL_INTERVAL_SECS: u64 = 30;
 /// the persisted grant.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefreshDecision {
-    /// No grant on disk — either the user hasn't logged in, or a
-    /// previous failure wiped it. Caller must route to the login view.
+    /// No grant on disk. Caller may ask the user to sign in, but this is not
+    /// a refresh-endpoint terminal error and must not clear a live credential.
     NoGrant,
     /// Grant is on disk and still has plenty of runway — caller does nothing.
     Fresh,
     /// The grant is within `GRANT_ROTATION_SKEW_SECS` of its own expiry and
     /// should be rotated onto a fresh grant. Caller should run [`run_refresh`].
     Due,
-    /// The grant itself has expired. Rotation will fail; caller
-    /// should clear local state and bounce to login.
+    /// The grant itself appears expired locally. The refresh path still
+    /// attempts rotation so only the refresh endpoint's terminal error code
+    /// decides whether local session material is cleared.
     GrantExpired,
 }
 
 /// Outcome the refresh harness returns to the caller.
 #[derive(Clone, Debug)]
 pub enum RefreshOutcome {
-    /// No persisted grant — caller routes to login.
+    /// No persisted grant. Caller may ask the user to sign in, but must not
+    /// clear a live credential because no refresh-endpoint terminal code was
+    /// observed.
     NoGrant,
     /// Nothing to do; the current grant is still fresh.
     Fresh,
@@ -62,13 +65,13 @@ pub enum RefreshOutcome {
     /// `ck.session.grant` JWT; caller swaps it into the in-memory credential
     /// signal and the persisted config.
     Refreshed { session_credential: String },
-    /// The grant is dead (expired, revoked, or any non-transient
-    /// failure). The persisted grant has been cleared; caller must
-    /// route to the login view.
+    /// The refresh endpoint reported a terminal grant error. The persisted
+    /// grant has been cleared; caller should route to the login view through
+    /// the app-wide invalidator.
     LoginRequired { reason: String },
     /// Rotation attempt failed without proving the grant is dead
-    /// (network down, 5xx, or a consumed grant). Caller should
-    /// leave the current grant alone.
+    /// (network down, 5xx, missing endpoint, or generic auth denial). Caller
+    /// should leave the current grant alone.
     Transient { reason: String },
 }
 
@@ -126,8 +129,7 @@ fn normalized_server_key(server_url: &str) -> String {
 ///
 /// The client currently keeps one foreground server session. A grant minted
 /// for another server must not be refreshed in the background or persisted as
-/// the active server's credential; otherwise an inactive server can indirectly
-/// bounce the visible session back to login.
+/// the active server's credential.
 pub fn grant_matches_principal_server(
     grant: &PersistedSessionGrant,
     principal_server_url: &str,
@@ -169,13 +171,7 @@ pub fn prepare_refresh(store: &mut LocalStateStore) -> RefreshPrepared {
     match refresh_decision(store) {
         RefreshDecision::NoGrant => return RefreshPrepared::Done(RefreshOutcome::NoGrant),
         RefreshDecision::Fresh => return RefreshPrepared::Done(RefreshOutcome::Fresh),
-        RefreshDecision::GrantExpired => {
-            store.set_session_grant(None);
-            return RefreshPrepared::Done(RefreshOutcome::LoginRequired {
-                reason: "session grant has expired".to_owned(),
-            });
-        }
-        RefreshDecision::Due => {}
+        RefreshDecision::GrantExpired | RefreshDecision::Due => {}
     }
 
     let Some(grant) = store.session_grant() else {
@@ -235,12 +231,9 @@ pub fn prepare_refresh_for_server_after_unauthorized(
     if !grant_matches_principal_server(&grant, principal_server_url) {
         return RefreshPrepared::Done(RefreshOutcome::NoGrant);
     }
-    if grant_is_dead(&grant) {
-        store.set_session_grant(None);
-        return RefreshPrepared::Done(RefreshOutcome::LoginRequired {
-            reason: "session grant has expired".to_owned(),
-        });
-    }
+    // Even when local expiry metadata says the grant is already dead, attempt
+    // the refresh exchange and let the Account Authority's structured terminal
+    // error code decide whether the grant is cleared.
     prepare_refresh_grant(store, grant)
 }
 
@@ -374,14 +367,11 @@ pub async fn refresh_session_grant(
 }
 
 fn is_grant_dead_error(error: &anyhow::Error) -> bool {
-    // We don't have a structured error code for "grant revoked" — fall
-    // back to the same heuristic as session-expired handling. A bare 401
-    // might be transient (proxy hiccup, clock skew), but if the error
-    // chain mentions `auth_expired` / `invalid_grant` we treat it as
-    // terminal.
-    if crate::api::is_auth_expired_error(error) {
-        return true;
-    }
+    // Only refresh-specific terminal grant errors clear the persisted grant.
+    // A generic `auth_expired` / 401 on the refresh call can be a stale
+    // deployment, proxy route miss, clock skew, or temporary Account Authority
+    // outage; treating it as logout causes the UI to throw away recoverable
+    // session material.
     if crate::api::is_terminal_session_grant_error(error) {
         return true;
     }
@@ -406,16 +396,7 @@ fn is_grant_dead_error(error: &anyhow::Error) -> bool {
             return true;
         }
     }
-    let chain = format!("{error}").to_ascii_lowercase();
-    chain.contains("invalid_grant")
-        || chain.contains("grant_already_consumed")
-        || chain.contains("grant_expired")
-        || chain.contains("grant_revoked")
-        || chain.contains("session_grant_not_found")
-        || chain.contains("session_logged_out")
-        || chain.contains("invalid_signature")
-        || chain.contains("did_proof_required")
-        || terminal_session_grant_message(&chain)
+    false
 }
 
 fn terminal_session_grant_message(message: &str) -> bool {
@@ -585,6 +566,37 @@ mod tests {
             ),
         }
         .into();
+
+        let outcome = commit_refresh(&mut store, Err(error));
+
+        assert!(matches!(outcome, RefreshOutcome::Transient { .. }));
+        assert!(store.session_grant().is_some());
+    }
+
+    #[test]
+    fn commit_keeps_grant_for_generic_auth_expired_refresh_failure() {
+        let mut store = isolated_store("generic-auth-expired-refresh");
+        store.set_session_grant(Some(grant_with_expiry(86400)));
+        let error: anyhow::Error = crate::api::CokretApiError {
+            status: reqwest::StatusCode::UNAUTHORIZED,
+            error: crate::api::decode_cokret_error(
+                reqwest::StatusCode::UNAUTHORIZED,
+                br#"{"ok":false,"error":{"code":"auth_expired","message":"temporary auth gateway denial"}}"#,
+            ),
+        }
+        .into();
+
+        let outcome = commit_refresh(&mut store, Err(error));
+
+        assert!(matches!(outcome, RefreshOutcome::Transient { .. }));
+        assert!(store.session_grant().is_some());
+    }
+
+    #[test]
+    fn commit_keeps_grant_for_unstructured_terminal_looking_text() {
+        let mut store = isolated_store("unstructured-terminal-looking-text");
+        store.set_session_grant(Some(grant_with_expiry(86400)));
+        let error = anyhow::anyhow!("upstream said grant_revoked without an error envelope");
 
         let outcome = commit_refresh(&mut store, Err(error));
 
