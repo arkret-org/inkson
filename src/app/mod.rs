@@ -1026,9 +1026,13 @@ pub fn RouterView() -> Element {
             seen_detection_key.set(Some(detection_key));
 
             spawn(async move {
-                match crate::views::helpers::with_authed_api(&base, session, |api| async move {
-                    crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
-                })
+                match crate::views::helpers::with_authed_api(
+                    &base,
+                    session.clone(),
+                    |api| async move {
+                        crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
+                    },
+                )
                 .await
                 {
                     Ok(payload) => {
@@ -1095,7 +1099,19 @@ pub fn RouterView() -> Element {
                                     &actor,
                                     &device,
                                 );
-                            needs_mls_backup.set(should_backup);
+                            if should_backup {
+                                crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                                    base.clone(),
+                                    session.clone(),
+                                    actor.clone(),
+                                    device.clone(),
+                                    state_store_for_detection,
+                                    needs_mls_backup,
+                                )
+                                .await;
+                            } else {
+                                needs_mls_backup.set(false);
+                            }
                             let should_recovery_setup = {
                                 let store = state_store_for_detection.read();
                                 mls_recovery_setup_missing(
@@ -1508,7 +1524,7 @@ pub fn RouterView() -> Element {
                 // leave the flag false.
                 match crate::views::helpers::with_authed_api(
                     &detect_base,
-                    detect_session,
+                    detect_session.clone(),
                     |api| async move {
                         crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
                     },
@@ -1579,7 +1595,19 @@ pub fn RouterView() -> Element {
                                     &detect_actor,
                                     &detect_device,
                                 );
-                            needs_mls_backup_for_bootstrap.set(should_backup);
+                            if should_backup {
+                                crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                                    detect_base.clone(),
+                                    detect_session.clone(),
+                                    detect_actor.clone(),
+                                    detect_device.clone(),
+                                    state_store_for_probe,
+                                    needs_mls_backup_for_bootstrap,
+                                )
+                                .await;
+                            } else {
+                                needs_mls_backup_for_bootstrap.set(false);
+                            }
                             let should_recovery_setup = {
                                 let store = state_store_for_probe.read();
                                 mls_recovery_setup_missing(

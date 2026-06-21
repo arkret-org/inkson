@@ -266,7 +266,30 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
     let (_recovery_private_key, recovery_public_key) =
         crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key)
             .map_err(|err| anyhow!("derive recovery HPKE keypair: {err}"))?;
+    upload_mls_account_secret_backup_with_recovery_public_key(
+        api,
+        secure_store,
+        actor_id,
+        device_id,
+        &recovery_public_key,
+    )
+    .await
+}
 
+/// Upload an HPKE `recovery_public_key` account-secret backup using the
+/// already-known public recovery key. This path is used after the user has
+/// confirmed the 24-word Recovery Key once; future automatic backups only need
+/// the public recipient key and must not ask for the words again.
+pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
+    api: &crate::api::CokretApi,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    recovery_public_key: &[u8],
+) -> Result<String> {
+    if recovery_public_key.is_empty() {
+        return Err(anyhow!("recovery public key is required"));
+    }
     let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
@@ -290,7 +313,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
         &account_backup_id,
         actor_id,
         device_id,
-        &recovery_public_key,
+        recovery_public_key,
         &recovery_key_ref,
         &stored.secret,
         stored.version,

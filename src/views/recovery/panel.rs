@@ -44,6 +44,7 @@ pub fn RecoveryPanel(
     // Recovery key state — plaintext only in memory after Generate.
     let mut live_recovery_key = use_signal(String::new);
     let mut recovery_key_fp = use_signal(|| initial.recovery_key_fingerprint.clone());
+    let mut recovery_public_key_b64u = use_signal(|| initial.recovery_public_key_b64u.clone());
     let mut recovery_key_rotated_at = use_signal(|| initial.recovery_key_rotated_at.clone());
     let mut recovery_key_status = use_signal(String::new);
     let mut passkey_wraps = use_signal(|| initial.passkey_wraps.clone());
@@ -81,6 +82,9 @@ pub fn RecoveryPanel(
             if recovery_key_fp() != next.recovery_key_fingerprint {
                 recovery_key_fp.set(next.recovery_key_fingerprint);
             }
+            if recovery_public_key_b64u() != next.recovery_public_key_b64u {
+                recovery_public_key_b64u.set(next.recovery_public_key_b64u);
+            }
             if recovery_key_rotated_at() != next.recovery_key_rotated_at {
                 recovery_key_rotated_at.set(next.recovery_key_rotated_at);
             }
@@ -92,6 +96,7 @@ pub fn RecoveryPanel(
 
     let snapshot_state = move || RecoveryState {
         recovery_key_fingerprint: recovery_key_fp(),
+        recovery_public_key_b64u: recovery_public_key_b64u(),
         recovery_key_rotated_at: recovery_key_rotated_at(),
         sss_threshold: threshold(),
         sss_total: total(),

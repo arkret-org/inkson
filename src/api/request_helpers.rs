@@ -36,11 +36,19 @@ pub(crate) fn resolve_handle_request_body(
         ),
         None => None,
     };
+    let intent = match non_empty(context.intent) {
+        Some(intent) => Some(
+            intent
+                .parse::<cokret_sdk::models::DirectoryIntent>()
+                .map_err(|err| anyhow::anyhow!("invalid directory intent `{intent}`: {err}"))?,
+        ),
+        None => None,
+    };
     Ok(cokret_sdk::models::DirectoryResolveHandleRequestBody {
         handle: handle.to_owned(),
         expected_did,
         proof_challenge: non_empty(context.proof_challenge),
-        intent: non_empty(context.intent),
+        intent,
         requester,
         audience: non_empty(context.audience),
         realm_id,

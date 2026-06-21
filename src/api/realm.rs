@@ -899,22 +899,22 @@ impl CokretApi {
 }
 
 /// Stamp an invite→join event's `seal_ref` from the resolve-realm join
-/// candidate's `seal_head_ref`.
+/// candidate's single-leaf `seal_basis`.
 ///
 /// The invitee is not yet a member, so it cannot read the membership-gated
 /// `GET /_cokret/self/events/frontier?realm_id=` Realm Seal view (it answers
 /// `404 realm not found`). The current Seal head is instead disclosed by
-/// resolve-realm — authorized by the invite — in the join candidate. Stamp it
-/// before signing so [`CokretApi::submit_built_event`] does not fall back
-/// to the 404-prone frontier read.
+/// resolve-realm — authorized by the invite — in the join candidate's Control
+/// Move basis. Stamp it before signing so [`CokretApi::submit_built_event`]
+/// does not fall back to the 404-prone frontier read.
 ///
 /// Only stamps when the event actually needs a seal (`seal_ref` empty and it
-/// carries `effects`) and the candidate advertised a head — mirroring
+/// carries `effects`) and the candidate advertised a basis leaf — mirroring
 /// `submit_built_event`'s own seal-stamp condition so it is a no-op
 /// otherwise.
 fn stamp_invite_join_seal_ref(event: &mut cokret_sdk::Event, candidate: &RealmJoinCandidate) {
     if event.seal_ref.is_none() && !event.effects.is_empty() {
-        if let Some(seal_head) = candidate.seal_head_ref.as_ref() {
+        if let Some(seal_head) = candidate.seal_basis.leaves.first() {
             event.seal_ref = Some(seal_head.clone());
         }
     }

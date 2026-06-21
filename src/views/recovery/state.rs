@@ -1,5 +1,7 @@
 //! Private-data load/save and recovery-material predicates.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use dioxus::prelude::*;
 
 use super::RECOVERY_STATE_KEY;
@@ -48,8 +50,11 @@ pub(crate) fn save_generated_recovery_key_metadata(
     }
     let mut state = load_state(state_store, account_key);
     let fingerprint = fingerprint_recovery_key(recovery_key);
+    let (_, recovery_public_key) =
+        crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key).ok()?;
     let rotated_at = chrono::Utc::now().to_rfc3339();
     state.recovery_key_fingerprint = fingerprint.clone();
+    state.recovery_public_key_b64u = B64.encode(recovery_public_key);
     state.recovery_key_rotated_at = rotated_at.clone();
     state.passkey_wraps.clear();
     save_state(state_store, account_key, &state);
@@ -93,6 +98,26 @@ pub(crate) fn local_recovery_key_fingerprint(
         .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
         .map(|state| state.recovery_key_fingerprint)
         .filter(|fp| !fp.trim().is_empty())
+}
+
+/// Public HPKE key derived from the locally configured Recovery Key. This is
+/// safe to keep because it can only seal new backups; opening them still
+/// requires the offline 24-word Recovery Key.
+pub(crate) fn local_recovery_public_key(
+    state_store: &LocalStateStore,
+    account_key: &str,
+) -> Option<Vec<u8>> {
+    if account_key.trim().is_empty() {
+        return None;
+    }
+    state_store
+        .load_private_data(account_key, RECOVERY_STATE_KEY)
+        .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
+        .map(|state| state.recovery_public_key_b64u)
+        .map(|key| key.trim().to_owned())
+        .filter(|key| !key.is_empty())
+        .and_then(|key| B64.decode(key.as_bytes()).ok())
+        .filter(|key| !key.is_empty())
 }
 
 pub(crate) fn fmt_relative(iso: &str) -> String {

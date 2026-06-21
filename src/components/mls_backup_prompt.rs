@@ -427,14 +427,55 @@ pub fn try_needs_mls_backup_signal() -> Option<Signal<bool>> {
 /// X11.2 — shared first-write trigger. After a successful ENCRYPTED write,
 /// the caller spawns this: if the server holds NO `mls_account_secret`
 /// backup yet AND a local account secret exists, flip `needs_mls_backup` on
-/// so [`MlsBackupPrompt`] surfaces promptly. Best-effort and self-contained:
-/// swallows every error and never blocks the write path. The server probe is
-/// intentionally session-deduped per `(base_url, actor_id)`: the prompt only
-/// needs a first-write kick, not a backup-list request after every message.
+/// so [`MlsBackupPrompt`] surfaces promptly. Call
+/// [`maybe_auto_backup_mls_after_encrypted_write`] when a `LocalStateStore` is
+/// available so the public-key auto-backup path can run first. Best-effort and
+/// self-contained: swallows every error and never blocks the write path. The
+/// server probe is intentionally session-deduped per `(base_url, actor_id)`:
+/// the prompt only needs a first-write kick, not a backup-list request after
+/// every message.
 pub async fn maybe_flag_mls_backup_after_encrypted_write(
     base_url: String,
     token: String,
     actor_id: String,
+    needs_mls_backup: Signal<bool>,
+) {
+    maybe_backup_or_flag_mls_backup_after_encrypted_write(
+        base_url,
+        token,
+        actor_id,
+        None,
+        needs_mls_backup,
+    )
+    .await;
+}
+
+/// First-write trigger with the no-prompt path enabled. Once the user has
+/// confirmed a Recovery Key, the cached recovery public key can seal future
+/// account-secret backups without asking for the 24 words again.
+pub async fn maybe_auto_backup_mls_after_encrypted_write(
+    base_url: String,
+    token: String,
+    actor_id: String,
+    device_id: String,
+    state_store: Signal<LocalStateStore>,
+    needs_mls_backup: Signal<bool>,
+) {
+    maybe_backup_or_flag_mls_backup_after_encrypted_write(
+        base_url,
+        token,
+        actor_id,
+        Some((device_id, state_store)),
+        needs_mls_backup,
+    )
+    .await;
+}
+
+async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
+    base_url: String,
+    token: String,
+    actor_id: String,
+    auto_backup: Option<(String, Signal<LocalStateStore>)>,
     needs_mls_backup: Signal<bool>,
 ) {
     if base_url.trim().is_empty() || token.trim().is_empty() || actor_id.trim().is_empty() {
@@ -458,16 +499,29 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
     if !mark_mls_backup_after_write_probe_started(probe_key) {
         return;
     }
-    // Surface the prompt as soon as the local account secret exists. The
-    // server probe below will close it again if a recovery-key backup is
-    // already present. This avoids a silent window after creating an encrypted
-    // Realm where the app has recoverable material locally but the async
-    // backup-list check has not completed yet.
-    try_set_signal(needs_mls_backup, true);
+    // If this browser already confirmed a Recovery Key, use the cached public
+    // key to seal the first account-secret backup without asking for the words
+    // again. Missing public key falls through to the explicit prompt below.
+    let auto_backup_inputs = auto_backup.as_ref().and_then(|(device_id, state_store)| {
+        let store = state_store.read();
+        let recovery_public_key =
+            crate::views::recovery::local_recovery_public_key(&store, &actor_id)?;
+        let sidecar_json = if store.private_plaintext_is_empty() {
+            None
+        } else {
+            Some(store.private_plaintext_snapshot_json())
+        };
+        Some((
+            *state_store,
+            device_id.clone(),
+            recovery_public_key,
+            sidecar_json,
+        ))
+    });
     // Server must NOT already hold an `mls_account_secret` backup. (When it
     // does, the restore/unlock path owns the strand — backup and restore are
     // mutually exclusive by this exact check, so we can't double-prompt.)
-    let payload = match with_authed_api(&base_url, token, |api| async move {
+    let payload = match with_authed_api(&base_url, token.clone(), |api| async move {
         crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
     })
     .await
@@ -482,11 +536,73 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
             return;
         }
     };
-    if crate::mls::account_recovery::select_preferred_mls_account_secret_backup(&payload).is_some()
+    if let Some(existing_backup) =
+        crate::mls::account_recovery::select_preferred_mls_account_secret_backup(&payload)
     {
+        if let Some((state_store, ..)) = auto_backup_inputs.as_ref()
+            && let Some(backup_id) = existing_backup
+                .get("backup_id")
+                .and_then(serde_json::Value::as_str)
+        {
+            let mut state_store = *state_store;
+            if let Ok(mut store) = state_store.try_write() {
+                mark_mls_recovery_backup_configured(&mut store, &actor_id, backup_id);
+            }
+        }
         try_set_signal(needs_mls_backup, false);
         return;
     }
+    if let Some((mut state_store, device_id, recovery_public_key, sidecar_json)) =
+        auto_backup_inputs
+    {
+        let actor_for_upload = actor_id.clone();
+        let device_for_upload = device_id.clone();
+        let upload_result = with_authed_api(&base_url, token.clone(), |api| async move {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_public_key(
+                &api,
+                secure_store.as_ref(),
+                &actor_for_upload,
+                &device_for_upload,
+                &recovery_public_key,
+            )
+            .await
+        })
+        .await;
+        match upload_result {
+            Ok(backup_id) => {
+                if let Ok(mut store) = state_store.try_write() {
+                    mark_mls_recovery_backup_configured(&mut store, &actor_id, &backup_id);
+                }
+                if let Some(sidecar_json) = sidecar_json {
+                    let actor = actor_id.clone();
+                    let device = device_id;
+                    let _ = with_authed_api(&base_url, token, |api| async move {
+                        let secure_store =
+                            crate::secure_key_store::default_secure_key_store("yougen");
+                        crate::mls::account_recovery::upload_mls_private_plaintext_backup(
+                            &api,
+                            secure_store.as_ref(),
+                            &actor,
+                            &device,
+                            &sidecar_json,
+                        )
+                        .await
+                    })
+                    .await;
+                }
+                try_set_signal(needs_mls_backup, false);
+                return;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err.display(),
+                    "automatic MLS account-secret backup with recovery public key failed"
+                );
+            }
+        }
+    }
+
     try_set_signal(needs_mls_backup, true);
 }
 

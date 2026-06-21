@@ -4244,15 +4244,16 @@ pub fn ChatPanel(
                                     );
 
                                     // X11.2 — first-write trigger. After this
-                                    // encrypted send landed, if the server holds no
-                                    // `mls_account_secret` backup yet, flip
-                                    // `needs_mls_backup` on directly so the prompt
-                                    // surfaces promptly. Best-effort + non-blocking.
+                                    // encrypted send landed, auto-back up the
+                                    // account secret when possible; otherwise
+                                    // fall back to the prompt. Best-effort.
                                     if let Some(signal) = backup_trigger_signal {
-                                        crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                                        crate::components::maybe_auto_backup_mls_after_encrypted_write(
                                             base_for_backup_trigger.clone(),
                                             token_for_backup_trigger.clone(),
                                             actor_for_backup_trigger.clone(),
+                                            device_for_sidecar_backup.clone(),
+                                            state_store,
                                             signal,
                                         )
                                         .await;

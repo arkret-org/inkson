@@ -81,7 +81,7 @@ pub fn ContactNewPanel(
                 id: "contact-target-input-input",
                 "data-testid": "contact-target-input",
                 value: "{target}",
-                placeholder: "did:web:alice.example",
+                placeholder: "alice:example.com or did:web:alice.example",
                 oninput: move |event: FormEvent| target.set(event.value()),
             }
             Label { html_for: "contact-recipient-service-input", {tr("contacts.new.recipient_service_label")} }

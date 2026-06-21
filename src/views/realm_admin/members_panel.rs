@@ -350,12 +350,12 @@ pub fn RealmMembersPanel(
 
                             div { class: "invite-divider muted", "data-testid": "realm-invite-divider", {crate::i18n::tr("realm_admin.invite_divider")} }
 
-                            Label { html_for: "invite-target-input", "Invite locator" }
+                            Label { html_for: "invite-target-input", "Invite target" }
                             Input {
                                 id: "invite-target-input",
                                 "data-testid": "invite-target-input",
                                 value: "{invite_target}",
-                                placeholder: "Paste an invite locator link",
+                                placeholder: "Handle, locator link, or DID + server DID",
                                 oninput: move |event: FormEvent| invite_target.set(event.value()),
                             }
                             div { class: "muted members-invite-hint",
@@ -383,7 +383,7 @@ pub fn RealmMembersPanel(
                                         let api_token = token();
                                         let target = invite_target().trim().to_owned();
                                         if target.is_empty() {
-                                            status_msg.set("invite locator is required".to_owned());
+                                            status_msg.set("invite target is required".to_owned());
                                             return;
                                         }
                                         let wait_for = active_sync_token(sync_cursor());
@@ -404,7 +404,7 @@ pub fn RealmMembersPanel(
                                                     {
                                                         Ok(did) => did,
                                                         Err(error) => {
-                                                            status_msg.set(format!("invite locator resolve failed: {error}"));
+                                                            status_msg.set(format!("invite target resolve failed: {error}"));
                                                             return;
                                                         }
                                                     };

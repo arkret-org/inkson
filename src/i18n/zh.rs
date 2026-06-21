@@ -266,7 +266,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.members_no_match", "没有匹配的成员。");
     dict.set(
         "realm_admin.invite_hint",
-        "粘贴对方生成的邀请 locator 链接。",
+        "优先使用对方生成的邀请 locator 链接；如果对方允许被发现，也可以输入 handle 或 DID + server DID。",
     );
 
     dict.set("notifications.archived", "显示已归档");
@@ -857,9 +857,9 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "需对方同意");
     dict.set(
         "contacts.new.intro",
-        "输入对方的 DID 发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。",
+        "输入对方的 DID 或 handle 发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。",
     );
-    dict.set("contacts.new.target_label", "对方 DID");
+    dict.set("contacts.new.target_label", "对方 DID 或 handle");
     dict.set(
         "contacts.new.recipient_service_label",
         "对方所在服务器(跨服务器添加时填)",
@@ -934,6 +934,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("invite_policy.kind.consent_grant", "联系人(已同意的好友)");
     dict.set("invite_policy.kind.locator_ref", "邀请链接");
     dict.set("invite_policy.kind.shared_realm", "同群成员");
+    dict.set("invite_policy.kind.handle_claim", "知道我 handle 的人");
     dict.set(
         "invite_policy.kind.same_principal_server",
         "同一服务器的用户",
@@ -942,6 +943,13 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set(
         "invite_policy.explicit_label",
         "“任何知道我地址的人”的处理方式",
+    );
+    dict.set("invite_policy.handle_label", "通过 handle 邀请时的处理方式");
+    dict.set("invite_policy.handle_allowed_domains", "允许的 handle 域名");
+    dict.set("invite_policy.handle_blocked_domains", "屏蔽的 handle 域名");
+    dict.set(
+        "invite_policy.handle_hint",
+        "公开 handle 会让别人更容易找到你。域名列表留空表示不额外限制；服务器仍可能施加更严格的最低要求。",
     );
     dict.set("invite_policy.explicit.drop", "直接丢弃");
     dict.set("invite_policy.explicit.quarantine", "暂存待审");
@@ -953,9 +961,15 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("invite_policy.disclosure_title", "回执");
     dict.set("invite_policy.disclosure_toggle", "让联系人知道邀请结果");
     dict.set(
+        "invite_policy.discovery_disclosure_toggle",
+        "让通过 handle 找到我的人知道邀请结果",
+    );
+    dict.set(
         "invite_policy.disclosure_hint",
         "对陌生人(低信任来源)始终不回执,避免暴露你是否在线或是否接受邀请。",
     );
+    dict.set("invite_policy.server_caps_title", "服务器最低要求");
+    dict.set("invite_policy.server_caps_empty", "服务器未公布额外限制。");
     dict.set("invite_policy.blocked_title", "已屏蔽的邀请者");
     dict.set("invite_policy.blocked_empty", "没有被屏蔽的邀请者。");
     dict.set("invite_policy.unblock", "移除");

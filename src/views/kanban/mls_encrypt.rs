@@ -834,14 +834,16 @@ pub(super) fn dispatch_card_detail_update(
                         state_store,
                     );
                     // X11.2 — first-write trigger. After this encrypted write
-                    // landed, prompt if no account-secret recovery backup exists.
+                    // landed, auto-back up the account secret when possible.
                     // The helper dedupes its server probe per account/session, so
                     // ordinary writes do not list backups repeatedly.
                     if let Some(signal) = backup_trigger_signal {
-                        crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                        crate::components::maybe_auto_backup_mls_after_encrypted_write(
                             base_for_backup_trigger.clone(),
                             api_token.clone(),
                             actor_for_backup_trigger.clone(),
+                            device_for_sidecar_backup.clone(),
+                            state_store,
                             signal,
                         )
                         .await;

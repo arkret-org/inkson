@@ -478,12 +478,14 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
 
     if applied > 0 {
         // Applying a Welcome creates/imports the local account MLS secret before
-        // the user necessarily sends an encrypted message. Prompt for the recovery
-        // passphrase now if the account secret still lacks a server backup.
-        crate::components::maybe_flag_mls_backup_after_encrypted_write(
+        // the user necessarily sends an encrypted message. Back it up with the
+        // cached recovery public key when available, otherwise surface the prompt.
+        crate::components::maybe_auto_backup_mls_after_encrypted_write(
             base_url.clone(),
             session_token.clone(),
             actor_id.clone(),
+            device_id.clone(),
+            state_store,
             needs_mls_backup,
         )
         .await;

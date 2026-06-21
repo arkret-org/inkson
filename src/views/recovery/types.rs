@@ -58,6 +58,11 @@ pub(crate) struct RecoveryState {
     /// SHA-256 fingerprint of the current Recovery Key (never the plaintext).
     #[serde(default)]
     pub(crate) recovery_key_fingerprint: String,
+    /// Base64url-encoded HPKE public key derived from the current Recovery Key.
+    /// This is not secret; it lets the device seal future backups without
+    /// asking the user to re-enter the 24 words.
+    #[serde(default)]
+    pub(crate) recovery_public_key_b64u: String,
     /// RFC-3339 UTC timestamp of the last Recovery Key rotation.
     #[serde(default)]
     pub(crate) recovery_key_rotated_at: String,
@@ -89,6 +94,7 @@ impl Default for RecoveryState {
     fn default() -> Self {
         Self {
             recovery_key_fingerprint: String::new(),
+            recovery_public_key_b64u: String::new(),
             recovery_key_rotated_at: String::new(),
             sss_threshold: default_threshold(),
             sss_total: default_total(),

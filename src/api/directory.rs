@@ -10,6 +10,12 @@ pub struct InviteeResolution {
     pub introduction_evidence_digest: String,
 }
 
+pub(crate) struct ContactRequestAddressing {
+    pub(crate) target: cokret_sdk::Did,
+    pub(crate) recipient_service_did: Option<cokret_sdk::Did>,
+    pub(crate) introduction_evidence: cokret_sdk::ContactIntroductionEvidence,
+}
+
 fn invitee_resolution(
     invite_address: cokret_sdk::InviteAddress,
     handle: Option<String>,
@@ -45,6 +51,33 @@ fn invitee_resolution(
 /// is `did:web:<domain>`, which is what `parse_user_handle` already computes.
 /// For other DID shapes we cannot infer the server, so this returns `None` and
 /// the caller surfaces a temporarily unavailable state for that contact.
+fn explicit_invitee_resolution(
+    invite_address: cokret_sdk::InviteAddress,
+    handle: Option<String>,
+) -> anyhow::Result<InviteeResolution> {
+    invitee_resolution(
+        invite_address,
+        handle,
+        cokret_sdk::IntroductionEvidence::ExplicitAddress,
+    )
+}
+
+fn invite_address(
+    subject_id: &str,
+    recipient_service_did: &str,
+) -> anyhow::Result<cokret_sdk::InviteAddress> {
+    let subject = cokret_sdk::Did::new(subject_id.trim().to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid invite subject DID `{subject_id}`: {err}"))?;
+    let recipient_service =
+        cokret_sdk::Did::new(recipient_service_did.trim().to_owned()).map_err(|err| {
+            anyhow::anyhow!("invalid invite recipient service DID `{recipient_service_did}`: {err}")
+        })?;
+    Ok(cokret_sdk::InviteAddress::principal_server(
+        subject,
+        recipient_service,
+    ))
+}
+
 fn contact_recipient_service_did(contact_did: &str) -> Option<String> {
     let display = crate::views::helpers::handle_display_from_did(contact_did)?;
     crate::identity_handle::parse_user_handle(&display).map(|handle| handle.principal_server_did)
@@ -98,7 +131,11 @@ fn invitee_from_target_json(target: &str) -> anyhow::Result<Option<InviteeResolu
         let locator: cokret_sdk::PrincipalLocator = serde_json::from_value(value)?;
         return invitee_from_principal_locator(locator).map(Some);
     }
-    anyhow::bail!("invite target JSON must be a principal locator")
+    if value.get("subject_id").is_some() && value.get("recipient_service_did").is_some() {
+        let address: cokret_sdk::InviteAddress = serde_json::from_value(value)?;
+        return explicit_invitee_resolution(address, None).map(Some);
+    }
+    anyhow::bail!("invite target JSON must be a principal locator or invite address")
 }
 
 fn locator_url_token(url: &Url) -> anyhow::Result<String> {
@@ -146,16 +183,88 @@ fn parse_invite_locator_url(target: &str) -> anyhow::Result<Option<(String, Stri
     Ok(Some((locator_url_origin(&url)?, token)))
 }
 
-fn reject_removed_invite_target(target: &str) -> anyhow::Result<()> {
-    if cokret_sdk::Did::new(target.to_owned()).is_ok() {
-        anyhow::bail!("raw DID is not an invite target; paste an invite locator URL");
+fn token_value<'a>(token: &'a str, names: &[&str]) -> Option<&'a str> {
+    let (key, value) = token.split_once('=')?;
+    let key = key.trim().to_ascii_lowercase();
+    names
+        .iter()
+        .any(|name| key == *name)
+        .then(|| value.trim())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeResolution>> {
+    let tokens: Vec<&str> = target
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | ';' | '|'))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .collect();
+    let mut subject = None;
+    let mut server = None;
+    for token in &tokens {
+        if let Some(value) = token_value(token, &["did", "subject", "subject_id", "target"]) {
+            subject = Some(value);
+        } else if let Some(value) =
+            token_value(token, &["server", "service", "recipient_service_did"])
+        {
+            server = Some(value);
+        }
     }
-    if canonical_invitee_handle(target).is_ok() {
-        anyhow::bail!(
-            "handle lookup is not used for invites; paste the recipient's invite locator URL"
-        );
+    if let (Some(subject), Some(server)) = (subject, server) {
+        return explicit_invitee_resolution(invite_address(subject, server)?, None).map(Some);
     }
-    Ok(())
+    let dids: Vec<&str> = tokens
+        .iter()
+        .copied()
+        .filter(|token| cokret_sdk::Did::new((*token).to_owned()).is_ok())
+        .collect();
+    if dids.len() == 2 {
+        let (subject, server) = if dids[1].contains(":users:") && !dids[0].contains(":users:") {
+            (dids[1], dids[0])
+        } else {
+            (dids[0], dids[1])
+        };
+        return explicit_invitee_resolution(invite_address(subject, server)?, None).map(Some);
+    }
+    Ok(None)
+}
+
+fn resolved_handle_claim(
+    resolved: &ResolveHandleView,
+) -> anyhow::Result<Option<cokret_sdk::models::HandleClaim>> {
+    let Some(value) = resolved.handle_claim.as_ref() else {
+        return Ok(None);
+    };
+    let claim: cokret_sdk::models::HandleClaim = serde_json::from_value(value.clone())?;
+    claim
+        .validate()
+        .map_err(|err| anyhow::anyhow!("directory returned invalid handle_claim: {err}"))?;
+    Ok(Some(claim))
+}
+
+fn resolved_member_delivery_binding(
+    resolved: &ResolveHandleView,
+) -> anyhow::Result<Option<cokret_sdk::models::DeliveryBindingHint>> {
+    resolved
+        .member_delivery_binding_value()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(Into::into)
+}
+
+fn resolved_by_did(resolved: &ResolveHandleView) -> Option<cokret_sdk::Did> {
+    resolved
+        .via_services
+        .iter()
+        .find_map(|did| cokret_sdk::Did::new(did.clone()).ok())
+}
+
+fn resolved_at(resolved: &ResolveHandleView) -> Option<chrono::DateTime<chrono::Utc>> {
+    resolved
+        .as_of
+        .as_deref()
+        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+        .map(|ts| ts.with_timezone(&chrono::Utc))
 }
 
 impl CokretApi {
@@ -352,7 +461,7 @@ impl CokretApi {
             agent_slug: agent_slug.to_owned(),
             expected_agent_did: None,
             proof_challenge: None,
-            intent: "mention".to_owned(),
+            intent: cokret_sdk::models::DirectoryIntent::Mention,
             realm_id: Some(realm_id),
             requester,
             proofs: Vec::new(),
@@ -364,6 +473,137 @@ impl CokretApi {
             .validate()
             .map_err(|err| anyhow::anyhow!("invalid agent selector outcome: {err}"))?;
         Ok(outcome)
+    }
+
+    async fn resolve_invitee_handle_for_invite(
+        &self,
+        handle: &str,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<InviteeResolution> {
+        let resolved = self
+            .resolve_handle_with_context(
+                handle,
+                ResolveHandleContext {
+                    intent: Some("invite"),
+                    requester: Some(actor_id),
+                    audience: Some(realm_id),
+                    realm_id: Some(realm_id),
+                    ..ResolveHandleContext::default()
+                },
+            )
+            .await?;
+        let subject = resolved.subject_did().ok_or_else(|| {
+            anyhow::anyhow!("directory resolve_handle response did not include subject DID")
+        })?;
+        let recipient_service = resolved_member_delivery_binding(&resolved)?
+            .map(|binding| binding.recipient_service_did)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "directory handle result did not include a recipient service; use DID + server"
+                )
+            })?;
+        let address = invite_address(subject, recipient_service.as_str())?;
+        let handle = cokret_sdk::models::Handle::parse(&resolved.handle)
+            .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
+        let fallback_resolved_by = self
+            .describe_cached()
+            .await
+            .ok()
+            .map(|description| description.service_did.clone());
+        let resolved_by = resolved_by_did(&resolved).or(fallback_resolved_by);
+        let evidence = match resolved_handle_claim(&resolved)? {
+            Some(handle_claim) => cokret_sdk::IntroductionEvidence::HandleClaim {
+                handle: handle.clone(),
+                handle_claim: Box::new(handle_claim),
+                member_delivery_binding_candidate: None,
+                resolved_by,
+                resolved_at: resolved_at(&resolved),
+            },
+            None => cokret_sdk::IntroductionEvidence::ExplicitAddress,
+        };
+        invitee_resolution(address, Some(handle.canonical().to_owned()), evidence)
+    }
+
+    pub(crate) async fn contact_request_addressing(
+        &self,
+        target: &str,
+        recipient_service_did: Option<&str>,
+    ) -> anyhow::Result<ContactRequestAddressing> {
+        let target = target.trim();
+        if target.is_empty() {
+            anyhow::bail!("contact target is required");
+        }
+        if let Ok(handle) = canonical_invitee_handle(target) {
+            let requester = self.account_me().await?.did;
+            let resolved = self
+                .resolve_handle_with_context(
+                    &handle,
+                    ResolveHandleContext {
+                        intent: Some("contact_request"),
+                        requester: Some(&requester),
+                        audience: Some(&requester),
+                        ..ResolveHandleContext::default()
+                    },
+                )
+                .await?;
+            let subject = resolved.subject_did().ok_or_else(|| {
+                anyhow::anyhow!("directory resolve_handle response did not include subject DID")
+            })?;
+            let target_did = cokret_sdk::Did::new(subject.to_owned()).map_err(|err| {
+                anyhow::anyhow!("directory resolved invalid DID `{subject}`: {err}")
+            })?;
+            let resolved_service = resolved_member_delivery_binding(&resolved)?
+                .map(|binding| binding.recipient_service_did);
+            let explicit_service = recipient_service_did
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| {
+                    cokret_sdk::Did::new(value.to_owned()).map_err(|err| {
+                        anyhow::anyhow!("invalid recipient_service_did `{value}`: {err}")
+                    })
+                })
+                .transpose()?;
+            let recipient_service_did = explicit_service.or(resolved_service);
+            let handle = cokret_sdk::models::Handle::parse(&resolved.handle)
+                .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
+            let fallback_resolved_by = self
+                .describe_cached()
+                .await
+                .ok()
+                .map(|description| description.service_did.clone());
+            let resolved_by = resolved_by_did(&resolved).or(fallback_resolved_by);
+            let introduction_evidence = match resolved_handle_claim(&resolved)? {
+                Some(handle_claim) => cokret_sdk::ContactIntroductionEvidence::HandleClaim {
+                    handle,
+                    handle_claim: Box::new(handle_claim),
+                    resolved_by,
+                    resolved_at: resolved_at(&resolved),
+                },
+                None => cokret_sdk::ContactIntroductionEvidence::ExplicitAddress,
+            };
+            return Ok(ContactRequestAddressing {
+                target: target_did,
+                recipient_service_did,
+                introduction_evidence,
+            });
+        }
+        let target_did = cokret_sdk::Did::new(target.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid contact target DID `{target}`: {err}"))?;
+        let recipient_service_did = recipient_service_did
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                cokret_sdk::Did::new(value.to_owned()).map_err(|err| {
+                    anyhow::anyhow!("invalid recipient_service_did `{value}`: {err}")
+                })
+            })
+            .transpose()?;
+        Ok(ContactRequestAddressing {
+            target: target_did,
+            recipient_service_did,
+            introduction_evidence: cokret_sdk::ContactIntroductionEvidence::ExplicitAddress,
+        })
     }
 
     pub async fn resolve_invitee_did(&self, target: &str) -> anyhow::Result<String> {
@@ -448,12 +688,12 @@ impl CokretApi {
     pub async fn resolve_invitee_for_invite(
         &self,
         target: &str,
-        _realm_id: &str,
-        _actor_id: &str,
+        realm_id: &str,
+        actor_id: &str,
     ) -> anyhow::Result<InviteeResolution> {
         let target = target.trim();
         if target.is_empty() {
-            anyhow::bail!("invite locator is required");
+            anyhow::bail!("invite target is required");
         }
         if let Some(invitee) = invitee_from_target_json(target)? {
             return Ok(invitee);
@@ -469,8 +709,20 @@ impl CokretApi {
             return invitee_from_principal_locator(locator);
         }
 
-        reject_removed_invite_target(target)?;
-        anyhow::bail!("invite target must be an invite locator URL or principal locator JSON")
+        if let Ok(handle) = canonical_invitee_handle(target) {
+            return self
+                .resolve_invitee_handle_for_invite(&handle, realm_id, actor_id)
+                .await;
+        }
+        if let Some(invitee) = parse_explicit_invite_target(target)? {
+            return Ok(invitee);
+        }
+        if cokret_sdk::Did::new(target.to_owned()).is_ok() {
+            anyhow::bail!("raw DID invite target also needs a recipient server DID");
+        }
+        anyhow::bail!(
+            "invite target must be a locator, handle, principal locator JSON, or DID + server"
+        )
     }
 
     /// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.query.list_handles_for_subject`.
@@ -589,25 +841,32 @@ mod invite_addressing_tests {
     }
 
     #[test]
-    fn invite_target_json_rejects_raw_invite_address() {
+    fn invite_target_json_accepts_invite_address_as_explicit() {
         let raw_invite_address = json!({
             "subject_id": "did:web:bob.example",
             "recipient_service_did": "did:web:ps.bob.example",
         })
         .to_string();
-        let err = invitee_from_target_json(&raw_invite_address)
-            .expect_err("raw invite_address JSON must be rejected");
-        assert!(err.to_string().contains("principal locator"));
+        let invitee = invitee_from_target_json(&raw_invite_address)
+            .expect("json target parsed")
+            .expect("invite address target");
+        assert_eq!(invitee.did, "did:web:bob.example");
+        assert_eq!(invitee.introduction_evidence.kind(), "explicit_address");
     }
 
     #[test]
-    fn invite_target_rejects_raw_did_and_handle() {
-        let did_err = reject_removed_invite_target("did:web:bob.example")
-            .expect_err("raw DID is no longer an invite target");
-        assert!(did_err.to_string().contains("raw DID"));
-
-        let handle_err = reject_removed_invite_target("bob:example.com")
-            .expect_err("handle must not drive invite delivery");
-        assert!(handle_err.to_string().contains("handle lookup"));
+    fn explicit_invite_target_accepts_did_plus_server() {
+        let invitee = parse_explicit_invite_target("did:web:bob.example did:web:ps.bob.example")
+            .expect("explicit target parsed")
+            .expect("did plus server target");
+        assert_eq!(invitee.did, "did:web:bob.example");
+        assert_eq!(
+            invitee
+                .invite_delivery_target
+                .recipient_service_did
+                .as_str(),
+            "did:web:ps.bob.example"
+        );
+        assert_eq!(invitee.introduction_evidence.kind(), "explicit_address");
     }
 }

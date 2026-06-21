@@ -42,7 +42,7 @@ mod tests;
 
 pub use panel::RecoveryPanel;
 pub(crate) use state::{
-    local_recovery_key_fingerprint, recovery_options_configured,
+    local_recovery_key_fingerprint, local_recovery_public_key, recovery_options_configured,
     save_generated_recovery_key_metadata,
 };
 pub(crate) use upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};

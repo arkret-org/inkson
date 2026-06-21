@@ -917,12 +917,14 @@ pub(super) fn RealmsSection(
                                                         ) && let Some(signal) = backup_trigger_signal {
                                                             // Realm bootstrap creates the account MLS secret
                                                             // before the first encrypted message/card write,
-                                                            // so trigger the recovery-passphrase prompt here
+                                                            // so attempt the recovery-public-key backup here
                                                             // instead of waiting for a later write hook.
-                                                            crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                                                            crate::components::maybe_auto_backup_mls_after_encrypted_write(
                                                                 base.clone(),
                                                                 api_token.clone(),
                                                                 actor.clone(),
+                                                                device.clone(),
+                                                                state_store,
                                                                 signal,
                                                             )
                                                             .await;

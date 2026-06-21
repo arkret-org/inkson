@@ -80,8 +80,8 @@ pub use empty_state::{EmptyState, EmptyStateKind};
 pub use encryption_floor_prompt::EncryptionFloorPrompt;
 pub use error_boundary::{ErrorBoundary, RetryableError};
 pub use mls_backup_prompt::{
-    MlsBackupPrompt, MlsBackupSignal, maybe_flag_mls_backup_after_encrypted_write,
-    try_needs_mls_backup_signal,
+    MlsBackupPrompt, MlsBackupSignal, maybe_auto_backup_mls_after_encrypted_write,
+    maybe_flag_mls_backup_after_encrypted_write, try_needs_mls_backup_signal,
 };
 pub(crate) use mls_backup_prompt::{
     mark_mls_recovery_backup_configured, mls_recovery_backup_configured,

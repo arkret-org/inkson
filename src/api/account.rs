@@ -195,18 +195,19 @@ impl CokretApi {
             .filter(|scope| !scope.is_empty())
             .map(ToOwned::to_owned)
             .collect();
+        let addressing = self
+            .contact_request_addressing(target, recipient_service_did)
+            .await?;
         let body = cokret_sdk::ContactRequestRequestBody {
-            target: did_for_request_field("target", target)?,
+            target: addressing.target,
             requested_scopes,
             message: message
                 .map(str::trim)
                 .filter(|message| !message.is_empty())
                 .map(ToOwned::to_owned),
             idempotency_key: None,
-            recipient_service_did: optional_did_for_request_field(
-                "recipient_service_did",
-                recipient_service_did,
-            )?,
+            recipient_service_did: addressing.recipient_service_did,
+            introduction_evidence: Some(addressing.introduction_evidence),
         };
         self.post_json(cokret_sdk::http::PATH_SELF_CONTACTS_REQUEST, &body)
             .await
