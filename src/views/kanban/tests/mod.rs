@@ -35,17 +35,6 @@ pub(super) trait TestEventPayloadView {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl TestEventPayloadView for crate::operation::EventEnvelope {
-    fn kind_for_schema(&self) -> &str {
-        &self.kind
-    }
-
-    fn payload_for_schema(&self) -> &serde_json::Value {
-        &self.payload
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 impl TestEventPayloadView for cokret_sdk::Event {
     fn kind_for_schema(&self) -> &str {
         self.kind.as_str()
@@ -72,8 +61,6 @@ pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView)
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn sdk_event(event: crate::operation::EventEnvelope) -> cokret_sdk::Event {
     event
-        .to_sdk_event_for_submit()
-        .expect("test event must match SDK Event wire model")
 }
 
 #[cfg(not(target_arch = "wasm32"))]

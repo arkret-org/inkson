@@ -547,7 +547,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
         )
         .expect("builds")
         .build("yougen");
-        assert_eq!(event.kind, "ck.strand.update");
-        assert_eq!(event.local_target_ref(), Some(strand_id));
+        assert_eq!(event.kind.as_str(), "ck.strand.update");
+        assert_eq!(sdk_event_local_target_ref(&event), Some(strand_id));
     }
 }

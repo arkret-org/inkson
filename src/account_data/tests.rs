@@ -670,10 +670,10 @@ fn build_account_data_set_emits_canonical_kind() {
     )
     .build("node");
     assert_eq!(op.kind, "ck.account_data.set");
-    assert_eq!(op.payload["key"], "ck.read_receipt.preferences");
-    assert_eq!(op.payload["owner"], "did:web:alice");
-    assert_eq!(op.payload["body"]["send"], false);
-    assert!(op.payload["updated_at"].is_string());
+    assert_eq!(op.content["key"], "ck.read_receipt.preferences");
+    assert_eq!(op.content["owner"], "did:web:alice");
+    assert_eq!(op.content["body"]["send"], false);
+    assert!(op.content["updated_at"].is_string());
 }
 
 #[test]
@@ -733,8 +733,8 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
         json!({"pinned": true}),
     )
     .build("node");
-    assert!(op.payload.get("encrypted_payload").is_some());
-    assert!(op.payload.get("body").is_none());
+    assert!(op.content.get("encrypted_payload").is_some());
+    assert!(op.content.get("body").is_none());
 }
 
 #[test]
@@ -749,9 +749,9 @@ fn private_account_data_builders_emit_encrypted_payload() {
     .unwrap()
     .build("node");
     assert_eq!(op.kind, "ck.account_data.set");
-    assert_eq!(op.payload["key"], key);
-    assert!(op.payload.get("body").is_none());
-    assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
+    assert_eq!(op.content["key"], key);
+    assert!(op.content.get("body").is_none());
+    assert_eq!(op.content["encrypted_payload"]["ciphertext"], "opaque");
 
     let tombstone = build_private_account_data_tombstone(
         "ck:realm:0196419b-0000-7000-8000-000000000001",
@@ -760,7 +760,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(tombstone.payload["tombstone"], true);
+    assert_eq!(tombstone.content["tombstone"], true);
 }
 
 #[test]
@@ -783,9 +783,9 @@ fn private_account_data_builder_can_emit_cas_guard() {
     .unwrap()
     .build("node");
     assert_eq!(op.kind, "ck.account_data.set");
-    assert_eq!(op.payload["expected_state_digest"], expected);
-    assert!(op.payload.get("body").is_none());
-    assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
+    assert_eq!(op.content["expected_state_digest"], expected);
+    assert!(op.content.get("body").is_none());
+    assert_eq!(op.content["encrypted_payload"]["ciphertext"], "opaque");
 
     assert!(
         build_private_account_data_set_with_cas(
@@ -811,8 +811,8 @@ fn generic_builder_does_not_put_private_values_under_body() {
         json!({"ciphertext": "opaque"}),
     )
     .build("node");
-    assert!(op.payload.get("body").is_none());
-    assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
+    assert!(op.content.get("body").is_none());
+    assert_eq!(op.content["encrypted_payload"]["ciphertext"], "opaque");
 }
 
 #[test]
@@ -824,10 +824,10 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     )
     .build("node");
     assert_eq!(op.kind, "ck.account_data.set");
-    assert_eq!(op.payload["key"], "ck.read_receipt.preferences");
-    assert_eq!(op.payload["owner"], "did:web:alice");
-    assert_eq!(op.payload["tombstone"], true);
-    assert!(op.payload["updated_at"].is_string());
+    assert_eq!(op.content["key"], "ck.read_receipt.preferences");
+    assert_eq!(op.content["owner"], "did:web:alice");
+    assert_eq!(op.content["tombstone"], true);
+    assert!(op.content["updated_at"].is_string());
 }
 
 #[test]

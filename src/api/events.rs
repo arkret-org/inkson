@@ -408,7 +408,9 @@ fn event_proof_context_from_description(
     let service_did = describe.service_did.to_string();
     crate::event_signer::EventProofContext::new()
         .with_domain(service_did.clone())
-        .with_audience(crate::operation::EventProofAudience::single(service_did))
+        .with_audience(crate::operation::EventProofAudience::Single(
+            service_did.to_owned(),
+        ))
 }
 
 #[cfg(test)]

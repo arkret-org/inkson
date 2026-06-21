@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::operation::{
-    Effect, EventKind, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
-    trim_realm_id, uuid_v7,
+    Effect, EventKind, EventRequirements, LatticeOp, LatticeOpType, OperationBuilder, Precondition,
+    Predicate, PredicateOp, trim_realm_id, uuid_v7,
 };
 
 /// RFC3339 timestamp in the canonical wire form soland's
@@ -31,6 +31,67 @@ fn set_sdk_event_created_at(event: &mut cokret_sdk::Event, created_at: &str) -> 
         .map_err(|err| anyhow::anyhow!("event timestamp is not canonical RFC3339: {err}"))?
         .with_timezone(&chrono::Utc);
     Ok(())
+}
+
+fn cell_ref(cell: &str) -> anyhow::Result<cokret_sdk::CellRef> {
+    cokret_sdk::CellRef::new(cell.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid cell ref {cell:?}: {err}"))
+}
+
+fn head_eq_precondition(cell: &str, value: Value) -> anyhow::Result<Precondition> {
+    Ok(Precondition {
+        cell: cell_ref(cell)?,
+        predicate: Predicate {
+            op: PredicateOp::HeadEq,
+            value: Some(value),
+            values: None,
+            predicate_id: None,
+        },
+    })
+}
+
+fn set_effect(cell: &str, value: Value) -> anyhow::Result<Effect> {
+    Ok(Effect {
+        cell: cell_ref(cell)?,
+        op: LatticeOp {
+            op_type: LatticeOpType::Set,
+            tag: None,
+            value: Some(value),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+        },
+    })
+}
+
+fn transition_effect(
+    cell: &str,
+    from: Value,
+    to: Value,
+    reason: Option<String>,
+) -> anyhow::Result<Effect> {
+    Ok(Effect {
+        cell: cell_ref(cell)?,
+        op: LatticeOp {
+            op_type: LatticeOpType::Transition,
+            tag: None,
+            value: None,
+            from: Some(from),
+            to: Some(to),
+            reason,
+            issuer_seq: None,
+        },
+    })
+}
+
+fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
+    EventRequirements {
+        schema_profile_refs: vec![schema_ref.to_owned()],
+        reducer_profile_ref: None,
+        required_features: Vec::new(),
+        critical_extensions: Vec::new(),
+    }
 }
 
 /// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
@@ -263,29 +324,8 @@ pub fn build_realm_create_event(
 
     // ck.component.realm.create.v1 is a cas-register cell; the
     // genesis write asserts head_eq null and sets the realm metadata.
-    let preconditions = vec![Precondition {
-        cell: cell.clone(),
-        predicate: Predicate {
-            op: "head_eq".to_owned(),
-            value: Some(Value::Null),
-            values: None,
-            predicate_id: None,
-        },
-    }];
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "set".to_owned(),
-            tag: None,
-            value: Some(object.clone()),
-            from: None,
-            to: None,
-            reason: None,
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
+    let effects = vec![set_effect(&cell, object.clone())?];
     // The Realm entity itself has no SDK `*CreateObject` strong type yet
     // (the realm schema is large / lives outside the operation_payloads
     // module); the `object` Value above is hand-built. But the `{object}`
@@ -304,12 +344,7 @@ pub fn build_realm_create_event(
     .body(realm_body)
     .preconditions(preconditions)
     .effects(effects)
-    .requirements(EventRequirements {
-        schema: vec!["ck.schema.realm.v1".to_owned()],
-        reducer: None,
-        features: Vec::new(),
-        critical_extensions: Vec::new(),
-    })
+    .requirements(event_requirements_with_schema("ck.schema.realm.v1"))
     .build_sdk_event("yougen")?;
     set_sdk_event_created_at(&mut event, &created_at_for_object)?;
     Ok(event)
@@ -446,29 +481,8 @@ pub fn build_space_create_event(
     object["created_at"] = Value::String(created_at.clone());
 
     let cell = space_cell("ck.component.space.create.v1", space_id);
-    let preconditions = vec![Precondition {
-        cell: cell.clone(),
-        predicate: Predicate {
-            op: "head_eq".to_owned(),
-            value: Some(Value::Null),
-            values: None,
-            predicate_id: None,
-        },
-    }];
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "set".to_owned(),
-            tag: None,
-            value: Some(object.clone()),
-            from: None,
-            to: None,
-            reason: None,
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
+    let effects = vec![set_effect(&cell, object.clone())?];
     let space_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.space.create payload serialize: {e}"))?;
@@ -481,12 +495,7 @@ pub fn build_space_create_event(
     .body(space_body)
     .preconditions(preconditions)
     .effects(effects)
-    .requirements(EventRequirements {
-        schema: vec!["ck.schema.space.v1".to_owned()],
-        reducer: None,
-        features: Vec::new(),
-        critical_extensions: Vec::new(),
-    })
+    .requirements(event_requirements_with_schema("ck.schema.space.v1"))
     .build_sdk_event("yougen")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
@@ -521,29 +530,16 @@ pub fn build_space_lifecycle_event(
     };
     let created_at = event_timestamp();
     let cell = space_cell("ck.component.space.state.v1", space_id);
-    let preconditions = vec![Precondition {
-        cell: cell.clone(),
-        predicate: Predicate {
-            op: "head_eq".to_owned(),
-            value: Some(Value::String(prior_state.to_owned())),
-            values: None,
-            predicate_id: None,
-        },
-    }];
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "transition".to_owned(),
-            tag: None,
-            value: None,
-            from: Some(Value::String(prior_state.to_owned())),
-            to: Some(Value::String(next_state.to_owned())),
-            reason: None,
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let preconditions = vec![head_eq_precondition(
+        &cell,
+        Value::String(prior_state.to_owned()),
+    )?];
+    let effects = vec![transition_effect(
+        &cell,
+        Value::String(prior_state.to_owned()),
+        Value::String(next_state.to_owned()),
+        None,
+    )?];
     let mut event = OperationBuilder::new(realm_id, actor_id, kind)
         .target_ref(space_id)
         .body(json!({ "space_id": space_id }))
@@ -580,29 +576,8 @@ pub fn build_realm_state_event(
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell(cell_family, &realm_id_wire);
-    let preconditions = vec![Precondition {
-        cell: cell.clone(),
-        predicate: Predicate {
-            op: "head_eq".to_owned(),
-            value: Some(Value::Null),
-            values: None,
-            predicate_id: None,
-        },
-    }];
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "set".to_owned(),
-            tag: None,
-            value: Some(value.clone()),
-            from: None,
-            to: None,
-            reason: None,
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
+    let effects = vec![set_effect(&cell, value.clone())?];
     // For `ck.realm.history_visibility` the body is the spec
     // `history_visibility_payload` (`{value, restricted_policy_digest?,
     // reason?}`, additionalProperties:false). Route it through the SDK strong
@@ -648,20 +623,7 @@ pub fn build_realm_archive_event(
         typed = typed.with_reason(reason);
     }
     let payload = typed.to_value()?;
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "set".to_owned(),
-            tag: None,
-            value: Some(payload.clone()),
-            from: None,
-            to: None,
-            reason: None,
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let effects = vec![set_effect(&cell, payload.clone())?];
     let mut event = OperationBuilder::new(
         realm_id,
         actor_id,
@@ -701,20 +663,7 @@ pub fn build_realm_tombstone_event(
     let successor = cokret_sdk::RealmId::new(successor_realm_id)
         .map_err(|err| anyhow::anyhow!("invalid successor_realm_id: {err}"))?;
     let payload = cokret_sdk::RealmTombstonePayload::new(successor, reason).to_value()?;
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "set".to_owned(),
-            tag: None,
-            value: Some(payload.clone()),
-            from: None,
-            to: None,
-            reason: None,
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let effects = vec![set_effect(&cell, payload.clone())?];
     let mut event = OperationBuilder::new(
         realm_id,
         actor_id,
@@ -744,20 +693,7 @@ pub fn build_realm_destroy_event(
     // _required omitted so the reducer applies its default; additionalProperties
     // :false).
     let payload = cokret_sdk::RealmDestroyPayload::new(reason).to_value()?;
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "set".to_owned(),
-            tag: None,
-            value: Some(payload.clone()),
-            from: None,
-            to: None,
-            reason: None,
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let effects = vec![set_effect(&cell, payload.clone())?];
     let mut event = OperationBuilder::new(
         realm_id,
         actor_id,
@@ -838,30 +774,9 @@ pub fn build_plaintext_visible_services_event(
         "ck.component.realm.plaintext_visible_services.v1",
         &realm_id_wire,
     );
-    let preconditions = vec![Precondition {
-        cell: cell.clone(),
-        predicate: Predicate {
-            op: "head_eq".to_owned(),
-            value: Some(Value::Null),
-            values: None,
-            predicate_id: None,
-        },
-    }];
+    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let body_value = cokret_sdk::PlaintextVisibleServicesPayload::new(services).to_value()?;
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "set".to_owned(),
-            tag: None,
-            value: Some(body_value.clone()),
-            from: None,
-            to: None,
-            reason: None,
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let effects = vec![set_effect(&cell, body_value.clone())?];
     // Builder takes `Value` by move; reuse the value we already built for
     // the effect rather than cloning `services` a second time.
     let mut event = OperationBuilder::new(
@@ -989,43 +904,22 @@ fn build_member_state_transition_event_with_binding(
         member_actor_id
     );
     let preconditions = if let Some(prior) = from_state {
-        vec![Precondition {
-            cell: cell.clone(),
-            predicate: Predicate {
-                op: "head_eq".to_owned(),
-                value: Some(Value::String(prior.to_owned())),
-                values: None,
-                predicate_id: None,
-            },
-        }]
+        vec![head_eq_precondition(
+            &cell,
+            Value::String(prior.to_owned()),
+        )?]
     } else {
-        vec![Precondition {
-            cell: cell.clone(),
-            predicate: Predicate {
-                op: "head_eq".to_owned(),
-                value: Some(Value::Null),
-                values: None,
-                predicate_id: None,
-            },
-        }]
+        vec![head_eq_precondition(&cell, Value::Null)?]
     };
     let from_value = from_state
         .map(|s| Value::String(s.to_owned()))
         .unwrap_or(Value::Null);
-    let effects = vec![Effect {
-        cell,
-        op: LatticeOp {
-            kind: "transition".to_owned(),
-            tag: None,
-            value: None,
-            from: Some(from_value),
-            to: Some(Value::String(to_state.to_owned())),
-            reason: Some(reason.to_owned()),
-            issuer_seq: None,
-            element_id: None,
-            predecessor: None,
-        },
-    }];
+    let effects = vec![transition_effect(
+        &cell,
+        from_value,
+        Value::String(to_state.to_owned()),
+        Some(reason.to_owned()),
+    )?];
     OperationBuilder::new(
         realm_id,
         actor_id,

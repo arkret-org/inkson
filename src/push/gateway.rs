@@ -9,8 +9,8 @@
 
 use chime::{
     ChimePushRegisterDeviceRequest, PushBridgeDescribeOutcome,
-    PushGatewayIntegrationDescribeOutcome, PushRegistrationState, push_bridge_describe_url,
-    push_integration_describe_url,
+    PushGatewayIntegrationDescribeOutcome, PushRegistrationState, floria_push_bridge_describe_url,
+    floria_push_integration_describe_url,
 };
 use serde_json::Value;
 
@@ -165,7 +165,7 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
 pub async fn describe_push_gateway_bridge(
     push_gateway_url: &str,
 ) -> anyhow::Result<PushBridgeDescribeOutcome> {
-    let describe_url = push_bridge_describe_url(push_gateway_url)?;
+    let describe_url = floria_push_bridge_describe_url(push_gateway_url)?;
     let response = reqwest::Client::new().get(&describe_url).send().await?;
     let status = response.status();
     if !status.is_success() {
@@ -177,7 +177,7 @@ pub async fn describe_push_gateway_bridge(
 pub async fn describe_push_gateway_integration(
     push_gateway_url: &str,
 ) -> anyhow::Result<PushGatewayIntegrationDescribeOutcome> {
-    let describe_url = push_integration_describe_url(push_gateway_url)?;
+    let describe_url = floria_push_integration_describe_url(push_gateway_url)?;
     let response = reqwest::Client::new().get(&describe_url).send().await?;
     let status = response.status();
     if !status.is_success() {

@@ -302,11 +302,11 @@ mod tests {
             &["strand.read"],
         )
         .build("yougen");
-        assert_eq!(op.payload["agent_id"], "did:web:agent.example");
-        assert_eq!(op.payload["endpoints"][0]["protocol"], "ck.agent.v1");
-        assert_eq!(op.payload["endpoints"][0]["capabilities"][0], "strand.read");
-        assert!(op.payload.get("protocol").is_none());
-        assert!(op.payload.get("capabilities").is_none());
+        assert_eq!(op.content["agent_id"], "did:web:agent.example");
+        assert_eq!(op.content["endpoints"][0]["protocol"], "ck.agent.v1");
+        assert_eq!(op.content["endpoints"][0]["capabilities"][0], "strand.read");
+        assert!(op.content.get("protocol").is_none());
+        assert!(op.content.get("capabilities").is_none());
     }
 
     #[test]
@@ -319,7 +319,7 @@ mod tests {
             serde_json::json!({"merkle_root": "sha256:abc"}),
         )
         .build("yougen");
-        assert_eq!(op.payload["audit_binding"]["merkle_root"], "sha256:abc");
+        assert_eq!(op.content["audit_binding"]["merkle_root"], "sha256:abc");
     }
 
     // Pin the verify helper's outcomes for each canonical wire

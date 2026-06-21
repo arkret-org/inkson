@@ -12,7 +12,7 @@ use serde_json::Value;
 // envelope builder and realm-id normalizer through `super::*` (= this module).
 // Re-export them from the parent `operation` module so those `use
 // super::OperationBuilder` / `super::trim_realm_id` paths resolve unchanged.
-pub(super) use super::{EventKind, OperationBuilder, trim_realm_id};
+pub(super) use super::{OperationBuilder, trim_realm_id};
 
 // YOU-02-001: every fallible helper below returns `anyhow::Result`
 // instead of panicking. The ids these helpers parse ultimately come from

@@ -156,29 +156,30 @@ pub fn build_container_rebalance(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operation::EventEnvelopeExt;
 
     #[test]
     fn morph_update_emits_canonical_kind() {
         let op = build_morph_update(
-            "ck:realm:s1",
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "ck:morph:abc",
             json!({"morph_type": "task"}),
         )
         .build("node");
-        assert_eq!(op.kind, "ck.morph.update");
-        assert_eq!(op.payload["target_ref"], "ck:morph:abc");
+        assert_eq!(op.kind.as_str(), "ck.morph.update");
+        assert_eq!(op.content["target_ref"], "ck:morph:abc");
         assert!(
-            op.payload.get("morph_id").is_none(),
+            op.content.get("morph_id").is_none(),
             "morph_id is not an object_patch_payload field"
         );
-        assert_eq!(op.payload["patch"]["morph_type"], "task");
+        assert_eq!(op.content["patch"]["morph_type"], "task");
     }
 
     #[test]
     fn relation_create_carries_kind_and_endpoints() {
         let op = build_relation_create(
-            "ck:realm:s1",
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "ck:relation:r1",
             "contains",
@@ -187,22 +188,22 @@ mod tests {
         )
         .expect("builds")
         .build("node");
-        assert_eq!(op.kind, "ck.relation.create");
+        assert_eq!(op.kind.as_str(), "ck.relation.create");
         // relation id is routed via target_ref, not a payload field.
         assert_eq!(op.local_target_ref(), Some("ck:relation:r1"));
         assert!(
-            op.payload.get("relation_id").is_none(),
+            op.content.get("relation_id").is_none(),
             "relation_id is not a relation_create_payload field"
         );
-        assert_eq!(op.payload["kind"], "contains");
-        assert_eq!(op.payload["from_ref"], "ck:strand:f1");
-        assert_eq!(op.payload["to_ref"], "ck:strand:f2");
+        assert_eq!(op.content["kind"], "contains");
+        assert_eq!(op.content["from_ref"], "ck:strand:f1");
+        assert_eq!(op.content["to_ref"], "ck:strand:f2");
     }
 
     #[test]
     fn container_move_item_uses_spec_position_payload() {
         let op = build_container_move_item(
-            "ck:realm:s1",
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "ck:space:0196419b-0000-7000-8000-000000000001",
             "ck:strand:f1",
@@ -210,24 +211,24 @@ mod tests {
             "r0",
         )
         .build("node");
-        assert_eq!(op.kind, "ck.container.move_item");
+        assert_eq!(op.kind.as_str(), "ck.container.move_item");
         assert_eq!(
             op.local_target_ref(),
             Some("ck:space:0196419b-0000-7000-8000-000000000001")
         );
         assert_eq!(
-            op.payload["container_ref"],
+            op.content["container_ref"],
             "ck:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.payload["source_ref"], "ck:strand:f1");
-        assert_eq!(op.payload["target_ref"], "ck:strand:f1");
-        assert_eq!(op.payload["rank"], "r0");
+        assert_eq!(op.content["source_ref"], "ck:strand:f1");
+        assert_eq!(op.content["target_ref"], "ck:strand:f1");
+        assert_eq!(op.content["rank"], "r0");
     }
 
     #[test]
     fn container_rebalance_flattens_items() {
         let op = build_container_rebalance(
-            "ck:realm:s1",
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "ck:space:0196419b-0000-7000-8000-000000000001",
             "ck:strand:f1",
@@ -239,14 +240,14 @@ mod tests {
             ],
         )
         .build("node");
-        assert_eq!(op.kind, "ck.container.rebalance");
+        assert_eq!(op.kind.as_str(), "ck.container.rebalance");
         assert_eq!(
-            op.payload["container_ref"],
+            op.content["container_ref"],
             "ck:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.payload["target_ref"], "ck:strand:f2");
-        assert_eq!(op.payload["rank"], "r1");
-        assert_eq!(op.payload["items"][0]["item_ref"], "ck:strand:f1");
-        assert_eq!(op.payload["items"][1]["rank"], "r1");
+        assert_eq!(op.content["target_ref"], "ck:strand:f2");
+        assert_eq!(op.content["rank"], "r1");
+        assert_eq!(op.content["items"][0]["item_ref"], "ck:strand:f1");
+        assert_eq!(op.content["items"][1]["rank"], "r1");
     }
 }

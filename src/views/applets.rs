@@ -971,9 +971,9 @@ mod tests {
             &["read"],
         )
         .build("yougen");
-        assert_eq!(op.payload["service_did"], "did:web:applet.example");
-        assert_eq!(op.payload["namespace"], "extensions");
-        assert_eq!(op.payload["capabilities"][0], "read");
+        assert_eq!(op.content["service_did"], "did:web:applet.example");
+        assert_eq!(op.content["namespace"], "extensions");
+        assert_eq!(op.content["capabilities"][0], "read");
     }
 
     #[test]

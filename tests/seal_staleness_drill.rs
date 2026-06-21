@@ -35,10 +35,10 @@ use regex::Regex;
 use sha2::{Digest, Sha256};
 use yougen::api;
 use yougen::canonical::hex_encode;
-use yougen::operation::EventEnvelope;
+use yougen::operation::{EventEnvelope, EventEnvelopeExt};
 
 const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
-const TEST_actor_id: &str = "did:web:alice.example";
+const TEST_ACTOR_ID: &str = "did:web:alice.example";
 
 /// Deterministic Ed25519 seed used in this test process. Different
 /// seed from `conformance_gates.rs::test_signing_key` so a future
@@ -61,12 +61,15 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
     // Stable across runs, non-zero, and tied to the event we're about
     // to sign — that's exactly the property a real notary guarantees.
     let mut hasher = Sha256::new();
-    hasher.update(envelope.kind.as_bytes());
+    hasher.update(envelope.kind.as_str().as_bytes());
     hasher.update(b":seal_staleness_drill");
     let digest = hasher.finalize();
-    envelope.seal_ref = Some(format!("ck:seal:sha256:{}", hex_encode(&digest)));
+    envelope.seal_ref = Some(
+        cokret_sdk::SealId::new(format!("ck:seal:sha256:{}", hex_encode(&digest)))
+            .expect("test seal ref is valid"),
+    );
 
-    let signer_did = TEST_actor_id;
+    let signer_did = TEST_ACTOR_ID;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, &signing_key())
@@ -77,7 +80,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
 fn realm_create_envelope_carries_real_proof_and_real_anchor() {
     let mut envelope = api::build_realm_create_event(
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -104,7 +107,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
 fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
     let events = api::build_realm_bootstrap_events(
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         "Engineering",
         None,
         "listed",
@@ -175,6 +178,7 @@ fn assert_event_digest_is_sha256(envelope: &EventEnvelope) {
         .unwrap_or_else(|| panic!("envelope kind={} missing proofs[0]", envelope.kind));
     let hex = proof
         .event_digest
+        .as_str()
         .strip_prefix("sha256:")
         .unwrap_or_else(|| {
             panic!(
@@ -199,12 +203,16 @@ fn assert_event_digest_is_sha256(envelope: &EventEnvelope) {
 }
 
 fn assert_seal_ref_is_real(envelope: &EventEnvelope) {
-    let seal = envelope.seal_ref.as_deref().unwrap_or_else(|| {
-        panic!(
-            "envelope kind={} has no seal_ref (reducer-input events MUST carry one)",
-            envelope.kind
-        )
-    });
+    let seal = envelope
+        .seal_ref
+        .as_ref()
+        .map(|seal| seal.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "envelope kind={} has no seal_ref (reducer-input events MUST carry one)",
+                envelope.kind
+            )
+        });
     let anchor_re = Regex::new(r"^ck:seal:sha256:[0-9a-f]{64}$").expect("seal regex compiles");
     assert!(
         anchor_re.is_match(seal),

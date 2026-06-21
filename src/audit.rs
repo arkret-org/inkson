@@ -185,66 +185,66 @@ mod tests {
     #[test]
     fn audit_accessed_emits_canonical_kind() {
         let op = build_audit_accessed(
-            "ck:realm:s1",
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "ck:event:abc",
             "did:key:zDevice",
         )
         .build("node");
         assert_eq!(op.kind, "ck.audit.accessed");
-        assert_eq!(op.payload["target_ref"], "ck:event:abc");
-        assert_eq!(op.payload["actor_id"], "did:web:alice");
+        assert_eq!(op.content["target_ref"], "ck:event:abc");
+        assert_eq!(op.content["actor_id"], "did:web:alice");
         assert!(
-            op.payload["purpose"]
+            op.content["purpose"]
                 .as_str()
                 .is_some_and(|p| p.contains("reader_device=did:key:zDevice"))
         );
-        assert!(op.payload["accessed_at"].is_string());
+        assert!(op.content["accessed_at"].is_string());
         // No illegal top-level fields under the strict audit_payload schema.
-        assert!(op.payload.get("reader_device").is_none());
-        assert!(op.payload.get("target_event_id").is_none());
+        assert!(op.content.get("reader_device").is_none());
+        assert!(op.content.get("target_event_id").is_none());
     }
 
     #[test]
     fn audit_ryw_receipt_lists_devices() {
         let op = build_audit_ryw_receipt(
-            "ck:realm:s1",
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "ck:event:abc",
             vec!["did:key:zA".into(), "did:key:zB".into()],
         )
         .build("node");
         assert_eq!(op.kind, "ck.audit.ryw_receipt");
-        assert_eq!(op.payload["target_ref"], "ck:event:abc");
-        assert_eq!(op.payload["actor_id"], "did:web:alice");
+        assert_eq!(op.content["target_ref"], "ck:event:abc");
+        assert_eq!(op.content["actor_id"], "did:web:alice");
         assert!(
-            op.payload["purpose"]
+            op.content["purpose"]
                 .as_str()
                 .is_some_and(|p| p.contains("did:key:zA") && p.contains("did:key:zB"))
         );
-        assert!(op.payload["accessed_at"].is_string());
+        assert!(op.content["accessed_at"].is_string());
         // No illegal top-level fields under the strict audit_payload schema.
-        assert!(op.payload.get("delivered_to_devices").is_none());
-        assert!(op.payload.get("source_event_id").is_none());
+        assert!(op.content.get("delivered_to_devices").is_none());
+        assert!(op.content.get("source_event_id").is_none());
     }
 
     #[test]
     fn presentation_request_carries_claim_list() {
         let op = build_presentation_request(
-            "ck:realm:s1",
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "did:web:bob",
             vec!["display_name".into(), "avatar".into()],
         )
         .build("node");
         assert_eq!(op.kind, "ck.identity.presentation_request");
-        assert_eq!(op.payload["requested_claims"][0], "display_name");
+        assert_eq!(op.content["requested_claims"][0], "display_name");
     }
 
     #[test]
     fn disclosure_receipt_records_counterparty() {
         let op = build_disclosure_receipt(
-            "ck:realm:s1",
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "ck:event:req",
             "did:web:bob",
@@ -252,7 +252,7 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.identity.disclosure_receipt");
-        assert_eq!(op.payload["counterparty"], "did:web:bob");
+        assert_eq!(op.content["counterparty"], "did:web:bob");
     }
 
     #[test]

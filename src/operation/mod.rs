@@ -1,4 +1,4 @@
-//! Typed v1 Event Envelope used by yougen's active write paths.
+//! SDK-backed v1 Event Envelope builder used by yougen's active write paths.
 //!
 //! Spec source of truth: `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 //!
@@ -9,18 +9,18 @@
 //! NO placeholder proof: a submit without an installed signer is rejected
 //! locally with `no active signer configured` rather than shipped to the
 //! wire in any form.
-//!
-//! Internal Rust field names match the wire JSON names exactly — there are
-//! no `#[serde(rename)]` rewrites on this struct.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 pub use cokret_sdk::events::kinds::EventKind;
-use serde::{Deserialize, Serialize};
+pub use cokret_sdk::{
+    Audience as EventProofAudience, CriticalExtension, Effect, Event as EventEnvelope,
+    EventRef as SemanticRef, EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate,
+    PredicateOp, Proof as EventProof, SealBasis,
+};
 use serde_json::Value;
 
-use crate::canonical::canonical_sha256;
 use crate::hlc::{Hlc, next_seq};
 
 /// Active client-side proof attachment mode. Retained so the settings UI
@@ -99,197 +99,6 @@ pub(crate) fn trim_realm_id(value: &str) -> String {
     value.trim().to_owned()
 }
 
-/// Typed semantic reference per spec `event-envelope.schema.json $defs/semantic_ref`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SemanticRef {
-    pub id: String,
-    pub role: String,
-    #[serde(default = "default_true")]
-    pub critical: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proof: Option<InclusionProof>,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-/// Typed inclusion-proof body per spec `event-envelope.schema.json $defs/semantic_ref.proof`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InclusionProof {
-    pub kind: String,
-    pub leaf_hash: String,
-    pub audit_path: Vec<String>,
-    pub leaf_index: u64,
-    pub tree_size: u64,
-}
-
-/// Typed precondition per spec `event-envelope.schema.json $defs/precondition`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Precondition {
-    pub cell: String,
-    pub predicate: Predicate,
-}
-
-/// Typed predicate per spec `event-envelope.schema.json $defs/predicate`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Predicate {
-    pub op: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub values: Option<Vec<Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub predicate_id: Option<String>,
-}
-
-/// Typed effect per spec `event-envelope.schema.json $defs/effect`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Effect {
-    pub cell: String,
-    pub op: LatticeOp,
-}
-
-/// Typed Control Move basis per spec `event-envelope.schema.json
-/// $defs/seal_basis` — the accepted Seal view the author signed under.
-/// Mint a single-leaf basis from the registered sourcing
-/// (`events_frontier_realm_seal_view(realm).seal_basis()`); never
-/// fabricate one (SPEC-SOL-003 resolution).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SealBasis {
-    pub leaves: Vec<String>,
-    pub control_event_set_root: String,
-    pub state_root: String,
-}
-
-/// Typed lattice op per spec `event-envelope.schema.json $defs/lattice_op`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LatticeOp {
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tag: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub to: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub issuer_seq: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub element_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub predecessor: Option<String>,
-}
-
-/// Typed envelope requirements block per spec `event-envelope.schema.json
-/// properties.requirements`.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct EventRequirements {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub schema: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reducer: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub critical_extensions: Vec<CriticalExtension>,
-}
-
-/// Typed critical-extension declaration per spec `event-envelope.schema.json
-/// $defs/criticalExtension`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CriticalExtension {
-    pub id: String,
-    pub scope: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schema_ref: Option<String>,
-    pub fail_closed: bool,
-}
-
-/// Current v1 Event Envelope used by active write paths.
-///
-/// Field names match the wire JSON exactly per spec `event-envelope.schema.json` —
-/// no serde renames. `preconditions` / `effects` / `seal_ref` are
-/// `Option<Vec<...>>` / `Option<String>` because reducer-input event kinds
-/// require them and non-reducer kinds (read marker, account_data, ...)
-/// must omit them entirely.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EventEnvelope {
-    pub event_id: String,
-    pub kind: String,
-    pub realm_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effective_scope: Option<Value>,
-    pub actor_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executed_by: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authorization_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor_kind: Option<String>,
-    pub actor_seq: u64,
-    pub created_at: String,
-    pub hlc: String,
-    #[serde(default)]
-    pub prev_refs: Vec<String>,
-    #[serde(default)]
-    pub refs: Vec<SemanticRef>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub preconditions: Vec<Precondition>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<Effect>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seal_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seal_basis: Option<SealBasis>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub redacts: Option<String>,
-    pub payload: Value,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub unsigned: BTreeMap<String, Value>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub proofs: Vec<EventProof>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requirements: Option<EventRequirements>,
-}
-
-/// Detached proof entry on an [`EventEnvelope`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EventProof {
-    pub kind: String,
-    pub alg: String,
-    pub verification_method: String,
-    pub event_digest: String,
-    pub created_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub audience: Option<EventProofAudience>,
-    pub jws: String,
-}
-
-/// EventProof `audience` accepts the v1 scalar and multi-audience shapes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum EventProofAudience {
-    Single(String),
-    Multiple(Vec<String>),
-}
-
-impl EventProofAudience {
-    pub fn single(value: impl Into<String>) -> Self {
-        Self::Single(value.into())
-    }
-
-    pub fn multiple(values: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self::Multiple(values.into_iter().map(Into::into).collect())
-    }
-}
-
 /// Builder for creating typed event envelopes. Callers attach
 /// preconditions / effects / seal_ref / requirements after `new()`
 /// and before `build_sdk_event()`; the SDK event submit path requires an active
@@ -298,7 +107,7 @@ impl EventProofAudience {
 pub struct OperationBuilder {
     realm_id: String,
     actor: String,
-    op_type: String,
+    op_type: EventKind,
     target_ref: Option<String>,
     body: Value,
     authz_ref: Option<String>,
@@ -310,7 +119,7 @@ pub struct OperationBuilder {
     seal_ref: Option<String>,
     seal_basis: Option<SealBasis>,
     requirements: Option<EventRequirements>,
-    redacts: Option<String>,
+    redacts: Option<cokret_sdk::EventId>,
 }
 
 impl OperationBuilder {
@@ -318,7 +127,7 @@ impl OperationBuilder {
         Self {
             realm_id: realm_id.into(),
             actor: actor.into(),
-            op_type: op_type.as_str().to_owned(),
+            op_type,
             target_ref: None,
             body: Value::Null,
             authz_ref: None,
@@ -392,19 +201,32 @@ impl OperationBuilder {
     }
 
     pub fn redacts(mut self, redacts: impl Into<String>) -> Self {
-        self.redacts = Some(redacts.into());
+        let redacts = redacts.into();
+        self.redacts = Some(
+            cokret_sdk::EventId::new(redacts).expect("redacts must be a canonical ck:event id"),
+        );
         self
     }
 
     pub fn build(self, node_id: &str) -> EventEnvelope {
-        self.build_with_deps(node_id, Vec::new())
+        self.build_sdk_event(node_id)
+            .expect("OperationBuilder emitted an invalid SDK Event")
     }
 
     pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<cokret_sdk::Event> {
-        self.build(node_id).to_sdk_event_for_submit()
+        self.build_sdk_event_with_deps(node_id, Vec::new())
     }
 
     pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> EventEnvelope {
+        self.build_sdk_event_with_deps(node_id, deps)
+            .expect("OperationBuilder emitted an invalid SDK Event")
+    }
+
+    pub fn build_sdk_event_with_deps(
+        self,
+        node_id: &str,
+        deps: Vec<String>,
+    ) -> anyhow::Result<cokret_sdk::Event> {
         let hlc = Hlc::now(node_id);
         let operation_id = typed_operation_id(&uuid_v7());
         let mut unsigned = BTreeMap::new();
@@ -419,138 +241,120 @@ impl OperationBuilder {
             unsigned.insert("local_authz_ref".to_owned(), Value::String(authz_ref));
         }
         let actor_seq = next_seq();
-        // Normalize the wire `realm_id` field without accepting alternate
-        // protocol namespaces.
         let realm_id = trim_realm_id(&self.realm_id);
-        EventEnvelope {
-            event_id: format!("ck:event:{}", uuid_v7()),
+        let prev_refs = deps
+            .into_iter()
+            .map(|dep| {
+                cokret_sdk::EventId::new(dep)
+                    .map_err(|err| anyhow::anyhow!("invalid prev_refs event id: {err}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let created_at = chrono::DateTime::parse_from_rfc3339(&crate::clock::now_rfc3339_secs())
+            .map_err(|err| anyhow::anyhow!("event timestamp is not canonical RFC3339: {err}"))?
+            .with_timezone(&chrono::Utc);
+        Ok(cokret_sdk::Event {
+            event_id: cokret_sdk::EventId::new(format!("ck:event:{}", uuid_v7()))
+                .map_err(|err| anyhow::anyhow!("generated event_id is invalid: {err}"))?,
             kind: self.op_type,
-            realm_id,
+            realm_id: cokret_sdk::RealmId::new(realm_id)
+                .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?,
             effective_scope: None,
-            actor_id: self.actor,
-            executed_by: self.executed_by,
+            actor_id: cokret_sdk::Did::new(self.actor)
+                .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?,
+            executed_by: self
+                .executed_by
+                .map(cokret_sdk::Did::new)
+                .transpose()
+                .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?,
             authorization_ref: self.authorization_ref,
             actor_kind: None,
             actor_seq,
-            created_at: crate::clock::now_rfc3339_secs(),
-            hlc: hlc.encode(),
-            prev_refs: deps,
+            created_at,
+            hlc: cokret_sdk::Hlc::new(hlc.encode())
+                .map_err(|err| anyhow::anyhow!("generated HLC is invalid: {err}"))?,
+            prev_refs,
             refs: self.refs,
-            payload: self.body,
+            content: self.body,
             preconditions: self.preconditions,
             effects: self.effects,
-            seal_ref: self.seal_ref,
+            seal_ref: self
+                .seal_ref
+                .map(cokret_sdk::SealId::new)
+                .transpose()
+                .map_err(|err| anyhow::anyhow!("invalid seal_ref: {err}"))?,
+            auth_context: None,
             seal_basis: self.seal_basis,
-            requirements: self.requirements,
+            requirements: self.requirements.unwrap_or_default(),
             redacts: self.redacts,
+            applet_id: None,
+            external_ref: None,
             unsigned,
             proofs: Vec::new(),
-        }
-    }
-
-    pub fn build_sdk_event_with_deps(
-        self,
-        node_id: &str,
-        deps: Vec<String>,
-    ) -> anyhow::Result<cokret_sdk::Event> {
-        self.build_with_deps(node_id, deps)
-            .to_sdk_event_for_submit()
+        })
     }
 }
 
-impl EventEnvelope {
-    /// Decode this local builder envelope through the SDK's canonical Event
-    /// model before it is allowed onto the HTTP wire.
-    ///
-    /// Yougen still builds envelopes with the local `OperationBuilder`, but
-    /// soland owns the accepted submit structure. This conversion keeps the
-    /// network boundary pinned to `cokret_sdk::Event` while the remaining
-    /// builder migration happens behind it.
-    pub fn to_sdk_event(&self) -> anyhow::Result<cokret_sdk::Event> {
-        let mut value = serde_json::to_value(self)?;
-        if let Value::Object(object) = &mut value {
-            object
-                .entry("proofs".to_owned())
-                .or_insert_with(|| Value::Array(Vec::new()));
-        }
-        serde_json::from_value(value)
-            .map_err(|err| anyhow::anyhow!("event does not match SDK Event wire model: {err}"))
-    }
+pub trait EventEnvelopeExt {
+    fn local_operation_idempotency_alias(&self) -> Option<&str>;
+    fn local_operation_id(&self) -> &str;
+    fn local_target_ref(&self) -> Option<&str>;
+    fn canonical_digest(&self) -> anyhow::Result<String>;
+    fn refresh_proof_hashes(&mut self) -> anyhow::Result<()>;
+    fn sign_ed25519(
+        &mut self,
+        signer_did: impl Into<String>,
+        key_id: impl Into<String>,
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> anyhow::Result<()>;
+    fn require_proof(&self) -> anyhow::Result<&EventProof>;
+}
 
-    pub fn to_sdk_event_for_submit(&self) -> anyhow::Result<cokret_sdk::Event> {
-        let sdk_event = self.to_sdk_event()?;
-        let local_digest = self.canonical_digest()?;
-        let sdk_digest = sdk_event
-            .event_digest()
-            .map_err(|err| anyhow::anyhow!("SDK Event digest failed: {err}"))?;
-        if local_digest != sdk_digest {
-            anyhow::bail!(
-                "event digest drift between yougen builder and SDK Event: local={local_digest}, sdk={sdk_digest}"
-            );
-        }
-        for proof in &self.proofs {
-            if proof.event_digest != sdk_digest {
-                anyhow::bail!(
-                    "event proof digest {} does not match SDK Event digest {sdk_digest}",
-                    proof.event_digest
-                );
-            }
-        }
-        Ok(sdk_event)
-    }
-
-    pub fn local_operation_idempotency_alias(&self) -> Option<&str> {
+impl EventEnvelopeExt for EventEnvelope {
+    fn local_operation_idempotency_alias(&self) -> Option<&str> {
         self.unsigned
             .get("local_operation_idempotency_alias")
             .and_then(Value::as_str)
     }
 
-    pub fn local_operation_id(&self) -> &str {
+    fn local_operation_id(&self) -> &str {
         self.local_operation_idempotency_alias()
-            .unwrap_or(self.event_id.as_str())
+            .unwrap_or_else(|| self.event_id.as_str())
     }
 
-    pub fn local_target_ref(&self) -> Option<&str> {
+    fn local_target_ref(&self) -> Option<&str> {
         self.unsigned
             .get("local_target_ref")
             .and_then(Value::as_str)
     }
 
-    pub fn canonical_digest(&self) -> anyhow::Result<String> {
-        let mut canonical = serde_json::to_value(self)?;
-        if let Value::Object(object) = &mut canonical {
-            object.remove("proofs");
-            object.remove("unsigned");
-        }
-        canonical_sha256(&canonical)
+    fn canonical_digest(&self) -> anyhow::Result<String> {
+        self.event_digest()
+            .map_err(|err| anyhow::anyhow!("SDK Event digest failed: {err}"))
     }
 
-    pub fn refresh_proof_hashes(&mut self) -> anyhow::Result<()> {
+    fn refresh_proof_hashes(&mut self) -> anyhow::Result<()> {
         let digest = self.canonical_digest()?;
+        let digest = cokret_sdk::Hash::new(digest)
+            .map_err(|err| anyhow::anyhow!("event digest is not a SDK Hash: {err}"))?;
         for proof in &mut self.proofs {
             proof.event_digest = digest.clone();
         }
         Ok(())
     }
 
-    pub fn sign_ed25519(
+    fn sign_ed25519(
         &mut self,
         signer_did: impl Into<String>,
-        key_id: impl Into<String>,
+        _key_id: impl Into<String>,
         signing_key: &ed25519_dalek::SigningKey,
     ) -> anyhow::Result<()> {
-        // Delegate to the SDK pipeline via
-        // [`crate::event_signer::YougenEventSigner::sign_envelope`] so a
-        // bug fix in the canonical-bytes / detached-JWS path lands in
-        // one place (the SDK) instead of being mirrored across coauth,
-        // soland, and yougen.
         use std::sync::Arc;
 
         use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
 
         let signer_did = signer_did.into();
-        let key_id = key_id.into();
-        let sdk_signer = Ed25519DetachedJwsSigner::new(signing_key.clone(), key_id.clone());
+        let sdk_signer =
+            Ed25519DetachedJwsSigner::new(signing_key.clone(), format!("{signer_did}#device"));
         let signer = crate::event_signer::YougenEventSigner::from_dyn_signer(
             Arc::new(sdk_signer),
             signer_did.clone(),
@@ -558,16 +362,10 @@ impl EventEnvelope {
         signer
             .sign_envelope(self)
             .map_err(|err| anyhow::anyhow!("Ed25519 sign rejected: {err}"))?;
-        if let Some(proof) = self.proofs.first_mut() {
-            proof.verification_method = key_id;
-        }
-        if self.actor_id.is_empty() {
-            self.actor_id = signer_did;
-        }
         Ok(())
     }
 
-    pub fn require_proof(&self) -> anyhow::Result<&EventProof> {
+    fn require_proof(&self) -> anyhow::Result<&EventProof> {
         self.proofs
             .first()
             .ok_or_else(|| anyhow::anyhow!("event envelope missing proof"))

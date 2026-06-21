@@ -340,9 +340,9 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
     .unwrap()
     .build("yougen");
     assert_eq!(op.kind, "ck.account_data.set");
-    assert_eq!(op.payload["key"], item.account_data_key);
-    assert_eq!(op.payload["encrypted_payload"]["kind"], "saved_item");
-    assert!(op.payload.get("body").is_none());
+    assert_eq!(op.content["key"], item.account_data_key);
+    assert_eq!(op.content["encrypted_payload"]["kind"], "saved_item");
+    assert!(op.content.get("body").is_none());
     assert_ne!(op.kind, "ck.pin.add");
 }
 

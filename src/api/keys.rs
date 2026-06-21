@@ -394,15 +394,7 @@ impl CokretApi {
             revoked_by_device_id,
             "user_request",
         )
-        .seal_basis(crate::operation::SealBasis {
-            leaves: basis
-                .leaves
-                .iter()
-                .map(|leaf| leaf.as_str().to_owned())
-                .collect(),
-            control_event_set_root: basis.control_event_set_root.as_str().to_owned(),
-            state_root: basis.state_root.as_str().to_owned(),
-        })
+        .seal_basis(basis)
         .build_sdk_event(revoked_by_device_id)?;
         self.submit_sdk_event(&event).await
     }

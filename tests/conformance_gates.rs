@@ -17,7 +17,7 @@ use ed25519_dalek::SigningKey;
 use jsonschema::{Registry, Resource};
 use serde_json::Value;
 use yougen::api;
-use yougen::operation::EventEnvelope;
+use yougen::operation::{EventEnvelope, EventEnvelopeExt, EventKind};
 
 // ----------------------------------------------------------------------
 // Shared path / file helpers
@@ -117,7 +117,7 @@ fn test_signing_key() -> &'static SigningKey {
 
 const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
 const TEST_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-000000000002";
-const TEST_actor_id: &str = "did:web:alice.example";
+const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_ANCHOR_REF: &str =
     "ck:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -128,9 +128,10 @@ const TEST_ANCHOR_REF: &str =
 /// rules baked into event-envelope.schema.json.
 fn stamp_wire_fields(envelope: &mut EventEnvelope) {
     if envelope.seal_ref.is_none() {
-        envelope.seal_ref = Some(TEST_ANCHOR_REF.to_owned());
+        envelope.seal_ref =
+            Some(cokret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned()).expect("test seal ref"));
     }
-    let signer_did = TEST_actor_id;
+    let signer_did = TEST_ACTOR_ID;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, test_signing_key())
@@ -206,7 +207,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
 /// diff on any schema violation.
 fn assert_envelope_matches_schema(label: &str, envelope: &EventEnvelope) {
     assert!(
-        !envelope.hlc.is_empty(),
+        !envelope.hlc.as_str().is_empty(),
         "{label}: builder produced empty hlc — should be `<12>-<4>-<8>` hex"
     );
     let value = serde_json::to_value(envelope)
@@ -230,7 +231,7 @@ fn assert_envelope_matches_schema(label: &str, envelope: &EventEnvelope) {
 fn build_realm_create_event_matches_event_schema() {
     let mut envelope = api::build_realm_create_event(
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -254,7 +255,7 @@ fn build_space_create_event_matches_event_schema() {
     let mut envelope = api::build_space_create_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         "Launch checklist",
         Some("Quarterly launch tracking"),
         "list",
@@ -271,8 +272,8 @@ fn build_space_lifecycle_event_archive_matches_event_schema() {
     let mut envelope = api::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
-        TEST_actor_id,
-        "ck.space.archive",
+        TEST_ACTOR_ID,
+        EventKind::SpaceArchive,
     )
     .expect("build_space_lifecycle_event(archive) succeeds");
     stamp_wire_fields(&mut envelope);
@@ -284,8 +285,8 @@ fn build_space_lifecycle_event_restore_matches_event_schema() {
     let mut envelope = api::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
-        TEST_actor_id,
-        "ck.space.restore",
+        TEST_ACTOR_ID,
+        EventKind::SpaceRestore,
     )
     .expect("build_space_lifecycle_event(restore) succeeds");
     stamp_wire_fields(&mut envelope);
@@ -297,8 +298,8 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
     let mut envelope = api::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
-        TEST_actor_id,
-        "ck.space.tombstone",
+        TEST_ACTOR_ID,
+        EventKind::SpaceTombstone,
     )
     .expect("build_space_lifecycle_event(tombstone) succeeds");
     stamp_wire_fields(&mut envelope);
@@ -309,8 +310,8 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
 fn build_realm_state_event_join_rule_matches_event_schema() {
     let mut envelope = api::build_realm_state_event(
         TEST_REALM_ID,
-        TEST_actor_id,
-        "ck.realm.join_rule",
+        TEST_ACTOR_ID,
+        EventKind::RealmJoinRule,
         serde_json::json!("invite"),
     )
     .expect("build_realm_state_event(join_rule) succeeds");
@@ -322,8 +323,8 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
 fn build_realm_state_event_history_visibility_matches_event_schema() {
     let mut envelope = api::build_realm_state_event(
         TEST_REALM_ID,
-        TEST_actor_id,
-        "ck.realm.history_visibility",
+        TEST_ACTOR_ID,
+        EventKind::RealmHistoryVisibility,
         serde_json::json!("shared"),
     )
     .expect("build_realm_state_event(history_visibility) succeeds");
@@ -335,7 +336,7 @@ fn build_realm_state_event_history_visibility_matches_event_schema() {
 fn build_realm_history_sharing_policy_event_matches_event_schema() {
     let mut envelope = api::build_realm_history_sharing_policy_event(
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         serde_json::json!({
             "version": 1,
             "default_key_share": "event_time_visibility",
@@ -356,7 +357,7 @@ fn build_realm_history_sharing_policy_event_matches_event_schema() {
 fn build_realm_preview_policy_event_matches_event_schema() {
     let mut envelope = api::build_realm_preview_policy_event(
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         serde_json::json!({
             "mode": "stripped_state",
             "audiences": ["link_token_holder"],
@@ -382,7 +383,7 @@ fn build_member_state_event_matches_event_schema() {
     // calls it for each invitee) and pick out the member-state envelope.
     let events = api::build_realm_bootstrap_events(
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         "Engineering",
         None,
         "listed",
@@ -400,7 +401,7 @@ fn build_member_state_event_matches_event_schema() {
     .expect("build_realm_bootstrap_events succeeds");
     let mut envelope = events
         .into_iter()
-        .find(|event| event.kind == "ck.member.state")
+        .find(|event| event.kind == EventKind::MemberState)
         .expect("bootstrap chain emits one ck.member.state envelope for the invitee");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_member_state_event[invite]", &envelope);
@@ -410,7 +411,7 @@ fn build_member_state_event_matches_event_schema() {
 fn build_member_state_transition_event_matches_event_schema() {
     let mut envelope = api::build_member_state_transition_event(
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         TEST_INVITEE_DID,
         Some("invite"),
         "join",
@@ -425,7 +426,7 @@ fn build_member_state_transition_event_matches_event_schema() {
 fn build_plaintext_visible_services_event_matches_event_schema() {
     let mut envelope = api::build_plaintext_visible_services_event(
         TEST_REALM_ID,
-        TEST_actor_id,
+        TEST_ACTOR_ID,
         &["did:web:server.example".to_owned()],
     )
     .expect("build_plaintext_visible_services_event succeeds")
