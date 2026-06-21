@@ -23,7 +23,10 @@ impl CokretApi {
         let proof_context = self.event_proof_context().await?;
         for event in events {
             let mut signed = event.clone();
-            if signed.seal_ref.is_none() && !signed.effects.is_empty() {
+            if signed.seal_ref.is_none()
+                && signed.seal_basis.is_none()
+                && !signed.effects.is_empty()
+            {
                 let seal = self.current_seal_for(signed.realm_id.as_str()).await?;
                 signed.seal_ref = Some(
                     cokret_sdk::SealId::new(seal)
