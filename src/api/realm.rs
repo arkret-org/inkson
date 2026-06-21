@@ -409,7 +409,7 @@ impl CokretApi {
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
-        stamp_invite_join_seal_ref(&mut event, candidate);
+        stamp_invite_join_seal_basis(&mut event, candidate)?;
         self.submit_built_event_via_join_candidate(candidate, &event)
             .await
     }
@@ -427,7 +427,7 @@ impl CokretApi {
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
-        stamp_invite_join_seal_ref(&mut event, candidate);
+        stamp_invite_join_seal_basis(&mut event, candidate)?;
         self.submit_built_event_via_join_candidate(candidate, &event)
             .await
     }
@@ -898,24 +898,32 @@ impl CokretApi {
     }
 }
 
-/// Stamp an invite→join event's `seal_ref` from the resolve-realm join
-/// candidate's single-leaf `seal_basis`.
+/// Stamp an invite→join Control Move's `seal_basis` from the resolve-realm
+/// join candidate.
 ///
 /// The invitee is not yet a member, so it cannot read the membership-gated
 /// `GET /_cokret/self/events/frontier?realm_id=` Realm Seal view (it answers
-/// `404 realm not found`). The current Seal head is instead disclosed by
-/// resolve-realm — authorized by the invite — in the join candidate's Control
-/// Move basis. Stamp it before signing so [`CokretApi::submit_built_event`]
-/// does not fall back to the 404-prone frontier read.
+/// `404 realm not found`). The current Seal basis is instead disclosed by
+/// resolve-realm, authorized by the invite, in the join candidate. Stamp it
+/// before signing so [`CokretApi::submit_built_event`] does not fall back to
+/// the 404-prone frontier read or incorrectly turn the Control Move into a
+/// DataEvent.
 ///
-/// Only stamps when the event actually needs a seal (`seal_ref` empty and it
-/// carries `effects`) and the candidate advertised a basis leaf — mirroring
-/// `submit_built_event`'s own seal-stamp condition so it is a no-op
-/// otherwise.
-fn stamp_invite_join_seal_ref(event: &mut cokret_sdk::Event, candidate: &RealmJoinCandidate) {
-    if event.seal_ref.is_none() && !event.effects.is_empty() {
-        if let Some(seal_head) = candidate.seal_basis.leaves.first() {
-            event.seal_ref = Some(seal_head.clone());
-        }
+/// Only stamps when the event actually needs a Control Move basis: it carries
+/// effects and has no CBA basis yet.
+fn stamp_invite_join_seal_basis(
+    event: &mut cokret_sdk::Event,
+    candidate: &RealmJoinCandidate,
+) -> anyhow::Result<()> {
+    if event.effects.is_empty() || event.seal_basis.is_some() {
+        return Ok(());
     }
+    if event.seal_ref.is_some() {
+        anyhow::bail!("invite join Control Move must use seal_basis, not seal_ref");
+    }
+    if candidate.seal_basis.leaves.is_empty() {
+        anyhow::bail!("resolve_realm join candidate seal_basis has no leaves");
+    }
+    event.seal_basis = Some(candidate.seal_basis.clone());
+    Ok(())
 }

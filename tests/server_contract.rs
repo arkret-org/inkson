@@ -277,6 +277,11 @@ fn yougen_accepts_server_contract_payloads() {
             "join_methods": ["invite_accept", "member_join"],
             "priority": 0,
             "source": "directory_ingest",
+            "seal_basis": {
+                "leaves": ["ck:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"],
+                "control_event_set_root": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                "state_root": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            },
             "as_of": "2026-05-30T00:00:00Z",
             "expires_at": "2099-01-01T00:00:00Z"
         }]
@@ -702,10 +707,11 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
 
     let secret = "Alice from Ops Private";
     let contact_remark = ContactRemark::new("did:web:alice.example", secret);
-    let _realm_remark = RealmRemark::new("ck:realm:contract", secret);
+    let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000cd";
+    let _realm_remark = RealmRemark::new(realm_id, secret);
 
     let event = OperationBuilder::new(
-        "ck:realm:contract",
+        realm_id,
         "did:web:local.example",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )

@@ -1415,6 +1415,11 @@ function joinCandidate() {
     join_methods: ["invite_accept", "member_join"],
     priority: 0,
     source: "directory_ingest",
+    seal_basis: {
+      leaves: ["ck:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"],
+      control_event_set_root: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      state_root: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    },
     as_of: "2026-05-30T00:00:00Z",
     expires_at: "2099-01-01T00:00:00Z",
   };
