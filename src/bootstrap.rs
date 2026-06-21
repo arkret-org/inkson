@@ -3,7 +3,7 @@
 //! YOU-07-001: mechanically moved from `app.rs`; move-only, with no changes to
 //! logic, signatures, or canonical bytes.
 //! This module groups three concerns:
-//!   - development session refresh feasibility checks (`has_bootstrap_refresh_material`, etc.);
+//!   - session refresh feasibility checks (`has_bootstrap_refresh_material`, etc.);
 //!   - device authorization state projections (`*_device_authorization_*`);
 //!   - MLS backup/unlock dual checks and device-message Welcome bootstrap
 //!     (`mls_recovery_setup_missing` / `mls_welcome_bootstrap_key` /
@@ -19,8 +19,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use super::server_key;
-use crate::config::{is_valid_device_id, normalize_server_url};
-use crate::local_state::{ClientLocalState, LocalStateStore};
+use crate::local_state::LocalStateStore;
 
 pub(crate) const RECOVERY_AUTO_PROMPT_SHOWN_KEY: &str = "recovery.auto_prompt_shown.v1";
 pub(crate) const RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY: &str =
@@ -52,43 +51,6 @@ pub(crate) fn has_bootstrap_refresh_material(
         crate::session_refresh::grant_matches_principal_server(grant, principal_server_url)
             && !crate::session_refresh::grant_is_dead(grant)
     })
-}
-
-fn is_local_development_server_url(principal_server_url: &str) -> bool {
-    let normalized = normalize_server_url(principal_server_url);
-    let Ok(url) = url::Url::parse(&normalized) else {
-        return false;
-    };
-    url.host_str()
-        .is_some_and(|host| matches!(host, "local.host" | "localhost" | "127.0.0.1" | "::1"))
-}
-
-pub(crate) fn can_attempt_development_session_reissue(
-    principal_server_url: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> bool {
-    let actor = actor_id.trim();
-    let device = device_id.trim();
-    !actor.is_empty()
-        && actor.starts_with("did:")
-        && is_valid_device_id(device)
-        && is_local_development_server_url(principal_server_url)
-}
-
-pub(crate) fn can_bootstrap_with_development_session_reissue(
-    local_state: &ClientLocalState,
-    principal_server_url: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> bool {
-    let actor = actor_id.trim();
-    local_state
-        .account_scope_owner
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|owner| owner == actor)
-        && can_attempt_development_session_reissue(principal_server_url, actor, device_id)
 }
 
 pub(crate) fn local_state_has_encrypted_realm(state_store: &LocalStateStore) -> bool {

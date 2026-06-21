@@ -139,38 +139,6 @@ fn session_grant(session_expires_in: i64, grant_expires_in: i64) -> PersistedSes
 }
 
 #[test]
-fn development_session_reissue_is_local_did_and_protocol_device_only() {
-    let actor = "did:web:alice.example";
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
-
-    assert!(can_attempt_development_session_reissue(
-        "https://local.host",
-        actor,
-        device
-    ));
-    assert!(can_attempt_development_session_reissue(
-        "http://127.0.0.1:8787",
-        actor,
-        device
-    ));
-    assert!(!can_attempt_development_session_reissue(
-        "https://principal.example",
-        actor,
-        device
-    ));
-    assert!(!can_attempt_development_session_reissue(
-        "https://local.host",
-        "alice",
-        device
-    ));
-    assert!(!can_attempt_development_session_reissue(
-        "https://local.host",
-        actor,
-        "dev_yougen"
-    ));
-}
-
-#[test]
 fn oidc_refresh_error_invalidates_grant_for_invalid_grant_response() {
     let error = anyhow::anyhow!(
         "refresh endpoint returned 400 Bad Request: {{\"error\":\"invalid_grant\",\"error_description\":\"The provided access grant is invalid, expired, or revoked.\"}}"
@@ -190,56 +158,15 @@ fn oidc_refresh_error_keeps_bundle_for_transient_failures() {
 }
 
 #[test]
-fn bootstrap_development_reissue_requires_matching_account_scope_owner() {
+fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
     let actor = "did:web:alice.example";
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
-    let mut state = ClientLocalState::default();
-
-    assert!(!can_bootstrap_with_development_session_reissue(
-        &state,
-        "https://local.host",
-        actor,
-        device
-    ));
-
-    state.account_scope_owner = Some(actor.to_owned());
-    assert!(can_bootstrap_with_development_session_reissue(
-        &state,
-        "https://local.host",
-        actor,
-        device
-    ));
-
-    state.account_scope_owner = Some("did:web:bob.example".to_owned());
-    assert!(!can_bootstrap_with_development_session_reissue(
-        &state,
-        "https://local.host",
-        actor,
-        device
-    ));
-}
-
-#[test]
-fn cleared_account_scope_blocks_development_session_reissue() {
-    let actor = "did:web:alice.example";
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
-    let mut store = crate::local_state::isolated_store_for_tests("cleared-dev-reissue-owner");
+    let mut store = crate::local_state::isolated_store_for_tests("account-scope-no-restore");
     store.adopt_account_scope(actor);
 
-    assert!(can_bootstrap_with_development_session_reissue(
-        &store.load(),
+    assert!(!has_bootstrap_refresh_material(
+        &store,
         "https://local.host",
-        actor,
-        device
-    ));
-
-    store.clear_account_scoped();
-
-    assert!(!can_bootstrap_with_development_session_reissue(
-        &store.load(),
-        "https://local.host",
-        actor,
-        device
+        actor
     ));
 }
 
@@ -751,27 +678,20 @@ fn boot_state_restores_when_refresh_material_exists_without_token() {
 #[test]
 fn boot_state_waits_for_secure_store_before_known_account_is_signed_out() {
     assert_eq!(
-        session_boot_state_from_bootstrap_material(
-            "",
-            false,
-            false,
-            "did:web:alice.example",
-            false
-        ),
+        session_boot_state_from_bootstrap_material("", false, "did:web:alice.example", false),
         SessionBootState::Restoring
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, false, "", false),
+        session_boot_state_from_bootstrap_material("", false, "", false),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, false, "did:web:alice.example", true),
+        session_boot_state_from_bootstrap_material("", false, "did:web:alice.example", true),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
         session_boot_state_from_bootstrap_material(
             "sx-live",
-            false,
             false,
             "did:web:alice.example",
             false

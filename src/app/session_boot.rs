@@ -68,20 +68,18 @@ pub(super) fn should_wait_for_secure_store_session_restore(
 pub(super) fn session_boot_state_from_bootstrap_material(
     session_token: &str,
     can_restore_session: bool,
-    can_reissue_development_session: bool,
     account_did: &str,
     secure_store_ready: bool,
 ) -> SessionBootState {
-    let can_restore_now = can_restore_session || can_reissue_development_session;
     if should_wait_for_secure_store_session_restore(
         session_token,
-        can_restore_now,
+        can_restore_session,
         account_did,
         secure_store_ready,
     ) {
         SessionBootState::Restoring
     } else {
-        SessionBootState::from_boot_material(session_token, can_restore_now)
+        SessionBootState::from_boot_material(session_token, can_restore_session)
     }
 }
 

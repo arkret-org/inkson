@@ -10,22 +10,6 @@ pub(super) fn oidc_refresh_error_invalidates_grant(error: &anyhow::Error) -> boo
                 || (message.contains("refresh") && message.contains("invalid"))))
 }
 
-pub(super) async fn reissue_development_session(
-    principal_server_url: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> Option<crate::models::SessionLoginOutcome> {
-    if !can_attempt_development_session_reissue(principal_server_url, actor_id, device_id) {
-        return None;
-    }
-    let api = CokretApi::new(principal_server_url).ok()?;
-    let description = api.describe().await.ok()?;
-    if !description.development_mode {
-        return None;
-    }
-    api.dev_login(actor_id.trim(), device_id.trim()).await.ok()
-}
-
 /// The single source of truth for re-minting the principal bearer.
 ///
 /// Registered once at the app root and reached everywhere through
@@ -158,36 +142,7 @@ pub(super) async fn remint_principal_bearer(
             crate::session::invalidate_current_session(reason);
             None
         }
-        _ => {
-            let can_reissue_development_session = {
-                let store = state_store.read();
-                let state = store.load();
-                can_bootstrap_with_development_session_reissue(&state, &base, &actor, &device)
-            };
-            if !can_reissue_development_session {
-                return None;
-            }
-            if let Some(session) = reissue_development_session(&base, &actor, &device).await {
-                if !same_server_url(&base, &base_url()) || session_generation() != generation {
-                    return None;
-                }
-                let access_token = session.access_token.clone();
-                let actor = if session.actor.as_str().trim().is_empty() {
-                    actor
-                } else {
-                    session.actor.as_str().to_owned()
-                };
-                let device = if session.device_id.as_str().trim().is_empty() {
-                    device
-                } else {
-                    session.device_id.as_str().to_owned()
-                };
-                token.set(access_token.clone());
-                persist_config(config_store, base, actor, device, access_token.clone());
-                return Some(access_token);
-            }
-            None
-        }
+        _ => None,
     }
 }
 

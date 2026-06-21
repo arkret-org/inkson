@@ -47,17 +47,6 @@ impl CokretApi {
         )
     }
 
-    pub async fn dev_login(
-        &self,
-        actor: &str,
-        device_id: &str,
-    ) -> anyhow::Result<SessionLoginOutcome> {
-        let _ = (actor, device_id);
-        anyhow::bail!(
-            "dev_login is a soland private development path; yougen must not call private soland paths"
-        )
-    }
-
     // ②(A+②): removed `exchange_session_grant*`. The Principal Server no longer
     // mints a local bearer and there is no grant→principal-bearer exchange
     // endpoint (api-conventions.md §3.3). The held credential is the

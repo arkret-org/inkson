@@ -163,17 +163,10 @@ pub fn RouterView() -> Element {
         &initial_config.server_url,
         &initial_config.account_did,
     );
-    let initial_can_reissue_development_session = can_bootstrap_with_development_session_reissue(
-        &initial_local_state,
-        &initial_config.server_url,
-        &initial_config.account_did,
-        &initial_config.device_id,
-    );
     let initial_secure_store_bootstrap_ready = !cfg!(target_arch = "wasm32");
     let initial_session_boot_state = session_boot_state_from_bootstrap_material(
         &initial_session_token,
         initial_can_restore_session,
-        initial_can_reissue_development_session,
         &initial_config.account_did,
         initial_secure_store_bootstrap_ready,
     );
@@ -827,30 +820,16 @@ pub fn RouterView() -> Element {
                 session.clear();
             }
         }
-        let (can_restore_session, can_reissue_development_session) = {
+        let can_restore_session = {
             let store = state_store.read();
-            let state = store.load();
-            (
-                has_bootstrap_refresh_material(&store, &base, &account_did()),
-                can_bootstrap_with_development_session_reissue(
-                    &state,
-                    &base,
-                    &account_did(),
-                    &device_id(),
-                ),
-            )
+            has_bootstrap_refresh_material(&store, &base, &account_did())
         };
-        if !base.trim().is_empty()
-            && (!session.trim().is_empty()
-                || can_restore_session
-                || can_reissue_development_session)
-        {
+        if !base.trim().is_empty() && (!session.trim().is_empty() || can_restore_session) {
             bootstrap_pending.set(false);
             sync_bootstrap_complete.set(false);
             session_boot_state.set(session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
-                can_reissue_development_session,
                 &account_did(),
                 secure_store_ready,
             ));
@@ -893,7 +872,6 @@ pub fn RouterView() -> Element {
             session_boot_state.set(session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
-                can_reissue_development_session,
                 &account_did(),
                 secure_store_ready,
             ));

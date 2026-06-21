@@ -100,8 +100,8 @@ use crate::models::{
     MediaIceConfigOutcome, MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD,
     OkOutcome, PushRegisterView, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult,
     ReceiptResult, ResolveHandleView, ResolveRealmOutcome, SearchActorsView,
-    SearchOrganizationsView, ServerDescription, SessionLoginOutcome, SpaceCreateResult,
-    SubmitEventResult, SyncDescribeView, TypingResult, VerifyDeviceResult,
+    SearchOrganizationsView, ServerDescription, SpaceCreateResult, SubmitEventResult,
+    SyncDescribeView, TypingResult, VerifyDeviceResult,
 };
 use crate::operation::{EventKind, OperationBuilder, trim_realm_id, uuid_v7};
 
