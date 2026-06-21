@@ -1,23 +1,18 @@
-//! Federation trust bundle + transaction verification helpers.
+//! Federation trust bundle helpers.
 //!
 //! Spec: `sync/federation.md`. Cross-domain Event exchange requires:
 //! - Each domain advertises `.well-known/cokret/server` with its service DID.
 //! - Trust seals are pinned per peer domain (DID + public key).
-//! - Every `FederationTransaction` carries a signature the receiver verifies against the origin
-//!   domain's trust seal.
 //!
-//! Yougen previously called the federation HTTP endpoints (`api.rs:1458-1521`)
-//! as opaque pass-throughs. This module adds a client-side trust bundle that
-//! collects [`cokret_sdk::TrustAnchor`] entries, verifies the well-known
-//! discovery record against the active seal set, and gates inbound
-//! `FederationTransaction` payloads on bundle membership.
+//! This module owns the local trust-anchor set and verifies the well-known
+//! discovery record against it. It deliberately does not implement federation
+//! transaction verification; production federation ingress must use the SDK /
+//! server RFC 9421 and signed Event Envelope verifiers, not a local placeholder.
 
 use std::collections::BTreeMap;
 
 use cokret_sdk::WellKnownCokretServer;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustAnchor {
@@ -25,28 +20,16 @@ pub struct TrustAnchor {
     pub public_key: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FederationTransaction {
-    pub transaction_id: String,
-    pub origin: String,
-    pub destination: String,
-    #[serde(default)]
-    pub events: Vec<Value>,
-    pub signature: String,
-}
-
 /// Outcome of trust bundle verification.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustCheck {
-    /// Domain is pinned and the transaction's origin matches the seal.
+    /// Domain is pinned and the checked record matches the pinned DID.
     Trusted,
     /// Domain is not in the bundle; reject the transaction.
     UnknownDomain(String),
-    /// Domain is pinned but the transaction signature does not match.
+    /// Domain is pinned but the advertised service DID does not match.
     SignatureMismatch(String),
-    /// Origin/destination disagreement (e.g. transaction sent to wrong host).
-    OriginMismatch { declared: String, expected: String },
 }
 
 /// Pinned trust bundle. Maps `domain` → [`TrustAnchor`].
@@ -59,30 +42,6 @@ pub enum TrustCheck {
 pub struct TrustBundle {
     #[serde(default)]
     seals: BTreeMap<String, TrustAnchor>,
-    /// F-FED-1: backfill / federation transactions whose `origin`
-    /// isn't pinned land here instead of being silently dropped.
-    /// The UI surfaces them so the operator can decide whether to
-    /// pin the domain or evict the row. Quarantined rows aren't
-    /// applied to local state — see [`Self::quarantine_transaction`].
-    #[serde(default)]
-    quarantine: Vec<QuarantinedTransaction>,
-}
-
-/// F-FED-1: a federation transaction held back from local state
-/// because its origin wasn't pinned at receive time.
-///
-/// Carries the raw transaction id, origin and destination domains,
-/// and the verdict that originally landed the row in quarantine, so
-/// the UI can render a precise reason ("origin not pinned",
-/// "signature mismatch", "destination not us"). When the operator
-/// later pins the missing domain we can re-evaluate via
-/// [`TrustBundle::reverify_quarantined_against`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuarantinedTransaction {
-    pub transaction_id: String,
-    pub origin: String,
-    pub destination: String,
-    pub reason: TrustCheck,
 }
 
 impl TrustBundle {
@@ -118,108 +77,6 @@ impl TrustBundle {
         self.seals.is_empty()
     }
 
-    // ── F-FED-1: quarantine ──────────────────────────────────────────
-
-    /// Add `transaction` to the quarantine queue with `reason`.
-    /// Idempotent: a second call for the same transaction id
-    /// overwrites the prior entry (the latest verdict wins so the
-    /// UI never sees a stale "unknown domain" reason after the
-    /// signature verifier re-runs).
-    pub fn quarantine_transaction(
-        &mut self,
-        transaction: &FederationTransaction,
-        reason: TrustCheck,
-    ) {
-        self.quarantine
-            .retain(|row| row.transaction_id != transaction.transaction_id);
-        self.quarantine.push(QuarantinedTransaction {
-            transaction_id: transaction.transaction_id.clone(),
-            origin: transaction.origin.clone(),
-            destination: transaction.destination.clone(),
-            reason,
-        });
-    }
-
-    /// Current quarantine snapshot, for the UI to render.
-    pub fn quarantined(&self) -> &[QuarantinedTransaction] {
-        &self.quarantine
-    }
-
-    /// Drop a row from the quarantine queue (e.g. operator clicked
-    /// "evict"). Returns the removed row when it existed.
-    pub fn drop_quarantined(&mut self, transaction_id: &str) -> Option<QuarantinedTransaction> {
-        let idx = self
-            .quarantine
-            .iter()
-            .position(|row| row.transaction_id == transaction_id)?;
-        Some(self.quarantine.remove(idx))
-    }
-
-    /// F-FED-1: re-evaluate every quarantined row against the
-    /// current seal set + `local_domain`. Returns the
-    /// `transaction_id`s that are now [`TrustCheck::Trusted`] —
-    /// the caller is expected to re-fetch those transactions via
-    /// `/federation/backfill` (the actual replay is out of scope
-    /// for this module; we just identify the candidates).
-    ///
-    /// `verify_signature` is the same plug-in closure shape used
-    /// by [`crate::seal_witness::verify_seal_witness_chain`] — it lets
-    /// the caller swap the signature algorithm without touching
-    /// this module.
-    pub fn reverify_quarantined_against(
-        &mut self,
-        local_domain: &str,
-        transactions: &[FederationTransaction],
-    ) -> Vec<String> {
-        let mut promoted: Vec<String> = Vec::new();
-        for tx in transactions {
-            if self
-                .quarantine
-                .iter()
-                .any(|row| row.transaction_id == tx.transaction_id)
-                && matches!(
-                    self.verify_transaction(local_domain, tx),
-                    TrustCheck::Trusted
-                )
-            {
-                self.quarantine
-                    .retain(|row| row.transaction_id != tx.transaction_id);
-                promoted.push(tx.transaction_id.clone());
-            }
-        }
-        promoted
-    }
-
-    /// Verify a [`FederationTransaction`] against this bundle. Checks origin
-    /// pinning + destination matching, then verifies the local federation
-    /// transcript against the pinned seal key.
-    pub fn verify_transaction(
-        &self,
-        local_domain: &str,
-        transaction: &FederationTransaction,
-    ) -> TrustCheck {
-        let seal = match self.seals.get(&transaction.origin) {
-            Some(a) => a,
-            None => {
-                return TrustCheck::UnknownDomain(transaction.origin.clone());
-            }
-        };
-        if transaction.destination != local_domain {
-            return TrustCheck::OriginMismatch {
-                declared: transaction.destination.clone(),
-                expected: local_domain.to_owned(),
-            };
-        }
-        if seal.public_key.is_empty() || transaction.signature.is_empty() {
-            return TrustCheck::SignatureMismatch(transaction.transaction_id.clone());
-        }
-        if federation_transaction_signature(transaction, &seal.public_key) != transaction.signature
-        {
-            return TrustCheck::SignatureMismatch(transaction.transaction_id.clone());
-        }
-        TrustCheck::Trusted
-    }
-
     /// Verify a `.well-known/cokret/server` record against this bundle:
     /// the record's service DID must be pinned for `expected_domain`.
     pub fn verify_well_known(
@@ -239,21 +96,6 @@ impl TrustBundle {
         }
         TrustCheck::Trusted
     }
-}
-
-fn federation_transaction_signature(transaction: &FederationTransaction, key: &str) -> String {
-    let transcript = json!({
-        "transaction_id": transaction.transaction_id,
-        "origin": transaction.origin,
-        "destination": transaction.destination,
-        "events": transaction.events,
-        "key": key,
-    });
-    let bytes = serde_json::to_vec(&transcript).unwrap_or_default();
-    format!(
-        "sha256:{}",
-        crate::canonical::hex_encode(&Sha256::digest(bytes))
-    )
 }
 
 /// F-WELLKNOWN-1: errors surfaced by [`fetch_well_known_cokret_server`].
@@ -371,101 +213,6 @@ mod tests {
     }
 
     #[test]
-    fn unknown_origin_is_rejected() {
-        let bundle = TrustBundle::new();
-        let tx = FederationTransaction {
-            transaction_id: "t1".into(),
-            origin: "bob.example".into(),
-            destination: "alice.example".into(),
-            events: Vec::new(),
-            signature: "sig".into(),
-        };
-        match bundle.verify_transaction("alice.example", &tx) {
-            TrustCheck::UnknownDomain(d) => assert_eq!(d, "bob.example"),
-            other => panic!("expected UnknownDomain, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn destination_mismatch_is_caught() {
-        let mut bundle = TrustBundle::new();
-        bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
-        let tx = FederationTransaction {
-            transaction_id: "t1".into(),
-            origin: "bob.example".into(),
-            destination: "carol.example".into(),
-            events: Vec::new(),
-            signature: "sig".into(),
-        };
-        match bundle.verify_transaction("alice.example", &tx) {
-            TrustCheck::OriginMismatch { declared, expected } => {
-                assert_eq!(declared, "carol.example");
-                assert_eq!(expected, "alice.example");
-            }
-            other => panic!("expected OriginMismatch, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn pinned_origin_with_signature_passes() {
-        let signing_key = "shared-secret-for-bob";
-        let mut tx = FederationTransaction {
-            transaction_id: "t-signed".into(),
-            origin: "bob.example".into(),
-            destination: "alice.example".into(),
-            events: Vec::new(),
-            signature: String::new(),
-        };
-        tx.signature = federation_transaction_signature(&tx, signing_key);
-
-        let mut bundle = TrustBundle::new();
-        bundle.add_anchor(seal("bob.example", signing_key));
-        assert_eq!(
-            bundle.verify_transaction("alice.example", &tx),
-            TrustCheck::Trusted
-        );
-    }
-
-    #[test]
-    fn pinned_origin_with_forged_signature_is_rejected() {
-        let mut bundle = TrustBundle::new();
-        bundle.add_anchor(seal("bob.example", "bob-key"));
-        // Hand-rolled signature that does NOT match the SDK's algorithm.
-        let tx = FederationTransaction {
-            transaction_id: "t-forged".into(),
-            origin: "bob.example".into(),
-            destination: "alice.example".into(),
-            events: Vec::new(),
-            signature: "obviously-wrong".into(),
-        };
-        match bundle.verify_transaction("alice.example", &tx) {
-            TrustCheck::SignatureMismatch(id) => assert_eq!(id, "t-forged"),
-            other => panic!("expected SignatureMismatch, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn pinned_origin_with_wrong_key_is_rejected() {
-        // Sender used `wrong-key`; we pinned `right-key`. The signatures
-        // mix the key into the hash chain, so they diverge.
-        let mut tx = FederationTransaction {
-            transaction_id: "t-wrong-key".into(),
-            origin: "bob.example".into(),
-            destination: "alice.example".into(),
-            events: Vec::new(),
-            signature: String::new(),
-        };
-        tx.signature = federation_transaction_signature(&tx, "wrong-key");
-
-        let mut bundle = TrustBundle::new();
-        bundle.add_anchor(seal("bob.example", "right-key"));
-        match bundle.verify_transaction("alice.example", &tx) {
-            TrustCheck::SignatureMismatch(_) => {}
-            other => panic!("expected SignatureMismatch, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn well_known_matches_pinned_did() {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
@@ -528,91 +275,14 @@ mod tests {
         );
     }
 
-    // ── F-FED-1: quarantine + persistence ───────────────────────────
-
-    fn unpinned_tx() -> FederationTransaction {
-        FederationTransaction {
-            transaction_id: "tx-1".to_owned(),
-            origin: "bob.example".to_owned(),
-            destination: "alice.example".to_owned(),
-            events: Vec::new(),
-            signature: "sig-1".to_owned(),
-        }
-    }
-
-    #[test]
-    fn quarantine_transaction_is_idempotent_under_repeat_calls() {
-        let mut bundle = TrustBundle::new();
-        let tx = unpinned_tx();
-        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
-        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
-        assert_eq!(bundle.quarantined().len(), 1);
-        assert_eq!(bundle.quarantined()[0].transaction_id, "tx-1");
-    }
-
-    #[test]
-    fn quarantine_latest_reason_wins_on_repeat() {
-        let mut bundle = TrustBundle::new();
-        let tx = unpinned_tx();
-        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
-        bundle.quarantine_transaction(
-            &tx,
-            TrustCheck::SignatureMismatch(tx.transaction_id.clone()),
-        );
-        assert_eq!(bundle.quarantined().len(), 1);
-        assert!(matches!(
-            bundle.quarantined()[0].reason,
-            TrustCheck::SignatureMismatch(_)
-        ));
-    }
-
-    #[test]
-    fn drop_quarantined_removes_only_the_named_row() {
-        let mut bundle = TrustBundle::new();
-        let mut tx_a = unpinned_tx();
-        let mut tx_b = unpinned_tx();
-        tx_a.transaction_id = "tx-a".to_owned();
-        tx_b.transaction_id = "tx-b".to_owned();
-        bundle.quarantine_transaction(&tx_a, TrustCheck::UnknownDomain(tx_a.origin.clone()));
-        bundle.quarantine_transaction(&tx_b, TrustCheck::UnknownDomain(tx_b.origin.clone()));
-        let removed = bundle.drop_quarantined("tx-a").expect("removed");
-        assert_eq!(removed.transaction_id, "tx-a");
-        assert_eq!(bundle.quarantined().len(), 1);
-        assert_eq!(bundle.quarantined()[0].transaction_id, "tx-b");
-        assert!(bundle.drop_quarantined("tx-missing").is_none());
-    }
-
-    #[test]
-    fn reverify_promotes_transactions_whose_origin_was_pinned_after_quarantine() {
-        let mut bundle = TrustBundle::new();
-        // Build a transaction signed with the local federation transcript.
-        let mut tx = unpinned_tx();
-        tx.signature = federation_transaction_signature(&tx, "shared-key");
-
-        // Initially, bob.example isn't pinned → quarantine.
-        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
-        assert_eq!(bundle.quarantined().len(), 1);
-
-        // Operator pins bob.example → reverify should promote the row.
-        bundle.add_anchor(seal("bob.example", "shared-key"));
-        let promoted =
-            bundle.reverify_quarantined_against("alice.example", std::slice::from_ref(&tx));
-        assert_eq!(promoted, vec![tx.transaction_id.clone()]);
-        assert!(bundle.quarantined().is_empty());
-    }
-
     #[test]
     fn trust_bundle_round_trips_through_serde() {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(seal("alice.example", "did:web:alice.example"));
-        let tx = unpinned_tx();
-        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
 
         let bytes = serde_json::to_string(&bundle).expect("serialize");
         let restored: TrustBundle = serde_json::from_str(&bytes).expect("deserialize");
         assert_eq!(restored.len(), 1);
-        assert_eq!(restored.quarantined().len(), 1);
-        assert_eq!(restored.quarantined()[0].transaction_id, "tx-1");
     }
 
     #[test]

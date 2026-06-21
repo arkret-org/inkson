@@ -38,8 +38,9 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::api::{
-    AccountSubscribeSnapshotResult, CokretApi, is_auth_expired_error, is_invalid_cursor_error,
-    is_stale_frontier_error, is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
+    AccountSubscribeSnapshotResult, CokretApi, MAX_RETRY_DELAY, is_auth_expired_error,
+    is_invalid_cursor_error, is_stale_frontier_error, is_terminal_session_grant_error,
+    rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalSealView, LocalStateStore};
@@ -277,7 +278,9 @@ pub async fn run_sync_engine(
                 // Honour the server's hint with a floor of
                 // `MIN_BACKOFF_SECS` so a buggy server that returns
                 // `retry_after_ms = 0` still gives us a beat.
-                let wait_ms = retry_after_ms.max(MIN_BACKOFF_SECS.saturating_mul(1000));
+                let wait_ms = retry_after_ms
+                    .max(MIN_BACKOFF_SECS.saturating_mul(1000))
+                    .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
                 sleep_for(Duration::from_millis(wait_ms)).await;
                 // Don't escalate `backoff_secs` — the server told us
                 // exactly how long to wait, so the next iteration
@@ -292,7 +295,9 @@ pub async fn run_sync_engine(
                     let mut last_error = ctx.last_error;
                     last_error.set(reason.map(|reason| format!("sync_engine: {reason}")));
                 }
-                let wait_ms = reconnect_after_ms.max(MIN_BACKOFF_SECS.saturating_mul(1000));
+                let wait_ms = reconnect_after_ms
+                    .max(MIN_BACKOFF_SECS.saturating_mul(1000))
+                    .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
                 sleep_for(Duration::from_millis(wait_ms)).await;
                 backoff_secs = MIN_BACKOFF_SECS;
             }

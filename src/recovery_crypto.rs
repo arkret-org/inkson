@@ -1,6 +1,6 @@
 //! Client-side crypto helpers for the key-backup recovery path.
 //!
-//! Spec: `crypto-media/devices-and-auth.md` §4.1 — the recovery credential
+//! Spec: `crypto-media/key-management.md` §7 — the recovery credential
 //! (the normalized 24-word Recovery Key, or an internal secret such as the
 //! account MLS secret) is stretched on-device with Argon2id and the resulting
 //! KEK encrypts the backup payload with XChaCha20-Poly1305 before it is

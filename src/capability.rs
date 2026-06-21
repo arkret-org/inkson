@@ -16,8 +16,10 @@ pub enum ActionGroup {
 impl ActionGroup {
     /// Returns the set of actions in this group.
     ///
-    /// Action names are the **canonical, fully-qualified** forms from the
-    /// spec `capability-action-registry.json` (always `ck.` prefixed).
+    /// Registered action names are the **canonical, fully-qualified** forms
+    /// from the spec `capability-action-registry.json` (always `ck.`
+    /// prefixed). Entries that are yougen-local UI grouping placeholders are
+    /// marked inline and must not be written into capability grants.
     /// F-CAP-FIX-1 (2026-05-19) brought this table in line with spec
     /// fixtures, which write `actions: ["ck.strand.read", ...]` — under the
     /// previous bare-name table a wire-shaped grant from any conforming
@@ -26,9 +28,6 @@ impl ActionGroup {
     pub fn actions(&self) -> &'static [&'static str] {
         match self {
             Self::Common => &[
-                // Security-boundary capabilities live in the `ck.realm.*`
-                // namespace; container actions live in `ck.space.*`.
-                "ck.realm.read",
                 "ck.realm.update",
                 "ck.space.create",
                 "ck.space.update",
@@ -41,10 +40,8 @@ impl ActionGroup {
                 "ck.strand.archive",
                 "ck.strand.restore",
                 "ck.relation.create",
-                "ck.relation.read",
                 "ck.relation.tombstone",
                 "ck.view.create",
-                "ck.view.read",
                 "ck.view.update",
                 "ck.invite.create",
                 "ck.invite.accept",
@@ -651,7 +648,7 @@ mod tests {
         // regression that re-introduces the removed short form.
         // Realm security-boundary actions live in ck.realm.*; Space
         // container actions live in ck.space.*.
-        assert!(ActionGroup::Common.contains("ck.realm.read"));
+        assert!(ActionGroup::Common.contains("ck.realm.update"));
         assert!(ActionGroup::Common.contains("ck.strand.create"));
         assert!(ActionGroup::Conversation.contains("ck.message.create"));
         assert!(ActionGroup::Administrative.contains("ck.capability.grant"));
@@ -691,12 +688,12 @@ mod tests {
     fn test_ui_gate_denies_when_grant_present_but_action_missing() {
         // Engine carries an unrelated grant for the subject — gate is
         // now active and denies space.archive because the grant only
-        // covers realm.read.
+        // covers realm.update.
         let mut engine = CapabilityEngine::new();
         engine.add_grant(CapabilityGrant {
             subject: "did:web:alice.example".to_owned(),
             resource_selectors: vec![ResourceSelector::Wildcard],
-            actions: vec!["ck.realm.read".to_owned()],
+            actions: vec!["ck.realm.update".to_owned()],
             constraints: Vec::new(),
         });
         let resource = ResourceRef {

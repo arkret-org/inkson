@@ -40,9 +40,11 @@ pub fn sha256_digest(bytes: impl AsRef<[u8]>) -> String {
 /// tail style. Previously copied verbatim in `cross_signing`,
 /// `crypto_boundary` and `mls::persistence`.
 pub fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
 }
@@ -82,17 +84,6 @@ pub fn canonical_event_envelope_bytes(envelope: &cokret_sdk::Event) -> anyhow::R
 /// a parallel Move serializer.
 pub fn canonical_move_bytes<T: Serialize>(move_payload: &T) -> anyhow::Result<Vec<u8>> {
     canonical_json_bytes(move_payload)
-}
-
-/// F-CANONICAL-1: canonical bytes for an [`crate::seal_witness::SealWitnessChain`].
-/// The witness verifier passes this byte string into the per-witness
-/// signature check so a signature produced against a non-canonical
-/// serialization can't replay across seals. See
-/// `sync/finality-and-consensus.md §3`.
-pub fn canonical_seal_witness_bytes(
-    chain: &crate::seal_witness::SealWitnessChain,
-) -> anyhow::Result<Vec<u8>> {
-    canonical_json_bytes(chain)
 }
 
 #[cfg(test)]
@@ -175,24 +166,5 @@ mod tests {
         );
         assert!(!as_text.contains("proofs"));
         assert!(!as_text.contains("unsigned"));
-    }
-
-    #[test]
-    fn canonical_seal_witness_bytes_round_trip_is_deterministic() {
-        use crate::seal_witness::{SealWitness, SealWitnessChain};
-        let chain = SealWitnessChain {
-            seal_id: "ck:seal:1".to_owned(),
-            post_state_root: "sha256:root".to_owned(),
-            witnesses: vec![SealWitness {
-                signer_did: "did:web:alice".to_owned(),
-                signer_domain: "alice.example".to_owned(),
-                signature: "sig".to_owned(),
-                signed_at: None,
-            }],
-            threshold_required: 1,
-        };
-        let a = canonical_seal_witness_bytes(&chain).unwrap();
-        let b = canonical_seal_witness_bytes(&chain).unwrap();
-        assert_eq!(a, b);
     }
 }

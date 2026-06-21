@@ -28,7 +28,6 @@ default = []
 demo-crypto = []
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
-experimental-polls = []
 experimental-discussion-promote = []
 experimental-agents = []
 experimental-applets = []
@@ -61,11 +60,9 @@ mobile-ios = []
 # enums via `#[derive(thiserror::Error)]` instead of hand-rolled impls.
 # Pure derive-macro crate, zero runtime, wasm-friendly. Pinned to the
 # same major as the workspace SDK (`thiserror = "2.0.17"`).
-# Event-proof signing. ed25519-dalek for the Ed25519 detached-JWS
-# signatures produced by `event_signer`; bs58 to encode public keys as
-# did:key multibase (`z<base58btc(0xed01 || pubkey32)>`) in
-# `move_builder::encode_ed25519_did_key_multibase`. Production deploys
-# integrate OS keychain / WebAuthn / HSM via the `secure_key_store` path.
+# Event-proof signing. ed25519-dalek produces Ed25519 detached-JWS
+# signatures for `event_signer`; did:key multibase encoding comes from
+# the shared SDK helper.
 # QR rendering for device-verification handoff. SVG output keeps the
 # crate pure-Rust with no image / font dependencies.
 # Recovery strand (R-recovery-001): real Argon2id passphrase stretching +
@@ -96,7 +93,6 @@ anyhow = {workspace = true}
 argon2 = {workspace = true}
 base64 = {workspace = true}
 bip39 = {workspace = true}
-bs58 = {workspace = true}
 chacha20poly1305 = {workspace = true,default-features = false,features = ["alloc"]}
 chime = {workspace = true,features = ["http"]}
 chrono = {workspace = true,features = ["serde"]}
@@ -164,6 +160,7 @@ notify-rust = {workspace = true}
 reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "rustls", "stream", "form"]}
 sentry = {workspace = true,default-features = false,features = ["backtrace", "contexts", "panic", "reqwest", "rustls"]}
 tokio = {workspace = true,features = ["macros", "rt-multi-thread", "sync", "time"]}
+tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # C36.1 (2026-05-10): wasm32 needs the same surface as native because the app
@@ -195,6 +192,7 @@ gloo-timers = {workspace = true,features = ["futures"]}
 js-sys = {workspace = true}
 reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "stream", "form"]}
 tokio = {workspace = true,features = ["macros", "rt", "sync", "time"]}
+tracing-wasm = {workspace = true}
 wasm-bindgen = {workspace = true}
 wasm-bindgen-futures = {workspace = true}
 web-sys = {workspace = true,features = [
@@ -307,7 +305,6 @@ anyhow = "1.0.102"
 argon2 = "0.5"
 base64 = "0.22"
 bip39 = "2.2.2"
-bs58 = "0.5.1"
 chacha20poly1305 = {version = "0.10",default-features = false}
 chime = {version = "0.3.0",path = "../chime"}
 chrono = "0.4.45"
@@ -342,6 +339,8 @@ sha2 = "0.11"
 thiserror = "2"
 tokio = "1.52.3"
 tracing = "0.1"
+tracing-subscriber = "0.3.23"
+tracing-wasm = "0.2.1"
 unicode-normalization = "0.1"
 url = "2.5.8"
 wasm-bindgen = "0.2"

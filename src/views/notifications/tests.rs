@@ -17,7 +17,7 @@ mod tests {
     fn hydrate_notifications_applies_push_rules_and_dnd() {
         let raw = vec![json!({
             "notification_id": "n1",
-            "kind": "ck.notification",
+            "schema": "ck.schema.notification.v1",
             "notification_type": "message",
             "realm_id": "ck:realm:quiet",
             "body": "hello"
@@ -267,7 +267,7 @@ mod tests {
     fn notification_source_falls_back_to_account_data_only_when_endpoint_missing() {
         let account_data = vec![
             json!({
-                "kind": "ck.notification",
+                "schema": "ck.schema.notification.v1",
                 "notification_id": "n1",
                 "read": false
             }),

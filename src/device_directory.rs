@@ -101,6 +101,11 @@ const POSITIVE_TTL_MS: u64 = 5 * 60 * 1000;
 /// shorter window so a freshly-authorized device becomes resolvable quickly.
 const NEGATIVE_TTL_MS: u64 = 30 * 1000;
 
+/// Hard cap for the process-wide device-key cache. The receive path is
+/// synchronous, so eviction stays O(n) here rather than introducing an async
+/// cache dependency into the hot path.
+const MAX_CACHE_ENTRIES: usize = 4096;
+
 #[derive(Clone)]
 struct CacheEntry {
     /// `Some` = authoritative verify key; `None` = negative (revoked / absent /
@@ -108,6 +113,9 @@ struct CacheEntry {
     key: Option<PublicKeyMaterial>,
     /// `now_unix_ms` at which this entry stops being valid.
     expires_at_ms: u64,
+    /// Last successful sync lookup or insertion time, used for bounded-cache
+    /// eviction.
+    last_accessed_ms: u64,
 }
 
 type CacheKey = (String, String);
@@ -136,20 +144,29 @@ fn cache_key(actor: &str, device: &str) -> CacheKey {
 /// Synchronous, non-blocking cache lookup used by the receive routing path.
 pub fn cached_device_signing_key(actor: &str, device: &str) -> CacheLookup {
     let now = crate::clock::now_unix_ms();
-    let guard = match CACHE.read() {
+    let mut guard = match CACHE.write() {
         Ok(g) => g,
         Err(poison) => poison.into_inner(),
     };
-    match guard.get(&cache_key(actor, device)) {
-        Some(entry) if entry.expires_at_ms > now => match &entry.key {
-            Some(key) => CacheLookup::Hit(key.clone()),
-            None => CacheLookup::NegativeHit,
-        },
-        _ => CacheLookup::Miss,
+    let key = cache_key(actor, device);
+    match guard.get_mut(&key) {
+        Some(entry) if entry.expires_at_ms > now => {
+            entry.last_accessed_ms = now;
+            match &entry.key {
+                Some(key) => CacheLookup::Hit(key.clone()),
+                None => CacheLookup::NegativeHit,
+            }
+        }
+        Some(_) => {
+            guard.remove(&key);
+            CacheLookup::Miss
+        }
+        None => CacheLookup::Miss,
     }
 }
 
 fn store_entry(actor: &str, device: &str, key: Option<PublicKeyMaterial>) {
+    let now = crate::clock::now_unix_ms();
     let ttl = if key.is_some() {
         POSITIVE_TTL_MS
     } else {
@@ -157,13 +174,28 @@ fn store_entry(actor: &str, device: &str, key: Option<PublicKeyMaterial>) {
     };
     let entry = CacheEntry {
         key,
-        expires_at_ms: crate::clock::now_unix_ms().saturating_add(ttl),
+        expires_at_ms: now.saturating_add(ttl),
+        last_accessed_ms: now,
     };
     let mut guard = match CACHE.write() {
         Ok(g) => g,
         Err(poison) => poison.into_inner(),
     };
-    guard.insert(cache_key(actor, device), entry);
+    guard.retain(|_, entry| entry.expires_at_ms > now);
+    let inserted_key = cache_key(actor, device);
+    guard.insert(inserted_key.clone(), entry);
+    while guard.len() > MAX_CACHE_ENTRIES {
+        let victim = guard
+            .iter()
+            .filter(|(candidate, _)| *candidate != &inserted_key)
+            .min_by_key(|(_, entry)| (entry.last_accessed_ms, entry.expires_at_ms))
+            .map(|(key, _)| key.clone())
+            .or_else(|| guard.keys().next().cloned());
+        let Some(victim) = victim else {
+            break;
+        };
+        guard.remove(&victim);
+    }
 }
 
 /// Decode a directory `device_signing_key` (`did:key` Ed25519 multibase, with

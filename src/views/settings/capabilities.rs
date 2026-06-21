@@ -267,7 +267,7 @@ mod tests {
             "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:alice.example",
             "subject": subject,
-            "actions": ["ck.space.write_message"],
+            "actions": ["ck.message.create"],
             "resources": [
                 {"kind": "realm", "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001"}
             ],
@@ -285,7 +285,7 @@ mod tests {
             row.capability_id,
             "ck:grant:0196419b-0000-7000-8000-000000000000"
         );
-        assert_eq!(row.action, "ck.space.write_message");
+        assert_eq!(row.action, "ck.message.create");
         assert_eq!(row.issuer_did, "did:web:alice.example");
         assert_eq!(row.subject_did, "did:web:bob.example");
         assert!(row.expires_at.starts_with("2026-12-31"));

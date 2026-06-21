@@ -90,16 +90,7 @@ pub(crate) fn read_cursor_targets(notifications: &[Notification]) -> Vec<Notific
 }
 
 pub(crate) fn is_notification_account_data(value: &Value) -> bool {
-    matches!(
-        value
-            .get("kind")
-            .or_else(|| value.get("type"))
-            .and_then(Value::as_str),
-        Some("ck.notification")
-            | Some("ck.notification.v1")
-            | Some("ck.account.notification")
-            | Some("notification")
-    )
+    value.get("schema").and_then(Value::as_str) == Some("ck.schema.notification.v1")
 }
 
 pub(crate) fn raw_notifications_from_sources(

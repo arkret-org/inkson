@@ -9,11 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use ed25519_dalek::Signer;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
@@ -1126,27 +1122,22 @@ pub fn build_signed_device_verification_proof(
     }
     let canonical = cokret_sdk::canonical::canonical_json_bytes(&body)
         .map_err(|error| anyhow::anyhow!("canonicalize device verification proof: {error}"))?;
-    let header = json!({
-        "alg": "EdDSA",
-        "typ": "JWT",
-        "verification_method": format!("{}#yougen-device", from_device),
-    });
-    let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
-    let payload_b64 = URL_SAFE_NO_PAD.encode(&canonical);
-    let signing_input = format!("{header_b64}.{payload_b64}");
-    let signature = signing_key.sign(signing_input.as_bytes()).to_bytes();
-    let jws = format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature));
+    let verification_method = format!("{}#yougen-device", from_device);
+    let signer = cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner::new(
+        signing_key.clone(),
+        verification_method,
+    );
+    let proof = signer
+        .build_proof(&canonical, None, None)
+        .map_err(|error| anyhow::anyhow!("sign device verification proof: {error}"))?;
     Ok(json!({
         "device_envelope": body,
         "signature": {
-            "kind": "detached_jws",
-            "alg": "EdDSA",
-            "verification_method": format!("{}#yougen-device", from_device),
-            "payload_digest": format!(
-                "sha256:{}",
-                crate::canonical::hex_encode(&Sha256::digest(&canonical))
-            ),
-            "jws": jws,
+            "kind": proof.kind,
+            "alg": proof.alg,
+            "verification_method": proof.verification_method,
+            "payload_digest": proof.event_digest.as_str(),
+            "jws": proof.jws,
         }
     }))
 }

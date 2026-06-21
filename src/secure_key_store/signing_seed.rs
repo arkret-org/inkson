@@ -126,15 +126,9 @@ pub fn ensure_signing_seed(
     store_signing_seed(store, &seed)
 }
 
-/// Encode an Ed25519 seed into a `did:key:z…` (multibase `0xed01 ||
-/// pubkey32`). Kept in this module so callers don't have to depend on
-/// `crate::local_state::encode_did_key` for the seed-only path.
+/// Encode an Ed25519 seed into a `did:key:z…`.
 fn ed25519_seed_to_did_key(seed: &[u8; 32]) -> String {
     let signing = ed25519_dalek::SigningKey::from_bytes(seed);
     let verifying = signing.verifying_key();
-    let mut prefixed = Vec::with_capacity(34);
-    prefixed.push(0xed);
-    prefixed.push(0x01);
-    prefixed.extend_from_slice(&verifying.to_bytes());
-    format!("did:key:z{}", bs58::encode(prefixed).into_string())
+    crate::did_key::did_key_from_verifying_key(&verifying)
 }

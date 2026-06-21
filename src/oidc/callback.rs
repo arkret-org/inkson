@@ -143,11 +143,16 @@ pub fn extract_callback_error(callback_url: &str) -> Option<(String, Option<Stri
     Some((error, description))
 }
 
-/// Validate the OIDC `nonce` claim from an ID token against the scaffolded
-/// nonce generated before opening the authorization URL. This does not replace
-/// issuer signature validation at coauth; it is the client-side replay guard
-/// that prevents accepting a token minted for a different browser strand.
-pub fn validate_id_token_nonce(id_token: Option<&str>, expected_nonce: &str) -> anyhow::Result<()> {
+/// Decode the OIDC `nonce` claim from an untrusted ID-token payload and compare
+/// it with the scaffolded nonce generated before opening the authorization URL.
+///
+/// This deliberately does not verify the JWT signature and must not be used as
+/// proof that the ID token is trustworthy. Token trust is established by coauth;
+/// this client-side check is only a replay guard for the browser strand.
+pub fn validate_id_token_nonce_unverified_replay_guard(
+    id_token: Option<&str>,
+    expected_nonce: &str,
+) -> anyhow::Result<()> {
     let expected_nonce = expected_nonce.trim();
     if expected_nonce.is_empty() {
         return Ok(());
@@ -246,12 +251,12 @@ pub async fn process_callback(
             };
         }
     };
-    if let Err(error) = validate_id_token_nonce(
+    if let Err(error) = validate_id_token_nonce_unverified_replay_guard(
         token_response.id_token.as_deref(),
         &request.scaffold.expected_nonce,
     ) {
         return CallbackOutcome::Failed {
-            stage: "validate_id_token_nonce",
+            stage: "validate_id_token_nonce_unverified_replay_guard",
             error,
         };
     }
@@ -374,16 +379,20 @@ mod tests {
     }
 
     #[test]
-    fn validate_id_token_nonce_accepts_matching_nonce() {
+    fn validate_id_token_nonce_unverified_replay_guard_accepts_matching_nonce() {
         let token = unsigned_id_token_with_nonce("nonce-ok");
-        validate_id_token_nonce(Some(&token), "nonce-ok").expect("matching nonce");
+        validate_id_token_nonce_unverified_replay_guard(Some(&token), "nonce-ok")
+            .expect("matching nonce");
     }
 
     #[test]
-    fn validate_id_token_nonce_rejects_missing_or_mismatched_nonce() {
-        assert!(validate_id_token_nonce(None, "nonce-required").is_err());
+    fn validate_id_token_nonce_unverified_replay_guard_rejects_missing_or_mismatched_nonce() {
+        assert!(validate_id_token_nonce_unverified_replay_guard(None, "nonce-required").is_err());
         let token = unsigned_id_token_with_nonce("other");
-        assert!(validate_id_token_nonce(Some(&token), "nonce-required").is_err());
+        assert!(
+            validate_id_token_nonce_unverified_replay_guard(Some(&token), "nonce-required")
+                .is_err()
+        );
     }
 
     #[test]

@@ -58,8 +58,8 @@ pub fn build_morph_update(
 }
 
 /// Build a `ck.relation.create` operation. `kind` is a registered
-/// `relation_kind` (e.g. `ck.relation.parent_of`); `from_ref` and `to_ref` are
-/// the typed-id endpoints.
+/// `relation_kind` canonical id (for example `contains`); `from_ref` and
+/// `to_ref` are the typed-id endpoints.
 ///
 /// Body shape follows `relation_create_payload`
 /// (`additionalProperties:false`): the legal field set is `relation` |
@@ -181,7 +181,7 @@ mod tests {
             "ck:realm:s1",
             "did:web:alice",
             "ck:relation:r1",
-            "ck.relation.parent_of",
+            "contains",
             "ck:strand:f1",
             "ck:strand:f2",
         )
@@ -194,7 +194,7 @@ mod tests {
             op.payload.get("relation_id").is_none(),
             "relation_id is not a relation_create_payload field"
         );
-        assert_eq!(op.payload["kind"], "ck.relation.parent_of");
+        assert_eq!(op.payload["kind"], "contains");
         assert_eq!(op.payload["from_ref"], "ck:strand:f1");
         assert_eq!(op.payload["to_ref"], "ck:strand:f2");
     }

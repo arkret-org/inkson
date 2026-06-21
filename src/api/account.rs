@@ -31,10 +31,6 @@ fn optional_did_for_request_field(
 }
 
 impl CokretApi {
-    pub async fn health(&self) -> anyhow::Result<HealthOutcome> {
-        self.get_json("health").await
-    }
-
     pub async fn describe(&self) -> anyhow::Result<ServerDescription> {
         self.get_json("_cokret/describe").await
     }
@@ -212,7 +208,8 @@ impl CokretApi {
                 recipient_service_did,
             )?,
         };
-        self.post_json("_cokret/self/contacts/request", &body).await
+        self.post_json(cokret_sdk::http::PATH_SELF_CONTACTS_REQUEST, &body)
+            .await
     }
 
     pub async fn respond_contact(
@@ -284,11 +281,13 @@ impl CokretApi {
                 requester_service_did,
             )?,
         };
-        self.post_json("_cokret/self/contacts/respond", &body).await
+        self.post_json(cokret_sdk::http::PATH_SELF_CONTACTS_RESPOND, &body)
+            .await
     }
 
     pub async fn contacts(&self) -> anyhow::Result<ContactListView> {
-        let response: cokret_sdk::ContactList = self.get_json("_cokret/self/contacts").await?;
+        let response: cokret_sdk::ContactList =
+            self.get_json(cokret_sdk::http::PATH_SELF_CONTACTS).await?;
         ContactListView::from_sdk(response)
     }
 
@@ -310,7 +309,7 @@ impl CokretApi {
             block_peer,
             peer_service_did: None,
         };
-        self.post_json("_cokret/self/contacts/tombstone", &body)
+        self.post_json(cokret_sdk::http::PATH_SELF_CONTACTS_TOMBSTONE, &body)
             .await
     }
 
@@ -355,8 +354,11 @@ impl CokretApi {
             create,
             idempotency_key: None,
         };
-        self.post_json("_cokret/self/direct-conversations/resolve", &body)
-            .await
+        self.post_json(
+            cokret_sdk::http::PATH_SELF_DIRECT_CONVERSATIONS_RESOLVE,
+            &body,
+        )
+        .await
     }
 
     /// Hard logout at the Principal Server: revoke this session's bearer, mark

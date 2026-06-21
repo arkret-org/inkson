@@ -580,7 +580,7 @@ pub fn RecoveryPanel(
                 }
             }
 
-            // Social recovery — devices-and-auth §4.2. Advanced, collapsed by
+            // Social recovery — key-management.md §7.4. Advanced, collapsed by
             // default: the Recovery Key (24 words) is the primary credential;
             // guardian bookkeeping here is local-only.
             details { class: "event", "data-testid": "social-recovery-section",
@@ -773,7 +773,7 @@ pub fn RecoveryPanel(
                 }
             }
 
-            // Backup history — devices-and-auth §4.1 + key-management.md §7.3
+            // Backup history — key-management.md §7.3 + device-lifecycle.md §6
             //
             // Lists only backup creation times. Detailed envelope identifiers,
             // per-backup decrypt controls, and destructive delete controls stay

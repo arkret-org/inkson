@@ -5,13 +5,6 @@ pub use cokret_sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct HealthOutcome {
-    pub ok: bool,
-    pub service: String,
-    pub storage: String,
-}
-
 /// App-local current-account projection derived from the spec
 /// `ck.self.account.query.viewer` response. `handle` is populated only from a
 /// signed `primary_handle_claim.handle`; an empty string means the server did

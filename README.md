@@ -34,9 +34,8 @@ i18n keys in `src/i18n.rs`; protocol-level identifiers stay reachable via
 ## Round R4 (protocol review closures)
 
 Spec round 4 (`cokret-spec` range `2a4d39b..a77b995`, 8 commits) brings
-several client-visible changes. See [`CHANGELOG.md`](CHANGELOG.md)
-`[Unreleased]` and [`../_todos.md`](../_todos.md) for the canonical
-wire-breaking list.
+several client-visible changes. The canonical wire-breaking list is this
+section plus the protocol spec history in `../cokret-spec/spec/v1/`.
 
 - **`ck.call.signal` v2** — 13 signal types, required device `proof`,
   per-`(realm, call, actor, device)` monotonic `seq`. Seq rollback
@@ -58,9 +57,7 @@ wire-breaking list.
 ## Round R2/R3 user-facing surfaces
 
 Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
-[`CHANGELOG.md`](CHANGELOG.md) `[Unreleased]` and
-[`../cokret-spec/CHANGELOG.md`](../cokret-spec/CHANGELOG.md) for the
-normative source.
+the protocol spec tree (`../cokret-spec/spec/v1/`) for the normative source.
 
 - **Ephemeral signal routing change** — typing / receipts / presence /
   call-signal no longer travel through the durable `ck.self.events.command.submit`
@@ -84,7 +81,7 @@ normative source.
 ## Cross-project task tracking
 
 Per-project task lists are consolidated upstream — see
-[`../_todos.md`](../_todos.md) for the active cross-project task plan.
+the cotask specs for the active cross-project task plan.
 
 ## Targets
 

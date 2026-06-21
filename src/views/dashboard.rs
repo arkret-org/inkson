@@ -546,13 +546,9 @@ pub fn DashboardPanel(
                                                 api_token,
                                                 |api| async move {
                                                     let mut rows = Vec::new();
-                                                    match api.health().await {
-                                                        Ok(h) => rows.push(("Health".to_owned(), format!("OK ({})", h.service))),
-                                                        Err(e) => rows.push(("Health".to_owned(), format!("Error: {e}"))),
-                                                    }
                                                     match api.describe().await {
-                                                        Ok(d) => rows.push(("Server".to_owned(), format!("{} v{}", d.service_type, d.protocol_version))),
-                                                        Err(e) => rows.push(("Server".to_owned(), format!("Error: {e}"))),
+                                                        Ok(d) => rows.push(("Describe".to_owned(), format!("{} v{}", d.service_type, d.protocol_version))),
+                                                        Err(e) => rows.push(("Describe".to_owned(), format!("Error: {e}"))),
                                                     }
                                                     match api.sync_describe().await {
                                                         Ok(s) => rows.push(("Sync".to_owned(), format!("{} profiles", s.supported_sync_profiles.len()))),

@@ -30,8 +30,6 @@ pub(crate) fn current_oidc_redirect_uri() -> String {
 pub(crate) fn preferred_pkce_method(methods: &[String]) -> Option<&'static str> {
     if methods.iter().any(|method| method == "S256") {
         Some("S256")
-    } else if methods.iter().any(|method| method == "plain") {
-        Some("plain")
     } else {
         None
     }

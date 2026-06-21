@@ -131,10 +131,10 @@ impl CokretApi {
 
     /// Check server health and update network state.
     pub async fn check_connectivity(&self) -> bool {
-        match self.health().await {
-            Ok(resp) => {
+        match self.describe().await {
+            Ok(_) => {
                 self.set_network_state(NetworkState::Online).await;
-                resp.ok
+                true
             }
             Err(_) => {
                 self.set_network_state(NetworkState::Offline).await;
@@ -400,11 +400,7 @@ impl CokretApi {
             return Ok(request);
         };
         let path = request.url().path().to_owned();
-        if !(path.contains("/_cokret/self/")
-            || path.contains("/_soland/self/")
-            || path.contains("/_cokret/root/")
-            || path.contains("/_soland/root/"))
-        {
+        if !is_cokret_signed_surface(&path) {
             return Ok(request);
         }
         use cokret_sdk::http_signature::{
@@ -506,11 +502,7 @@ impl CokretApi {
             return Ok(request);
         };
         let path = request.url().path();
-        if !(path.contains("/_cokret/self/")
-            || path.contains("/_soland/self/")
-            || path.contains("/_cokret/root/")
-            || path.contains("/_soland/root/"))
-        {
+        if !is_cokret_signed_surface(path) {
             return Ok(request);
         }
         let htm = request.method().as_str().to_owned();
@@ -570,4 +562,8 @@ impl CokretApi {
             .header("x-cokret-request-id", request_id)
             .header("idempotency-key", request_id)
     }
+}
+
+fn is_cokret_signed_surface(path: &str) -> bool {
+    path.starts_with("/_cokret/self/") || path.starts_with("/_cokret/root/")
 }

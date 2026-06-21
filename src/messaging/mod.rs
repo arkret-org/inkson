@@ -4,9 +4,9 @@
 //! This module hosts the *client-side* state machines and serialisers
 //! for the advanced messaging surfaces (mentions, polls, typing,
 //! presence, read receipts, discussion promote) so the chat view file
-//! stays focused on rendering. Polls and discussion promote are compiled
-//! for builder/unit coverage but hidden from the default local UI behind
-//! `experimental-polls` and `experimental-discussion-promote`.
+//! stays focused on rendering. Polls are a default local UI surface; discussion
+//! promote remains hidden from the default local UI behind
+//! `experimental-discussion-promote`.
 //!
 //! Submodules:
 //! * [`polls`] — poll draft + result-tally state used by the composer and the timeline poll card.

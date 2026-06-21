@@ -1,14 +1,4 @@
-//! Canonical `did:key` (Ed25519) multibase encoding shared across yougen.
-//!
-//! Previously this logic lived in `move_builder` and was *copied* into
-//! `local_state` to keep `local_state` independent of `move_builder`'s
-//! heavier dependency graph. Both copies (and the `cross_signing` caller)
-//! now share this dependency-light module so the encoding lives in exactly
-//! one place.
-//!
-//! Encoding: `z<base58btc(0xed 0x01 || pubkey32)>` — the multibase form
-//! that `did:key` DID URLs and DID Document `verificationMethod` entries
-//! use for Ed25519 keys.
+//! Canonical `did:key` (Ed25519) helpers shared across yougen.
 
 use ed25519_dalek::VerifyingKey;
 
@@ -16,11 +6,7 @@ use ed25519_dalek::VerifyingKey;
 /// `did:key` DID URLs and DID Document `verificationMethod` entries:
 /// `z<base58btc(0xed 0x01 || pubkey32)>`.
 pub fn encode_ed25519_did_key_multibase(verifying_key: &VerifyingKey) -> String {
-    let mut bytes = Vec::with_capacity(34);
-    bytes.push(0xed);
-    bytes.push(0x01);
-    bytes.extend_from_slice(verifying_key.as_bytes());
-    format!("z{}", bs58::encode(bytes).into_string())
+    cokret_sdk::ed25519_pubkey_to_did_key_multibase(verifying_key.as_bytes())
 }
 
 /// Compose a full `did:key` DID URL from a verifying key

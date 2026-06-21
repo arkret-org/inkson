@@ -431,6 +431,22 @@ fn bundle_challenge_is_s256_of_verifier_when_supported() {
     );
 }
 
+#[test]
+fn authorize_scaffold_rejects_plain_only_pkce_discovery() {
+    let mut discovery = test_discovery();
+    discovery.code_challenge_methods_supported = vec!["plain".to_owned()];
+    let error = build_oidc_authorize_scaffold(
+        &discovery,
+        &test_oidc_method(),
+        "https://app.example/auth/callback",
+        "",
+        "device-plain-only",
+        "https://principal.example/api",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("PKCE S256"));
+}
+
 /// The authorize URL forces re-authentication (prompt=login, max_age=0).
 #[test]
 fn authorize_url_forces_reauthentication() {

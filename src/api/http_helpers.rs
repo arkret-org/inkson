@@ -8,6 +8,8 @@
 
 use super::*;
 
+pub(crate) const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
+
 /// A4b — module-level helper for composing a blob download URL when an
 /// [`CokretApi`] handle isn't available (e.g. read-only views that
 /// already have the Principal Server `base_url` as a string). Keeps
@@ -230,7 +232,7 @@ pub(crate) async fn sleep_backoff(initial: Duration, attempt: usize) {
 
 pub(crate) fn backoff_duration(initial: Duration, attempt: usize) -> Duration {
     let factor = 1u32.checked_shl(attempt as u32).unwrap_or(u32::MAX);
-    initial.saturating_mul(factor)
+    jitter_duration(initial.saturating_mul(factor).min(MAX_RETRY_DELAY))
 }
 
 pub(crate) async fn sleep_retry_delay(headers: &HeaderMap, initial: Duration, attempt: usize) {
@@ -257,7 +259,7 @@ pub(crate) fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
     let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
 
     if let Ok(seconds) = value.parse::<u64>() {
-        return Some(Duration::from_secs(seconds));
+        return Some(Duration::from_secs(seconds).min(MAX_RETRY_DELAY));
     }
 
     chrono::DateTime::parse_from_rfc2822(value)
@@ -269,6 +271,19 @@ pub(crate) fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
                 .to_std()
                 .ok()
         })
+        .map(|delay| delay.min(MAX_RETRY_DELAY))
+}
+
+fn jitter_duration(max: Duration) -> Duration {
+    let max_ms = u64::try_from(max.as_millis()).unwrap_or(u64::MAX);
+    if max_ms == 0 {
+        return max;
+    }
+    let mut bytes = [0u8; 8];
+    if getrandom::fill(&mut bytes).is_err() {
+        return max;
+    }
+    Duration::from_millis(u64::from_le_bytes(bytes) % (max_ms + 1))
 }
 
 pub fn parse_server_description(value: Value) -> anyhow::Result<ServerDescription> {

@@ -39,11 +39,9 @@ pub fn build_oidc_authorize_scaffold(
     let state = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let nonce = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let code_verifier = random_url_safe_token(PKCE_VERIFIER_BYTES)?;
-    let pkce_method = preferred_pkce_method(&discovery.code_challenge_methods_supported);
-    let code_challenge = match pkce_method {
-        Some("plain") => code_verifier.clone(),
-        _ => pkce_code_challenge_s256(&code_verifier),
-    };
+    preferred_pkce_method(&discovery.code_challenge_methods_supported)
+        .ok_or_else(|| anyhow::anyhow!("OIDC issuer must support PKCE S256"))?;
+    let code_challenge = pkce_code_challenge_s256(&code_verifier);
     let authorize_url = build_standard_authorize_url(
         discovery,
         method,
@@ -117,7 +115,8 @@ fn build_standard_authorize_url(
         scope_tokens.push(format!("{COKRET_DEVICE_SCOPE_PREFIX}{device_id}"));
     }
     let scope = scope_tokens.join(" ");
-    let pkce_method = preferred_pkce_method(&discovery.code_challenge_methods_supported);
+    let pkce_method = preferred_pkce_method(&discovery.code_challenge_methods_supported)
+        .ok_or_else(|| anyhow::anyhow!("OIDC issuer must support PKCE S256"))?;
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("response_type", "code");
@@ -134,10 +133,8 @@ fn build_standard_authorize_url(
         // silently undone by a live IdP SSO cookie.
         query.append_pair("prompt", "login");
         query.append_pair("max_age", "0");
-        if let Some(pkce_method) = pkce_method {
-            query.append_pair("code_challenge_method", pkce_method);
-            query.append_pair("code_challenge", code_challenge);
-        }
+        query.append_pair("code_challenge_method", pkce_method);
+        query.append_pair("code_challenge", code_challenge);
     }
     Ok(url.to_string())
 }

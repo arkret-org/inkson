@@ -45,9 +45,8 @@
 //! crate is already a direct yougen dependency (used by the cloud-vault
 //! recovery path) and builds cleanly on wasm32. The layout:
 //!
-//! * **Key derivation:** SHA-256-HMAC-style stretching. The device snapshot secret is concatenated
-//!   with a per-envelope salt and hashed `KDF_ITERATIONS` times. The resulting 32-byte key feeds
-//!   the ChaCha20-Poly1305 AEAD directly.
+//! * **Key derivation:** HKDF-SHA256 with the per-envelope salt and the device snapshot secret as
+//!   input keying material. The resulting 32-byte key feeds the ChaCha20-Poly1305 AEAD directly.
 //! * **Symmetric layer:** ChaCha20-Poly1305 AEAD with a fresh 12-byte random nonce per envelope.
 //!   The nonce is stored alongside the ciphertext so decryption is self-contained.
 //! * **Tamper detection:** the AEAD's built-in Poly1305 tag covers the ciphertext. We additionally
@@ -65,16 +64,10 @@ use chacha20poly1305::aead::{Aead, OsRng, Payload};
 use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
 use chrono::{DateTime, SecondsFormat, Utc};
 use cokret_sdk::MlsGroupStateRecord;
+use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-
-/// Number of SHA-256 rounds applied during device-secret stretching. The
-/// trade-off is cost-on-restore vs cost-of-brute-force; 600k matches
-/// the `ck.profile.key_backup.memory_hard.v1` PBKDF2 floor.
-/// Tests use the exact same constant — we don't ship a "test mode"
-/// reduction because the test surface is fast enough already.
-pub const KDF_ITERATIONS: u32 = 600_000;
 
 /// Magic-bytes prefix burned into every envelope so a future format
 /// migration can refuse pre-v1 blobs cleanly.
@@ -211,7 +204,7 @@ pub fn encrypt_state(
     salt: &[u8],
 ) -> MlsSnapshotEnvelope {
     let recorded_at = crate::clock::now_utc();
-    let key = derive_key(snapshot_secret, salt, KDF_ITERATIONS);
+    let key = derive_key(snapshot_secret, salt);
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
     let aad = build_aead_aad(salt, epoch, recorded_at);
     let cipher = ChaCha20Poly1305::new((&key).into());
@@ -279,7 +272,7 @@ fn decrypt_envelope_aead_v1(
             nonce_bytes.len()
         )));
     }
-    let key = derive_key(snapshot_secret, &salt, KDF_ITERATIONS);
+    let key = derive_key(snapshot_secret, &salt);
     let aad = build_aead_aad(&salt, envelope.epoch, envelope.recorded_at);
     let cipher = ChaCha20Poly1305::new((&key).into());
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -474,22 +467,12 @@ pub fn restore_envelope(
 
 // ───────────────────── Crypto primitives ────────────────────────
 
-fn derive_key(snapshot_secret: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
-    let mut state: [u8; 32] = {
-        let mut hasher = Sha256::new();
-        hasher.update(MLS_ENVELOPE_MAGIC);
-        hasher.update(salt);
-        hasher.update(snapshot_secret.as_bytes());
-        hasher.finalize().into()
-    };
-    for round in 1..iterations {
-        let mut hasher = Sha256::new();
-        hasher.update(state);
-        hasher.update(round.to_be_bytes());
-        hasher.update(snapshot_secret.as_bytes());
-        state = hasher.finalize().into();
-    }
-    state
+fn derive_key(snapshot_secret: &str, salt: &[u8]) -> [u8; 32] {
+    let hkdf = Hkdf::<Sha256>::new(Some(salt), snapshot_secret.as_bytes());
+    let mut out = [0u8; 32];
+    hkdf.expand(MLS_ENVELOPE_MAGIC, &mut out)
+        .expect("HKDF output length is fixed at 32 bytes");
+    out
 }
 
 fn is_protocol_device_id(value: &str) -> bool {
