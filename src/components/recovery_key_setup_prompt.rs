@@ -235,8 +235,9 @@ pub fn RecoveryKeySetupPrompt(
                                         let key = generated_now.clone();
                                         move |_| {
                                             let filename =
-                                                crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                                                crate::components::mls_backup_prompt::recovery_key_filename_for_account(
                                                     &personal_handles(),
+                                                    &account_did(),
                                                 );
                                             crate::components::mls_backup_prompt::download_text_as_file(
                                                 &filename,

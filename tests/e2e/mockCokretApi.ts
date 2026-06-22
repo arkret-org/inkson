@@ -45,10 +45,14 @@ type StrandProjection = {
 
 type MockCokretApiOptions = {
   advertiseListHandlesForSubject?: boolean;
+  accountPrincipalId?: string;
+  primaryHandle?: string | null;
 };
 
 export async function mockCokretApi(page: Page, options: MockCokretApiOptions = {}) {
   const advertiseListHandlesForSubject = options.advertiseListHandlesForSubject ?? true;
+  const accountPrincipalId = options.accountPrincipalId ?? "did:web:alice.example";
+  const primaryHandle = options.primaryHandle === undefined ? "alice:local.host" : options.primaryHandle;
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
@@ -915,16 +919,25 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname === "/_cokret/find/directory/list-handles-for-subject" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
-      const subject = body.subject ?? "did:web:alice.example";
+      const subject = body.subject ?? accountPrincipalId;
+      if (!primaryHandle) {
+        return json(route, {
+          subject,
+          primary_handle: null,
+          as_of: "2026-04-28T12:00:00Z",
+          has_more: false,
+          claims: [],
+        });
+      }
       return json(route, {
         subject,
-        primary_handle: "alice:local.host",
+        primary_handle: primaryHandle,
         as_of: "2026-04-28T12:00:00Z",
         has_more: false,
         claims: [
           {
             subject,
-            handle: "alice:local.host",
+            handle: primaryHandle,
             issuer: "did:web:server.local",
             issuer_service_did: "did:web:server.local",
             binding_state: "verified",
@@ -1199,18 +1212,13 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
 
     if (url.pathname === "/_cokret/self/account/viewer" && route.request().method() === "GET") {
-      return json(route, {
-        principal_id: "did:web:alice.example",
+      const viewer: Record<string, unknown> = {
+        principal_id: accountPrincipalId,
         state: "active",
-        primary_handle_claim: {
-          schema: "ck.schema.handle_claim.v1",
-          handle: "alice:local.host",
-          subject: "did:web:alice.example",
-        },
         profile: {
           id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
           schema: "ck.schema.actor_profile.v1",
-          principal_id: "did:web:alice.example",
+          principal_id: accountPrincipalId,
           actor_kind: "user",
           display_name: "yougen",
           created_at: "2026-04-28T12:00:00Z",
@@ -1223,7 +1231,15 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
             authorized_at: "2026-04-28T12:00:00Z",
           },
         ],
-      });
+      };
+      if (primaryHandle) {
+        viewer.primary_handle_claim = {
+          schema: "ck.schema.handle_claim.v1",
+          handle: primaryHandle,
+          subject: accountPrincipalId,
+        };
+      }
+      return json(route, viewer);
     }
 
     if (url.pathname === "/_cokret/gate/account/device-pair" && route.request().method() === "POST") {

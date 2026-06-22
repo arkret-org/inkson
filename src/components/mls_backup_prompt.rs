@@ -97,12 +97,7 @@ pub(crate) fn download_text_as_file(filename: &str, text: &str) {
 
 /// Pull the human-readable localpart out of the account's primary personal
 /// handle (`<localpart>:<domain>(:<port>)?`) for use in the recovery-key
-/// download filename. We deliberately do NOT derive it from the account DID:
-/// the DID's `:users:<…>` segment is the stable ULID
-/// (`01KTR58RQ4FRTRA0R6Y63C5Y7A`), which is unreadable and useless for telling
-/// downloaded files apart. Returns an empty string when no handle is known yet
-/// (directory lookup still pending), letting the filename fall back to the bare
-/// name rather than an opaque ULID.
+/// download filename. Returns an empty string when no handle is known yet.
 pub(crate) fn recovery_localpart_from_handles(handles: &[String]) -> String {
     handles
         .iter()
@@ -110,6 +105,36 @@ pub(crate) fn recovery_localpart_from_handles(handles: &[String]) -> String {
             crate::identity_handle::parse_user_handle(handle).map(|parsed| parsed.localpart)
         })
         .unwrap_or_default()
+}
+
+fn looks_like_ulid(value: &str) -> bool {
+    value.len() == 26
+        && value.chars().all(|ch| {
+            ch.is_ascii_digit()
+                || matches!(
+                    ch,
+                    'A'..='H' | 'J'..='K' | 'M'..='N' | 'P'..='T' | 'V'..='Z'
+                )
+        })
+}
+
+pub(crate) fn recovery_localpart_from_account_identifier(account_identifier: &str) -> String {
+    let trimmed = account_identifier.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(parsed) = crate::identity_handle::parse_user_handle(trimmed) {
+        return parsed.localpart;
+    }
+    let Some((_, localpart)) = trimmed.rsplit_once(":users:") else {
+        return String::new();
+    };
+    let localpart = localpart.trim();
+    if localpart.is_empty() || localpart.contains(':') || looks_like_ulid(localpart) {
+        String::new()
+    } else {
+        localpart.to_owned()
+    }
 }
 
 /// Build a per-account download filename for the recovery-key `.txt`, so that
@@ -144,9 +169,18 @@ pub(crate) fn recovery_key_filename(localpart: &str) -> String {
     }
 }
 
-pub(crate) fn recovery_key_filename_from_handles(handles: &[String]) -> String {
+pub(crate) fn recovery_key_filename_for_account(
+    handles: &[String],
+    account_identifier: &str,
+) -> String {
     let localpart = recovery_localpart_from_handles(handles);
-    recovery_key_filename(&localpart)
+    if localpart.is_empty() {
+        recovery_key_filename(&recovery_localpart_from_account_identifier(
+            account_identifier,
+        ))
+    } else {
+        recovery_key_filename(&localpart)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -1004,7 +1038,10 @@ pub fn MlsBackupPrompt(
                                         let key = generated_now.clone();
                                         move |_| {
                                             let fname =
-                                                recovery_key_filename_from_handles(&personal_handles());
+                                                recovery_key_filename_for_account(
+                                                    &personal_handles(),
+                                                    &actor_id(),
+                                                );
                                             download_text_as_file(&fname, &key);
                                         }
                                     },
@@ -1101,7 +1138,8 @@ pub fn MlsBackupPrompt(
 #[cfg(test)]
 mod tests {
     use super::{
-        recovery_key_filename, recovery_key_filename_from_handles, recovery_localpart_from_handles,
+        recovery_key_filename, recovery_key_filename_for_account,
+        recovery_localpart_from_account_identifier, recovery_localpart_from_handles,
     };
 
     #[test]
@@ -1165,15 +1203,59 @@ mod tests {
     #[test]
     fn filename_from_handles_uses_primary_handle_localpart() {
         assert_eq!(
-            recovery_key_filename_from_handles(&["alice:local.host".to_owned()]),
+            recovery_key_filename_for_account(&["alice:local.host".to_owned()], ""),
             "cokret-recovery-key-alice.txt"
         );
         assert_eq!(
-            recovery_key_filename_from_handles(&[
-                "did:web:local.host:users:01ABC".to_owned(),
-                "bob:local.host".to_owned(),
-            ]),
+            recovery_key_filename_for_account(
+                &[
+                    "did:web:local.host:users:01ABC".to_owned(),
+                    "bob:local.host".to_owned(),
+                ],
+                "",
+            ),
             "cokret-recovery-key-bob.txt"
+        );
+    }
+
+    #[test]
+    fn localpart_falls_back_to_account_identifier_when_handles_empty() {
+        assert_eq!(
+            recovery_localpart_from_account_identifier("@carol:local.host"),
+            "carol"
+        );
+        assert_eq!(
+            recovery_localpart_from_account_identifier("did:web:local.host:users:carol"),
+            "carol"
+        );
+        assert_eq!(
+            recovery_key_filename_for_account(&[], "@carol:local.host"),
+            "cokret-recovery-key-carol.txt"
+        );
+        assert_eq!(
+            recovery_key_filename_for_account(&[], "did:web:local.host:users:carol"),
+            "cokret-recovery-key-carol.txt"
+        );
+    }
+
+    #[test]
+    fn account_identifier_fallback_rejects_non_human_ids() {
+        assert_eq!(
+            recovery_localpart_from_account_identifier("did:web:alice.example"),
+            ""
+        );
+        assert_eq!(
+            recovery_localpart_from_account_identifier(
+                "did:web:local.host:users:01KTR58RQ4FRTRA0R6Y63C5Y7A"
+            ),
+            ""
+        );
+        assert_eq!(
+            recovery_key_filename_for_account(
+                &["alice:local.host".to_owned()],
+                "did:web:local.host:users:carol"
+            ),
+            "cokret-recovery-key-alice.txt"
         );
     }
 
@@ -1182,7 +1264,7 @@ mod tests {
         assert_eq!(recovery_key_filename(""), "cokret-recovery-key.txt");
         assert_eq!(recovery_key_filename("   "), "cokret-recovery-key.txt");
         assert_eq!(
-            recovery_key_filename_from_handles(&[]),
+            recovery_key_filename_for_account(&[], "did:web:alice.example"),
             "cokret-recovery-key.txt"
         );
     }

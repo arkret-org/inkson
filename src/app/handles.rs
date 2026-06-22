@@ -35,7 +35,7 @@ pub(super) fn display_handles_from_directory_response(
 /// The localpart branch is only a defensive fallback for legacy/synthetic
 /// payloads that carried a bare localpart with no domain: only then do we
 /// synthesise `<localpart>:<server-domain>`.
-pub(super) fn personal_handle_from_account_handle(
+pub(crate) fn personal_handle_from_account_handle(
     account_handle: &str,
     server_url: &str,
 ) -> Option<String> {

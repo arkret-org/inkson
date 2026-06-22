@@ -110,6 +110,133 @@ pub fn short_protocol_id(value: impl AsRef<str>) -> String {
     shorten_ascii_middle(value, 16, 8)
 }
 
+fn first_alphanumeric_upper(value: &str) -> Option<String> {
+    value
+        .chars()
+        .find(|ch| ch.is_alphanumeric())
+        .map(|ch| ch.to_uppercase().collect::<String>())
+}
+
+fn generic_avatar_seed(seed: &str) -> bool {
+    matches!(
+        seed.trim().to_ascii_lowercase().as_str(),
+        "account"
+            | "accounts"
+            | "admin"
+            | "auth"
+            | "identity"
+            | "issuer"
+            | "oauth"
+            | "operator"
+            | "org"
+            | "organization"
+            | "realm"
+            | "server"
+            | "service"
+            | "workspace"
+    )
+}
+
+fn handle_avatar_seed(value: &str) -> Option<String> {
+    crate::identity_handle::parse_user_handle(value).map(|handle| handle.localpart)
+}
+
+fn handle_subject_did(value: &str) -> Option<String> {
+    crate::identity_handle::parse_user_handle(value).map(|handle| handle.subject_did)
+}
+
+fn materialized_did_avatar_seed(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if let Some(display) = handle_display_from_did(trimmed) {
+        return handle_avatar_seed(&display);
+    }
+    let without_prefix = trimmed
+        .strip_prefix("did:web:")
+        .or_else(|| trimmed.strip_prefix("did:webvh:"))?;
+    let segments = without_prefix.split(':').collect::<Vec<_>>();
+    let marker_index = segments
+        .iter()
+        .position(|segment| matches!(*segment, "users" | "user" | "principals" | "principal"))?;
+    let localpart = segments.get(marker_index + 1)?.trim();
+    (!localpart.is_empty()).then(|| localpart.to_owned())
+}
+
+fn protocol_tail_avatar_seed(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with("did:") {
+        return None;
+    }
+    trimmed
+        .rsplit(':')
+        .next()
+        .map(str::trim)
+        .filter(|tail| !tail.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+pub(crate) fn avatar_seed_from_identity_value(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_start_matches('@').trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    handle_avatar_seed(trimmed)
+        .or_else(|| materialized_did_avatar_seed(trimmed))
+        .or_else(|| protocol_tail_avatar_seed(trimmed))
+        .or_else(|| Some(trimmed.to_owned()))
+}
+
+pub(crate) fn identity_avatar_seed(handles: &[String], identity_id: &str) -> String {
+    let identity = identity_id.trim();
+    for handle in handles {
+        if handle_subject_did(handle).as_deref() == Some(identity)
+            && let Some(seed) = handle_avatar_seed(handle)
+        {
+            return seed;
+        }
+    }
+    if let Some(seed) = materialized_did_avatar_seed(identity) {
+        return seed;
+    }
+    if let Some(seed) = handles
+        .iter()
+        .filter_map(|handle| handle_avatar_seed(handle))
+        .find(|seed| !generic_avatar_seed(seed))
+    {
+        return seed;
+    }
+    if let Some(seed) = protocol_tail_avatar_seed(identity) {
+        return seed;
+    }
+    if let Some(seed) = handles.iter().find_map(|handle| handle_avatar_seed(handle)) {
+        return seed;
+    }
+    avatar_seed_from_identity_value(identity).unwrap_or_default()
+}
+
+pub(crate) fn identity_avatar_initial(handles: &[String], identity_id: &str) -> String {
+    first_alphanumeric_upper(&identity_avatar_seed(handles, identity_id))
+        .unwrap_or_else(|| "?".to_owned())
+}
+
+pub(crate) fn avatar_initial_from_identity_value(value: &str) -> Option<String> {
+    avatar_seed_from_identity_value(value).and_then(|seed| first_alphanumeric_upper(&seed))
+}
+
+pub(crate) fn identity_avatar_tone(handles: &[String], identity_id: &str) -> usize {
+    let seed = identity_avatar_seed(handles, identity_id);
+    let hash_input = if seed.trim().is_empty() {
+        identity_id.trim()
+    } else {
+        seed.trim()
+    };
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in hash_input.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    (hash as usize % 6) + 1
+}
+
 /// Persist the current client configuration (server URL, DID, device ID, token).
 pub fn persist_config(
     mut config_store: Signal<LocalConfigStore>,

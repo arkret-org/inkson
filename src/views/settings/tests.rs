@@ -82,6 +82,21 @@ fn default_avatar_initial_prefers_handle_then_did() {
         "A"
     );
     assert_eq!(default_avatar_initial(&[], "did:web:bob.example"), "B");
+    assert_eq!(
+        default_avatar_initial(&[], "did:web:acme.example:users:bob"),
+        "B"
+    );
+    assert_eq!(
+        default_avatar_initial(&["org:example.com".to_owned()], "did:web:bob.example"),
+        "B"
+    );
+    assert_eq!(
+        default_avatar_initial(
+            &["org:example.com".to_owned()],
+            "did:web:acme.example:users:bob"
+        ),
+        "B"
+    );
 }
 
 #[test]

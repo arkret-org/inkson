@@ -920,13 +920,25 @@ fn agent_invite_target(agent_principal_id: &str, service_did: &str) -> String {
     )
 }
 
-fn member_avatar_initial(value: &str) -> String {
-    value
-        .trim_start_matches("did:web:")
-        .chars()
-        .find(|ch| ch.is_alphanumeric())
-        .map(|ch| ch.to_ascii_uppercase().to_string())
+fn member_avatar_initial_from_value(value: &str) -> String {
+    crate::views::helpers::avatar_initial_from_identity_value(value)
         .unwrap_or_else(|| "?".to_owned())
+}
+
+fn member_avatar_initial(profile: &MemberProfile) -> String {
+    if let Some(initial) = profile
+        .remark_name
+        .as_deref()
+        .or(profile.display_name.as_deref())
+        .and_then(crate::views::helpers::avatar_initial_from_identity_value)
+    {
+        return initial;
+    }
+    let identity = profile
+        .subject_id
+        .as_deref()
+        .unwrap_or(profile.actor_id.as_str());
+    crate::views::helpers::identity_avatar_initial(&profile.handles, identity)
 }
 
 #[component]
@@ -1203,7 +1215,7 @@ fn MemberRowActions(
 fn PendingInviteRow(profile: MemberProfile) -> Element {
     let member = profile.actor_id.clone();
     let member_label = profile.primary_label();
-    let avatar_initial = member_avatar_initial(&member_label);
+    let avatar_initial = member_avatar_initial(&profile);
     let state = profile
         .normalized_membership()
         .unwrap_or("invite")
@@ -1957,7 +1969,7 @@ pub fn RealmMembersPanel(
                         } else {
                             "member-group"
                         };
-                        let avatar_initial = member_avatar_initial(&member_label);
+                        let avatar_initial = member_avatar_initial(&member_profile);
                         let avatar_blob_ref = member_profile.avatar_blob_ref.clone();
                         let avatar_url = member_profile.avatar_url.clone();
                         let role_label = member_profile.role_label();
@@ -2388,7 +2400,7 @@ pub fn RealmMembersPanel(
                                             {
                                                 let agent_id = agent.agent_principal_id.clone();
                                                 let agent_label = agent.display_name.clone();
-                                                let agent_initial = member_avatar_initial(&agent_label);
+                                                let agent_initial = member_avatar_initial_from_value(&agent_label);
                                                 let policy_class = agent.mention_policy.badge_class();
                                                 let policy_label = agent.mention_policy.label();
                                                 let status_class = crate::views::agents::agent_state_badge_class(&agent.status);
@@ -2548,6 +2560,26 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].membership.as_deref(), Some("invite"));
         assert_eq!(rows[0].handles, vec!["bob:example.com"]);
+    }
+
+    #[test]
+    fn member_avatar_initial_uses_identity_not_did_prefix() {
+        let bob = member("did:web:bob.example");
+        let carol = member("did:web:carol.example");
+
+        assert_eq!(member_avatar_initial(&bob), "B");
+        assert_eq!(member_avatar_initial(&carol), "C");
+    }
+
+    #[test]
+    fn member_avatar_initial_prefers_display_and_handle_identity() {
+        let mut display = member("did:web:bob.example");
+        display.display_name = Some("Robert Example".to_owned());
+        assert_eq!(member_avatar_initial(&display), "R");
+
+        let mut handled = member("did:web:acme.example:users:bob");
+        handled.handles.push("bob:acme.example".to_owned());
+        assert_eq!(member_avatar_initial(&handled), "B");
     }
 
     #[test]

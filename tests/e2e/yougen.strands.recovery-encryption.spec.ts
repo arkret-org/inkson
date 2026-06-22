@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { mockCokretApi } from "./mockCokretApi";
 import {
   registerStrandsBeforeEach,
   latestTestId,
@@ -70,6 +71,45 @@ test("recovery key setup download filename includes account localpart", async ({
   await latestTestId(page, "recovery-key-setup-download-key").click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("cokret-recovery-key-alice.txt");
+
+  await latestTestId(page, "recovery-key-setup-confirm-key").fill(generatedRecoveryKey);
+  await latestTestId(page, "recovery-key-setup-saved").click();
+  await expect(setupModal).toBeHidden();
+});
+
+test("recovery key setup download filename falls back to account DID localpart", async ({
+  page,
+}) => {
+  await page.unroute("**/*");
+  await mockCokretApi(page, {
+    advertiseListHandlesForSubject: false,
+    accountPrincipalId: "did:web:local.host:users:carol",
+    primaryHandle: null,
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+
+  await latestTestId(page, "mls-recovery-missing-dismiss").click();
+  const setupModal = latestTestId(page, "recovery-key-setup-modal");
+  const autoOpened = await setupModal
+    .waitFor({ state: "visible", timeout: 2_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!autoOpened) {
+    await expect(latestTestId(page, "recovery-setup-banner")).toBeVisible();
+    await latestTestId(page, "recovery-setup-open-recovery").click();
+    await expect(setupModal).toBeVisible();
+  }
+
+  const generatedKeyField = latestTestId(page, "recovery-key-setup-generated-key");
+  await expect(generatedKeyField).toBeVisible();
+  const generatedRecoveryKey = await generatedKeyField.inputValue();
+  expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
+
+  const downloadPromise = page.waitForEvent("download");
+  await latestTestId(page, "recovery-key-setup-download-key").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("cokret-recovery-key-carol.txt");
 
   await latestTestId(page, "recovery-key-setup-confirm-key").fill(generatedRecoveryKey);
   await latestTestId(page, "recovery-key-setup-saved").click();

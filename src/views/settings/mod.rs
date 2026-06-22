@@ -66,29 +66,11 @@ pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "ck.push_rules";
 pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ck.dnd_schedule";
 
 pub(crate) fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
-    handles
-        .iter()
-        .map(|handle| handle.trim().trim_start_matches('@'))
-        .chain(std::iter::once(
-            account_did.rsplit(':').next().unwrap_or(account_did),
-        ))
-        .find_map(|value| value.chars().find(|ch| ch.is_alphanumeric()))
-        .map(|ch| ch.to_uppercase().collect::<String>())
-        .unwrap_or_else(|| "?".to_owned())
+    crate::views::helpers::identity_avatar_initial(handles, account_did)
 }
 
 pub(crate) fn default_avatar_tone(handles: &[String], account_did: &str) -> usize {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in handles
-        .iter()
-        .map(String::as_str)
-        .chain(std::iter::once(account_did))
-        .flat_map(str::bytes)
-    {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    (hash as usize % 6) + 1
+    crate::views::helpers::identity_avatar_tone(handles, account_did)
 }
 
 /// A4a — push the current `client.ui` payload (theme + sidebar

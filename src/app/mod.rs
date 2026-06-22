@@ -1985,6 +1985,8 @@ pub fn RouterView() -> Element {
                                 status,
                                 config_store,
                                 state_store,
+                                personal_handles,
+                                personal_handles_status,
                                 auto_capture_callback: true,
                                 on_login: move |_| {
                                     callback_bootstrap_pending.set(true);
@@ -2023,6 +2025,8 @@ pub fn RouterView() -> Element {
                                 status,
                                 config_store,
                                 state_store,
+                                personal_handles,
+                                personal_handles_status,
                                 auto_capture_callback: false,
                                 on_login: move |_| {
                                     login_bootstrap_pending.set(true);
@@ -4161,6 +4165,8 @@ pub fn RouterView() -> Element {
                             status,
                             config_store,
                             state_store,
+                            personal_handles,
+                            personal_handles_status,
                             auto_capture_callback: false,
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
                         }
@@ -4174,6 +4180,8 @@ pub fn RouterView() -> Element {
                             status,
                             config_store,
                             state_store,
+                            personal_handles,
+                            personal_handles_status,
                             auto_capture_callback: true,
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
                         }

@@ -22,6 +22,7 @@ use crate::views::helpers::{persist_config, short_protocol_id};
 struct CompletedLogin {
     principal_server_url: String,
     actor: String,
+    personal_handle: Option<String>,
     device_id: String,
     session_credential: String,
     /// Persisted principal session grant. This is the live credential for
@@ -50,6 +51,8 @@ pub fn LoginPanel(
     status: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
+    personal_handles: Signal<Vec<String>>,
+    personal_handles_status: Signal<String>,
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
 ) -> Element {
@@ -105,6 +108,12 @@ pub fn LoginPanel(
                 }
                 base_url.set(principal_server_url.clone());
                 account_did.set(completed.actor.clone());
+                if let Some(personal_handle) = completed.personal_handle.clone() {
+                    personal_handles.set(vec![personal_handle]);
+                    personal_handles_status.set("1 handle".to_owned());
+                } else if personal_handles().is_empty() {
+                    personal_handles_status.set("Not published".to_owned());
+                }
                 device_id.set(completed.device_id.clone());
                 token.set(completed.session_credential.clone());
                 persist_config(
@@ -540,6 +549,8 @@ async fn finish_oidc_callback(
     } else {
         account.did
     };
+    let personal_handle =
+        crate::app::personal_handle_from_account_handle(&account.handle, &principal_target);
     let _ = clear_persisted_oidc_scaffold();
 
     let resolved_device = device;
@@ -557,6 +568,7 @@ async fn finish_oidc_callback(
     Ok(CompletedLogin {
         principal_server_url: principal_target,
         actor: canonical_actor,
+        personal_handle,
         device_id: resolved_device,
         // The grant JWT is now the live credential carried in the `token` signal.
         session_credential: session_grant.grant_jwt.clone(),

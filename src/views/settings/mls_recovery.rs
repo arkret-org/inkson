@@ -349,8 +349,9 @@ pub fn SettingsMlsRecoveryPanel(
                                     let handles = personal_handles.clone();
                                     move |_| {
                                         let fname =
-                                            crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                                            crate::components::mls_backup_prompt::recovery_key_filename_for_account(
                                                 &handles,
+                                                &account_did(),
                                             );
                                         crate::components::mls_backup_prompt::download_text_as_file(&fname, &key);
                                     }
