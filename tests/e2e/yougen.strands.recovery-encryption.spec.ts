@@ -8,6 +8,8 @@ import {
   gotoAndDismissRecovery,
   dismissRecoveryMissingModal,
   seedLocalRecoveryKeyMetadata,
+  writeLocalConfig,
+  writeSessionGrantInjection,
 } from "./strandsHarness";
 
 registerStrandsBeforeEach();
@@ -15,6 +17,10 @@ registerStrandsBeforeEach();
 test("first authenticated session surfaces a single recovery prompt by priority", async ({
   page,
 }) => {
+  await writeSessionGrantInjection(page);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+
   // Single-prompt model (src/account_health.rs): at most one account-health
   // prompt shows at a time, by priority. The mock account has encrypted
   // history but no local key/backup, so the highest-priority prompt is the
@@ -32,21 +38,98 @@ test("first authenticated session surfaces a single recovery prompt by priority"
   const setupModal = latestTestId(page, "recovery-key-setup-modal");
   await expect(setupModal).toBeVisible();
 
-  // Closing it ("Not now") leaves the passive banner; the persisted flag means
-  // it does NOT auto-pop again, so the banner is the steady-state reminder.
-  await latestTestId(page, "recovery-key-setup-dismiss").click();
+  // With a real injected session grant, the setup prompt immediately generates
+  // and uploads the recovery backup. Confirming the displayed 24-word key marks
+  // the setup complete and suppresses the lower-priority banner.
+  const generatedKeyField = latestTestId(page, "recovery-key-setup-generated-key");
+  await expect(generatedKeyField).toBeVisible();
+  const generatedRecoveryKey = await generatedKeyField.inputValue();
+  expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
+  await latestTestId(page, "recovery-key-setup-confirm-key").fill(generatedRecoveryKey);
+  await latestTestId(page, "recovery-key-setup-saved").click();
   await expect(setupModal).toBeHidden();
-  const banner = latestTestId(page, "recovery-setup-banner");
-  await expect(banner).toBeVisible();
-  await expect(banner).toContainText("Recovery setup is incomplete");
-  await expect(latestTestId(page, "recovery-setup-open-recovery")).toBeVisible();
-  await expect(latestTestId(page, "recovery-setup-open-encryption")).toBeVisible();
+  await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
 
-  // Reloading must not re-pop the modal (flag persisted in local state).
+  // Reloading must not re-pop the modal once setup is confirmed.
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
   await dismissRecoveryMissingModal(page);
   await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
+  await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
+});
+
+test("first registered device opens 24-word recovery setup instead of existing-device approval", async ({
+  page,
+}) => {
+  const firstDid = "did:web:first.example";
+  const firstDevice = "ck:device:01964137-0000-7000-8000-0000000000f1";
+
+  await page.unroute("**/*");
+  await mockCokretApi(page, {
+    accountPrincipalId: firstDid,
+    primaryHandle: "first:local.host",
+    currentDeviceId: firstDevice,
+    accountDevices: [
+      {
+        device_id: firstDevice,
+        status: "unknown",
+        display_name: "First browser",
+        verification_state: "unverified",
+      },
+    ],
+    enableDeviceEnrollment: true,
+    includeDemoRealms: false,
+  });
+  await page.evaluate(() => localStorage.clear());
+  await page.addInitScript(() => {
+    const win = window as typeof window & {
+      __sawDeviceAuthorizationModal?: boolean;
+      __deviceAuthorizationObserver?: MutationObserver;
+    };
+    const scan = () => {
+      if (document.querySelector('[data-testid="device-authorization-modal"]')) {
+        win.__sawDeviceAuthorizationModal = true;
+      }
+    };
+    const start = () => {
+      if (win.__deviceAuthorizationObserver) {
+        scan();
+        return;
+      }
+      const observer = new MutationObserver(scan);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      win.__deviceAuthorizationObserver = observer;
+      win.__sawDeviceAuthorizationModal = false;
+      scan();
+    };
+    if (document.documentElement) {
+      start();
+    } else {
+      document.addEventListener("DOMContentLoaded", start, { once: true });
+    }
+  });
+  await writeLocalConfig(page, {
+    account_did: firstDid,
+    device_id: firstDevice,
+    session_credential: "sx:e2e-first-token",
+  });
+  await writeSessionGrantInjection(page, {
+    grant_jwt: "sx:e2e-first-token",
+  });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+
+  const setupModal = latestTestId(page, "recovery-key-setup-modal");
+  await expect(setupModal).toBeVisible({ timeout: 30_000 });
+  const generatedKeyField = latestTestId(page, "recovery-key-setup-generated-key");
+  await expect(generatedKeyField).toBeVisible({ timeout: 30_000 });
+  const generatedRecoveryKey = await generatedKeyField.inputValue();
+  expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
+  await expect(page.getByTestId("device-authorization-modal")).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => Boolean((window as any).__sawDeviceAuthorizationModal)))
+    .toBe(false);
 });
 
 test("recovery key setup download filename includes account localpart", async ({ page }) => {
@@ -116,7 +199,7 @@ test("recovery key setup download filename falls back to account DID localpart",
   await expect(setupModal).toBeHidden();
 });
 
-test("dialog ignores inside drag release but closes on outside click", async ({ page }) => {
+test("dialog ignores inside drag release and protects generated recovery key", async ({ page }) => {
   await dismissBlockingRecoveryModal(page);
   await latestTestId(page, "recovery-setup-open-recovery").click();
   const modal = latestTestId(page, "recovery-key-setup-modal");
@@ -130,8 +213,13 @@ test("dialog ignores inside drag release but closes on outside click", async ({ 
   await page.mouse.up();
   await expect(modal).toBeVisible();
 
+  const generatedKeyField = latestTestId(page, "recovery-key-setup-generated-key");
+  await expect(generatedKeyField).toBeVisible();
   await page.mouse.click(12, 12);
-  await expect(modal).toBeHidden();
+  await expect(modal).toBeVisible();
+  await expect(latestTestId(page, "recovery-key-setup-status")).toContainText(
+    "Store these 24 words first",
+  );
 });
 
 test("settings encryption links key backup diagnostics to recovery", async ({ page }) => {

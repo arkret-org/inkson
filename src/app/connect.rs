@@ -310,6 +310,44 @@ async fn enroll_current_session_device(
     crate::device_enrollment::enroll_current_device(&coauth, principal_api, &request, device).await
 }
 
+async fn probe_device_authorization_with_auto_enroll(
+    base: &str,
+    actor: &str,
+    device: &str,
+    principal_api: &CokretApi,
+    state_store: Signal<crate::local_state::LocalStateStore>,
+) -> anyhow::Result<(bool, bool)> {
+    let viewer = principal_api.list_devices().await?;
+    let mut has_other = account_has_other_active_devices_from_account_viewer(&viewer, device);
+    let mut needs_authorization =
+        device_authorization_required_from_account_viewer(&viewer, device);
+
+    if needs_authorization {
+        match enroll_current_session_device(base, actor, device, principal_api, state_store).await {
+            Ok(()) => match principal_api.list_devices().await {
+                Ok(viewer) => {
+                    has_other =
+                        account_has_other_active_devices_from_account_viewer(&viewer, device);
+                    needs_authorization =
+                        device_authorization_required_from_account_viewer(&viewer, device);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        "device authorization re-check failed after enrollment"
+                    );
+                    needs_authorization = false;
+                }
+            },
+            Err(error) => {
+                tracing::warn!(?error, "device enrollment failed");
+            }
+        }
+    }
+
+    Ok((needs_authorization, has_other))
+}
+
 pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
     let device = normalize_device_id(&device);
     spawn(async move {
@@ -625,14 +663,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut session_credential,
                     &mut authed,
                 );
-                match authed.list_devices().await {
-                    Ok(viewer) => {
-                        account_has_other_devices.set(
-                            account_has_other_active_devices_from_account_viewer(&viewer, &device),
-                        );
-                        needs_device_authorization.set(
-                            device_authorization_required_from_account_viewer(&viewer, &device),
-                        );
+                match probe_device_authorization_with_auto_enroll(
+                    &base,
+                    &canonical_actor,
+                    &device,
+                    &authed,
+                    state_store,
+                )
+                .await
+                {
+                    Ok((needs_authorization, has_other)) => {
+                        account_has_other_devices.set(has_other);
+                        needs_device_authorization.set(needs_authorization);
                         device_authorization_check_complete.set(true);
                     }
                     Err(error) if is_auth_expired_error(&error) => {
@@ -647,18 +689,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         .unwrap_or_else(|_| {
                                             api.clone().with_bearer(session_credential.clone())
                                         });
-                                match authed.list_devices().await {
-                                    Ok(viewer) => {
-                                        account_has_other_devices.set(
-                                            account_has_other_active_devices_from_account_viewer(
-                                                &viewer, &device,
-                                            ),
-                                        );
-                                        needs_device_authorization.set(
-                                            device_authorization_required_from_account_viewer(
-                                                &viewer, &device,
-                                            ),
-                                        );
+                                match probe_device_authorization_with_auto_enroll(
+                                    &base,
+                                    &canonical_actor,
+                                    &device,
+                                    &authed,
+                                    state_store,
+                                )
+                                .await
+                                {
+                                    Ok((needs_authorization, has_other)) => {
+                                        account_has_other_devices.set(has_other);
+                                        needs_device_authorization.set(needs_authorization);
                                     }
                                     Err(retry_error) => {
                                         tracing::warn!(
@@ -691,47 +733,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         tracing::warn!(?error, "device authorization check failed");
                         needs_device_authorization.set(true);
                         device_authorization_check_complete.set(true);
-                    }
-                }
-                // Decision 0002 §5.4 — when the Principal Server reports this
-                // session device is not yet authorized, enroll it through the
-                // delegated account authority: coauth signs a `service_attested`
-                // `ck.device.authorize` and we submit it to `/_cokret/self/events`,
-                // which gives the device row a `device_public_key` so recovery
-                // genesis stops failing with `recovery_policy_device_not_authorized`.
-                // Idempotent: skipped when already authorized, and a no-op-on-retry
-                // because the submit is a CAS on `actor_seq`.
-                if needs_device_authorization() {
-                    adopt_live_token_for_api(
-                        &base,
-                        state_store,
-                        token,
-                        &mut session_credential,
-                        &mut authed,
-                    );
-                    match enroll_current_session_device(
-                        &base,
-                        &canonical_actor,
-                        &device,
-                        &authed,
-                        state_store,
-                    )
-                    .await
-                    {
-                        Ok(()) => {
-                            if let Ok(viewer) = authed.list_devices().await {
-                                needs_device_authorization.set(
-                                    device_authorization_required_from_account_viewer(
-                                        &viewer, &device,
-                                    ),
-                                );
-                            } else {
-                                needs_device_authorization.set(false);
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(?error, "device enrollment failed");
-                        }
                     }
                 }
                 persist_config(

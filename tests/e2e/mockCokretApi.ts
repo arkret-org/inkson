@@ -1,4 +1,5 @@
 import { expect, type Page, type Route } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { mockCokretContract } from "./mockCokretContract";
 
 const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
@@ -47,12 +48,76 @@ type MockCokretApiOptions = {
   advertiseListHandlesForSubject?: boolean;
   accountPrincipalId?: string;
   primaryHandle?: string | null;
+  currentDeviceId?: string;
+  accountDevices?: MockAccountDevice[];
+  enableDeviceEnrollment?: boolean;
+  includeDemoRealms?: boolean;
 };
+
+type MockAccountDevice = {
+  device_id: string;
+  status?: string;
+  display_name?: string | null;
+  authorized_at?: string | null;
+  revoked_at?: string | null;
+  verification_state?: string;
+};
+
+function canonicalJson(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(`non-canonical JSON number: ${value}`);
+    }
+    return String(value);
+  }
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (typeof value === "object" && value !== null) {
+    const object = value as Record<string, unknown>;
+    const keys = Object.keys(object).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
+  }
+  throw new Error(`unsupported canonical JSON value: ${String(value)}`);
+}
+
+function canonicalSha256(value: unknown) {
+  return `sha256:${createHash("sha256").update(canonicalJson(value), "utf8").digest("hex")}`;
+}
+
+function signedEventDigest(event: Record<string, unknown>) {
+  const digestPayload = { ...event };
+  delete digestPayload.proofs;
+  delete digestPayload.unsigned;
+  return canonicalSha256(digestPayload);
+}
 
 export async function mockCokretApi(page: Page, options: MockCokretApiOptions = {}) {
   const advertiseListHandlesForSubject = options.advertiseListHandlesForSubject ?? true;
   const accountPrincipalId = options.accountPrincipalId ?? "did:web:alice.example";
   const primaryHandle = options.primaryHandle === undefined ? "alice:local.host" : options.primaryHandle;
+  const currentDeviceId = options.currentDeviceId ?? "ck:device:01964137-0000-7000-8000-0000000000a1";
+  const includeDemoRealms = options.includeDemoRealms ?? true;
+  const accountDevices = new Map<string, MockAccountDevice>();
+  for (const device of options.accountDevices ?? [
+    {
+      device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
+      status: "active",
+      display_name: "Current device",
+      authorized_at: "2026-04-28T12:00:00Z",
+    },
+  ]) {
+    accountDevices.set(device.device_id, { ...device });
+  }
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
@@ -60,6 +125,38 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
   const keyBackups = new Map<string, Record<string, unknown>>();
   const eventRealmId = (event: Record<string, unknown>) =>
     String(event.realm_id ?? "");
+  const accountDeviceSummaries = () =>
+    Array.from(accountDevices.values()).map((device) => {
+      const summary: Record<string, unknown> = {
+        device_id: device.device_id,
+        status: device.status ?? (device.authorized_at ? "active" : "unknown"),
+      };
+      if (device.display_name !== undefined) {
+        summary.display_name = device.display_name;
+      }
+      if (device.authorized_at) {
+        summary.authorized_at = device.authorized_at;
+      }
+      if (device.revoked_at) {
+        summary.revoked_at = device.revoked_at;
+      }
+      if (device.verification_state) {
+        summary.verification_state = device.verification_state;
+      }
+      if (device.device_id === currentDeviceId) {
+        summary.is_current_session_device = true;
+      }
+      return summary;
+    });
+  const markDeviceAuthorized = (deviceId: string) => {
+    accountDevices.set(deviceId, {
+      ...(accountDevices.get(deviceId) ?? { device_id: deviceId, display_name: "Current device" }),
+      status: "active",
+      verification_state: "verified",
+      authorized_at: new Date().toISOString(),
+      revoked_at: null,
+    });
+  };
   const boardSpaceContainers: SpaceContainerProjection[] = [
     {
       container_space_id: DEMO_BOARD_SPACE,
@@ -193,6 +290,62 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
     if (!url.pathname.startsWith("/_cokret/")) {
       return route.continue();
+    }
+    if (
+      options.enableDeviceEnrollment &&
+      url.hostname === "auth.local.host" &&
+      url.pathname === "/_cokret/gate/account/device-enroll" &&
+      route.request().method() === "POST"
+    ) {
+      const body = await route.request().postDataJSON();
+      const deviceId = typeof body.device_id === "string" ? body.device_id : currentDeviceId;
+      const authorizedEvent: Record<string, unknown> = {
+        event_id: "ck:event:01964137-0000-7000-8000-00000000d0e1",
+        kind: "ck.device.authorize",
+        realm_id: "ck:realm:01964137-0000-7000-8000-00000000c0de",
+        actor_id: accountPrincipalId,
+        executed_by: "did:web:auth.local.host",
+        authorization_ref: `${accountPrincipalId}#device-enrollment`,
+        actor_seq: typeof body.actor_seq === "number" ? body.actor_seq : 1,
+        created_at: "2026-06-22T00:00:00Z",
+        hlc: "019641370000-0000-12345678",
+        prev_refs: [],
+        refs: [],
+        payload: {
+          principal_id: accountPrincipalId,
+          device_id: deviceId,
+          device_public_key:
+            typeof body.device_public_key === "string"
+              ? body.device_public_key
+              : "z6MkExamplePublicKey",
+          authorized_by: "did:web:auth.local.host",
+          not_before: "2026-06-22T00:00:00Z",
+          enrollment_authority_binding: {
+            kind: "service_attested",
+            authority_did: "did:web:auth.local.host",
+            authorization_ref: `${accountPrincipalId}#device-enrollment`,
+          },
+        },
+      };
+      const eventDigest = signedEventDigest(authorizedEvent);
+      authorizedEvent.proofs = [
+        {
+          kind: "detached_jws",
+          alg: "EdDSA",
+          verification_method: "did:web:auth.local.host#enroll-key-1",
+          event_digest: eventDigest,
+          created_at: "2026-06-22T00:00:00Z",
+          domain: "did:web:auth.local.host",
+          audience: "did:web:server.local",
+          jws: "ey.ey.sig",
+        },
+      ];
+      return json(route, {
+        principal_id: accountPrincipalId,
+        device_id: deviceId,
+        authority_did: "did:web:auth.local.host",
+        authorized_event: authorizedEvent,
+      });
     }
 
     if (url.pathname === "/_cokret/describe" && route.request().method() === "GET") {
@@ -437,6 +590,16 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       let syncToken = "sx:e2e:event";
       const submittedEvents = Array.isArray(body.events) ? body.events : [body];
       for (const event of submittedEvents) {
+        if (event.kind === "ck.device.authorize") {
+          const authorizedDeviceId =
+            event.payload?.device_id ??
+            event.content?.device_id ??
+            event.device_id;
+          if (typeof authorizedDeviceId === "string") {
+            markDeviceAuthorized(authorizedDeviceId);
+          }
+          continue;
+        }
         const raw = JSON.stringify(event);
         if (event.kind !== "ck.realm.create" && !raw.includes("ck.realm.create")) {
           continue;
@@ -658,19 +821,18 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname === "/_cokret/gate/account/register" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
+      if (body.device_id && !accountDevices.has(body.device_id)) {
+        accountDevices.set(body.device_id, {
+          device_id: body.device_id,
+          status: "unknown",
+          display_name: "Current device",
+          verification_state: "unverified",
+        });
+      }
       return json(route, {
         principal_id: body.principal_id,
         state: "active",
-        devices: body.device_id
-          ? [
-              {
-                device_id: body.device_id,
-                status: "active",
-                display_name: "Current device",
-                authorized_at: "2026-04-28T12:00:00Z",
-              },
-            ]
-          : [],
+        devices: accountDeviceSummaries(),
         profile: {
           id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
           schema: "ck.schema.actor_profile.v1",
@@ -713,31 +875,33 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname === "/_cokret/self/account/subscribe" && route.request().method() === "GET") {
       const demoProjectionEvents = projectionEvents.filter((event) => eventRealmId(event) === DEMO_REALM);
-      const notificationEvents = [
-        {
-          kind: "ck.notification",
-          notification_id: "notif-msg-1",
-          title: "New message",
-          body: "Alice sent a message in Demo Realm",
-          realm_id: DEMO_REALM,
-          notification_kind: "message",
-          type: "message",
-          timestamp: "2026-04-28T12:01:00Z",
-          read: false,
-        },
-        {
-          kind: "ck.notification",
-          notification_id: "notif-invite-1",
-          invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
-          title: "New invite",
-          body: "You were invited to review Demo Realm",
-          realm_id: DEMO_REALM,
-          notification_kind: "invite",
-          type: "invite",
-          timestamp: "2026-04-28T12:02:00Z",
-          read: false,
-        },
-      ];
+      const notificationEvents = includeDemoRealms
+        ? [
+            {
+              kind: "ck.notification",
+              notification_id: "notif-msg-1",
+              title: "New message",
+              body: "Alice sent a message in Demo Realm",
+              realm_id: DEMO_REALM,
+              notification_kind: "message",
+              type: "message",
+              timestamp: "2026-04-28T12:01:00Z",
+              read: false,
+            },
+            {
+              kind: "ck.notification",
+              notification_id: "notif-invite-1",
+              invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
+              title: "New invite",
+              body: "You were invited to review Demo Realm",
+              realm_id: DEMO_REALM,
+              notification_kind: "invite",
+              type: "invite",
+              timestamp: "2026-04-28T12:02:00Z",
+              read: false,
+            },
+          ]
+        : [];
       const frame = {
         kind: "delta",
         cursor: "ck:cursor:e2e-2",
@@ -761,47 +925,53 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
               },
             ]),
           ),
-          [DEMO_REALM]: {
-            summary: {
-              title: "Cokret Demo Realm",
-              summary: "Shared demo Realm served by mocked server",
-              encryption_profile: "mls_rfc9420",
-            },
-            timeline: { events: demoProjectionEvents, limited: false },
-            state: { events: [] },
-            ephemeral: { events: [] },
-            unread: { notification_count: 0, highlight_count: 0 },
-          },
-          [CHILD_REALM]: {
-            summary: {
-              title: "Launch Realm",
-              summary: "Board and discussion scope",
-            },
-            timeline: { events: [], limited: false },
-            state: { events: [] },
-            ephemeral: { events: [] },
-            unread: { notification_count: 0, highlight_count: 0 },
-          },
-          [GRANDCHILD_REALM]: {
-            summary: {
-              title: "Launch Deep Realm",
-              summary: "Related scope fixture",
-            },
-            timeline: { events: [], limited: false },
-            state: { events: [] },
-            ephemeral: { events: [] },
-            unread: { notification_count: 0, highlight_count: 0 },
-          },
+          ...(includeDemoRealms
+            ? {
+                [DEMO_REALM]: {
+                  summary: {
+                    title: "Cokret Demo Realm",
+                    summary: "Shared demo Realm served by mocked server",
+                    encryption_profile: "mls_rfc9420",
+                  },
+                  timeline: { events: demoProjectionEvents, limited: false },
+                  state: { events: [] },
+                  ephemeral: { events: [] },
+                  unread: { notification_count: 0, highlight_count: 0 },
+                },
+                [CHILD_REALM]: {
+                  summary: {
+                    title: "Launch Realm",
+                    summary: "Board and discussion scope",
+                  },
+                  timeline: { events: [], limited: false },
+                  state: { events: [] },
+                  ephemeral: { events: [] },
+                  unread: { notification_count: 0, highlight_count: 0 },
+                },
+                [GRANDCHILD_REALM]: {
+                  summary: {
+                    title: "Launch Deep Realm",
+                    summary: "Related scope fixture",
+                  },
+                  timeline: { events: [], limited: false },
+                  state: { events: [] },
+                  ephemeral: { events: [] },
+                  unread: { notification_count: 0, highlight_count: 0 },
+                },
+              }
+            : {}),
         },
         left_realms: [],
         to_device: {
-          messages: [{ kind: "ck.mls.welcome", content: { ciphertext: "opaque" } }],
+          messages: includeDemoRealms
+            ? [{ kind: "ck.mls.welcome", content: { ciphertext: "opaque" } }]
+            : [],
           ack_token: "mock-to-device-ack",
         },
         account_data: { events: notificationEvents },
         device_lists: { changed: [], left: [] },
         presence: { events: [] },
-        notifications: { events: notificationEvents, unread_count: 2 },
+        notifications: { events: notificationEvents, unread_count: notificationEvents.length },
       };
       return route.fulfill({
         status: 200,
@@ -1223,14 +1393,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           display_name: "yougen",
           created_at: "2026-04-28T12:00:00Z",
         },
-        devices: [
-          {
-            device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
-            status: "active",
-            display_name: "Current device",
-            authorized_at: "2026-04-28T12:00:00Z",
-          },
-        ],
+        current_device_id: currentDeviceId,
+        devices: accountDeviceSummaries(),
       };
       if (primaryHandle) {
         viewer.primary_handle_claim = {
