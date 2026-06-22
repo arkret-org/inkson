@@ -93,7 +93,7 @@ pub fn RecoveryKeySetupPrompt(
     device_id: Signal<String>,
     state_store: Signal<LocalStateStore>,
     open: Signal<bool>,
-    personal_handles: Signal<Vec<String>>,
+    account_primary_handle: Signal<String>,
     #[props(default)] on_server_configured: Option<EventHandler<()>>,
 ) -> Element {
     let mut generated_recovery_key = use_signal(String::new);
@@ -234,10 +234,10 @@ pub fn RecoveryKeySetupPrompt(
                                     onclick: {
                                         let key = generated_now.clone();
                                         move |_| {
+                                            let primary_handle = account_primary_handle();
                                             let filename =
-                                                crate::components::mls_backup_prompt::recovery_key_filename_for_account(
-                                                    &personal_handles(),
-                                                    &account_did(),
+                                                crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                                                    std::slice::from_ref(&primary_handle),
                                                 );
                                             crate::components::mls_backup_prompt::download_text_as_file(
                                                 &filename,

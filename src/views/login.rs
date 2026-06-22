@@ -51,6 +51,7 @@ pub fn LoginPanel(
     status: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
+    account_primary_handle: Signal<String>,
     personal_handles: Signal<Vec<String>>,
     personal_handles_status: Signal<String>,
     auto_capture_callback: bool,
@@ -88,6 +89,10 @@ pub fn LoginPanel(
                     let previous = normalize_server_url(&base_url());
                     !previous.trim().is_empty() && previous != principal_server_url
                 };
+                let actor_changed = {
+                    let previous = account_did();
+                    !previous.trim().is_empty() && previous != completed.actor
+                };
                 {
                     let mut store = state_store_write.write();
                     // Adopt the account-scope for the signed-in actor. If the
@@ -108,11 +113,23 @@ pub fn LoginPanel(
                 }
                 base_url.set(principal_server_url.clone());
                 account_did.set(completed.actor.clone());
-                if let Some(personal_handle) = completed.personal_handle.clone() {
-                    personal_handles.set(vec![personal_handle]);
-                    personal_handles_status.set("1 handle".to_owned());
-                } else if personal_handles().is_empty() {
+                let mut account_primary_handle = account_primary_handle;
+                if server_changed || actor_changed {
+                    account_primary_handle.set(String::new());
+                    personal_handles.set(Vec::new());
                     personal_handles_status.set("Not published".to_owned());
+                }
+                if let Some(personal_handle) = completed.personal_handle.clone() {
+                    account_primary_handle.set(personal_handle.clone());
+                    let handles =
+                        crate::app::merge_personal_handles(&personal_handles(), [personal_handle]);
+                    personal_handles_status.set(crate::app::personal_handles_status_for(&handles));
+                    personal_handles.set(handles);
+                } else {
+                    account_primary_handle.set(String::new());
+                    if personal_handles().is_empty() {
+                        personal_handles_status.set("Not published".to_owned());
+                    }
                 }
                 device_id.set(completed.device_id.clone());
                 token.set(completed.session_credential.clone());
@@ -549,8 +566,7 @@ async fn finish_oidc_callback(
     } else {
         account.did
     };
-    let personal_handle =
-        crate::app::personal_handle_from_account_handle(&account.handle, &principal_target);
+    let personal_handle = crate::app::personal_handle_from_account_handle(&account.handle);
     let _ = clear_persisted_oidc_scaffold();
 
     let resolved_device = device;

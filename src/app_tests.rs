@@ -6,37 +6,50 @@ fn personal_handle_from_account_handle_keeps_full_handle_verbatim() {
     // be returned as-is — never have the server domain appended again, which
     // produced the `alice:local.host:local.host` double-domain regression.
     assert_eq!(
-        personal_handle_from_account_handle("alice:local.host", "https://local.host").as_deref(),
+        personal_handle_from_account_handle("alice:local.host").as_deref(),
         Some("alice:local.host")
     );
     assert_eq!(
-        personal_handle_from_account_handle("@alice:local.host", "https://local.host").as_deref(),
+        personal_handle_from_account_handle("@alice:local.host").as_deref(),
         Some("alice:local.host")
     );
     // A handle on a different domain than the active server is preserved, not
     // rewritten to the server's domain.
     assert_eq!(
-        personal_handle_from_account_handle("alice:example.com", "https://local.host").as_deref(),
+        personal_handle_from_account_handle("alice:example.com").as_deref(),
         Some("alice:example.com")
     );
 }
 
 #[test]
-fn personal_handle_from_account_handle_synthesises_bare_localpart() {
-    // Defensive fallback: a legacy bare localpart (no domain) gets the active
-    // server's domain appended exactly once.
-    assert_eq!(
-        personal_handle_from_account_handle("@alice", "https://local.host").as_deref(),
-        Some("alice:local.host")
+fn personal_handle_from_account_handle_rejects_missing_or_invalid_claim_handle() {
+    assert_eq!(personal_handle_from_account_handle("@alice"), None);
+    assert_eq!(personal_handle_from_account_handle("  "), None);
+}
+
+#[test]
+fn merge_personal_handles_adds_and_deduplicates_sources() {
+    let merged = merge_personal_handles(
+        &[
+            "alice:local.host".to_owned(),
+            "bob:remote.example".to_owned(),
+        ],
+        [
+            "@Alice:Local.Host".to_owned(),
+            "carol:local.host".to_owned(),
+            " ".to_owned(),
+        ],
     );
+
     assert_eq!(
-        personal_handle_from_account_handle("  ", "https://local.host"),
-        None
+        merged,
+        vec![
+            "alice:local.host".to_owned(),
+            "bob:remote.example".to_owned(),
+            "carol:local.host".to_owned(),
+        ]
     );
-    assert_eq!(
-        personal_handle_from_account_handle("@alice", "not a server URL"),
-        None
-    );
+    assert_eq!(personal_handles_status_for(&merged), "3 handles");
 }
 
 /// The App component installs a default push-token provider on

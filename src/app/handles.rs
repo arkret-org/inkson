@@ -21,44 +21,59 @@ pub(super) fn display_handles_from_directory_response(
     handles
 }
 
+pub(crate) fn merge_personal_handles(
+    current: &[String],
+    incoming: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    let mut seen = BTreeSet::<String>::new();
+    let mut merged = Vec::<String>::new();
+    let mut push_handle = |handle: String| {
+        if let Some(canonical) = canonical_personal_handle(&handle)
+            && seen.insert(canonical.clone())
+        {
+            merged.push(canonical);
+        }
+    };
+    for handle in current {
+        push_handle(handle.clone());
+    }
+    for handle in incoming {
+        push_handle(handle);
+    }
+    merged
+}
+
+pub(crate) fn personal_handles_status_for(handles: &[String]) -> String {
+    match handles.len() {
+        0 => "Not published".to_owned(),
+        1 => "1 handle".to_owned(),
+        count => format!("{count} handles"),
+    }
+}
+
+fn canonical_personal_handle(handle: &str) -> Option<String> {
+    let trimmed = handle.trim().trim_start_matches('@').trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    crate::identity_handle::normalize_user_handle_display(trimmed)
+}
+
 /// Build the account's personal **handle** (`<localpart>:<domain>`) from the
 /// `account_me` projection, for the account menu label and the recovery-key
 /// download filename.
 ///
 /// `account.handle` (see [`crate::api::account`]'s `primary_handle_from_viewer`)
 /// is the **full canonical handle** carried by the signed primary handle claim
-/// — it is *not* a bare localpart. So when the input already parses as a handle
-/// we return it canonicalised verbatim. Re-appending the server domain to a
-/// value that already has one is exactly what produced the
-/// `alice:local.host:local.host` double-domain bug.
-///
-/// The localpart branch is only a defensive fallback for legacy/synthetic
-/// payloads that carried a bare localpart with no domain: only then do we
-/// synthesise `<localpart>:<server-domain>`.
-pub(crate) fn personal_handle_from_account_handle(
-    account_handle: &str,
-    server_url: &str,
-) -> Option<String> {
+/// — it is *not* a bare localpart. Invalid or empty values are treated as an
+/// absent primary handle claim; directory handles and server URLs must not be
+/// used as recovery-key filename sources.
+pub(crate) fn personal_handle_from_account_handle(account_handle: &str) -> Option<String> {
     let trimmed = account_handle.trim().trim_start_matches('@').trim();
     if trimmed.is_empty() {
         return None;
     }
-    // Already a full canonical handle — never re-append a domain.
-    if let Some(handle) = crate::identity_handle::normalize_user_handle_display(trimmed) {
-        return Some(handle);
-    }
-    // Bare-localpart fallback: synthesise `<localpart>:<server-domain>` and
-    // canonicalise it through the same handle parser.
-    let server_host = handle_domain_from_server_url(server_url)?;
-    crate::identity_handle::normalize_user_handle_display(&format!("{trimmed}:{server_host}"))
-}
-
-pub(super) fn handle_domain_from_server_url(server_url: &str) -> Option<String> {
-    let normalized = normalize_server_url(server_url);
-    url::Url::parse(&normalized)
-        .ok()?
-        .host_str()
-        .map(str::to_owned)
+    crate::identity_handle::normalize_user_handle_display(trimmed)
 }
 
 pub(super) fn account_handles_display(handles: &[String], fallback: &str) -> String {
@@ -122,6 +137,7 @@ pub(super) struct ServerSelectionContext {
     pub(super) status: Signal<String>,
     pub(super) account_did: Signal<String>,
     pub(super) device_id: Signal<String>,
+    pub(super) account_primary_handle: Signal<String>,
     pub(super) personal_handles: Signal<Vec<String>>,
     pub(super) personal_handles_status: Signal<String>,
     pub(super) personal_handles_lookup_key: Signal<String>,
@@ -148,6 +164,7 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
     let mut status = ctx.status;
     let mut state_store = ctx.state_store;
     let mut sync_generation = ctx.sync_generation;
+    let mut account_primary_handle = ctx.account_primary_handle;
     let mut personal_handles = ctx.personal_handles;
     let mut personal_handles_status = ctx.personal_handles_status;
     let mut personal_handles_lookup_key = ctx.personal_handles_lookup_key;
@@ -187,6 +204,7 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
     device_queue.set(0);
     frontier_state.set("Not loaded".to_owned());
     crypto_state.set("Refresh session for selected server".to_owned());
+    account_primary_handle.set(String::new());
     personal_handles.set(Vec::new());
     personal_handles_status.set("Not published".to_owned());
     personal_handles_lookup_key.set(String::new());

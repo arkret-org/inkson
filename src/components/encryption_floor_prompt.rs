@@ -44,25 +44,20 @@ pub fn EncryptionFloorPrompt(
         || needs_device_authorization()
         || needs_mls_unlock()
         || needs_mls_backup()
+        || recovery_key_setup_prompt()
         || !account_needs_recommended_encryption_prompt(&state_store.read(), &actor)
     {
         return rsx! {};
     }
 
     // Whether to offer setting up a *new* 24-word Recovery Key is an
-    // account-level decision, not a per-device one. A second device has no
-    // local recovery material yet the account may already hold a Recovery Key
-    // (server `did_recovery` backup + policy). Reuse the same canonical
-    // predicate as the standing recovery reminder so the floor prompt never
-    // offers a redundant setup when the account is already configured; a device
-    // without the local key still seals the account secret to the account's
-    // recovery public key, so enabling encryption needs no local 24 words.
+    // account-level decision, not a per-device one. Treat unknown server state
+    // as not configured so the dialog never claims a Recovery Key exists before
+    // the account recovery probe has completed.
     let local_recovery_configured =
         crate::views::recovery::recovery_options_configured(&state_store.read(), &actor);
-    let recovery_key_configured = !crate::app::recovery_setup_prompt_required_for_local_state(
-        account_recovery_configured(),
-        local_recovery_configured,
-    );
+    let recovery_key_configured =
+        matches!(account_recovery_configured(), Some(true)) || local_recovery_configured;
     let on_enable = move |_| {
         acknowledge_dismissal(dismissed, account_did, state_store);
         if recovery_key_configured {

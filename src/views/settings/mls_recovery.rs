@@ -179,10 +179,8 @@ pub fn SettingsMlsRecoveryPanel(
     account_did: Signal<String>,
     device_id: Signal<String>,
     state_store: Signal<LocalStateStore>,
-    /// Account's personal handles (`<localpart>:<domain>`), used only to name
-    /// the recovery-key download file readably (the DID's `:users:` segment is
-    /// a ULID, not a human localpart).
-    personal_handles: Vec<String>,
+    /// Primary account handle claim, used only to name the recovery-key download file readably.
+    account_primary_handle: String,
 ) -> Element {
     let mut status = use_signal(|| MlsRecoveryStatus::Loading);
     let mut generated_recovery_key = use_signal(String::new);
@@ -346,12 +344,11 @@ pub fn SettingsMlsRecoveryPanel(
                                 "data-testid": "settings-mls-recovery-download-key",
                                 onclick: {
                                     let key = generated_now.clone();
-                                    let handles = personal_handles.clone();
+                                    let primary_handle = account_primary_handle.clone();
                                     move |_| {
                                         let fname =
-                                            crate::components::mls_backup_prompt::recovery_key_filename_for_account(
-                                                &handles,
-                                                &account_did(),
+                                            crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                                                std::slice::from_ref(&primary_handle),
                                             );
                                         crate::components::mls_backup_prompt::download_text_as_file(&fname, &key);
                                     }

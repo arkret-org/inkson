@@ -1,3 +1,6 @@
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
 use super::*;
 
 /// Canonical signing-input prefix for the MLS `keypackages/upload`
@@ -44,6 +47,32 @@ pub(crate) fn mls_key_package_record_upload_value(
         .entry("keypackage_digest".to_owned())
         .or_insert_with(|| json!(record.keypackage_ref.as_str()));
     Ok(value)
+}
+
+pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {
+    let mut bytes = [0u8; 24];
+    getrandom::fill(&mut bytes)
+        .map_err(|err| anyhow::anyhow!("generate MLS KeyPackage claim nonce: {err}"))?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+pub(crate) fn keypackage_claim_record_to_mls_record(
+    claim: &cokret_sdk::KeypackageClaimRecord,
+) -> anyhow::Result<cokret_sdk::MlsKeyPackageRecord> {
+    Ok(cokret_sdk::MlsKeyPackageRecord {
+        keypackage_id: claim.keypackage_ref.as_str().to_owned(),
+        principal_id: claim.principal_id.clone(),
+        device_id: cokret_sdk::DeviceId::new(claim.device_id.clone())?,
+        key_package: claim.key_package.clone(),
+        keypackage_ref: claim.keypackage_digest.clone(),
+        cipher_suites: Vec::new(),
+        capabilities: claim.capabilities.clone(),
+        state: cokret_sdk::MlsKeyPackageState::Published,
+        claim_id: Some(claim.claim_id.clone()),
+        created_at: crate::clock::now_utc(),
+        expires_at: Some(claim.expires_at),
+        device_signature: None,
+    })
 }
 
 impl CokretApi {
@@ -108,6 +137,45 @@ impl CokretApi {
         };
         let record: cokret_sdk::MlsKeyPackageRecord = serde_json::from_value(value.clone())?;
         Ok(Some(record))
+    }
+
+    pub async fn claim_mls_key_package(
+        &self,
+        target_principal_id: &str,
+        intended_realm_id: &str,
+        requester: &str,
+        claim_nonce: &str,
+        target_device_id: Option<&str>,
+        mls_group_id: Option<&str>,
+    ) -> anyhow::Result<cokret_sdk::KeyPackagesClaimOutcome> {
+        let target_device_ids = target_device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| cokret_sdk::DeviceId::new(value.to_owned()))
+            .transpose()?
+            .into_iter()
+            .collect::<Vec<_>>();
+        let body = cokret_sdk::KeyPackagesClaimRequestBody {
+            target_principal_id: cokret_sdk::Did::new(target_principal_id.trim().to_owned())?,
+            intended_realm_id: cokret_sdk::RealmId::new(crate::operation::trim_realm_id(
+                intended_realm_id,
+            ))?,
+            requester: cokret_sdk::Did::new(requester.trim().to_owned())?,
+            required_capabilities: Vec::new(),
+            claim_nonce: claim_nonce.trim().to_owned(),
+            expires_at: crate::clock::now_utc() + chrono::Duration::minutes(10),
+            target_device_ids,
+            minimal_metadata_allowed: Some(true),
+            timeout_ms: Some(30_000),
+            strand_id: None,
+            mls_group_id: mls_group_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            proofs: Vec::new(),
+        };
+        self.post_json("_cokret/self/keys/keypackages/claim", &body)
+            .await
     }
 
     // YOU-01-009: the former `rotate_mls_epoch` helper (non-spec

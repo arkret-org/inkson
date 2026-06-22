@@ -310,6 +310,38 @@ impl CokretApi {
         Ok(response)
     }
 
+    pub(crate) async fn submit_sdk_events_batch(
+        &self,
+        realm_id: &str,
+        mut events: Vec<cokret_sdk::Event>,
+        idempotency_key: Option<&str>,
+    ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
+        let seal = self.current_seal_for(realm_id).await?;
+        let seal = cokret_sdk::SealId::new(seal)
+            .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?;
+        for event in &mut events {
+            if event.seal_ref.is_none() && event.seal_basis.is_none() && !event.effects.is_empty() {
+                event.seal_ref = Some(seal.clone());
+            }
+        }
+        let proof_context = self.event_proof_context().await?;
+        for event in &mut events {
+            if event.proofs.is_empty() {
+                crate::event_signer::sign_sdk_event_with_active_context(
+                    event,
+                    proof_context.clone(),
+                )
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "no active signer configured \u{2014} cannot submit SDK Event batch: {err}"
+                    )
+                })?;
+            }
+        }
+        self.submit_signed_sdk_events_batch(&events, idempotency_key)
+            .await
+    }
+
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
     /// canonical ephemeral channel (`POST /_cokret/self/ephemeral`) instead of the
     /// durable `/_cokret/self/events` endpoint. The envelope MUST validate against

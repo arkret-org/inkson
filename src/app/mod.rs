@@ -415,6 +415,7 @@ pub fn RouterView() -> Element {
     let mut server_menu_open = use_signal(|| false);
     let mut account_menu_open = use_signal(|| false);
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
+    let mut account_primary_handle = use_signal(String::new);
     let mut personal_handles = use_signal(Vec::<String>::new);
     let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
@@ -862,6 +863,7 @@ pub fn RouterView() -> Element {
                     last_error,
                     server_description,
                     server_probe_status,
+                    account_primary_handle,
                     personal_handles,
                     personal_handles_status,
                     theme,
@@ -1185,9 +1187,9 @@ pub fn RouterView() -> Element {
     {
         // Proactive one-time 24-word Recovery Key setup nudge for new users.
         // When the account is otherwise healthy but no recovery path is
-        // configured (the lowest-priority RecoverySetupReminder state), open the
-        // setup modal once and persist a flag so it never auto-pops again — the
-        // passive dashboard banner remains as the steady-state reminder. The
+        // configured (the RecoverySetupReminder state), open the setup modal
+        // once and persist a flag so it never auto-pops again — the passive
+        // dashboard banner remains as the steady-state reminder. The
         // in-memory `recovery_auto_prompt_fired` guard makes "once" robust within
         // a session. See account_health::should_auto_prompt_recovery_setup and
         // docs/user-strands-key-lifecycle.md §3/S1.
@@ -1286,6 +1288,7 @@ pub fn RouterView() -> Element {
             }
             personal_handles_lookup_key.set(key);
             if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
+                account_primary_handle.set(String::new());
                 personal_handles.set(Vec::new());
                 personal_handles_status.set("No authenticated session".to_owned());
                 return;
@@ -1308,25 +1311,26 @@ pub fn RouterView() -> Element {
                         .await
                     {
                         Ok(res) => {
-                            let handles = display_handles_from_directory_response(&res);
-                            if handles.is_empty() {
+                            let directory_handles = display_handles_from_directory_response(&res);
+                            if directory_handles.is_empty() {
                                 // Mirror the error branches below: keep any
-                                // account-localpart fallback already derived
-                                // from the account viewer's primary handle
-                                // claim instead of clobbering it with an empty
+                                // account viewer primary handle claim already
+                                // loaded instead of clobbering it with an empty
                                 // directory page.
                                 if personal_handles().is_empty() {
                                     personal_handles_status.set("No handles published".to_owned());
                                 }
                             } else {
-                                personal_handles_status.set(format!("{} handle(s)", handles.len()));
+                                let handles =
+                                    merge_personal_handles(&personal_handles(), directory_handles);
+                                personal_handles_status.set(personal_handles_status_for(&handles));
                                 personal_handles.set(handles);
                             }
                         }
                         Err(err) => {
                             tracing::warn!(
                                 ?err,
-                                "directory list_handles_for_subject failed; keeping account localpart fallback"
+                                "directory list_handles_for_subject failed; keeping account primary handle claim"
                             );
                             if personal_handles().is_empty() {
                                 personal_handles_status.set("Not published".to_owned());
@@ -1987,6 +1991,7 @@ pub fn RouterView() -> Element {
                                 status,
                                 config_store,
                                 state_store,
+                                account_primary_handle,
                                 personal_handles,
                                 personal_handles_status,
                                 auto_capture_callback: true,
@@ -2027,6 +2032,7 @@ pub fn RouterView() -> Element {
                                 status,
                                 config_store,
                                 state_store,
+                                account_primary_handle,
                                 personal_handles,
                                 personal_handles_status,
                                 auto_capture_callback: false,
@@ -2223,6 +2229,7 @@ pub fn RouterView() -> Element {
                 state_store,
             }
             if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
+                && !recovery_key_setup_prompt()
                 && !encryption_floor_prompt_dismissed()
                 && !encryption_floor_prompt_acknowledged
             {
@@ -2247,7 +2254,7 @@ pub fn RouterView() -> Element {
                 device_id,
                 state_store,
                 open: recovery_key_setup_prompt,
-                personal_handles,
+                account_primary_handle,
                 on_server_configured: move |_| account_recovery_configured.set(Some(true)),
             }
             if show_recovery_setup_prompt {
@@ -2320,7 +2327,7 @@ pub fn RouterView() -> Element {
                     state_store,
                     needs_mls_backup,
                     account_recovery_configured,
-                    personal_handles,
+                    account_primary_handle,
                 }
             }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
@@ -2426,6 +2433,7 @@ pub fn RouterView() -> Element {
                                     last_error,
                                     server_description,
                                     server_probe_status,
+                                    account_primary_handle,
                                     personal_handles,
                                     personal_handles_status,
                                     theme,
@@ -2579,6 +2587,7 @@ pub fn RouterView() -> Element {
                                                     status,
                                                     account_did,
                                                     device_id,
+                                                    account_primary_handle,
                                                     personal_handles,
                                                     personal_handles_status,
                                                     personal_handles_lookup_key,
@@ -2607,6 +2616,7 @@ pub fn RouterView() -> Element {
                                                         last_error,
                                                         server_description,
                                                         server_probe_status,
+                                                        account_primary_handle,
                                                         personal_handles,
                                                         personal_handles_status,
                                                         theme,
@@ -3888,13 +3898,22 @@ pub fn RouterView() -> Element {
                                                                 Ok(account) => {
                                                                     let canonical_actor = account.did;
                                                                     if let Some(personal_handle) =
-                                                                        personal_handle_from_account_handle(&account.handle, &base)
+                                                                        personal_handle_from_account_handle(&account.handle)
                                                                     {
-                                                                        personal_handles.set(vec![personal_handle]);
-                                                                        personal_handles_status.set("1 handle".to_owned());
+                                                                        account_primary_handle
+                                                                            .set(personal_handle.clone());
+                                                                        let handles = merge_personal_handles(
+                                                                            &personal_handles(),
+                                                                            [personal_handle],
+                                                                        );
+                                                                        personal_handles_status
+                                                                            .set(personal_handles_status_for(&handles));
+                                                                        personal_handles.set(handles);
                                                                     } else {
-                                                                        personal_handles.set(Vec::new());
-                                                                        personal_handles_status.set("Not published".to_owned());
+                                                                        account_primary_handle.set(String::new());
+                                                                        if personal_handles().is_empty() {
+                                                                            personal_handles_status.set("Not published".to_owned());
+                                                                        }
                                                                     }
                                                                     account_did.set(canonical_actor.clone());
                                                                     persist_config(
@@ -3925,19 +3944,29 @@ pub fn RouterView() -> Element {
                                                                                         .await
                                                                                         .ok()
                                                                                         .and_then(|account| {
+                                                                                            let canonical_actor = account.did;
                                                                                             if let Some(personal_handle) =
-                                                                                                personal_handle_from_account_handle(&account.handle, &base)
+                                                                                                personal_handle_from_account_handle(&account.handle)
                                                                                             {
-                                                                                                personal_handles.set(vec![personal_handle]);
+                                                                                                account_primary_handle
+                                                                                                    .set(personal_handle.clone());
+                                                                                                let handles = merge_personal_handles(
+                                                                                                    &personal_handles(),
+                                                                                                    [personal_handle],
+                                                                                                );
                                                                                                 personal_handles_status
-                                                                                                    .set("1 handle".to_owned());
+                                                                                                    .set(personal_handles_status_for(&handles));
+                                                                                                personal_handles.set(handles);
                                                                                             } else {
-                                                                                                personal_handles.set(Vec::new());
-                                                                                                personal_handles_status
-                                                                                                    .set("Not published".to_owned());
+                                                                                                account_primary_handle
+                                                                                                    .set(String::new());
+                                                                                                if personal_handles().is_empty() {
+                                                                                                    personal_handles_status
+                                                                                                        .set("Not published".to_owned());
+                                                                                                }
                                                                                             }
-                                                                                            (!account.did.trim().is_empty())
-                                                                                                .then_some(account.did)
+                                                                                            (!canonical_actor.trim().is_empty())
+                                                                                                .then_some(canonical_actor)
                                                                                         }),
                                                                                     Err(_) => None,
                                                                                 }
@@ -4094,6 +4123,7 @@ pub fn RouterView() -> Element {
                                                 // resolution results (stale documents / old key
                                                 // sets).
                                                 did_cache.write().clear();
+                                                account_primary_handle.set(String::new());
                                                 personal_handles.set(Vec::new());
                                                 personal_handles_status.set("Not published".to_owned());
                                                 personal_handles_lookup_key.set(String::new());
@@ -4170,6 +4200,7 @@ pub fn RouterView() -> Element {
                             status,
                             config_store,
                             state_store,
+                            account_primary_handle,
                             personal_handles,
                             personal_handles_status,
                             auto_capture_callback: false,
@@ -4185,6 +4216,7 @@ pub fn RouterView() -> Element {
                             status,
                             config_store,
                             state_store,
+                            account_primary_handle,
                             personal_handles,
                             personal_handles_status,
                             auto_capture_callback: true,
@@ -4389,6 +4421,7 @@ pub fn RouterView() -> Element {
                             account_did,
                             device_id,
                             token,
+                            account_primary_handle: account_primary_handle(),
                             personal_handles: personal_handles(),
                             personal_handles_status: personal_handles_status(),
                             can_list_handles_for_subject,
@@ -4428,6 +4461,7 @@ pub fn RouterView() -> Element {
                                     base_url: base_url(),
                                     active_service_did: active_service_did.clone(),
                                     account_did: account_did(),
+                                    device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
                                     sync_cursor,

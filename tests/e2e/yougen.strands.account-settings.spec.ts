@@ -60,12 +60,34 @@ test("account menu falls back to account localpart when handle directory lookup 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
   await refreshServer(page);
+  await dismissBlockingRecoveryModal(page);
   await latestTestId(page, "account-menu-button").click();
 
   await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice.example:local.host");
   await expect(latestTestId(page, "account-menu-handles")).not.toContainText("unavailable");
   expect(handleDirectoryRequests).toBe(0);
   expect(pageErrors).toEqual([]);
+});
+
+test("account menu keeps account handle when handle directory returns an empty page", async ({
+  page,
+}) => {
+  let handleDirectoryRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/_cokret/find/directory/list-handles-for-subject") {
+      handleDirectoryRequests += 1;
+    }
+  });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await refreshServer(page);
+  await dismissBlockingRecoveryModal(page);
+  await latestTestId(page, "account-menu-button").click();
+
+  await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice:local.host");
+  await expect(latestTestId(page, "account-menu-handles")).not.toContainText("No handles published");
+  expect(handleDirectoryRequests).toBeGreaterThan(0);
 });
 
 test("settings language selector mirrors shell direction for RTL locales", async ({ page }) => {

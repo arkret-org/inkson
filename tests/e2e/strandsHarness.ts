@@ -3,6 +3,20 @@ import { mockCokretApi } from "./mockCokretApi";
 
 export const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
 export const CHILD_REALM = "ck:realm:01launchchild0000000000000";
+const DEFAULT_SERVER_URL = "https://local.host";
+const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
+const DEFAULT_DEVICE_ID = "ck:device:01964137-0000-7000-8000-0000000000a1";
+const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
+const TEST_SESSION_INJECTION_KEY = "yougen.test.session_injection.v1";
+const LOCALSTORAGE_SECRETS_FLAG = "yougen.security.allow_localstorage_secrets";
+const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+const defaultLocalConfig = {
+  server_url: DEFAULT_SERVER_URL,
+  account_did: DEFAULT_ACCOUNT_DID,
+  device_id: DEFAULT_DEVICE_ID,
+  session_credential: DEFAULT_SESSION_CREDENTIAL,
+};
 
 export function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
@@ -16,8 +30,9 @@ export async function dismissBlockingRecoveryModal(page: import("@playwright/tes
   // specific modal hidden — a freshly spawned modal must not fail the helper.
   for (let i = 0; i < 8; i += 1) {
     const modal = page.getByRole("dialog").last();
+    const timeout = i === 0 ? 8_000 : 800;
     const visible = await modal
-      .waitFor({ state: "visible", timeout: 800 })
+      .waitFor({ state: "visible", timeout })
       .then(() => true)
       .catch(() => false);
     if (!visible) {
@@ -106,21 +121,86 @@ export async function writeLocalConfig(
     session_credential: string;
   }>,
 ) {
-  await page.evaluate((nextConfig) => {
-    const current = localStorage.getItem("yougen.config.v1");
-    const parsed = current ? JSON.parse(current) : {};
-    localStorage.setItem(
-      "yougen.config.v1",
-      JSON.stringify({
-        server_url: "https://local.host",
-        account_did: "did:web:alice.example",
-        device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
-        session_credential: "sx:e2e-token",
-        ...parsed,
-        ...nextConfig,
-      }),
-    );
-  }, overrides);
+  await page.evaluate(
+    ({ defaults, nextConfig }) => {
+      const current = localStorage.getItem("yougen.config.v1");
+      const parsed = current ? JSON.parse(current) : {};
+      localStorage.setItem(
+        "yougen.config.v1",
+        JSON.stringify({
+          ...defaults,
+          ...parsed,
+          ...nextConfig,
+        }),
+      );
+    },
+    { defaults: defaultLocalConfig, nextConfig: overrides },
+  );
+}
+
+function sessionInjectionRecord(
+  overrides: Partial<{
+    grant_jwt: string;
+    grant_id: string;
+    audience: string;
+    dpop_seed_b64url: string;
+  }> = {},
+) {
+  return {
+    grant_jwt: DEFAULT_SESSION_CREDENTIAL,
+    grant_id: "ck:grant:e2e",
+    audience: DEFAULT_SERVER_URL,
+    dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,
+    ...overrides,
+  };
+}
+
+export async function addSessionGrantInjection(
+  page: import("@playwright/test").Page,
+  overrides: Partial<{
+    grant_jwt: string;
+    grant_id: string;
+    audience: string;
+    dpop_seed_b64url: string;
+  }> = {},
+) {
+  await page.addInitScript(
+    ({ record, flagKey, injectionKey }) => {
+      localStorage.setItem(flagKey, "1");
+      if (localStorage.getItem(injectionKey)) {
+        return;
+      }
+      localStorage.setItem(injectionKey, JSON.stringify(record));
+    },
+    {
+      record: sessionInjectionRecord(overrides),
+      flagKey: LOCALSTORAGE_SECRETS_FLAG,
+      injectionKey: TEST_SESSION_INJECTION_KEY,
+    },
+  );
+}
+
+export async function writeSessionGrantInjection(
+  page: import("@playwright/test").Page,
+  overrides: Partial<{
+    grant_jwt: string;
+    grant_id: string;
+    audience: string;
+    dpop_seed_b64url: string;
+  }> = {},
+) {
+  await addSessionGrantInjection(page, overrides);
+  await page.evaluate(
+    ({ record, flagKey, injectionKey }) => {
+      localStorage.setItem(flagKey, "1");
+      localStorage.setItem(injectionKey, JSON.stringify(record));
+    },
+    {
+      record: sessionInjectionRecord(overrides),
+      flagKey: LOCALSTORAGE_SECRETS_FLAG,
+      injectionKey: TEST_SESSION_INJECTION_KEY,
+    },
+  );
 }
 
 export async function writeLocalConfigAndReload(
@@ -132,22 +212,22 @@ export async function writeLocalConfigAndReload(
     session_credential: string;
   }>,
 ) {
-  await page.evaluate((nextConfig) => {
-    const current = localStorage.getItem("yougen.config.v1");
-    const parsed = current ? JSON.parse(current) : {};
-    localStorage.setItem(
-      "yougen.config.v1",
-      JSON.stringify({
-        server_url: "https://local.host",
-        account_did: "did:web:alice.example",
-        device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
-        session_credential: "sx:e2e-token",
-        ...parsed,
-        ...nextConfig,
-      }),
-    );
-    window.location.reload();
-  }, overrides);
+  await page.evaluate(
+    ({ defaults, nextConfig }) => {
+      const current = localStorage.getItem("yougen.config.v1");
+      const parsed = current ? JSON.parse(current) : {};
+      localStorage.setItem(
+        "yougen.config.v1",
+        JSON.stringify({
+          ...defaults,
+          ...parsed,
+          ...nextConfig,
+        }),
+      );
+      window.location.reload();
+    },
+    { defaults: defaultLocalConfig, nextConfig: overrides },
+  );
   await page.waitForLoadState("domcontentloaded");
 }
 
@@ -212,45 +292,32 @@ export async function dismissMlsBackupModal(page: import("@playwright/test").Pag
 
 export function registerStrandsBeforeEach() {
   test.beforeEach(async ({ page }, testInfo) => {
+    const initialDeviceId = testInfo.title.startsWith("fresh browser requires device authorization")
+      ? "ck:device:01964137-0000-7000-8000-0000000000b2"
+      : DEFAULT_DEVICE_ID;
     await mockCokretApi(page, {
+      currentDeviceId: initialDeviceId,
       advertiseListHandlesForSubject: !testInfo.title.startsWith(
         "account menu falls back to account localpart",
       ),
+      directoryPrimaryHandle: testInfo.title.startsWith(
+        "account menu keeps account handle when handle directory returns an empty page",
+      )
+        ? null
+        : undefined,
     });
     if (testInfo.title.startsWith("login page")) {
       return;
     }
-    const initialDeviceId = testInfo.title.startsWith("fresh browser requires device authorization")
-      ? "ck:device:01964137-0000-7000-8000-0000000000b2"
-      : "ck:device:01964137-0000-7000-8000-0000000000a1";
-    await page.addInitScript(() => {
+    await page.addInitScript((initialConfig) => {
       if (localStorage.getItem("yougen.config.v1")) {
         return;
       }
-      localStorage.setItem(
-        "yougen.config.v1",
-        JSON.stringify({
-          server_url: "https://local.host",
-          account_did: "did:web:alice.example",
-          device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
-          session_credential: "sx:e2e-token",
-        }),
-      );
+      localStorage.setItem("yougen.config.v1", JSON.stringify(initialConfig));
+    }, {
+      ...defaultLocalConfig,
+      device_id: initialDeviceId,
     });
-    await page.addInitScript((deviceId) => {
-      const current = localStorage.getItem("yougen.config.v1");
-      const parsed = current ? JSON.parse(current) : {};
-      localStorage.setItem(
-        "yougen.config.v1",
-        JSON.stringify({
-          server_url: "https://local.host",
-          account_did: "did:web:alice.example",
-          session_credential: "sx:e2e-token",
-          ...parsed,
-          device_id: deviceId,
-        }),
-      );
-    }, initialDeviceId);
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
   });

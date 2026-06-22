@@ -6,6 +6,7 @@
 //! because every MIMI operation requires an MLS group context.
 
 pub mod account_recovery;
+pub(crate) mod admission;
 pub mod governance;
 pub mod mimi_client;
 pub mod persistence;
