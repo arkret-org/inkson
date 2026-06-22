@@ -25,11 +25,12 @@
 pub use cokret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use cokret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, Did, FrameKeyContext, IceConfig,
+    CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, FrameKeyContext, IceConfig,
     MediaIceConfigRequestBody, MediaIceMode, MediaServiceAnchors, MlsExporterSource, RealmId,
-    call_media_token_exchange, derive_frame_key, verify_call_media_token_outcome,
-    verify_ice_config_outcome,
+    call_media_token_exchange, derive_frame_key, resolve_verification_method_key_from_document,
+    verify_call_media_token_outcome, verify_ice_config_outcome,
 };
+use ed25519_dalek::VerifyingKey;
 
 use crate::api::CokretApi;
 
@@ -243,20 +244,81 @@ impl MediaJoinRequest {
         })
     }
 
-    fn anchors(&self) -> Result<MediaServiceAnchors, RtcClientError> {
+    fn anchor_dids(&self) -> Result<Vec<Did>, RtcClientError> {
         let dids = self
             .media_service_dids
             .iter()
             .map(|did| Did::new(did.clone()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        let anchors = MediaServiceAnchors::new(dids);
-        if anchors.is_empty() {
+        if dids.is_empty() {
             // Fail closed: with no anchored media service we cannot trust
             // any issuer kid.
             return Err(RtcClientError::TokenIssuerUnauthorised);
         }
+        Ok(dids)
+    }
+
+    async fn anchors(&self, api: &CokretApi) -> Result<MediaServiceAnchors, RtcClientError> {
+        let dids = self.anchor_dids()?;
+        let mut anchors = MediaServiceAnchors::new(dids);
+        for service_did in &self.media_service_dids {
+            register_media_service_keys(api, &mut anchors, service_did).await?;
+        }
         Ok(anchors)
+    }
+}
+
+async fn register_media_service_keys(
+    api: &CokretApi,
+    anchors: &mut MediaServiceAnchors,
+    service_did: &str,
+) -> Result<(), RtcClientError> {
+    let outcome = api
+        .identity_resolve(service_did)
+        .await
+        .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+    if outcome.did_document.did.as_str() != service_did {
+        return Err(RtcClientError::TokenIssuerUnauthorised);
+    }
+
+    let document: DidDocument = serde_json::from_value(outcome.did_document.document)
+        .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+    if document.id.as_str() != service_did {
+        return Err(RtcClientError::TokenIssuerUnauthorised);
+    }
+
+    let mut registered = 0usize;
+    for method in document.verification_methods.keys() {
+        let resolved = resolve_verification_method_key_from_document(&document, method)
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+        if resolved.did.as_str() != service_did {
+            return Err(RtcClientError::TokenIssuerUnauthorised);
+        }
+        let key_bytes = resolved
+            .public_key
+            .ed25519_bytes()
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+        let verifying_key = VerifyingKey::from_bytes(&key_bytes)
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+        let kid = normalize_verification_method_kid(service_did, &resolved.verification_method);
+        anchors.insert_key(kid, verifying_key);
+        registered += 1;
+    }
+
+    if registered == 0 {
+        return Err(RtcClientError::TokenIssuerUnauthorised);
+    }
+    Ok(())
+}
+
+fn normalize_verification_method_kid(service_did: &str, method: &str) -> String {
+    if method.starts_with("did:") {
+        method.to_owned()
+    } else if method.starts_with('#') {
+        format!("{service_did}{method}")
+    } else {
+        format!("{service_did}#{method}")
     }
 }
 
@@ -399,7 +461,7 @@ pub async fn join_call_media(
     mls_exporter: &impl MlsExporterSource,
 ) -> Result<JoinedMediaSession, RtcClientError> {
     let ids = request.typed_ids()?;
-    let anchors = request.anchors()?;
+    let anchors = request.anchors(api).await?;
 
     // CALL-1 — token exchange + anchored verification.
     let mut token_request: CallMediaTokenExchangeRequestBody = call_media_token_exchange(
@@ -661,7 +723,7 @@ mod tests {
             media_service_dids: Vec::new(),
         };
         assert_eq!(
-            request.anchors().unwrap_err(),
+            request.anchor_dids().unwrap_err(),
             RtcClientError::TokenIssuerUnauthorised
         );
     }

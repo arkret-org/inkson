@@ -6,15 +6,15 @@
 //! caller that previously hand-rolled an `h` field MUST switch to that
 //! helper so the minimum-length floor stays enforced.
 //!
-//! P3B.9.2: re-export `RealmPosition` and add the small UI-facing
+//! P3B.9.2: re-export the SDK realm sync position and add the small UI-facing
 //! helpers ([`strand_position_label`], [`strand_position_hlc`]) that consume
 //! the new Strand position projection fields shipped on `cokret-service-api`.
 //! UI callers (kanban move arrow, timeline scroll-to-position) should
 //! prefer these over decoding the raw JSON.
 
 pub use cokret_sdk::cursor::{
-    CURSOR_HANDLE_MIN_LEN, Cursor, CursorPurpose, CursorTarget, RealmPosition, SyncPositions,
-    SyncTracker, generate_cursor_handle,
+    CURSOR_HANDLE_MIN_LEN, Cursor, CursorPurpose, RealmSyncPosition as RealmPosition,
+    SyncPositions, SyncTracker, generate_cursor_handle,
 };
 
 /// Compact label for a [`RealmPosition`] used by the timeline jump-to
@@ -24,7 +24,7 @@ pub use cokret_sdk::cursor::{
 /// `last_read_at` value.
 ///
 /// `last_read_at` is sourced from the raw account-subscribe projection
-/// for now (the SDK's `RealmPosition` struct has no field for it yet —
+/// for now (the SDK's realm position struct has no field for it yet —
 /// when the SDK promotes the field, callers should switch to reading
 /// it directly off the struct and pass the value in here).
 pub fn strand_position_label(position: &RealmPosition, last_read_at: Option<&str>) -> String {
@@ -32,11 +32,11 @@ pub fn strand_position_label(position: &RealmPosition, last_read_at: Option<&str
     // chunk so the label fits in a chip; if there's no hyphen at all
     // we fall back to the full value.
     let short = position
-        .order
+        .timeline_order
         .rsplit_once('-')
         .map(|(left, _)| left)
-        .unwrap_or(position.order.as_str());
-    let core = format!("@{} ⇢ {} tip(s)", short, position.p.len());
+        .unwrap_or(position.timeline_order.as_str());
+    let core = format!("@{} ⇢ {} tip(s)", short, position.frontier.len());
     match last_read_at
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -51,8 +51,8 @@ pub fn strand_position_label(position: &RealmPosition, last_read_at: Option<&str
 /// absent or non-string (older soland builds / SDK projections).
 ///
 /// Spec field name registered on `cokret-service-api/openapi.yaml`.
-/// Once the SDK promotes it onto [`RealmPosition`] directly, replace
-/// the JSON lookup with a struct field read.
+/// Once the SDK promotes it onto [`RealmPosition`] directly, replace the JSON
+/// lookup with a struct field read.
 pub fn last_read_at_from_projection(raw: &serde_json::Value) -> Option<String> {
     raw.get("last_read_at")
         .and_then(|value| value.as_str())
@@ -63,12 +63,11 @@ pub fn last_read_at_from_projection(raw: &serde_json::Value) -> Option<String> {
 
 /// Best-effort HLC extractor — returns the `order` field directly. The
 /// renamed projection field in the new spec is `hlc` (vs `order`); the
-/// SDK still serialises it as `o`, so the field on the struct stays
-/// `order` for now. Callers should use this helper rather than touching
-/// `position.order` so the rename lands in a single place when it
-/// arrives in the SDK.
+/// SDK cursor position model now stores it as `timeline_order`. Callers should
+/// use this helper rather than touching the struct field directly so the rename
+/// lands in a single place when it arrives in the SDK.
 pub fn strand_position_hlc(position: &RealmPosition) -> &str {
-    position.order.as_str()
+    position.timeline_order.as_str()
 }
 
 #[cfg(test)]
@@ -77,9 +76,9 @@ mod tests {
 
     fn sample_position() -> RealmPosition {
         RealmPosition {
-            p: vec!["ck:event:tip-1".to_owned(), "ck:event:tip-2".to_owned()],
-            order: "2026-05-26T00:00:00Z-0001".to_owned(),
-            h: "sha256:abcd".to_owned(),
+            frontier: vec!["ck:event:tip-1".to_owned(), "ck:event:tip-2".to_owned()],
+            timeline_order: "2026-05-26T00:00:00Z-0001".to_owned(),
+            state_digest: "sha256:abcd".to_owned(),
         }
     }
 
