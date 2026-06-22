@@ -1,5 +1,6 @@
 use super::operations::{
-    message_create_operation, message_create_operation_with_expiry, message_revise_operation,
+    message_create_operation, message_create_operation_with_expiry,
+    message_create_operation_with_message_id, message_revise_operation,
     public_update_requires_sanitization, reaction_add_operation,
 };
 use super::sync::timeline_events_from_sync_realms;
@@ -50,6 +51,33 @@ fn message_create_operation_attaches_incident_priority_under_realm() {
     assert_eq!(
         op.content["content"]["notification"]["priority"],
         "critical"
+    );
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .validate_payload(op.kind.as_str(), &op.content)
+        .unwrap();
+}
+
+#[test]
+fn message_create_operation_uses_planned_message_id_for_replies() {
+    let message_id = "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a24";
+    let reply_to = "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23";
+    let op = message_create_operation_with_message_id(
+        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "did:web:bob.example",
+        Some(reply_to),
+        "hello",
+        None,
+        message_id,
+    )
+    .expect("builds");
+
+    assert_eq!(op.content["message_id"], message_id);
+    assert_eq!(op.content["reply_to"], reply_to);
+    assert!(
+        !op.content["reply_to"]
+            .as_str()
+            .unwrap()
+            .starts_with("ck:event:")
     );
     cokret_sdk::schema::event_payload_validator_catalog()
         .validate_payload(op.kind.as_str(), &op.content)

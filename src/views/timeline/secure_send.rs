@@ -107,6 +107,7 @@ pub(super) fn send_timeline_encrypted_message(input: TimelineEncryptedSend) -> b
     let optimistic = TimelineEvent {
         realm_id: Some(realm.clone()),
         id: local_event_id.clone(),
+        message_id: Some(message_id.clone()),
         sender: actor.clone(),
         sender_display: "you".to_owned(),
         body: body.clone(),

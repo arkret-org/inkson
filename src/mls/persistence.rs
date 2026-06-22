@@ -364,16 +364,10 @@ impl MlsSnapshotEnvelope {
                 "mls_group_id": self.group_id,
                 "epoch": self.epoch,
                 "secret_id": "yougen_mls_snapshot",
-                "realm_ref": self.realm_id
+                "realm_id": self.realm_id
             }],
             "ciphertext": ciphertext,
-            "ciphertext_digest": ciphertext_digest,
-            "envelope_meta": {
-                "realm_ref": self.realm_id,
-                "group_id": self.group_id,
-                "epoch": self.epoch,
-                "recorded_at": self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true),
-            }
+            "ciphertext_digest": ciphertext_digest
         });
         if is_protocol_device_id(device_id)
             && let Some(object) = body.as_object_mut()
@@ -609,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn key_backup_body_carries_envelope_meta_and_blob() {
+    fn key_backup_body_carries_content_metadata_and_blob() {
         let envelope = encrypt_state(
             "ck:realm:demo",
             "aaaa",
@@ -646,6 +640,9 @@ mod tests {
         );
         assert!(body["encryption"].get("kdf").is_none());
         assert_eq!(body["contents"][0]["item_type"], "mls_group_state");
+        assert_eq!(body["contents"][0]["realm_id"], "ck:realm:demo");
+        assert_eq!(body["contents"][0]["mls_group_id"], "aaaa");
+        assert_eq!(body["contents"][0]["epoch"], 42);
         assert_eq!(
             body["domain_separation"]["hkdf_info"],
             "cokret-key-backup/mls_history/mls_snapshot/v1"
@@ -655,8 +652,7 @@ mod tests {
             Some(crate::key_backup::KeyBackupClass::MlsHistory),
         )
         .expect("MLS history backup envelope should validate");
-        assert_eq!(body["envelope_meta"]["realm_ref"], "ck:realm:demo");
-        assert_eq!(body["envelope_meta"]["epoch"], 42);
+        assert!(body.get("envelope_meta").is_none());
         // The ciphertext is a base64url-encoded JSON envelope — it
         // round-trips back to the same struct without exposing plaintext
         // MLS provider state to soland.
@@ -693,7 +689,6 @@ mod tests {
         assert_eq!(kept.epoch_started_at, baseline);
     }
 
-    #[test]
     #[test]
     fn encrypt_with_distinct_salts_produces_distinct_ciphertext() {
         // Sanity: salt randomisation defeats rainbow-table lookups

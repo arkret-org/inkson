@@ -240,20 +240,14 @@ pub(super) fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value>
         .collect()
 }
 
-/// Realm a `mls_history` backup body belongs to (`envelope_meta.realm_ref`,
-/// falling back to `contents[0].realm_ref`). Both survive soland's
-/// list-metadata redaction, so tail selection works on the redacted list.
+/// Realm a `mls_history` backup body belongs to. `contents[].realm_id` survives
+/// soland's list-metadata redaction, so tail selection works on the redacted list.
 fn mls_history_backup_realm_ref(body: &Value) -> Option<&str> {
-    body.get("envelope_meta")
-        .and_then(|meta| meta.get("realm_ref"))
+    body.get("contents")
+        .and_then(Value::as_array)
+        .and_then(|c| c.first())
+        .and_then(|item| item.get("realm_id"))
         .and_then(Value::as_str)
-        .or_else(|| {
-            body.get("contents")
-                .and_then(Value::as_array)
-                .and_then(|c| c.first())
-                .and_then(|item| item.get("realm_ref"))
-                .and_then(Value::as_str)
-        })
 }
 
 pub(super) fn backup_series_id(body: &Value) -> &str {

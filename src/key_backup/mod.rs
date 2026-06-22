@@ -17,6 +17,8 @@ pub const KEY_BACKUP_PLAINTEXT_SCHEMA: &str = "ck.schema.key_backup_plaintext.v1
 pub const KEY_BACKUP_ACTIVE_SERIES_SCHEMA: &str = "ck.schema.key_backup_active_series.v1";
 pub const DEFAULT_SSK_GENERATION: u64 = 1;
 
+pub use cokret_sdk::BackupClass as KeyBackupClass;
+
 /// Envelope fields the backup `auth_data.signature` MUST cover (key-management.md
 /// §7.4.1 / §7.6 + the `ck.schema.key_backup.v1` `signed_fields.allOf`). Optional
 /// fields (`supersedes`, `supersedes_digest`, `frontier_ref`) are only listed
@@ -56,38 +58,8 @@ const KEY_BACKUP_SIGNED_FIELDS_MANDATORY: &[&str] = &[
     "ciphertext_digest",
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyBackupClass {
-    DidRecovery,
-    SecretStorage,
-    MlsHistory,
-}
-
-impl KeyBackupClass {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::DidRecovery => "did_recovery",
-            Self::SecretStorage => "secret_storage",
-            Self::MlsHistory => "mls_history",
-        }
-    }
-}
-
-impl TryFrom<&str> for KeyBackupClass {
-    type Error = String;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "did_recovery" => Ok(Self::DidRecovery),
-            "secret_storage" => Ok(Self::SecretStorage),
-            "mls_history" => Ok(Self::MlsHistory),
-            other => Err(format!("unsupported backup_class {other}")),
-        }
-    }
-}
-
 pub fn key_backup_hkdf_info(class: KeyBackupClass, subdomain: &str) -> String {
-    format!("cokret-key-backup/{}/{subdomain}/v1", class.as_str())
+    class.hkdf_info(subdomain)
 }
 
 pub fn key_backup_delete_ownership_proof(actor_id: &str, backup_id: &str) -> String {

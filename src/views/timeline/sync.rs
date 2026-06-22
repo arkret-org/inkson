@@ -77,6 +77,10 @@ pub fn timeline_events_from_sync_realms(
                 .and_then(Value::as_str)
                 .unwrap_or("event:unknown")
                 .to_owned();
+            let message_id = event
+                .get("message_id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
             let content = event.get("content").unwrap_or(&Value::Null);
             let mut body = content
                 .get("body")
@@ -112,14 +116,14 @@ pub fn timeline_events_from_sync_realms(
                     .get("realm_id")
                     .and_then(Value::as_str)
                     .unwrap_or(realm_id);
-                let message_id = content.get("message_id").and_then(Value::as_str);
+                let sidecar_message_id = message_id.as_deref();
                 let strand_id = content
                     .get("strand_id")
                     .and_then(Value::as_str)
                     .or_else(|| event.get("thread_id").and_then(Value::as_str));
                 // a. Author sidecar — the plaintext the author stored on send.
                 let sidecar_body = store.and_then(|store| {
-                    let message_id = message_id?;
+                    let message_id = sidecar_message_id?;
                     let strand_id = strand_id?;
                     store.private_plaintext_for(
                         message_realm,
@@ -163,6 +167,7 @@ pub fn timeline_events_from_sync_realms(
             events.push(TimelineEvent {
                 realm_id: Some(realm_id.clone()),
                 id: event_id.clone(),
+                message_id,
                 // The canonical envelope subject is `actor_id`; sender display
                 // fields use the role-explicit `sender_actor_*` schema names.
                 // Prefer actor_id / sender_actor_id; `sender` is deprecated and
@@ -183,6 +188,10 @@ pub fn timeline_events_from_sync_realms(
                     .get("thread_id")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
+                reply_to: event
+                    .get("reply_to")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
                 event_id: Some(event_id),
                 encrypted_payload,
                 ..TimelineEvent::default()
@@ -196,7 +205,9 @@ pub(super) fn timeline_reply_quote_preview(
     events: &[TimelineEvent],
     reply_id: &str,
 ) -> Option<(String, String)> {
-    let quoted = events.iter().find(|e| e.id == reply_id)?;
+    let quoted = events
+        .iter()
+        .find(|event| event.message_reply_ref() == Some(reply_id) || event.id == reply_id)?;
     let body = if quoted.redacted {
         "[Message redacted]".to_owned()
     } else {

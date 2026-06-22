@@ -73,7 +73,34 @@ pub(crate) fn message_create_operation(
     body: &str,
     incident_priority: Option<&str>,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    message_create_operation_with_expiry(realm_id, actor, thread_id, body, incident_priority, None)
+    message_create_operation_core(
+        realm_id,
+        actor,
+        thread_id,
+        body,
+        incident_priority,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn message_create_operation_with_message_id(
+    realm_id: &str,
+    actor: &str,
+    thread_id: Option<&str>,
+    body: &str,
+    incident_priority: Option<&str>,
+    message_id: &str,
+) -> anyhow::Result<cokret_sdk::Event> {
+    message_create_operation_core(
+        realm_id,
+        actor,
+        thread_id,
+        body,
+        incident_priority,
+        Some(message_id),
+        None,
+    )
 }
 
 pub(crate) fn message_create_operation_with_expiry(
@@ -82,6 +109,26 @@ pub(crate) fn message_create_operation_with_expiry(
     thread_id: Option<&str>,
     body: &str,
     incident_priority: Option<&str>,
+    expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
+) -> anyhow::Result<cokret_sdk::Event> {
+    message_create_operation_core(
+        realm_id,
+        actor,
+        thread_id,
+        body,
+        incident_priority,
+        None,
+        expiry,
+    )
+}
+
+fn message_create_operation_core(
+    realm_id: &str,
+    actor: &str,
+    thread_id: Option<&str>,
+    body: &str,
+    incident_priority: Option<&str>,
+    message_id: Option<&str>,
     expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
 ) -> anyhow::Result<cokret_sdk::Event> {
     // Spec `event-payload.schema.json` `message_create_payload` requires
@@ -104,6 +151,9 @@ pub(crate) fn message_create_operation_with_expiry(
         "discussion",
         sdk_payload_value(content.to_value(), "timeline message content serialize")?,
     );
+    if let Some(message_id) = message_id {
+        payload = payload.with_message_id(message_id);
+    }
     if let Some(thread_id) = thread_id {
         payload = payload.with_reply_to(thread_id);
     }

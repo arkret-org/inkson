@@ -8,8 +8,9 @@ use serde_json::json;
 
 use super::model::{BlobAttachment, TimelineEvent};
 use super::operations::{
-    message_create_operation, pending_send_error_is_permanent, public_update_requires_sanitization,
-    sdk_event_local_operation_id, submit_timeline_message_with_plaintext_retry,
+    message_create_operation_with_message_id, pending_send_error_is_permanent,
+    public_update_requires_sanitization, sdk_event_local_operation_id,
+    submit_timeline_message_with_plaintext_retry,
 };
 use super::preferences::ATTACHMENT_BYTES;
 use super::secure_send::{TimelineEncryptedSend, send_timeline_encrypted_message};
@@ -320,8 +321,11 @@ pub(super) fn TimelineComposer(
                             write_status.set("plaintext blocked: acknowledge boundary or enable encryption".to_owned());
                             return;
                         }
-                        let reply_target = reply_to_index()
-                            .and_then(|idx| timeline().get(idx).map(|event| event.id.clone()));
+                        let reply_target = reply_to_index().and_then(|idx| {
+                            timeline()
+                                .get(idx)
+                                .and_then(|event| event.message_reply_ref().map(ToOwned::to_owned))
+                        });
                         let thread_id = reply_target.clone();
                         let realm_for_encrypt = selected_realm_key.clone();
                         let realm_for_plain = selected_realm_key.clone();
@@ -358,9 +362,11 @@ pub(super) fn TimelineComposer(
                             return;
                         } else {
                             let event_id = format!("ev:local:{}", uuid_v7());
+                            let message_id = format!("ck:message:{}", uuid_v7());
                             timeline.write().push(TimelineEvent {
                                 realm_id: Some(realm_for_plain.clone()),
                                 id: event_id.clone(),
+                                message_id: Some(message_id.clone()),
                                 sender: account_did_key.clone(),
                                 sender_display: "you".to_owned(),
                                 body: body.clone(),
@@ -388,12 +394,13 @@ pub(super) fn TimelineComposer(
                             let wait_for = active_sync_token(sync_cursor());
                             spawn(async move {
                                 if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                    let op = match message_create_operation(
+                                    let op = match message_create_operation_with_message_id(
                                         &realm,
                                         &actor,
                                         thread_id.as_deref(),
                                         &body,
                                         Some(incident_priority_for_send.as_str()),
+                                        &message_id,
                                     ) {
                                         Ok(op) => op,
                                         Err(error) => {
@@ -606,8 +613,11 @@ pub(super) fn TimelineComposer(
                                 return;
                             }
 
-                            let reply_target = reply_to_index()
-                                .and_then(|idx| timeline().get(idx).map(|event| event.id.clone()));
+                            let reply_target = reply_to_index().and_then(|idx| {
+                                timeline()
+                                    .get(idx)
+                                    .and_then(|event| event.message_reply_ref().map(ToOwned::to_owned))
+                            });
                             let thread_id = reply_target.clone();
                             let realm_for_encrypt = sc.clone();
                             let realm_for_plain = sc.clone();
@@ -642,9 +652,11 @@ pub(super) fn TimelineComposer(
                                 }
                             } else {
                                 let local_event_id = format!("local-event-{}", uuid_v7());
+                                let message_id = format!("ck:message:{}", uuid_v7());
                                 timeline.write().push(TimelineEvent::pending_message(
                                     realm_for_plain.clone(),
                                     local_event_id.clone(),
+                                    Some(message_id.clone()),
                                     ac.clone(),
                                     "local",
                                     body.clone(),
@@ -664,12 +676,13 @@ pub(super) fn TimelineComposer(
                                 spawn(async move {
                                     match authed_api_with_sync(&base, api_token, wait_for) {
                                         Ok(api) => {
-                                            let op = match message_create_operation(
+                                            let op = match message_create_operation_with_message_id(
                                                 &realm,
                                                 &actor,
                                                 thread_id.as_deref(),
                                                 &body_clone,
                                                 Some(incident_priority_for_send.as_str()),
+                                                &message_id,
                                             ) {
                                                 Ok(op) => op,
                                                 Err(error) => {

@@ -57,13 +57,6 @@ pub fn decode_mls_history_backup_envelope(
     let envelope: crate::mls::persistence::MlsSnapshotEnvelope = serde_json::from_slice(&bytes)
         .map_err(|err| MlsRuntimeError::BackupDecode(format!("snapshot envelope json: {err}")))?;
 
-    let meta = body
-        .get("envelope_meta")
-        .ok_or_else(|| MlsRuntimeError::BackupDecode("envelope_meta is required".to_owned()))?;
-    require_backup_str(meta, "realm_ref", &envelope.realm_id)?;
-    require_backup_str(meta, "group_id", &envelope.group_id)?;
-    require_backup_u64(meta, "epoch", envelope.epoch)?;
-
     let contents = body
         .get("contents")
         .and_then(Value::as_array)
@@ -76,7 +69,7 @@ pub fn decode_mls_history_backup_envelope(
             "contents must include mls_group_state".to_owned(),
         ));
     };
-    require_backup_str(group_state, "realm_ref", &envelope.realm_id)?;
+    require_backup_str(group_state, "realm_id", &envelope.realm_id)?;
     require_backup_str(group_state, "mls_group_id", &envelope.group_id)?;
     require_backup_u64(group_state, "epoch", envelope.epoch)?;
 

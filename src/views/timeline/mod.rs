@@ -12,7 +12,6 @@ mod tests;
 
 pub(crate) use decrypt::try_local_mls_decrypt_core;
 pub use model::{TimelineEvent, TimelineRevision};
-pub(crate) use operations::message_create_operation;
 pub use panel::TimelinePanel;
 pub(crate) use preferences::{
     TIMELINE_ENCRYPT_LOCAL_DEFAULT_KEY, TIMELINE_INCIDENT_PRIORITY_KEY, TIMELINE_PLAINTEXT_ACK_KEY,

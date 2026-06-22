@@ -146,7 +146,7 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
         "did:web:alice.example",
         "ck:device:01904100-0000-7000-8000-000000000001",
     );
-    body["envelope_meta"]["epoch"] = json!(7);
+    body["contents"][0]["epoch"] = json!(7);
 
     let error = decode_mls_history_backup_envelope(&body).unwrap_err();
 

@@ -25,6 +25,7 @@ pub(super) struct BlobAttachment {
 pub struct TimelineEvent {
     pub realm_id: Option<String>,
     pub id: String,
+    pub message_id: Option<String>,
     pub sender: String,
     pub sender_display: String,
     pub body: String,
@@ -55,6 +56,7 @@ impl Default for TimelineEvent {
     fn default() -> Self {
         Self {
             id: String::new(),
+            message_id: None,
             realm_id: None,
             sender: "yougen".to_owned(),
             sender_display: "local".to_owned(),
@@ -98,6 +100,7 @@ impl TimelineEvent {
     pub fn pending_message(
         realm_id: impl Into<String>,
         id: impl Into<String>,
+        message_id: Option<String>,
         sender: impl Into<String>,
         sender_display: impl Into<String>,
         body: impl Into<String>,
@@ -107,6 +110,7 @@ impl TimelineEvent {
         Self {
             realm_id: Some(realm_id.into()),
             id: id.into(),
+            message_id,
             sender: sender.into(),
             sender_display: sender_display.into(),
             body: body.into(),
@@ -125,6 +129,10 @@ impl TimelineEvent {
         self.pending = false;
         self.failed = false;
         self.error = None;
+    }
+
+    pub fn message_reply_ref(&self) -> Option<&str> {
+        self.message_id.as_deref()
     }
 
     pub fn apply_revision(
