@@ -96,7 +96,7 @@ pub struct SyncEngineContext {
     pub token: Signal<String>,
     pub state_store: Signal<LocalStateStore>,
     pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    pub timeline: Signal<Vec<crate::views::timeline::TimelineEvent>>,
+    pub projection_events: Signal<Vec<crate::views::account_projection::ProjectionEvent>>,
     pub sync_cursor: Signal<String>,
     pub status: Signal<String>,
     pub network_state: Signal<String>,
@@ -709,7 +709,7 @@ async fn run_iteration(
             // logout / profile switch / server switch during it bumps the
             // generation and rebinds `state_store`. Re-check before applying so a
             // stale-generation `response` (old account's realms / cursor /
-            // timeline) can't be written into the new generation's store and UI
+            // event projections) can't be written into the new generation's store and UI
             // signals. The generation bump covers the profile/server switch case.
             if generation() != start_generation {
                 return IterationOutcome::Ok {
@@ -865,7 +865,7 @@ async fn route_inbound_call_signals(
 
 /// Apply an account subscribe response: persist projections (server-authoritatively
 /// reconciled when full-sync), hydrate Seal views + account-data, and
-/// publish derived UI signals (realm tree nodes / timeline / device queue /
+/// publish derived UI signals (realm tree nodes / event projections / device queue /
 /// status / cursor).
 ///
 /// Exposed at module scope so tests can drive it without spinning up
@@ -882,7 +882,7 @@ pub fn apply_response(
     // Copy so this is cheap.
     let mut state_store = ctx.state_store;
     let realm_tree_nodes = ctx.realm_tree_nodes;
-    let mut timeline = ctx.timeline;
+    let mut projection_events = ctx.projection_events;
     let mut sync_cursor = ctx.sync_cursor;
     let mut status = ctx.status;
     let mut network_state = ctx.network_state;
@@ -1011,20 +1011,20 @@ pub fn apply_response(
     // Merge encrypted bodies on read (author sidecar → remote decrypt-on-read).
     // The `store` write guard above is out of scope; take a fresh read guard.
     let device_id = ctx.device_id.read().clone();
-    let synced_timeline = {
+    let synced_projection_events = {
         let store_guard = state_store.read();
-        crate::views::timeline::timeline_events_from_sync_realms(
+        crate::views::account_projection::projection_events_from_sync_realms(
             &response.realms,
             Some(&store_guard),
             Some((&account_did, &device_id)),
         )
     };
-    let next_timeline = if is_full_sync {
-        synced_timeline
+    let next_projection_events = if is_full_sync {
+        synced_projection_events
     } else {
-        crate::app::merge_timeline_events(&timeline.read(), synced_timeline)
+        crate::app::merge_projection_events(&projection_events.read(), synced_projection_events)
     };
-    timeline.set(next_timeline);
+    projection_events.set(next_projection_events);
 
     device_queue.set(state_store.read().load().to_device_inbox.len());
     if to_device_batch_allows_cursor_advance(&response.to_device, response.to_device_limited) {

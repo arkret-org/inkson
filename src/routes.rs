@@ -17,23 +17,11 @@ pub enum Route {
     #[route("/auth/callback", RoutePage)]
     AuthCallback,
 
-    #[route("/timeline", RoutePage)]
-    Timeline,
-
     #[route("/realms/manage", RoutePage)]
     RealmsManage,
 
     #[route("/realms/:realm_id", RealmPage)]
     Realm { realm_id: String },
-
-    #[route("/timeline/:realm_id", TimelineRealmPage)]
-    TimelineRealm { realm_id: String },
-
-    #[route("/timeline/:realm_id/message/:message_id", TimelineMessagePage)]
-    TimelineMessage {
-        realm_id: String,
-        message_id: String,
-    },
 
     #[route("/chat/:realm_id", ChatRealmPage)]
     Chat { realm_id: String },
@@ -193,18 +181,6 @@ fn RoutePage() -> Element {
 }
 
 #[component]
-fn TimelineRealmPage(realm_id: String) -> Element {
-    let _ = realm_id;
-    rsx! {}
-}
-
-#[component]
-fn TimelineMessagePage(realm_id: String, message_id: String) -> Element {
-    let _ = (realm_id, message_id);
-    rsx! {}
-}
-
-#[component]
 fn ChatRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
     rsx! {}
@@ -305,10 +281,7 @@ impl Route {
         match self {
             Route::Dashboard => View::Dashboard,
             Route::Login | Route::AuthCallback => View::Login,
-            Route::RealmsManage | Route::Realm { .. } => View::Timeline,
-            Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
-                View::Timeline
-            }
+            Route::RealmsManage | Route::Realm { .. } => View::Kanban,
             Route::Chat { .. } | Route::DirectConversation { .. } => View::Chat,
             Route::Contacts | Route::ContactsManage => View::Contacts,
             Route::FileTransfer => View::FileTransfer,
@@ -348,8 +321,6 @@ impl Route {
     pub fn realm_id(&self) -> Option<&str> {
         match self {
             Route::Realm { realm_id }
-            | Route::TimelineRealm { realm_id }
-            | Route::TimelineMessage { realm_id, .. }
             | Route::Chat { realm_id }
             | Route::DirectConversation { realm_id, .. }
             | Route::KanbanRealm { realm_id }
@@ -402,7 +373,6 @@ impl From<View> for Route {
         match view {
             View::Dashboard => Route::Dashboard,
             View::Login => Route::Login,
-            View::Timeline => Route::Timeline,
             View::Chat => Route::Chat {
                 realm_id: String::new(),
             },
@@ -447,7 +417,6 @@ mod tests {
             Route::Realm {
                 realm_id: "ck:realm:roundtrip".to_owned(),
             },
-            Route::Timeline,
             Route::Directory,
             Route::FileTransfer,
             Route::Setup,
@@ -499,14 +468,6 @@ mod tests {
             .realm_id(),
             Some("ck:realm:home")
         );
-        assert_eq!(
-            Route::TimelineRealm {
-                realm_id: "ck:realm:abc".to_owned()
-            }
-            .realm_id(),
-            Some("ck:realm:abc")
-        );
-        assert_eq!(Route::Timeline.realm_id(), None);
         assert_eq!(
             Route::RealmAdminSection {
                 realm_id: "ck:realm:admin".to_owned(),

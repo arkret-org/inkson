@@ -3,11 +3,11 @@ use super::*;
 impl LocalStateStore {
     /// Round R2/R3 (T07) — has the Realm (security boundary, formerly Space)
     /// emitted a `ck.realm.destroy` event we've already received? The
-    /// timeline / chat UI MUST gray out the send box and surface the
+    /// chat UI MUST gray out the send box and surface the
     /// "permanently retired" banner once this returns true.
     ///
     /// Backed by `realm_lifecycle_state`, which is updated as local raw
-    /// operations are appended. This keeps the timeline send-box guard at
+    /// operations are appended. This keeps the send-box guard at
     /// a constant-time lookup instead of scanning the raw operation log on
     /// every render.
     pub fn realm_is_destroyed(&self, realm_id: &str) -> bool {

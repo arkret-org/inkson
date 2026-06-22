@@ -130,7 +130,7 @@ pub(super) struct ConnectContext {
     pub(super) account_did: Signal<String>,
     pub(super) selected_realm_id: Signal<String>,
     pub(super) realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    pub(super) timeline: Signal<Vec<TimelineEvent>>,
+    pub(super) projection_events: Signal<Vec<ProjectionEvent>>,
     pub(super) device_queue: Signal<usize>,
     pub(super) frontier_state: Signal<String>,
     pub(super) crypto_state: Signal<String>,
@@ -320,7 +320,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         let mut account_did = ctx.account_did;
         let mut selected_realm_id = ctx.selected_realm_id;
         let mut realm_tree_nodes = ctx.realm_tree_nodes;
-        let mut timeline = ctx.timeline;
+        let mut projection_events = ctx.projection_events;
         let mut device_queue = ctx.device_queue;
         let mut frontier_state = ctx.frontier_state;
         let mut crypto_state = ctx.crypto_state;
@@ -592,7 +592,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         // about to run.
                         drop(store);
                         realm_tree_nodes.set(Vec::new());
-                        timeline.set(Vec::new());
+                        projection_events.set(Vec::new());
                         selected_realm_id.set(String::new());
                         sync_cursor.set("-".to_owned());
                         device_queue.set(0);
@@ -1109,7 +1109,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             }
                             *did_cache.write() = anchor.into_cache();
                         }
-                        let synced_timeline = {
+                        let synced_projection_events = {
                             {
                                 let mut store = state_store.write();
                                 crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
@@ -1122,7 +1122,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // above is out of scope here; take a fresh read
                             // guard scoped to this call.
                             let store_guard = state_store.read();
-                            crate::views::timeline::timeline_events_from_sync_realms(
+                            crate::views::account_projection::projection_events_from_sync_realms(
                                 &sync.realms,
                                 Some(&store_guard),
                                 Some((&canonical_actor, &device)),
@@ -1155,7 +1155,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         if needs_reset {
                             selected_realm_id.set(first_realm.unwrap_or_default());
                         }
-                        timeline.set(synced_timeline);
+                        projection_events.set(synced_projection_events);
                         device_queue.set(sync.to_device.len());
                         sync_cursor.set(sync.cursor);
                     }

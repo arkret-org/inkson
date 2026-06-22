@@ -9,7 +9,6 @@
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
 // | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | ck.session.grant, ck.device.authorize                            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
-// | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | ck.strand.update, ck.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ck.strand.move, ck.strand.reorder, ck.space.update (board/list container)|
 // | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.strand.tracks.update (unified), ck.message.*                      |
 // | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | ck.strand.update on synthesis track                                  |
@@ -35,6 +34,7 @@
 // 5. The Auth Service can only issue short-lived `ck.session.grant`; any change to the long-lived
 //    device set must go through `ck.device.authorize`.
 
+pub mod account_projection;
 pub mod agents;
 pub mod applets;
 pub mod audit;
@@ -80,22 +80,19 @@ pub mod quarantine;
 pub mod realm_admin;
 pub mod recovery;
 /// Shared E2EE "Send Secure" pipeline (MLS encrypt → forced commit →
-/// encrypted `ck.message.create`), used by both `chat` and `timeline` so the
-/// MLS core + persist-on-accept ordering stay identical across views.
+/// encrypted `ck.message.create`) used by chat message writes.
 pub mod secure_send;
 /// `views::settings` is a module directory. The aggregate entry lives in
 /// `settings/mod.rs`; per-card panels live in sibling files. See the
 /// settings/mod.rs head comment for the territory split (G3.Y1 vs G3.Y3).
 pub mod settings;
 pub mod setup;
-pub mod timeline;
 pub mod verify_device;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum View {
     Login,
     Dashboard,
-    Timeline,
     Chat,
     Contacts,
     Directory,

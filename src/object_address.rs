@@ -261,32 +261,26 @@ impl OpenedLink {
     /// route to be navigable; an alias-only address routes to the directory so
     /// the user can resolve it there.
     ///
-    /// yougen routes a Realm/Strand through the Realm timeline
-    /// (`/realms/:realm_id`, `/timeline/:realm_id`) and a Message as
-    /// `/timeline/:realm_id/message/:message_id`. We route strand targets to the
-    /// strand's timeline and message targets to the message seal.
+    /// yougen routes a Realm through the default Realm surface, a Strand to its
+    /// Board task deep link, and a Message to the Realm discussion surface.
     pub fn route_for(&self, target_kind: TargetKind) -> Route {
         match target_kind {
-            TargetKind::Realm => match &self.address.realm {
-                RealmRef::RealmId(uuid) => Route::Realm {
-                    realm_id: typed_realm(uuid),
-                },
-                RealmRef::Alias(_) => Route::Directory,
-            },
-            TargetKind::Strand => match self.address.strand.as_deref() {
-                Some(strand) => Route::TimelineRealm {
-                    realm_id: typed_strand(strand),
-                },
+            TargetKind::Realm => match typed_realm_route_id(&self.address.realm) {
+                Some(realm_id) => Route::Realm { realm_id },
                 None => Route::Directory,
             },
-            TargetKind::Message => match (
+            TargetKind::Strand => match (
+                typed_realm_route_id(&self.address.realm),
                 self.address.strand.as_deref(),
-                self.address.message.as_deref(),
             ) {
-                (Some(strand), Some(message)) => Route::TimelineMessage {
-                    realm_id: typed_strand(strand),
-                    message_id: typed_message(message),
+                (Some(realm_id), Some(strand)) => Route::KanbanTask {
+                    realm_id,
+                    task_id: typed_strand(strand),
                 },
+                _ => Route::Directory,
+            },
+            TargetKind::Message => match typed_realm_route_id(&self.address.realm) {
+                Some(realm_id) => Route::Chat { realm_id },
                 _ => Route::Directory,
             },
         }
@@ -315,19 +309,18 @@ fn typed_realm(bare: &str) -> String {
     }
 }
 
+fn typed_realm_route_id(realm: &RealmRef) -> Option<String> {
+    match realm {
+        RealmRef::RealmId(uuid) => Some(typed_realm(uuid)),
+        RealmRef::Alias(_) => None,
+    }
+}
+
 fn typed_strand(bare: &str) -> String {
     if bare.starts_with("ck:strand:") {
         bare.to_owned()
     } else {
         format!("ck:strand:{bare}")
-    }
-}
-
-fn typed_message(bare: &str) -> String {
-    if bare.starts_with("ck:message:") {
-        bare.to_owned()
-    } else {
-        format!("ck:message:{bare}")
     }
 }
 
@@ -409,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn message_link_routes_to_message_anchor() {
+    fn message_link_routes_to_chat() {
         let target = ShareTarget::message(
             &format!("ck:realm:{R}"),
             &format!("ck:strand:{F}"),
@@ -425,14 +418,10 @@ mod tests {
         let opened = OpenedLink::parse(&links.web_cokret).unwrap();
         assert!(opened.address.is_message());
         match opened.route_for(TargetKind::Message) {
-            Route::TimelineMessage {
-                realm_id,
-                message_id,
-            } => {
-                assert_eq!(realm_id, format!("ck:strand:{F}"));
-                assert_eq!(message_id, format!("ck:message:{M}"));
+            Route::Chat { realm_id } => {
+                assert_eq!(realm_id, format!("ck:realm:{R}"));
             }
-            other => panic!("expected TimelineMessage route, got {other:?}"),
+            other => panic!("expected Chat route, got {other:?}"),
         }
     }
 

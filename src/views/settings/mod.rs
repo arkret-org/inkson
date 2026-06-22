@@ -44,11 +44,6 @@ use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
-use crate::views::timeline::{
-    TIMELINE_ENCRYPT_LOCAL_DEFAULT_KEY, TIMELINE_INCIDENT_PRIORITY_KEY, TIMELINE_PLAINTEXT_ACK_KEY,
-    TIMELINE_PRIVATE_PLAINTEXT_KEY, TIMELINE_PUBLIC_UPDATE_GUARD_KEY, plaintext_visible_service,
-    timeline_incident_priority_preference, timeline_private_data_bool,
-};
 use crate::workflows::blocked_release_workflows;
 
 /// `ck.account_data` key used by the read-receipt preferences entry. Spec:
@@ -379,7 +374,7 @@ pub fn SettingsPanel(
     let new_override_level_selected = use_memo(move || Some(new_override_level()));
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
-    // `state_store.set_read_receipt_*` so the timeline view can resolve
+    // `state_store.set_read_receipt_*` so message readers can resolve
     // (strand → realm → default) before sending `ck.receipt.read`.
     let mut read_receipt_default_send =
         use_signal(|| state_store.read().read_receipt_default_send());
@@ -436,41 +431,6 @@ pub fn SettingsPanel(
     let mut blocklist_did_input = use_signal(String::new);
     let mut blocklist_reason_input = use_signal(String::new);
     let mut blocklist_status = use_signal(String::new);
-    let mut timeline_encrypt_local_default = use_signal(|| {
-        timeline_private_data_bool(
-            &state_store.read(),
-            &account_did(),
-            TIMELINE_ENCRYPT_LOCAL_DEFAULT_KEY,
-            false,
-        )
-    });
-    let mut timeline_public_update_guard = use_signal(|| {
-        timeline_private_data_bool(
-            &state_store.read(),
-            &account_did(),
-            TIMELINE_PUBLIC_UPDATE_GUARD_KEY,
-            true,
-        )
-    });
-    let mut timeline_private_plaintext = use_signal(|| {
-        timeline_private_data_bool(
-            &state_store.read(),
-            &account_did(),
-            TIMELINE_PRIVATE_PLAINTEXT_KEY,
-            false,
-        )
-    });
-    let mut timeline_plaintext_ack = use_signal(|| {
-        timeline_private_data_bool(
-            &state_store.read(),
-            &account_did(),
-            TIMELINE_PLAINTEXT_ACK_KEY,
-            false,
-        )
-    });
-    let mut timeline_incident_priority =
-        use_signal(|| timeline_incident_priority_preference(&state_store.read(), &account_did()));
-    let timeline_incident_priority_selected = use_memo(move || Some(timeline_incident_priority()));
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mls_group_policy_selected = use_memo(move || Some(mls_group_policy()));
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
@@ -535,7 +495,6 @@ pub fn SettingsPanel(
         format!("avatar-img lg default-avatar tone-{account_default_avatar_tone}");
     let principal_short_label = short_protocol_id(&principal_label);
     let device_short_label = short_protocol_id(&device_label);
-    let timeline_visible_service = plaintext_visible_service(&base_url());
     {
         let account_key = account_did();
         use_effect(move || {
@@ -2803,171 +2762,6 @@ pub fn SettingsPanel(
                                 account_did,
                                 token,
                                 state_store,
-                            }
-                        }
-                    }
-
-                    // ── Timeline composer defaults ──────────────────────
-                    if active_section == SettingsSection::Timeline {
-                        div { class: "settings-card-grid",
-                            div { class: "event settings-card-span-2", "data-testid": "settings-timeline-composer",
-                                div { class: "event-head",
-                                    span { "Composer defaults" }
-                                    span { "Timeline" }
-                                }
-                                div { class: "metric-grid",
-                                    label { class: "metric",
-                                        Checkbox {
-                                            "data-testid": "settings-timeline-encrypt-default",
-                                            checked: if timeline_encrypt_local_default() {
-                                                CheckboxState::Checked
-                                            } else {
-                                                CheckboxState::Unchecked
-                                            },
-                                            on_checked_change: move |state: CheckboxState| {
-                                                let enabled = bool::from(state);
-                                                timeline_encrypt_local_default.set(enabled);
-                                                state_store.write().save_private_data(
-                                                    &account_did(),
-                                                    TIMELINE_ENCRYPT_LOCAL_DEFAULT_KEY,
-                                                    enabled.to_string(),
-                                                );
-                                                status.set(if enabled {
-                                                    "Timeline composer defaults to Encrypt Local.".to_owned()
-                                                } else {
-                                                    "Timeline composer defaults to plaintext.".to_owned()
-                                                });
-                                            },
-                                        }
-                                        strong { "Encrypt Local by default" }
-                                        span { if timeline_encrypt_local_default() { "Enabled" } else { "Disabled" } }
-                                    }
-                                    div { class: "metric",
-                                        strong { "Incident priority" }
-                                        Select::<String> {
-                                            "data-testid": "settings-timeline-priority-select",
-                                            value: Some(timeline_incident_priority_selected.into()),
-                                            on_value_change: move |v: Option<String>| {
-                                                if let Some(value) = v {
-                                                    timeline_incident_priority.set(value.clone());
-                                                    state_store.write().save_private_data(
-                                                        &account_did(),
-                                                        TIMELINE_INCIDENT_PRIORITY_KEY,
-                                                        value.clone(),
-                                                    );
-                                                    status.set(format!("Timeline priority set to {value}."));
-                                                }
-                                            },
-                                            SelectOption::<String> { index: 0usize, value: "normal".to_string(), text_value: "Normal", "Normal" }
-                                            SelectOption::<String> { index: 1usize, value: "sev3".to_string(), text_value: "SEV-3", "SEV-3" }
-                                            SelectOption::<String> { index: 2usize, value: "sev2".to_string(), text_value: "SEV-2", "SEV-2" }
-                                            SelectOption::<String> { index: 3usize, value: "sev1".to_string(), text_value: "SEV-1", "SEV-1" }
-                                        }
-                                    }
-                                }
-                            }
-
-                            div { class: "event settings-card-span-2", "data-testid": "settings-timeline-plain-text",
-                                div { class: "event-head",
-                                    span { "Plaintext boundary" }
-                                    span { "Configured server" }
-                                }
-                                div { class: "metric-grid",
-                                    div { class: "metric", "data-testid": "settings-timeline-visible-service",
-                                        strong { "Visible service" }
-                                        span { "{timeline_visible_service}" }
-                                    }
-                                    div { class: "metric", "data-testid": "settings-timeline-disclosure",
-                                        strong { "Disclosure" }
-                                        span { "Plaintext messages may feed server-side search, previews, moderation, and notification snippets." }
-                                    }
-                                }
-                                div { class: "actions",
-                                    label {
-                                        Checkbox {
-                                            "data-testid": "settings-timeline-public-update-guard",
-                                            checked: if timeline_public_update_guard() {
-                                                CheckboxState::Checked
-                                            } else {
-                                                CheckboxState::Unchecked
-                                            },
-                                            on_checked_change: move |state: CheckboxState| {
-                                                let enabled = bool::from(state);
-                                                timeline_public_update_guard.set(enabled);
-                                                state_store.write().save_private_data(
-                                                    &account_did(),
-                                                    TIMELINE_PUBLIC_UPDATE_GUARD_KEY,
-                                                    enabled.to_string(),
-                                                );
-                                                status.set(if enabled {
-                                                    "Public update guard enabled.".to_owned()
-                                                } else {
-                                                    "Public update guard disabled.".to_owned()
-                                                });
-                                            },
-                                        }
-                                        " Public update guard"
-                                    }
-                                    label {
-                                        Checkbox {
-                                            "data-testid": "settings-timeline-private-plaintext",
-                                            checked: if timeline_private_plaintext() {
-                                                CheckboxState::Checked
-                                            } else {
-                                                CheckboxState::Unchecked
-                                            },
-                                            on_checked_change: move |state: CheckboxState| {
-                                                let enabled = bool::from(state);
-                                                timeline_private_plaintext.set(enabled);
-                                                if !enabled {
-                                                    timeline_plaintext_ack.set(false);
-                                                    state_store.write().save_private_data(
-                                                        &account_did(),
-                                                        TIMELINE_PLAINTEXT_ACK_KEY,
-                                                        "false",
-                                                    );
-                                                }
-                                                state_store.write().save_private_data(
-                                                    &account_did(),
-                                                    TIMELINE_PRIVATE_PLAINTEXT_KEY,
-                                                    enabled.to_string(),
-                                                );
-                                                status.set(if enabled {
-                                                    "Private plaintext guard enabled.".to_owned()
-                                                } else {
-                                                    "Private plaintext guard disabled.".to_owned()
-                                                });
-                                            },
-                                        }
-                                        " Treat plaintext drafts as private"
-                                    }
-                                    label {
-                                        Checkbox {
-                                            "data-testid": "settings-timeline-plaintext-ack",
-                                            disabled: !timeline_private_plaintext(),
-                                            checked: if timeline_plaintext_ack() {
-                                                CheckboxState::Checked
-                                            } else {
-                                                CheckboxState::Unchecked
-                                            },
-                                            on_checked_change: move |state: CheckboxState| {
-                                                let acknowledged = bool::from(state);
-                                                timeline_plaintext_ack.set(acknowledged);
-                                                state_store.write().save_private_data(
-                                                    &account_did(),
-                                                    TIMELINE_PLAINTEXT_ACK_KEY,
-                                                    acknowledged.to_string(),
-                                                );
-                                                status.set(if acknowledged {
-                                                    "Plaintext exposure acknowledged.".to_owned()
-                                                } else {
-                                                    "Plaintext exposure acknowledgement cleared.".to_owned()
-                                                });
-                                            },
-                                        }
-                                        " Acknowledge plaintext exposure"
-                                    }
-                                }
                             }
                         }
                     }

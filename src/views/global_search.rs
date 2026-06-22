@@ -5,7 +5,7 @@
 //! navigating directly to `/search` opens this panel. The remote Cokret HTTP
 //! catalog still has no spec-defined global plaintext search endpoint; this
 //! panel searches only the local client index material the device can already
-//! render from decrypted timeline projections.
+//! render from decrypted message projections.
 //!
 //! UI states surfaced:
 //! - empty (no query typed yet) — `global-search-results-empty`
@@ -30,8 +30,8 @@ use crate::models::IndexSearchView;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
+use crate::views::account_projection::projection_events_from_sync_realms;
 use crate::views::helpers::short_protocol_id;
-use crate::views::timeline::timeline_events_from_sync_realms;
 
 /// True when a `key` event should be treated as the global search
 /// trigger (`Ctrl+F` on Win/Linux, `Cmd+F` on macOS). The `meta` flag
@@ -109,7 +109,8 @@ pub fn local_decrypted_index_search(
         .cloned()
         .filter(|realm_id| !realm_id.trim().is_empty())
         .collect::<std::collections::BTreeSet<_>>();
-    let events = timeline_events_from_sync_realms(realms, Some(store), Some((actor_id, device_id)));
+    let events =
+        projection_events_from_sync_realms(realms, Some(store), Some((actor_id, device_id)));
     let mut results = Vec::new();
     for event in events {
         if results.len() >= limit {
@@ -135,7 +136,7 @@ pub fn local_decrypted_index_search(
         results.push(json!({
             "realm_id": realm_id,
             "kind": "message",
-            "surface": "timeline",
+            "surface": "message",
             "event_id": event_ref,
             "message_id": event_ref,
             "actor_id": event.sender,
@@ -179,9 +180,8 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
 
     if let Some(message_id) = string_field(result, &["message_id", "event_id", "object_id"]) {
         return Some(SearchDestination {
-            route: Route::TimelineMessage {
+            route: Route::Chat {
                 realm_id: realm_id.to_owned(),
-                message_id: message_id.clone(),
             },
             seal: Some(message_id),
             label: "Open message".to_owned(),
@@ -193,7 +193,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let route = match surface {
-        "timeline" | "message" => Route::TimelineRealm {
+        "message" => Route::Chat {
             realm_id: realm_id.to_owned(),
         },
         "kanban" | "board" => Route::KanbanRealm {
@@ -499,14 +499,10 @@ mod tests {
         let destination = result_destination(&row).expect("destination");
         assert_eq!(destination.seal.as_deref(), Some("ck:event:message"));
         match destination.route {
-            Route::TimelineMessage {
-                realm_id,
-                message_id,
-            } => {
+            Route::Chat { realm_id } => {
                 assert_eq!(realm_id, "ck:realm:demo");
-                assert_eq!(message_id, "ck:event:message");
             }
-            other => panic!("expected TimelineMessage, got {other:?}"),
+            other => panic!("expected Chat, got {other:?}"),
         }
     }
 

@@ -80,7 +80,7 @@ pub struct PollOption {
     pub label: String,
 }
 
-/// Aggregate state of a poll as it renders in the timeline.
+/// Aggregate state of a poll as it renders in chat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PollCard {
     pub poll_id: String,

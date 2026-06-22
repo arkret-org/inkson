@@ -238,7 +238,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
         serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
             .ok()?;
     let payload_value = serde_json::to_value(envelope.to_payload().ok()?).ok()?;
-    let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
+    let plaintext = crate::views::account_projection::try_local_mls_decrypt_core(
         state_store,
         realm_id,
         actor_id,
@@ -300,7 +300,7 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
 /// author's own local plaintext sidecar (`mls_private_plaintext`, keyed by
 /// `message:{message_id}`) over the encrypted payload. OpenMLS forbids an
 /// author from decrypting their OWN application messages, so for the author's
-/// encrypted messages the ciphertext is undecryptable and the timeline carries
+/// encrypted messages the ciphertext is undecryptable and the projection carries
 /// no plaintext body. Without the sidecar, keep the message as a visible
 /// crypto-pending row instead of dropping it, so a fresh browser shows "locked"
 /// rather than "No messages". The sidecar lookup mirrors kanban's
@@ -657,16 +657,16 @@ pub(crate) fn chat_messages_from_sync_realms_with_sidecar(
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     for (realm_id, body) in realms {
-        let Some(timeline_events) = body
+        let Some(wire_events) = body
             .get("timeline")
-            .and_then(|timeline| timeline.get("events"))
+            .and_then(|projection| projection.get("events"))
             .and_then(Value::as_array)
         else {
             continue;
         };
         messages.extend(chat_messages_from_events_with_sidecar(
             realm_id,
-            timeline_events,
+            wire_events,
             state_store,
             decrypt_identity,
         ));
@@ -679,14 +679,14 @@ pub(crate) fn poll_cards_from_sync_realms(
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::new();
     for body in realms.values() {
-        let Some(timeline_events) = body
+        let Some(wire_events) = body
             .get("timeline")
-            .and_then(|timeline| timeline.get("events"))
+            .and_then(|projection| projection.get("events"))
             .and_then(Value::as_array)
         else {
             continue;
         };
-        cards.extend(poll_cards_from_events(timeline_events));
+        cards.extend(poll_cards_from_events(wire_events));
     }
     cards
 }

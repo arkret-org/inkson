@@ -37,11 +37,11 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   ).toHaveText("Realm");
 
   await page.getByTestId("realm-tree-node-button").first().click();
-  await expect(page.getByTestId("timeline")).toBeVisible();
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(page.getByTestId("realm-context-bar")).not.toContainText("Space views");
   await expect(page.getByTestId("realm-context-bar")).not.toContainText("Discussion");
-  await expect(page.getByTestId("realm-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
-  await expect(page.getByTestId("timeline")).toContainText("Shared demo Realm served by mocked server");
+  await expect(page.getByTestId("realm-context-bar").getByRole("link", { name: "Board" })).toBeVisible();
+  await expect(page.getByTestId("realm-context-bar")).not.toContainText("Time" + "line");
 });
 
 test("authenticated login route returns to the workspace", async ({ page }) => {

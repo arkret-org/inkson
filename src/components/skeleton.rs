@@ -1,6 +1,6 @@
 //! P5 — skeleton loaders for high-latency surfaces.
 //!
-//! Spec / scope: applied to the timeline feed, the agent list, and the
+//! Spec / scope: applied to message-heavy lists, the agent list, and the
 //! key-backup history. The component is intentionally CSS-driven; the
 //! Rust side only renders structural placeholders + the
 //! `aria-busy="true"` annotation. The pulsing animation lives in

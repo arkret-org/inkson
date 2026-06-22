@@ -1,14 +1,13 @@
 //! Shared E2EE "Send Secure" pipeline.
 //!
 //! This module owns the MLS core + operation construction + commit/message
-//! submission orchestration that both the Chat discussion view
-//! (`views::chat`) and the Timeline view (`views::timeline`) use to send an
-//! encrypted `ck.message.create`. It was extracted from the (already verified)
-//! Chat "Send Secure" strand so the two views share ONE encryption + commit +
-//! persist-on-accept path instead of diverging.
+//! submission orchestration used by the Chat discussion view to send an
+//! encrypted `ck.message.create`. It was extracted from the verified Chat
+//! "Send Secure" strand so encryption, commit and persist-on-accept stay in one
+//! path.
 //!
 //! Boundary: this module performs everything that MUST be identical across the
-//! two views —
+//! message-write path —
 //!   1. MLS encrypt of the canonical Content Block bytes (`run_local_mls_encrypt` →
 //!      `mls::runtime::encrypt_message_with_device_snapshot`),
 //!   2. forced `ck.mls.commit` envelope build (governance binding / prev→post epoch / policy_root /
@@ -203,8 +202,8 @@ pub(crate) struct SecureSendBuild {
     pub message_event: cokret_sdk::Event,
     /// The spec `ck.schema.encrypted_envelope.v1` JSON wrapped in the message
     /// (`content.encrypted_content`). Callers attach it to the optimistic
-    /// timeline/chat event's `encrypted_payload` so the audit-accessed emitter
-    /// and reload/sync dedup see the same shape the synced event carries.
+    /// chat event's `encrypted_payload` so reload/sync dedup sees the same
+    /// shape the synced event carries.
     pub encrypted_content: serde_json::Value,
     /// Post-commit snapshot — persisted by the caller ONLY after the server
     /// accepts the commit (persist-on-accept).
@@ -378,7 +377,7 @@ pub(crate) enum SecureSendOutcome {
 /// Submit a built secure send: forced `ck.mls.commit` first (persist-on-accept
 /// snapshot + §7.10 history-backup schedule + move-submission record), then the
 /// encrypted `ck.message.create`. The MLS core ordering + persistence here is
-/// shared verbatim by Chat and Timeline.
+/// shared verbatim by the chat write path.
 ///
 /// The caller owns all UI reconciliation: it inspects [`SecureSendOutcome`] to
 /// clear/fail the optimistic bubble, persist the author sidecar, restore the

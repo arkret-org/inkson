@@ -254,7 +254,7 @@ test.describe("feature coverage placeholders", () => {
 
   test("session grant alone never reads E2EE history", async ({ page }) => {
     // this contract has two visible UI handles
-    // that the session-grant-only path MUST render: (1) the timeline's
+    // that the session-grant-only path MUST render: (1) the Board's
     // ciphertext-locked badge, and (2) the card-detail's locked
     // discussion fail-closed banner. We don't simulate a session-grant
     // login (that requires a coauth fixture mock); we DO assert that

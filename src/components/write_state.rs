@@ -3,7 +3,7 @@
 //! The yougen client surfaces the same write lifecycle in Board, Card, and
 //! Room views. `views/kanban.rs` originally defined its own `CardState`; this
 //! module pulls the same semantics into a shared component for chat / forum /
-//! timeline reuse, preventing drift across the three call sites.
+//! Board reuse, preventing drift across the three call sites.
 //!
 //! Spec sources:
 //! - `sync/operations-sync.md`: offline-first writes; the Event Envelope is the source of truth.

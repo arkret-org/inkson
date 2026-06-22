@@ -348,14 +348,14 @@ pub fn DashboardPanel(
                                                 let id = node.id.clone();
                                                 move |_| {
                                                     selected_realm_id.set(id.clone());
-                                                    view.set(super::View::Timeline);
+                                                    view.set(super::View::Kanban);
                                                 }
                                             },
                                             span { class: "avatar org", "{avatar_seed}" }
                                             span { class: "grow",
                                                 span { class: "title", "{display_name}" }
                                                 span { class: "sub",
-                                                    {node.description.as_deref().unwrap_or("Open timeline")}
+                                                    {node.description.as_deref().unwrap_or("Open Board")}
                                                 }
                                             }
                                             if has_remark {

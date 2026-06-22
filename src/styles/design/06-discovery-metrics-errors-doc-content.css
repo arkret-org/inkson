@@ -544,7 +544,7 @@
 
 /* ===== 21. CONTENT RENDERER (A3) ================================== */
 /* Shared shell around every rich message body. Stays neutral so it
-   doesn't introduce extra spacing inside timeline/chat row containers. */
+   doesn't introduce extra spacing inside message row containers. */
 .content-blocks { display: flex; flex-direction: column; gap: 6px; }
 .content-block-text { margin: 0; line-height: 1.55; white-space: pre-wrap; }
 

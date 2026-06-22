@@ -90,38 +90,32 @@ test.describe("responsive viewport — mobile", () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test("timeline composer remains reachable at mobile width", async ({ page }) => {
+  test("board remains reachable at mobile width", async ({ page }) => {
     await bootAuthenticatedShell(page);
-    await page.goto(`/timeline/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
 
-    await expect(page.getByTestId("timeline")).toBeVisible();
-    await expect(page.getByTestId("composer")).toBeVisible();
-    await expect(page.getByTestId("composer-input")).toBeVisible();
-    await page.getByTestId("composer-input").scrollIntoViewIfNeeded();
+    await expect(page.getByTestId("kanban-panel")).toBeVisible();
+    await expect(page.getByTestId("kanban-board-grid")).toBeVisible();
+    await page.getByTestId("kanban-board-grid").scrollIntoViewIfNeeded();
 
     const metrics = await page.evaluate(() => {
       const workspace = document.querySelector(".workspace-body")?.getBoundingClientRect();
-      const composer = document
-        .querySelector('[data-testid="composer"]')
+      const board = document
+        .querySelector('[data-testid="kanban-board-grid"]')
         ?.getBoundingClientRect();
-      const input = document
-        .querySelector('[data-testid="composer-input"]')
-        ?.getBoundingClientRect();
-      return workspace && composer && input
+      return workspace && board
         ? {
-            composerRight: composer.right,
-            inputRight: input.right,
+            boardRight: board.right,
+            boardBottom: board.bottom,
             workspaceRight: workspace.right,
-            inputBottom: input.bottom,
             workspaceBottom: workspace.bottom,
           }
         : null;
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.composerRight).toBeLessThanOrEqual(metrics!.workspaceRight + 1);
-    expect(metrics!.inputRight).toBeLessThanOrEqual(metrics!.workspaceRight + 1);
-    expect(metrics!.inputBottom).toBeLessThanOrEqual(metrics!.workspaceBottom + 1);
+    expect(metrics!.boardRight).toBeLessThanOrEqual(metrics!.workspaceRight + 1);
+    expect(metrics!.boardBottom).toBeLessThanOrEqual(metrics!.workspaceBottom + 1);
     await expectNoHorizontalOverflow(page);
   });
 });

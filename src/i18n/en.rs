@@ -12,7 +12,6 @@ pub fn english_translations() -> TranslationDict {
     // Navigation & Shell
     dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "Home");
-    dict.set("nav.timeline", "Timeline");
     dict.set("nav.chat", "Chat");
     dict.set("nav.forum", "Forum");
     dict.set("nav.directory", "Directory");
@@ -60,34 +59,7 @@ pub fn english_translations() -> TranslationDict {
         "Your session has expired. Log in again to continue.",
     );
 
-    // Timeline
-    dict.set(
-        "timeline.composer_placeholder",
-        "Write a plaintext dev-mode message (Ctrl+Enter to send)",
-    );
-    dict.set(
-        "timeline.encrypted_placeholder",
-        "Write an encrypted message (Ctrl+Enter to send)",
-    );
-    dict.set("timeline.send", "Send");
-    dict.set("timeline.reply", "Reply");
-    dict.set("timeline.react", "React");
-    dict.set("timeline.edit", "Edit");
-    dict.set("timeline.redact", "Redact");
-    dict.set("timeline.thread", "Thread");
-    dict.set("timeline.save", "Save");
-    dict.set("timeline.cancel", "Cancel");
-    dict.set("timeline.pending", "(pending)");
-    dict.set("timeline.edited", "(edited)");
-    dict.set("timeline.redacted", "[Message redacted]");
-    dict.set("timeline.search_placeholder", "Search messages...");
-    dict.set(
-        "timeline.no_events",
-        "No timeline events yet. Compose a dev-mode message.",
-    );
-    dict.set("timeline.encrypt_local", "Encrypt Local");
-    dict.set("timeline.attach_blob", "Attach Blob");
-    dict.set("timeline.report_queue", "Report / Queue");
+    dict.set("message.redacted", "[Message redacted]");
 
     // Directory
     dict.set("directory.title", "Directory");
@@ -702,7 +674,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("shortcuts.list.send", "Send the current message");
     // Personal blocklist (A5) — actor-private `ck.account.blocklist`
     // account-data namespace. Used by the Settings → Privacy panel, the
-    // member-row context action, and the timeline/chat "blocked user"
+    // member-row context action, and the message "blocked user"
     // placeholder row.
     dict.set("settings.privacy.title", "Privacy");
     dict.set("settings.privacy.blocked_users.title", "Blocked users");
@@ -773,8 +745,8 @@ pub fn english_translations() -> TranslationDict {
         "Their messages will be hidden behind a placeholder. You can unblock them anytime from Settings → Privacy.",
     );
     dict.set("member.block_confirm.confirm", "Block");
-    dict.set("timeline.blocked_user", "[Blocked user]");
-    dict.set("timeline.show_anyway", "Show anyway");
+    dict.set("message.blocked_user", "[Blocked user]");
+    dict.set("message.show_anyway", "Show anyway");
 
     // A3 (round 28): rich content renderer (markdown / image / video /
     // audio / code / generic attachment).
@@ -926,12 +898,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("moderation.appeal.state.decided", "Decided");
     dict.set("moderation.appeal.state.closed", "Closed");
 
-    // Round R2/R3 (T16) — late key recovery banner.
-    dict.set(
-        "timeline.late_recovery.banner",
-        "Older messages were just decrypted, {minutes} minutes after they arrived.",
-    );
-
     // Round R2/R3 (T07) — Realm terminal-state banner.
     dict.set(
         "realm.destroyed.banner",
@@ -962,13 +928,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set(
         "invite.terminal.invalidated_by_rate_limit",
         "Invalidated — too many failed attempts; the invite is now blocked.",
-    );
-
-    // Round 4 — e2ee_late_recovery banner sourced from
-    // `late_recovery_original_event_id`.
-    dict.set(
-        "timeline.e2ee_late_recovery.banner",
-        "Older messages were just decrypted, {minutes} minutes after they arrived.",
     );
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the

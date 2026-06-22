@@ -395,7 +395,7 @@ impl MoveSubmissionState {
     }
 
     /// Human-readable label (Chinese where the spec / sodmin already
-    /// uses Chinese copy). Surfaces in the timeline pill / banner.
+    /// uses Chinese copy). Surfaces in message status pills / banners.
     pub fn label_zh(self) -> &'static str {
         match self {
             Self::PendingSeal => "待 Seal",
@@ -550,7 +550,7 @@ pub struct ClientLocalState {
     /// Locally-submitted Move state tracker. Keyed by `move_id`; entries
     /// arrive when `submit_move` succeeds and get updated when the next
     /// sync surfaces an Seal that includes the id (or a rejection).
-    /// Drives the timeline / realm_admin state pill UI.
+    /// Drives message / realm_admin state pill UI.
     #[serde(default)]
     pub move_submissions: BTreeMap<String, MoveSubmissionRecord>,
     /// Encrypted private account data (preferences, tags, custom emojis).
@@ -620,7 +620,7 @@ pub struct ClientLocalState {
     /// base64url(plaintext)`. The receive chain is persisted forward on every
     /// successful decrypt (`encryption-and-audit.md` §5.6 first duty: persist the receive chain),
     /// which deliberately consumes the per-message ratchet key — re-rendering
-    /// the same ciphertext (timeline scroll, board re-projection, restart)
+    /// the same ciphertext (chat scroll, board re-projection, restart)
     /// MUST therefore be served from this cache instead of replaying the
     /// ratchet from an earlier snapshot. `payload_digest` is the envelope's
     /// canonical `sha256:` digest (bound over epoch/content_type/AAD/
@@ -648,7 +648,7 @@ pub struct ClientLocalState {
     pub contact_remarks: BTreeMap<String, crate::account_data::ContactRemark>,
     /// Actor-private personal blocklist per
     /// `discovery/client-preferences.md` (`ck.account.blocklist`). Each
-    /// entry hides messages from the targeted DID in the timeline/chat
+    /// entry hides messages from the targeted DID in chat
     /// renderers and surfaces in the Settings → Privacy panel. The
     /// shape mirrors the wire body so the future
     /// `ck.account_data.set("ck.account.blocklist", …)` push can serialise

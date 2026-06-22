@@ -1,5 +1,5 @@
 //! G3.Y2 — messaging UI scaffolding shared by `views::chat` and
-//! `views::timeline`.
+//! `views::account_projection`.
 //!
 //! This module hosts the *client-side* state machines and serialisers
 //! for the advanced messaging surfaces (mentions, polls, typing,
@@ -9,7 +9,7 @@
 //! `experimental-discussion-promote`.
 //!
 //! Submodules:
-//! * [`polls`] — poll draft + result-tally state used by the composer and the timeline poll card.
+//! * [`polls`] — poll draft + result-tally state used by the composer and chat poll card.
 //! * [`mentions`] — @mention picker state + sidecar hash helper for E2EE-aware mention routing.
 //! * [`discussion_promote`] — "promote this Strand's discussion into a Circle-scoped Strand" UI
 //!   state.

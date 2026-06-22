@@ -50,7 +50,7 @@ pub(super) fn OverviewSection(selected_realm_id: Signal<String>) -> Element {
                     Link { class: "secondary", to: Route::Directory, "Open Search" }
                 }
                 div { class: "metric",
-                    strong { "Realm timeline" }
+                    strong { "Board" }
                     span { "after bootstrap" }
                     if has_selected_realm {
                         Link {
@@ -59,7 +59,7 @@ pub(super) fn OverviewSection(selected_realm_id: Signal<String>) -> Element {
                             "Open Current Realm"
                         }
                     } else {
-                        Link { class: "secondary", to: Route::Timeline, "Open Timeline" }
+                        Link { class: "secondary", to: Route::Kanban, "Open Board" }
                     }
                 }
             }

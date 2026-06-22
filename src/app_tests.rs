@@ -675,16 +675,13 @@ fn auth_surface_routes_authenticated_login_to_app_shell() {
 }
 
 #[test]
-fn space_top_nav_excludes_discussion_surface() {
+fn realm_top_nav_starts_with_board_and_excludes_removed_surface() {
     let surfaces = RealmSurface::top_nav();
 
+    assert_eq!(surfaces, [RealmSurface::Board, RealmSurface::Document]);
     assert_eq!(
-        surfaces,
-        [
-            RealmSurface::Timeline,
-            RealmSurface::Board,
-            RealmSurface::Document
-        ]
+        RealmSurface::from_preference("timeline"),
+        Some(RealmSurface::Board)
     );
     assert_eq!(
         RealmSurface::from_preference("discussion"),
@@ -894,20 +891,20 @@ fn mls_welcome_bootstrap_key_waits_for_e2ee_profile_and_sync() {
 }
 
 #[test]
-fn merge_timeline_events_keeps_existing_messages_on_summary_only_delta() {
-    let mut summary = TimelineEvent::system_notice("summary-ck:realm:test", "server", "old");
+fn merge_projection_events_keeps_existing_messages_on_summary_only_delta() {
+    let mut summary = ProjectionEvent::system_notice("summary-ck:realm:test", "server", "old");
     summary.realm_id = Some("ck:realm:test".to_owned());
-    let message = TimelineEvent {
+    let message = ProjectionEvent {
         id: "ck:event:message".to_owned(),
         realm_id: Some("ck:realm:test".to_owned()),
         body: "welcome".to_owned(),
-        ..TimelineEvent::default()
+        ..ProjectionEvent::default()
     };
     let mut updated_summary =
-        TimelineEvent::system_notice("summary-ck:realm:test", "server", "new");
+        ProjectionEvent::system_notice("summary-ck:realm:test", "server", "new");
     updated_summary.realm_id = Some("ck:realm:test".to_owned());
 
-    let merged = merge_timeline_events(&[summary, message], vec![updated_summary]);
+    let merged = merge_projection_events(&[summary, message], vec![updated_summary]);
 
     assert_eq!(merged.len(), 2);
     assert_eq!(merged[0].body, "new");

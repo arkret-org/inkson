@@ -100,8 +100,8 @@ pub struct LocalStateStore {
     /// a decrypt recorded through any handle is visible to every reader.
     mls_receive_overlay: Arc<Mutex<MlsReceiveOverlay>>,
     /// YOU-02-004 — serialization lock for the MLS "decrypt → state
-    /// write-back" critical section. Multiple views (timeline / chat /
-    /// kanban) can trigger decrypt-on-read for the same realm; holding this
+    /// write-back" critical section. Multiple views (chat / kanban) can
+    /// trigger decrypt-on-read for the same realm; holding this
     /// for the whole restore→decrypt→export→persist sequence guarantees the
     /// receive chain only ever advances from the latest persisted snapshot
     /// (never replays the ratchet from a stale clone of it). Distinct from

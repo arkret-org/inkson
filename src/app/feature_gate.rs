@@ -77,9 +77,6 @@ pub(super) fn route_label(route: &Route) -> &'static str {
         Route::Login | Route::AuthCallback => "Login",
         Route::RealmsManage => "Manage Realms",
         Route::Realm { .. } => "Realm",
-        Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
-            "Timeline View"
-        }
         Route::Chat { .. } => "Discussion",
         Route::DirectConversation { .. } => "Direct",
         Route::ContactsManage => "Manage Contacts",
@@ -140,7 +137,6 @@ pub(super) fn settings_route_label(section: &str) -> &'static str {
         "invite-policy" | "invite_policy" => "Who can invite me",
         "blocklist" | "blocked-users" => "Blocked actors",
         "capabilities" => "Capabilities",
-        "timeline" | "composer" => "Timeline & composer",
         "audit" | "audit-log" | "developer" | "developer-tools" => "Diagnostics",
         "theme" => "Appearance & locale",
         "release" => "Diagnostics",

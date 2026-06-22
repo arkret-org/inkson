@@ -11,8 +11,8 @@ use crate::config::LocalConfigStore;
 
 /// Marker recognised in message bodies that points at an uploaded blob.
 ///
-/// Produced by `views::chat::ondrop` and `views::timeline::ondrop` when
-/// the composer drag-drop pipeline uploads bytes via
+/// Produced by chat composer drag-and-drop when the upload pipeline sends
+/// bytes via
 /// `CokretApi::upload_blob_bytes` (A6.2).
 const ATTACHMENT_MARKER_PREFIX: &str = "[Attachment:";
 const ATTACHMENT_MARKER_SUFFIX: char = ']';

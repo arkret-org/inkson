@@ -112,7 +112,7 @@ impl OptimisticRealmTreeProjection {
                 content_encryption_floor: encryption_floor.clone(),
                 metadata_encryption_floor: encryption_floor,
             },
-            timeline: ProjectionTimeline::default(),
+            event_feed: ProjectionEventFeed::default(),
         })
     }
 
@@ -135,7 +135,7 @@ impl OptimisticRealmTreeProjection {
                 summary,
                 space_kind: kind,
             },
-            timeline: ProjectionTimeline::default(),
+            event_feed: ProjectionEventFeed::default(),
         })
     }
 
@@ -156,7 +156,8 @@ pub(crate) struct RealmProjectionBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata_encryption_floor: Option<String>,
     summary: RealmProjectionSummary,
-    timeline: ProjectionTimeline,
+    #[serde(rename = "timeline")]
+    event_feed: ProjectionEventFeed,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -187,7 +188,8 @@ pub(crate) struct SpaceProjectionBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     default_realm_id: Option<String>,
     summary: SpaceProjectionSummary,
-    timeline: ProjectionTimeline,
+    #[serde(rename = "timeline")]
+    event_feed: ProjectionEventFeed,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -199,7 +201,7 @@ struct SpaceProjectionSummary {
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
-struct ProjectionTimeline {
+struct ProjectionEventFeed {
     events: Vec<Value>,
 }
 

@@ -134,7 +134,6 @@ pub fn chinese_translations() -> TranslationDict {
 
     dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "主页");
-    dict.set("nav.timeline", "时间线");
     dict.set("nav.chat", "聊天");
     dict.set("nav.forum", "论坛");
     dict.set("nav.directory", "目录");
@@ -178,17 +177,7 @@ pub fn chinese_translations() -> TranslationDict {
         "您的会话已过期。请重新登录以继续。",
     );
 
-    dict.set("timeline.send", "发送");
-    dict.set("timeline.reply", "回复");
-    dict.set("timeline.react", "反应");
-    dict.set("timeline.edit", "编辑");
-    dict.set("timeline.redact", "撤回");
-    dict.set("timeline.thread", "线程");
-    dict.set("timeline.save", "保存");
-    dict.set("timeline.cancel", "取消");
-    dict.set("timeline.pending", "(待定)");
-    dict.set("timeline.edited", "(已编辑)");
-    dict.set("timeline.redacted", "[消息已撤回]");
+    dict.set("message.redacted", "[消息已撤回]");
 
     dict.set("common.loading", "加载中...");
     dict.set("common.error", "错误");
@@ -725,8 +714,8 @@ pub fn chinese_translations() -> TranslationDict {
         "其消息将被占位符替代。您可随时在 设置 → 隐私 中取消屏蔽。",
     );
     dict.set("member.block_confirm.confirm", "屏蔽");
-    dict.set("timeline.blocked_user", "[已屏蔽用户]");
-    dict.set("timeline.show_anyway", "仍要查看");
+    dict.set("message.blocked_user", "[已屏蔽用户]");
+    dict.set("message.show_anyway", "仍要查看");
 
     // A3 (round 28): rich content renderer strings.
     dict.set("content.code.copy", "复制");

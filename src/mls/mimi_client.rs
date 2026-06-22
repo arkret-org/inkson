@@ -14,7 +14,7 @@
 //! Write paths (`submit_message`, `room_update`, `notify`,
 //! `report_abuse`) are explicitly NOT in this client — those are
 //! initiated by Cokret-native authoring surfaces (`chat.rs` etc.)
-//! and surfaced through the canonical timeline by soland's facade
+//! and surfaced through canonical message projections by soland's facade
 //! mapping (see `routing/interop/mimi.rs`). Crossing into MIMI's
 //! write side directly from yougen would bypass capability checks
 //! and policy gating that the Cokret path enforces.

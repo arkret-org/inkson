@@ -2628,7 +2628,7 @@ pub fn KanbanPanel(
                                 "data-testid": "kanban-card-redacted",
                                 "data-strand-id": "{redacted_card.id}",
                                 div { class: "event-head",
-                                    span { class: "entity-title muted", "{crate::i18n::tr(\"timeline.redacted\")}" }
+                                    span { class: "entity-title muted", "{crate::i18n::tr(\"message.redacted\")}" }
                                 }
                             }
                         }

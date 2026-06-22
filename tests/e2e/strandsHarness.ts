@@ -74,12 +74,6 @@ export async function openSettings(page: import("@playwright/test").Page) {
   await latestTestId(page, "account-menu-settings").click();
 }
 
-export async function openTimeline(page: import("@playwright/test").Page) {
-  await page.goto(`/timeline/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
-  await dismissBlockingRecoveryModal(page);
-  await expect(latestTestId(page, "timeline")).toBeVisible();
-}
-
 export async function openDiscussion(page: import("@playwright/test").Page) {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();

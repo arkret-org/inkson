@@ -94,7 +94,7 @@ impl LocalStateStore {
     }
 
     /// True when `did` appears in the local blocklist. Used by the
-    /// timeline + chat renderers to gate message bodies behind a
+    /// message renderers to gate message bodies behind a
     /// "Show anyway" affordance.
     pub fn is_user_blocked(&self, did: &str) -> bool {
         crate::account_data::is_blocked(&self.load().client_blocklist, did)

@@ -51,7 +51,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
   const advertiseListHandlesForSubject = options.advertiseListHandlesForSubject ?? true;
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
-  const timelineEvents: Array<Record<string, unknown>> = [];
+  const projectionEvents: Array<Record<string, unknown>> = [];
   let recoveryPolicy: Record<string, unknown> | null = null;
   const keyBackups = new Map<string, Record<string, unknown>>();
   const eventRealmId = (event: Record<string, unknown>) =>
@@ -481,7 +481,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         messageCounter += 1;
         syncToken = `sx:e2e:message-${messageCounter}`;
         const realmId = body.realm_id ?? DEMO_REALM;
-        timelineEvents.push({
+        projectionEvents.push({
           ...(body.payload ?? {}),
           event_id: body.event_id,
           kind: body.kind,
@@ -522,7 +522,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
             boardStrandProjections.push(nextProjection);
           }
         }
-        timelineEvents.push({
+        projectionEvents.push({
           ...(body.payload ?? {}),
           event_id: body.event_id,
           kind: body.kind,
@@ -708,7 +708,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
 
     if (url.pathname === "/_cokret/self/account/subscribe" && route.request().method() === "GET") {
-      const demoTimelineEvents = timelineEvents.filter((event) => eventRealmId(event) === DEMO_REALM);
+      const demoProjectionEvents = projectionEvents.filter((event) => eventRealmId(event) === DEMO_REALM);
       const notificationEvents = [
         {
           kind: "ck.notification",
@@ -748,7 +748,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
                   encryption_profile: realm.encryption_profile,
                 },
                 timeline: {
-                  events: timelineEvents.filter((event) => eventRealmId(event) === realm.id),
+                  events: projectionEvents.filter((event) => eventRealmId(event) === realm.id),
                   limited: false,
                 },
                 state: { events: [] },
@@ -763,7 +763,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
               summary: "Shared demo Realm served by mocked server",
               encryption_profile: "mls_rfc9420",
             },
-            timeline: { events: demoTimelineEvents, limited: false },
+            timeline: { events: demoProjectionEvents, limited: false },
             state: { events: [] },
             ephemeral: { events: [] },
             unread: { notification_count: 0, highlight_count: 0 },
@@ -988,8 +988,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         .map((realm) => realm.trim())
         .filter(Boolean);
       const events = requestedRealms.length
-        ? timelineEvents.filter((event) => requestedRealms.includes(eventRealmId(event)))
-        : timelineEvents;
+        ? projectionEvents.filter((event) => requestedRealms.includes(eventRealmId(event)))
+        : projectionEvents;
       return json(route, { events, next_cursor: null, has_more: false });
     }
 

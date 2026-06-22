@@ -26,10 +26,10 @@ pub(super) fn copy_text_to_clipboard(text: &str) {
     let _ = document::eval(&script);
 }
 
-pub fn merge_timeline_events(
-    current: &[TimelineEvent],
-    incoming: Vec<TimelineEvent>,
-) -> Vec<TimelineEvent> {
+pub fn merge_projection_events(
+    current: &[ProjectionEvent],
+    incoming: Vec<ProjectionEvent>,
+) -> Vec<ProjectionEvent> {
     let mut merged = current.to_vec();
     for event in incoming {
         if let Some(existing) = merged.iter_mut().find(|existing| existing.id == event.id) {

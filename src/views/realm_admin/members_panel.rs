@@ -440,7 +440,7 @@ fn MemberRowActions(
                         variant: ButtonVariant::Secondary,
                         "data-testid": "block-user-cancel-button",
                         onclick: move |_| block_confirm_did.set(None),
-                        {crate::i18n::tr("timeline.cancel")}
+                        {crate::i18n::tr("common.cancel")}
                     }
                 }
             }

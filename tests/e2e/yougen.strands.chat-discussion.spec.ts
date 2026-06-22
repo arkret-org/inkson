@@ -1,10 +1,8 @@
 import { expect, test } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
-  latestTestId,
   refreshServer,
   gotoAndDismissRecovery,
-  openTimeline,
   openDiscussion,
   createDiscussion,
   dismissMlsBackupModal,
@@ -236,76 +234,4 @@ test("chat separates shared pins from private saved account-data", async ({ page
     "data-source",
     "private-account-data",
   );
-});
-
-test("plaintext compose keeps request ids, revision chains, tombstones, and local MLS entries", async ({ page }) => {
-  await openTimeline(page);
-  await page.getByTestId("composer-input").fill("draft survives reload");
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
-  await openTimeline(page);
-  await expect(page.getByTestId("composer-input")).toHaveValue("draft survives reload");
-
-  const sendRequest = page.waitForRequest("**/_cokret/self/events");
-  await page.getByTestId("composer-input").fill("plain e2e message");
-  await page.getByTestId("send-button").click();
-  expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
-  await expect(page.getByTestId("timeline")).toContainText("plain e2e message");
-  await expect(page.getByTestId("write-status")).toContainText("persisted");
-
-  const editRequest = page.waitForRequest(
-    (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
-      request.method() === "POST" &&
-      request.postDataJSON().kind === "ck.message.revise",
-  );
-  await page.getByTestId("edit-button").last().click();
-  await page.getByTestId("edit-composer").locator("textarea").fill("plain e2e message edited");
-  await page.getByTestId("save-edit-button").click();
-  expect((await editRequest).headers()["x-cokret-request-id"]).toBeTruthy();
-  await expect(page.getByTestId("timeline")).toContainText("plain e2e message edited");
-  await expect(page.getByTestId("revision-chain")).toContainText("plain e2e message");
-  await expect(page.getByTestId("event-fact").last()).toContainText("fact");
-
-  const redactRequest = page.waitForRequest(
-    (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
-      request.method() === "POST" &&
-      request.postDataJSON().kind === "ck.message.redact",
-  );
-  await page.getByTestId("redact-button").last().click();
-  await page.getByTestId("confirm-redact-button").click();
-  expect((await redactRequest).headers()["x-cokret-request-id"]).toBeTruthy();
-  await expect(page.getByTestId("redacted-tombstone")).toContainText("[Message redacted]");
-  await expect(page.getByTestId("event-fact").last()).toContainText("tombstone ck:event:");
-
-  await page.getByTestId("composer-input").fill("secret e2e message");
-  await page.getByTestId("encrypt-local-button").click();
-  await page.getByTestId("send-button").click();
-  await expect(page.getByTestId("timeline")).toContainText("encrypted mls-rfc9420 epoch");
-  await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-crypto")).toContainText("encrypted local payload");
-});
-
-test("plaintext boundary blocks private drafts until exposure is acknowledged", async ({ page }) => {
-  await gotoAndDismissRecovery(page, "/settings/timeline");
-  await expect(latestTestId(page, "settings-timeline-plain-text")).toBeVisible();
-  await expect(latestTestId(page, "settings-timeline-visible-service")).toContainText("configured server");
-  await expect(latestTestId(page, "settings-timeline-disclosure")).toContainText("search");
-  await latestTestId(page, "settings-timeline-private-plaintext").click();
-
-  await openTimeline(page);
-  await latestTestId(page, "composer-input").fill("private plaintext body");
-  await latestTestId(page, "send-button").click();
-  await expect(latestTestId(page, "write-status")).toContainText("plaintext blocked");
-  await expect(latestTestId(page, "plaintext-boundary-warning")).toContainText("blocked");
-
-  await gotoAndDismissRecovery(page, "/settings/timeline");
-  await latestTestId(page, "settings-timeline-plaintext-ack").click();
-  await openTimeline(page);
-  await latestTestId(page, "composer-input").fill("acknowledged private plaintext body");
-  const sendRequest = page.waitForRequest("**/_cokret/self/events");
-  await latestTestId(page, "send-button").click();
-  expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
-  await expect(latestTestId(page, "write-status")).toContainText("persisted");
 });

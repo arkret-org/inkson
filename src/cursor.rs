@@ -9,7 +9,7 @@
 //! P3B.9.2: re-export the SDK realm sync position and add the small UI-facing
 //! helpers ([`strand_position_label`], [`strand_position_hlc`]) that consume
 //! the new Strand position projection fields shipped on `cokret-service-api`.
-//! UI callers (kanban move arrow, timeline scroll-to-position) should
+//! UI callers (kanban move arrow, message position chips) should
 //! prefer these over decoding the raw JSON.
 
 pub use cokret_sdk::cursor::{
@@ -17,8 +17,8 @@ pub use cokret_sdk::cursor::{
     SyncPositions, SyncTracker, generate_cursor_handle,
 };
 
-/// Compact label for a [`RealmPosition`] used by the timeline jump-to
-/// indicator and the kanban move arrow. Returns a string of the form
+/// Compact label for a [`RealmPosition`] used by Board move controls and
+/// message position chips. Returns a string of the form
 /// `"@<hlc-short> ⇢ <frontier-count> tip(s)"`, optionally suffixed
 /// with a middle-dot separator before `last read <rfc3339>` when the caller supplies the
 /// `last_read_at` value.

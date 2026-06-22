@@ -1,4 +1,4 @@
-//! Rich content rendering for message bodies (timeline + chat).
+//! Rich content rendering for message bodies.
 //!
 //! Task A3 (round 28). Uses a structured pipeline:
 //!

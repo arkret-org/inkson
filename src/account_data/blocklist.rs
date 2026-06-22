@@ -164,7 +164,7 @@ impl BlocklistEntry {
 
 /// True when actor `did` appears in `list`. Empty + whitespace `did` is
 /// always `false`. Matching is exact on the (already trimmed) DID string and
-/// scoped to `kind == "actor"` entries — this is the timeline / chat sender
+/// scoped to `kind == "actor"` entries — this is the message sender
 /// filter, so domain / service / organization blocks (which gate other
 /// surfaces) must not accidentally match a sender DID string.
 pub fn is_blocked(list: &[BlocklistEntry], did: &str) -> bool {

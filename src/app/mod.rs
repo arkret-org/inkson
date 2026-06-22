@@ -35,8 +35,8 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::ConnectionState;
+use crate::views::account_projection::ProjectionEvent;
 use crate::views::helpers::{persist_config, short_protocol_id};
-use crate::views::timeline::TimelineEvent;
 
 // YOU-07-001: post-login / startup-check effects and small types moved to
 // `crate::app::bootstrap` (move-only; logic, signatures, and bytes unchanged).
@@ -250,11 +250,6 @@ pub fn RouterView() -> Element {
         .find(|node| node.kind == RealmTreeNodeKind::Realm)
         .map(|node| node.id.clone())
         .unwrap_or_default();
-    let initial_draft = initial_realm_tree_nodes
-        .first()
-        .and_then(|space| initial_local_state.drafts.get(&space.id))
-        .cloned()
-        .unwrap_or_default();
     let initial_push_state =
         crate::push::push_status_label(initial_local_state.push_registration.as_ref());
     let initial_realm_tree_nodes_for_signal = initial_realm_tree_nodes.clone();
@@ -262,8 +257,7 @@ pub fn RouterView() -> Element {
     let mut selected_realm_id = use_signal(move || initial_selected_realm_id);
     let mut new_space_context_node = use_signal(String::new);
     let mut realm_tree_nodes = use_signal(move || initial_realm_tree_nodes_for_signal);
-    let mut timeline = use_signal(Vec::<TimelineEvent>::new);
-    let draft = use_signal(move || initial_draft);
+    let mut projection_events = use_signal(Vec::<ProjectionEvent>::new);
     let mut device_queue = use_signal(|| 0usize);
     let push_state = use_signal(move || initial_push_state);
     let frontier_state = use_signal(|| "Not loaded".to_owned());
@@ -700,7 +694,7 @@ pub fn RouterView() -> Element {
         let mut invalidator_sync_cursor = sync_cursor;
         let mut invalidator_selected_realm_id = selected_realm_id;
         let mut invalidator_realm_tree_nodes = realm_tree_nodes;
-        let mut invalidator_timeline = timeline;
+        let mut invalidator_projection_events = projection_events;
         let mut invalidator_device_queue = device_queue;
         let mut invalidator_crypto_state = crypto_state;
         let mut invalidator_status = status;
@@ -735,7 +729,7 @@ pub fn RouterView() -> Element {
                 invalidator_sync_cursor.set("-".to_owned());
                 invalidator_selected_realm_id.set(String::new());
                 invalidator_realm_tree_nodes.set(Vec::new());
-                invalidator_timeline.set(Vec::new());
+                invalidator_projection_events.set(Vec::new());
                 invalidator_device_queue.set(0);
                 invalidator_crypto_state.set("Session expired".to_owned());
                 invalidator_status.set("Session expired; sign in again".to_owned());
@@ -846,7 +840,7 @@ pub fn RouterView() -> Element {
                     account_did,
                     selected_realm_id,
                     realm_tree_nodes,
-                    timeline,
+                    projection_events,
                     device_queue,
                     frontier_state,
                     crypto_state,
@@ -904,7 +898,7 @@ pub fn RouterView() -> Element {
             token,
             state_store,
             realm_tree_nodes,
-            timeline,
+            projection_events,
             sync_cursor,
             status,
             network_state,
@@ -1657,8 +1651,7 @@ pub fn RouterView() -> Element {
     if let (Some(realm_id), Some(surface)) = (routed_realm_id.as_deref(), resolved_realm_surface)
         && matches!(
             &route,
-            Route::TimelineRealm { .. }
-                | Route::KanbanRealm { .. }
+            Route::KanbanRealm { .. }
                 | Route::KanbanBoard { .. }
                 | Route::KanbanBoardTask { .. }
                 | Route::DocumentRealm { .. }
@@ -2352,7 +2345,7 @@ pub fn RouterView() -> Element {
                                     account_did,
                                     selected_realm_id,
                                     realm_tree_nodes,
-                                    timeline,
+                                    projection_events,
                                     device_queue,
                                     frontier_state,
                                     crypto_state,
@@ -2501,7 +2494,7 @@ pub fn RouterView() -> Element {
                                                     sync_cursor,
                                                     selected_realm_id,
                                                     realm_tree_nodes,
-                                                    timeline,
+                                                    projection_events,
                                                     device_queue,
                                                     frontier_state,
                                                     crypto_state,
@@ -2532,7 +2525,7 @@ pub fn RouterView() -> Element {
                                                         account_did,
                                                         selected_realm_id,
                                                         realm_tree_nodes,
-                                                        timeline,
+                                                        projection_events,
                                                         device_queue,
                                                         frontier_state,
                                                         crypto_state,
@@ -3552,7 +3545,7 @@ pub fn RouterView() -> Element {
                                         },
                                         on_pick_realm: move |realm_id: String| {
                                             selected_realm_id.set(realm_id.clone());
-                                            view.set(crate::views::View::Timeline);
+                                            view.set(crate::views::View::Kanban);
                                             let _ = navigator.push(Route::Realm { realm_id });
                                             palette_open.set(false);
                                             topbar_search_expanded.set(false);
@@ -4017,7 +4010,7 @@ pub fn RouterView() -> Element {
                                                 // Realm tree updates between this click and the
                                                 // navigator.push(Login).
                                                 realm_tree_nodes.set(Vec::new());
-                                                timeline.set(Vec::new());
+                                                projection_events.set(Vec::new());
                                                 sync_cursor.set("-".to_owned());
                                                 selected_realm_id.set(String::new());
                                                 device_queue.set(0);
@@ -4143,29 +4136,7 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Realm { .. } => {
-                        match resolved_realm_surface.unwrap_or(RealmSurface::Timeline) {
-                            RealmSurface::Timeline => {
-                                if minimal_ready {
-                                    rsx! {
-                                        crate::views::timeline::TimelinePanel {
-                                            base_url: base_url(),
-                                            account_did: account_did(),
-                                            device_id: device_id(),
-                                            token,
-                                            selected_realm_id: active_realm_id.clone(),
-                                            timeline,
-                                            draft,
-                                            state_store,
-                                            crypto_state,
-                                            sync_cursor,
-                                            frontier_state,
-                                            base_url_sig: base_url,
-                                        }
-                                    }
-                                } else {
-                                    rsx! { ProfileGateNotice { profile: "minimal_client" } }
-                                }
-                            }
+                        match resolved_realm_surface.unwrap_or(RealmSurface::Board) {
                             RealmSurface::Board => {
                                 if kanban_ready {
                                     rsx! {
@@ -4203,33 +4174,6 @@ pub fn RouterView() -> Element {
                                     rsx! { ProfileGateNotice { profile: "full_client" } }
                                 }
                             }
-                        }
-                    },
-                    Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
-                        if let Some(sid) = route.realm_id()
-                            && selected_realm_id() != sid
-                        {
-                            selected_realm_id.set(sid.to_owned());
-                        }
-                        if minimal_ready {
-                            rsx! {
-                                crate::views::timeline::TimelinePanel {
-                                    base_url: base_url(),
-                                    account_did: account_did(),
-                                    device_id: device_id(),
-                                    token,
-                                    selected_realm_id: active_realm_id.clone(),
-                                    timeline,
-                                    draft,
-                                    state_store,
-                                    crypto_state,
-                                    sync_cursor,
-                                    frontier_state,
-                                    base_url_sig: base_url,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
                         }
                     },
                     Route::DirectConversation { realm_id, strand_id } => {

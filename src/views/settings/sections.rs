@@ -22,7 +22,6 @@ pub(super) enum SettingsSection {
     Blocklist,
     /// G3.Y3 — capability delegation viewer (`/settings/capabilities`).
     Capabilities,
-    Timeline,
     Theme,
     Release,
 }
@@ -42,7 +41,6 @@ impl SettingsSection {
             "invite-policy" | "invite_policy" => Self::InvitePolicy,
             "blocklist" | "blocked-users" => Self::Blocklist,
             "capabilities" => Self::Capabilities,
-            "timeline" | "composer" => Self::Timeline,
             "audit" | "audit-log" | "developer" | "developer-tools" | "release" => Self::Release,
             "theme" => Self::Theme,
             _ => Self::Server,
@@ -64,7 +62,6 @@ impl SettingsSection {
             Self::InvitePolicy => "invite-policy",
             Self::Blocklist => "blocklist",
             Self::Capabilities => "capabilities",
-            Self::Timeline => "timeline",
             Self::Theme => "theme",
             Self::Release => "release",
         }
@@ -85,7 +82,6 @@ impl SettingsSection {
             Self::InvitePolicy => "Who can invite me",
             Self::Blocklist => "Blocked actors",
             Self::Capabilities => "Capabilities",
-            Self::Timeline => "Timeline & composer",
             Self::Theme => "Appearance & locale",
             Self::Release => "Diagnostics",
         }
@@ -148,8 +144,7 @@ pub(super) const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     // disclosure control (spec governance/content-moderation.md §4).
     SettingsSection::Blocklist,
 ];
-pub(super) const SETTINGS_CLIENT_GROUP: &[SettingsSection] =
-    &[SettingsSection::Timeline, SettingsSection::Theme];
+pub(super) const SETTINGS_CLIENT_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
 pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
     SettingsSection::Capabilities,
     SettingsSection::Storage,

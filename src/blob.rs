@@ -204,7 +204,7 @@ pub fn encrypt_mls_asset(
 
 /// Wrap a [`MediaMetadata`] reference in the canonical event payload shape
 /// used by `ck.message.create` attachments. Useful for building chat /
-/// timeline event bodies that carry a single attached blob.
+/// message event bodies that carry a single attached blob.
 pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
     Ok(json!({
         "kind": "ck.content.attachment",

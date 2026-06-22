@@ -107,7 +107,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             id: "message.create",
             name: "Plaintext and local encrypted compose",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Space timeline composer",
+            client_surface: "Chat composer",
             server_dependency: "Needs real web MLS crypto store and client-side signed commit path for offline queue",
         },
         ClientWorkflow {

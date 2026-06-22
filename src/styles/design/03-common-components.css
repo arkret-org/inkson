@@ -450,7 +450,7 @@ button[data-style="link"]:disabled:hover {
 
 /* Pinned bar (A6.3): horizontal scrollable strip at the top of a
    space showing every pinned message. Click a pill to scroll the
-   timeline to that message. */
+   message list to that message. */
 .pinned-bar {
   display: flex;
   gap: 6px;
@@ -802,4 +802,3 @@ label.avatar-upload-button:active,
 .mb-24 { margin-bottom: 24px; }
 .ml-auto { margin-left: auto; }
 .divider { border-top: 1px solid var(--border); margin: 12px 0; }
-

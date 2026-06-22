@@ -6,7 +6,6 @@ import {
   refreshServer,
   gotoAndDismissRecovery,
   dismissRecoveryMissingModal,
-  openTimeline,
   dismissMlsBackupModal,
 } from "./strandsHarness";
 
@@ -76,7 +75,7 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
   assertWorkspaceLayout(await measureLayout());
 });
 
-test("setup, onboarding, and space timeline strand works", async ({ page }) => {
+test("setup, onboarding, and Board entry works", async ({ page }) => {
   await refreshServer(page);
   await expect(page.getByTestId("sync-cursor")).toContainText("ck:cursor:e2e-2");
 
@@ -145,22 +144,16 @@ test("setup, onboarding, and space timeline strand works", async ({ page }) => {
   await expect(page.getByTestId("realm-lifecycle-strand").getByTestId("selected-realm-id")).toContainText("ck:realm:");
 
   await page.getByTestId("realm-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
-  await expect(page.getByTestId("timeline")).toBeVisible();
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(page.getByTestId("sidebar")).toContainText("Setup Strand Space");
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
   // The reload re-runs account-health detection; dismiss any account-health
-  // modal that re-appears so it doesn't block the composer.
+  // modal that re-appears so it doesn't block the Board.
   await dismissRecoveryMissingModal(page);
   await dismissMlsBackupModal(page);
   await expect(page.getByTestId("sidebar")).toContainText("Setup Strand Space");
-  await expect(page.getByTestId("timeline")).toBeVisible();
-  const sendRequest = page.waitForRequest("**/_cokret/self/events");
-  await page.getByTestId("composer-input").fill("setup strand message");
-  await page.getByTestId("send-button").click();
-  expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
-  await expect(page.getByTestId("timeline")).toContainText("setup strand message");
-  await expect(page.getByTestId("write-status")).toContainText("persisted");
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:");
 });
@@ -253,23 +246,6 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/repair");
   await page.getByTestId("archive-realm-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("archive event submitted");
-});
-
-test("moderation report and to-device queue action hits protocol endpoints", async ({ page }) => {
-  await openTimeline(page);
-  const report = page.waitForRequest("**/_cokret/self/moderation/report");
-  const deviceMessage = page.waitForRequest(
-    (request) =>
-      request.url().endsWith("/_cokret/self/device_messages") &&
-      request.method() === "POST",
-  );
-
-  await page.getByTestId("report-queue-button").click();
-
-  expect((await report).method()).toBe("POST");
-  const deviceMessageRequest = await deviceMessage;
-  expect(deviceMessageRequest.method()).toBe("POST");
-  expect(deviceMessageRequest.headers()["idempotency-key"]).toBe("yougen-txn-1");
 });
 
 test("visual smoke renders core client pages on desktop and mobile", async ({ page }) => {

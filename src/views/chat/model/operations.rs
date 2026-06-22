@@ -28,8 +28,8 @@ pub(crate) fn fail_optimistic_chat_send(
 
 // The MLS encrypt + commit/envelope/payload build + commit→message submission
 // orchestration for the encrypted "Send Secure" path now lives in the shared
-// `crate::views::secure_send` module so the Chat and Timeline views drive ONE
-// MLS core + persist-on-accept pipeline. The Chat composer calls
+// `crate::views::secure_send` module so chat drives ONE MLS core +
+// persist-on-accept pipeline. The Chat composer calls
 // `secure_send::build_secure_send` / `secure_send::submit_secure_send`
 // directly; the former local `run_local_mls_encrypt` / `chat_mls_*` helpers
 // moved there verbatim.
@@ -364,7 +364,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
             .with_audience_mentions(audience_mentions)
             .map_err(|err| anyhow::anyhow!("chat message audience_mentions serialize: {err}"))?;
     }
-    // T2.3: v1 wire uses `track_name` — a display-only timeline segment
+    // T2.3: v1 wire uses `track_name` — a display-only message segment
     // identifier — instead of the removed `branch` top-level field.
     let mut payload = cokret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,

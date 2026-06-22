@@ -38,7 +38,7 @@ pub(super) fn render_message_text_block(
                             span {
                                 key: "{part_key}",
                                 class: "{class}",
-                                "data-testid": "timeline-event-mention",
+                                "data-testid": "message-event-mention",
                                 title: "{label}",
                                 "{part.text}"
                             }

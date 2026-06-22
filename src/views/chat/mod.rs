@@ -315,7 +315,7 @@ pub fn ChatPanel(
         .cloned()
         .collect::<Vec<_>>();
     // CKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
-    // timeline accent rail. We index by `strand_id` once instead of
+    // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
     let strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle> = all_channels
         .iter()
@@ -1792,19 +1792,19 @@ pub fn ChatPanel(
                                     // body + a "Show anyway" reveal.
                                     div {
                                         class: "msg-content muted",
-                                        "data-testid": "timeline-blocked-row",
-                                        {crate::i18n::tr("timeline.blocked_user")}
+                                        "data-testid": "message-blocked-row",
+                                        {crate::i18n::tr("message.blocked_user")}
                                     }
                                     Button {
                                         variant: ButtonVariant::Secondary,
-                                        "data-testid": "timeline-blocked-show-anyway",
+                                        "data-testid": "message-blocked-show-anyway",
                                         onclick: {
                                             let eid = msg.id.clone();
                                             move |_| {
                                                 blocked_show_anyway.write().insert(eid.clone());
                                             }
                                         },
-                                        {crate::i18n::tr("timeline.show_anyway")}
+                                        {crate::i18n::tr("message.show_anyway")}
                                     }
                                 } else {
                                     div { class: "msg-content",
@@ -2083,7 +2083,7 @@ pub fn ChatPanel(
                                             let voted = card.actor_has_voted(&account_did);
                                             rsx! {
                                                 div {
-                                                    class: "poll-card timeline-event-poll",
+                                                    class: "poll-card message-event-poll",
                                                     "data-testid": "poll-card",
                                                     "data-poll-id": "{poll_id}",
                                                     div {
@@ -2300,7 +2300,7 @@ pub fn ChatPanel(
                                     // resulting private discussion Strand id lives in
                                     // `promoted_targets` keyed by the
                                     // source message id; we render an
-                                    // seal row so the parent timeline
+                                    // seal row so the parent discussion
                                     // shows the divergence point.
                                     let promoted_to = promoted_targets()
                                         .get(&msg.id)
@@ -3462,9 +3462,9 @@ pub fn ChatPanel(
                                             &draft_snapshot,
                                         );
                                         // Optimistic UI: surface the
-                                        // poll card immediately, push
-                                        // a synthetic ChatMessage so
-                                        // the timeline seals it.
+                                        // poll card immediately, then push
+                                        // a synthetic ChatMessage so chat
+                                        // renders it in place.
                                         poll_cards.write().push(card.clone());
                                         messages.write().push(ChatMessage {
                                             realm_id: realm.clone(),
@@ -4037,9 +4037,8 @@ pub fn ChatPanel(
                                 // envelope (governance / prev→post epoch /
                                 // policy_root / membership_frontier) → spec
                                 // `ck.schema.encrypted_envelope.v1` wrap →
-                                // ck.message.create payload. Identical to the
-                                // Timeline encrypted path (see
-                                // `crate::views::secure_send`).
+                                // ck.message.create payload. This mirrors the
+                                // shared secure send builder.
                                 let secure_build = match crate::views::secure_send::build_secure_send(
                                     state_store,
                                     &seal_view,
@@ -4128,7 +4127,7 @@ pub fn ChatPanel(
                                     // Shared submit: forced ck.mls.commit first
                                     // (persist-on-accept snapshot + §7.10 backup
                                     // schedule + move record), then the encrypted
-                                    // ck.message.create. Identical to Timeline.
+                                    // ck.message.create.
                                     let outcome = crate::views::secure_send::submit_secure_send(
                                         &api,
                                         state_store,

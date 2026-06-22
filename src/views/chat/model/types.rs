@@ -31,7 +31,7 @@ pub(crate) struct ChannelEntity {
 
 /// Minimal Circle-scope projection embedded on each [`ChannelEntity`].
 /// Mirrors the subset of [`crate::circle::CircleSummary`] needed by
-/// the chat composer banner and timeline accent rail.
+/// the chat composer banner and message accent rail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StrandScopeCircle {
     /// `ck:circle:…`

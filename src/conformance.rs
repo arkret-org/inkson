@@ -109,7 +109,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         ClientProfileDeclaration {
             profile_id: PROFILE_MINIMAL_CLIENT,
             label: "minimal_client",
-            description: "Minimal client: sync, directory lookup, timeline, and plaintext message strand.",
+            description: "Minimal client: sync, directory lookup, Board, and plaintext message strand.",
             local_supported: true,
             degradation_path: "Read-only shell with server discovery and local cached state.",
             tier: ConformanceTier::V1Core,
@@ -117,9 +117,9 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         ClientProfileDeclaration {
             profile_id: PROFILE_CHAT_MVP,
             label: "chat_mvp",
-            description: "Chat MVP client: channels, timeline, message send/edit/redaction, reactions, and read markers.",
+            description: "Chat MVP client: channels, message send/edit/redaction, reactions, and read markers.",
             local_supported: true,
-            degradation_path: "Timeline can remain visible, but chat write controls stay gated.",
+            degradation_path: "Chat remains readable, but write controls stay gated.",
             tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {

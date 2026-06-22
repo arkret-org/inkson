@@ -204,5 +204,4 @@ test("card detail embeds discussion directly without discussion chrome", async (
   await expect(page.getByTestId("card-discussion-panel")).toBeHidden();
   await page.getByTestId("card-detail-tab-discussion").click();
   await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #ck:task:123");
-  await expect(page.getByTestId("discussion-timeline-protocol")).toHaveCount(0);
 });

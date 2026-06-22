@@ -123,25 +123,22 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
 /// when its `Relation::ConfidentialDiscussionOf` points at a parent
 /// Strand.
 ///
-/// CKP-0007 P3B.2.8 — the link routes through the dioxus router via
-/// the optional `target_realm_id`. When the relation projection
-/// carries the parent Strand's home Realm id the link is built as a
-/// `Route::TimelineRealm { realm_id }` navigation; when it doesn't,
-/// the seal falls back to a `#strand:<id>` hash so the current Realm
-/// timeline can still scroll to the parent Strand.
+/// CKP-0007 P3B.2.8 — the link routes through the optional
+/// `target_realm_id`. When the relation projection carries the parent
+/// Strand's home Realm id the link is built as a Board task deep link; when it
+/// doesn't, the seal falls back to a `#strand:<id>` hash.
 #[component]
 pub fn ConfidentialDiscussionOfBanner(
     target_strand_id: String,
     target_title: String,
-    /// Parent Strand's home Realm id. When supplied the link routes via
-    /// the dioxus router's `Route::TimelineRealm` (with a strand seal
-    /// in the URL hash).
+    /// Parent Strand's home Realm id. When supplied the link routes to the
+    /// Board task URL with the strand id as the task id.
     #[props(default)]
     target_realm_id: Option<String>,
 ) -> Element {
     let href = match target_realm_id.as_deref() {
         Some(realm_id) if !realm_id.trim().is_empty() => {
-            format!("/timeline/{realm_id}#strand:{target_strand_id}")
+            format!("/kanban/{realm_id}/task/{target_strand_id}")
         }
         _ => format!("#strand:{target_strand_id}"),
     };

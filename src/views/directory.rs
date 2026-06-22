@@ -615,7 +615,7 @@ pub fn DirectoryPanel(
             // `target_kind`. Failures collapse to one friendly message
             // (never distinguish not_found vs unauthorized).
             // TODO(R3.3.1): a richer share/open surface (per-object "Share"
-            // context-menu actions in the timeline/kanban/realm pages, an
+            // context-menu actions in the Board and Realm pages, an
             // invite-token issuance strand, and a confirm-before-navigate
             // preview card) lives here in a follow-up.
             div { class: "event", "data-testid": "open-shared-link",
@@ -717,7 +717,7 @@ pub fn DirectoryPanel(
                                     let id = realm.id.clone();
                                     move |_| {
                                         selected_realm_id.set(id.clone());
-                                        view.set(super::View::Timeline);
+                                        view.set(super::View::Kanban);
                                     }
                                 },
                                 "Open Realm"

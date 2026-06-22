@@ -342,14 +342,14 @@ pub(crate) fn channels_from_sync_realms(
         if default_realm_ids.iter().any(|id| id == realm_id) {
             channels.push(default_discussion_channel(realm_id, Some(body)));
         }
-        let Some(timeline_events) = body
+        let Some(wire_events) = body
             .get("timeline")
-            .and_then(|timeline| timeline.get("events"))
+            .and_then(|projection| projection.get("events"))
             .and_then(Value::as_array)
         else {
             continue;
         };
-        channels.extend(channels_from_events(realm_id, timeline_events));
+        channels.extend(channels_from_events(realm_id, wire_events));
     }
     channels
 }

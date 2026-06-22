@@ -18,7 +18,7 @@
 //!
 //! P3B.2 ships the typed scaffolding — types, scope picker component,
 //! detail view, error-code mapping, the composer banner, and the
-//! timeline accent rail wiring inside `views/chat.rs`. The local
+//! chat accent rail wiring inside `views/chat.rs`. The local
 //! `DecryptedScope` enum has been replaced with a re-export of the
 //! SDK's [`cokret_sdk::models::events::EffectiveScope`]; pattern
 //! matching against `effective_scope` now happens against the same

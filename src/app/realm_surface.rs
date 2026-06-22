@@ -1,4 +1,4 @@
-//! Per-realm surface (Timeline/Board/Document) selection: the `RealmSurface`
+//! Per-realm surface (Board/Document) selection: the `RealmSurface`
 //! enum + its label/route/availability helpers, the private-data preference
 //! load/persist pair, and the route→surface resolution used by the router
 //! reconcile. Moved out of `app.rs` (YOU-07-001, move only); re-exported from
@@ -9,19 +9,17 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RealmSurface {
-    Timeline,
     Board,
     Document,
 }
 
 impl RealmSurface {
-    pub(crate) fn top_nav() -> [Self; 3] {
-        [Self::Timeline, Self::Board, Self::Document]
+    pub(crate) fn top_nav() -> [Self; 2] {
+        [Self::Board, Self::Document]
     }
 
     pub(crate) fn short_label(self) -> &'static str {
         match self {
-            Self::Timeline => "Timeline",
             Self::Board => "Board",
             Self::Document => "Document",
         }
@@ -29,7 +27,6 @@ impl RealmSurface {
 
     pub(crate) fn title(self) -> &'static str {
         match self {
-            Self::Timeline => "Timeline View",
             Self::Board => "Board View",
             Self::Document => "Document View",
         }
@@ -37,7 +34,6 @@ impl RealmSurface {
 
     pub(crate) fn icon_name(self) -> &'static str {
         match self {
-            Self::Timeline => "timeline",
             Self::Board => "board",
             Self::Document => "file",
         }
@@ -45,7 +41,6 @@ impl RealmSurface {
 
     pub(crate) fn preference_value(self) -> &'static str {
         match self {
-            Self::Timeline => "timeline",
             Self::Board => "board",
             Self::Document => "document",
         }
@@ -53,7 +48,7 @@ impl RealmSurface {
 
     pub(crate) fn from_preference(value: &str) -> Option<Self> {
         match value {
-            "timeline" => Some(Self::Timeline),
+            "timeline" => Some(Self::Board),
             "board" => Some(Self::Board),
             "discussion" => Some(Self::Board),
             "document" => Some(Self::Document),
@@ -63,7 +58,6 @@ impl RealmSurface {
 
     pub(crate) fn route(self, realm_id: String) -> Route {
         match self {
-            Self::Timeline => Route::TimelineRealm { realm_id },
             Self::Board => Route::KanbanRealm { realm_id },
             Self::Document => Route::DocumentRealm { realm_id },
         }
@@ -71,12 +65,11 @@ impl RealmSurface {
 
     pub(crate) fn is_available(
         self,
-        minimal_ready: bool,
+        _minimal_ready: bool,
         kanban_ready: bool,
         full_ready: bool,
     ) -> bool {
         match self {
-            Self::Timeline => minimal_ready,
             Self::Board => kanban_ready,
             Self::Document => full_ready,
         }
@@ -93,14 +86,14 @@ pub(crate) fn load_realm_surface_preference(
     realm_id: &str,
 ) -> RealmSurface {
     if account_key.trim().is_empty() {
-        return RealmSurface::Timeline;
+        return RealmSurface::Board;
     }
 
     state_store
         .load_private_data(account_key, &realm_surface_preference_key(realm_id))
         .as_deref()
         .and_then(RealmSurface::from_preference)
-        .unwrap_or(RealmSurface::Timeline)
+        .unwrap_or(RealmSurface::Board)
 }
 
 pub(crate) fn persist_realm_surface_preference(
@@ -132,9 +125,6 @@ pub(crate) fn resolve_realm_surface(
             account_key,
             realm_id,
         )),
-        Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
-            Some(RealmSurface::Timeline)
-        }
         Route::Chat { .. } | Route::DirectConversation { .. } => None,
         Route::Kanban
         | Route::KanbanRealm { .. }
@@ -155,9 +145,6 @@ pub(crate) fn route_uses_realm_context(route: &Route) -> bool {
     matches!(
         route,
         Route::Realm { .. }
-            | Route::Timeline
-            | Route::TimelineRealm { .. }
-            | Route::TimelineMessage { .. }
             | Route::Chat { .. }
             | Route::DirectConversation { .. }
             | Route::Kanban

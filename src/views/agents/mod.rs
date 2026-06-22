@@ -7,8 +7,8 @@
 //!   * `ck.agent.endpoint` registers an agent_id + invocation protocol + capability_proof
 //!     requirement.
 //!   * `ck.agent.interop_session.{start,status,result}` track agent invocations. The terminal
-//!     `result` event carries a typed result payload + the audit_binding proof so the audit
-//!     timeline can verify the agent's output corresponds to the signed input.
+//!     `result` event carries a typed result payload + the audit_binding proof so the audit chat
+//!     can verify the agent's output corresponds to the signed input.
 //!
 //! Incoming `ck.agent.interop_session.result` events fetched from
 //! soland are decoded + verified via

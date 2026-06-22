@@ -3,7 +3,7 @@
 //! When the backend transitions a previously-undecryptable event to
 //! `late_recovered` (e.g. an MLS welcome arrived after the messages were
 //! delivered, so the client now has the epoch keys for older ciphertext),
-//! the timeline / chat view MUST surface a banner so the user understands
+//! message readers MUST surface a banner so the user understands
 //! why old messages just popped into view:
 //!
 //! > "Older messages were just decrypted, X minutes after they arrived."
@@ -14,8 +14,7 @@
 //!    keys arrived, the server REJECTS the decrypt (`late_recovery_rejected_membership`). The
 //!    client also filters defensively — see [`should_filter_recovered_event`] — so a misconfigured
 //!    server can't dribble revoked-actor content into the UI.
-//! 2. The banner message is i18n'd; the actual translation lives in [`crate::i18n`] under
-//!    `timeline.late_recovery.banner`. This module only owns the projection + the minutes
+//! 2. The banner message is i18n'd by renderers; this module only owns the projection + the minutes
 //!    computation.
 //!
 //! Round 4 (spec a77b995) — the banner is now sourced from the
@@ -29,7 +28,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-/// One late-recovered event surfaced to the timeline. Constructed from
+/// One late-recovered event surfaced to message readers. Constructed from
 /// the server's `recovery.recovered_at` + the event's
 /// `original_received_at` timestamps.
 #[derive(Clone, Debug, PartialEq, Eq)]

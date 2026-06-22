@@ -140,7 +140,7 @@ pub fn BlocklistSettingsCard(
                 span { "Personal blocklist" }
             }
             div { class: "muted",
-                "Blocked targets are hidden from your timeline and notifications on your devices. "
+                "Blocked targets are hidden from your messages and notifications on your devices. "
                 "Blocks are a local filter — they are not broadcast and do not change what other members see."
             }
 

@@ -1,6 +1,6 @@
 //! Input-path perf helpers: debounce + typing throttle hooks.
 //!
-//! The composer hot paths (Timeline / Chat) used to do real work on *every*
+//! The composer hot paths used to do real work on *every*
 //! keystroke — persist the whole local draft state to disk/localStorage and
 //! POST a `ck.typing` ephemeral to the server. On normal typing that is one
 //! synchronous serialize + one network request per character. These hooks

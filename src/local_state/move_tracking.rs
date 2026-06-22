@@ -158,7 +158,7 @@ impl LocalStateStore {
     }
 
     /// Read all tracked Moves for a specific Realm, sorted by submit
-    /// time (newest first). Used by the timeline / realm_admin pills.
+    /// time (newest first). Used by Board / realm_admin pills.
     pub fn move_submissions_for_realm(&self, realm_id: &str) -> Vec<MoveSubmissionRecord> {
         let mut out: Vec<MoveSubmissionRecord> = self
             .load()

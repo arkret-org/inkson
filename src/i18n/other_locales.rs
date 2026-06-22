@@ -10,7 +10,6 @@ pub fn arabic_translations() -> TranslationDict {
 
     dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "Home");
-    dict.set("nav.timeline", "الخط الزمني");
     dict.set("nav.chat", "الدردشة");
     dict.set("nav.forum", "المنتدى");
     dict.set("nav.directory", "الدليل");
@@ -44,7 +43,6 @@ pub fn spanish_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Es);
     dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "Home");
-    dict.set("nav.timeline", "Cronología");
     dict.set("nav.chat", "Chat");
     dict.set("nav.forum", "Foro");
     dict.set("nav.directory", "Directorio");
@@ -85,7 +83,6 @@ pub fn japanese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Ja);
     dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "Home");
-    dict.set("nav.timeline", "タイムライン");
     dict.set("nav.chat", "チャット");
     dict.set("nav.forum", "フォーラム");
     dict.set("nav.directory", "ディレクトリ");
@@ -126,7 +123,6 @@ pub fn french_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Fr);
     dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "Home");
-    dict.set("nav.timeline", "Chronologie");
     dict.set("nav.chat", "Discussion");
     dict.set("nav.forum", "Forum");
     dict.set("nav.directory", "Annuaire");
