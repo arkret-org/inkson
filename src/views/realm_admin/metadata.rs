@@ -140,7 +140,8 @@ pub(crate) fn projected_members_for_realm(store: &LocalStateStore, realm_id: &st
                 .filter_map(|member| {
                     member.as_str().map(ToOwned::to_owned).or_else(|| {
                         member
-                            .get("did")
+                            .get("actor_id")
+                            .or_else(|| member.get("did"))
                             .and_then(|did| did.as_str())
                             .map(ToOwned::to_owned)
                     })
@@ -148,4 +149,32 @@ pub(crate) fn projected_members_for_realm(store: &LocalStateStore, realm_id: &st
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projected_members_reads_roster_actor_id_entries() {
+        let realm_id = "ck:realm:test";
+        let mut store = LocalStateStore::default();
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "members": [
+                    {"actor_id": "did:web:alice.example", "membership": "join"},
+                    {"actor_id": "did:web:agent.example", "membership": "join"}
+                ]
+            }),
+        );
+
+        assert_eq!(
+            projected_members_for_realm(&store, realm_id),
+            vec![
+                "did:web:alice.example".to_owned(),
+                "did:web:agent.example".to_owned()
+            ]
+        );
+    }
 }

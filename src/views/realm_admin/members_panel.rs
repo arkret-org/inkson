@@ -1,6 +1,9 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use cokret_sdk::models::{AgentParticipation, AgentParticipationEntry, AgentParticipationScope};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::metadata::projected_members_for_realm;
 use super::permissions::{RealmMemberPermissions, authz_json_allowed};
@@ -24,9 +27,193 @@ const MEMBER_PAGE_SIZE: usize = 50;
 /// shown. Below it, scanning the list by eye is faster than typing.
 const MEMBER_SEARCH_THRESHOLD: usize = 8;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentMentionPolicy {
+    Allowed,
+    OwnerOnly,
+    Unknown,
+}
+
+impl AgentMentionPolicy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Allowed => "普通成员可 @",
+            Self::OwnerOnly => "仅主人 @",
+            Self::Unknown => "@ 权限未知",
+        }
+    }
+
+    fn badge_class(self) -> &'static str {
+        match self {
+            Self::Allowed => "badge green",
+            Self::OwnerOnly => "badge amber",
+            Self::Unknown => "badge",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MemberAgentRow {
+    agent_principal_id: String,
+    display_name: String,
+    agent_slug: String,
+    status: String,
+    mention_policy: AgentMentionPolicy,
+    selection: AgentParticipation,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MemberGroup {
+    controller_did: String,
+    agents: Vec<MemberAgentRow>,
+}
+
+fn agent_projection_value(row: &Value) -> &Value {
+    row.get("agent").unwrap_or(row)
+}
+
+fn member_agent_row_from_value(row: Value) -> Option<MemberAgentRow> {
+    let projection = agent_projection_value(&row);
+    let agent_principal_id = projection
+        .get("agent_principal_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_owned();
+    let display_name = projection
+        .get("display_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| short_protocol_id(&agent_principal_id));
+    let agent_slug = projection
+        .get("agent_slug")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_default();
+    let status = row
+        .get("status")
+        .or_else(|| projection.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("active")
+        .to_owned();
+    Some(MemberAgentRow {
+        agent_principal_id,
+        display_name,
+        agent_slug,
+        status,
+        mention_policy: AgentMentionPolicy::Unknown,
+        selection: AgentParticipation::NONE,
+    })
+}
+
+fn mention_state_from_entries(
+    entries: &[AgentParticipationEntry],
+    realm_id: &str,
+) -> (AgentMentionPolicy, AgentParticipation) {
+    let mut selection = AgentParticipation::NONE;
+    let mut matched = false;
+    for entry in entries {
+        match &entry.scope {
+            AgentParticipationScope::Realm { realm_id: entry_realm } if entry_realm.as_str() == realm_id => {
+                matched = true;
+                selection = entry.selection;
+                if entry.effective.accept_third_party_mention {
+                    return (AgentMentionPolicy::Allowed, selection);
+                }
+            }
+            _ => {}
+        }
+    }
+    if matched {
+        (AgentMentionPolicy::OwnerOnly, selection)
+    } else {
+        (AgentMentionPolicy::OwnerOnly, AgentParticipation::NONE)
+    }
+}
+
+fn group_members_with_owned_agents(
+    members: &[String],
+    owned_agents: &[MemberAgentRow],
+    controller_did: &str,
+) -> Vec<MemberGroup> {
+    let member_set: BTreeSet<&str> = members.iter().map(String::as_str).collect();
+    let owned_agent_ids: BTreeSet<&str> = owned_agents
+        .iter()
+        .map(|agent| agent.agent_principal_id.as_str())
+        .collect();
+    let mut groups = BTreeMap::<String, MemberGroup>::new();
+
+    for member in members {
+        if owned_agent_ids.contains(member.as_str()) {
+            continue;
+        }
+        groups
+            .entry(member.clone())
+            .or_insert_with(|| MemberGroup {
+                controller_did: member.clone(),
+                agents: Vec::new(),
+            });
+    }
+
+    let mut in_realm_agents: Vec<MemberAgentRow> = owned_agents
+        .iter()
+        .filter(|agent| member_set.contains(agent.agent_principal_id.as_str()))
+        .cloned()
+        .collect();
+    in_realm_agents.sort_by(|a, b| {
+        a.display_name
+            .cmp(&b.display_name)
+            .then_with(|| a.agent_principal_id.cmp(&b.agent_principal_id))
+    });
+    if !in_realm_agents.is_empty() {
+        let controller = controller_did.trim();
+        if !controller.is_empty() {
+            groups
+                .entry(controller.to_owned())
+                .or_insert_with(|| MemberGroup {
+                    controller_did: controller.to_owned(),
+                    agents: Vec::new(),
+                })
+                .agents
+                .extend(in_realm_agents);
+        }
+    }
+
+    groups.into_values().collect()
+}
+
+fn member_group_matches(group: &MemberGroup, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    group.controller_did.to_lowercase().contains(&query)
+        || short_protocol_id(&group.controller_did)
+            .to_lowercase()
+            .contains(&query)
+        || group.agents.iter().any(|agent| {
+            agent.agent_principal_id.to_lowercase().contains(&query)
+                || agent.display_name.to_lowercase().contains(&query)
+                || agent.agent_slug.to_lowercase().contains(&query)
+        })
+}
+
+fn agent_invite_target(agent_principal_id: &str, service_did: &str) -> String {
+    format!(
+        "subject_id={} recipient_service_did={}",
+        agent_principal_id.trim(),
+        service_did.trim()
+    )
+}
+
 #[component]
 pub fn RealmMembersPanel(
     base_url: String,
+    active_service_did: String,
     account_did: String,
     token: Signal<String>,
     selected_realm_id: String,
@@ -37,6 +224,8 @@ pub fn RealmMembersPanel(
     let mut invite_target = use_signal(String::new);
     let mut status_msg = use_signal(String::new);
     let mut members = use_signal(Vec::<String>::new);
+    let mut owned_agents = use_signal(Vec::<MemberAgentRow>::new);
+    let mut self_agent_settings_open = use_signal(|| false);
     let mut block_confirm_did = use_signal(|| Option::<String>::None);
     let mut permissions = use_signal(RealmMemberPermissions::default);
     // Invite is now a modal launched from the list header "+" button.
@@ -102,6 +291,56 @@ pub fn RealmMembersPanel(
             if members() != next {
                 members.set(next);
             }
+        });
+    }
+
+    {
+        let base = base_url.clone();
+        let realm = selected_realm_id.clone();
+        use_effect(move || {
+            let api_token = token();
+            if api_token.trim().is_empty() {
+                owned_agents.set(Vec::new());
+                return;
+            }
+            let base = base.clone();
+            let realm = realm.clone();
+            spawn(async move {
+                let result =
+                    crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
+                        let list = api.agent_list().await?;
+                        let mut rows = Vec::<MemberAgentRow>::new();
+                        for value in list.agents {
+                            let Some(mut row) = member_agent_row_from_value(value) else {
+                                continue;
+                            };
+                            match api.agent_participation_get(&row.agent_principal_id).await {
+                                Ok(outcome) => {
+                                    let (policy, selection) =
+                                        mention_state_from_entries(&outcome.entries, &realm);
+                                    row.mention_policy = policy;
+                                    row.selection = selection;
+                                }
+                                Err(_) => {
+                                    row.mention_policy = AgentMentionPolicy::Unknown;
+                                }
+                            }
+                            rows.push(row);
+                        }
+                        rows.sort_by(|left, right| {
+                            left.display_name
+                                .cmp(&right.display_name)
+                                .then_with(|| {
+                                    left.agent_principal_id.cmp(&right.agent_principal_id)
+                                })
+                        });
+                        Ok::<Vec<MemberAgentRow>, anyhow::Error>(rows)
+                    })
+                    .await;
+                if let Ok(rows) = result {
+                    owned_agents.set(rows);
+                }
+            });
         });
     }
 

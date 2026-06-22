@@ -4399,6 +4399,7 @@ pub fn RouterView() -> Element {
                             rsx! {
                                 crate::views::realm_admin::RealmMembersPanel {
                                     base_url: base_url(),
+                                    active_service_did: active_service_did.clone(),
                                     account_did: account_did(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
