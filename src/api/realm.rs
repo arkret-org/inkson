@@ -584,8 +584,8 @@ impl CokretApi {
     // via `ck.self.events.command.submit` (`POST /_cokret/self/events`) —
     // mirroring `transition_member_state` / `ban_member`. P1 (capability)
     // and P2 (moderation) projected the matching reducers in soland and the
-    // sodmin-side `/_soland/admin/...` write paths were retired; these are
-    // the yougen-side submitters that drive them.
+    // sodmin-side admin write paths were retired; these are the yougen-side
+    // submitters that drive them.
 
     /// Grant Realm admin authority to `subject` by emitting a
     /// `ck.capability.grant{actions:[ck.realm.admin], subject}` event.

@@ -87,6 +87,7 @@ pub fn build_mls_remove_commit_for_effective_scope(
     actor_id: &str,
     device_id: &str,
     target_principal_id: &str,
+    revocation_membership_frontier: &[cokret_sdk::EventId],
 ) -> Result<
     (
         cokret_sdk::MlsRemoveMemberResult,
@@ -94,6 +95,7 @@ pub fn build_mls_remove_commit_for_effective_scope(
     ),
     MlsRuntimeError,
 > {
+    canonical_mls_remove_membership_frontier(revocation_membership_frontier)?;
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -125,6 +127,29 @@ pub fn build_mls_remove_commit_for_effective_scope(
         &salt,
     );
     Ok((remove, new_envelope))
+}
+
+/// Canonicalize the governance frontier required for an MLS Remove commit.
+///
+/// The caller must pass the accepted `ck.device.revoke` event id or the
+/// Realm/Circle governance Control Move that imported that revocation. This
+/// helper deliberately does not fall back to `LocalSealView.frontier` or
+/// `leaves`: those sets are useful for ordinary commit freshness but are not
+/// proof that this Remove covers the specific revocation that triggered it.
+pub fn canonical_mls_remove_membership_frontier(
+    revocation_membership_frontier: &[cokret_sdk::EventId],
+) -> Result<Vec<cokret_sdk::EventId>, MlsRuntimeError> {
+    if revocation_membership_frontier.is_empty() {
+        return Err(MlsRuntimeError::Commit(
+            "MLS Remove governance binding requires the accepted ck.device.revoke event \
+             or imported revocation Control Move frontier"
+                .to_owned(),
+        ));
+    }
+    let mut frontier = revocation_membership_frontier.to_vec();
+    frontier.sort();
+    frontier.dedup();
+    Ok(frontier)
 }
 
 /// YOU-02-004 (`encryption-and-audit.md` §5.6, normative) — decrypt a remote

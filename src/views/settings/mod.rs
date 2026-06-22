@@ -25,7 +25,7 @@ use dioxus_router::Link;
 use dioxus_router::hooks::{use_navigator, use_route};
 use invite_locator::*;
 use sections::*;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 use widgets::*;
 
 use crate::components::{HelpTip, UiIcon};
@@ -64,6 +64,9 @@ pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "ck.push_rules";
 
 /// `ck.account_data` key used by do-not-disturb preferences.
 pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ck.dnd_schedule";
+
+/// `ck.account_data` key used by the principal-private presence policy.
+pub(crate) const PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY: &str = "ck.presence.visibility";
 
 pub(crate) fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
     crate::views::helpers::identity_avatar_initial(handles, account_did)
@@ -144,13 +147,42 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
 /// other devices reading the value via `/sync` get the same field names.
 pub(crate) fn build_read_receipt_preferences_body(
     default_send: bool,
-    realm_overrides: &std::collections::BTreeMap<String, bool>,
-    strand_overrides: &std::collections::BTreeMap<String, bool>,
+    default_display: bool,
+    realm_send_overrides: &std::collections::BTreeMap<String, bool>,
+    realm_display_overrides: &std::collections::BTreeMap<String, bool>,
+    strand_send_overrides: &std::collections::BTreeMap<String, bool>,
+    strand_display_overrides: &std::collections::BTreeMap<String, bool>,
 ) -> serde_json::Value {
+    fn scope_map(
+        send_overrides: &std::collections::BTreeMap<String, bool>,
+        display_overrides: &std::collections::BTreeMap<String, bool>,
+    ) -> Value {
+        let ids: std::collections::BTreeSet<String> = send_overrides
+            .keys()
+            .chain(display_overrides.keys())
+            .cloned()
+            .collect();
+        let mut scopes = Map::new();
+        for id in ids {
+            let mut pref = Map::new();
+            if let Some(send) = send_overrides.get(&id) {
+                pref.insert("send".to_owned(), Value::Bool(*send));
+            }
+            if let Some(display) = display_overrides.get(&id) {
+                pref.insert("display".to_owned(), Value::Bool(*display));
+            }
+            scopes.insert(id, Value::Object(pref));
+        }
+        Value::Object(scopes)
+    }
+
     json!({
-        "default_send": default_send,
-        "realm_overrides": realm_overrides,
-        "strand_overrides": strand_overrides,
+        "default": {
+            "send": default_send,
+            "display": default_display,
+        },
+        "realms": scope_map(realm_send_overrides, realm_display_overrides),
+        "strands": scope_map(strand_send_overrides, strand_display_overrides),
     })
 }
 
@@ -341,7 +373,8 @@ pub fn SettingsPanel(
     let mut diagnostics_mode =
         use_signal(|| route_diagnostics_mode.unwrap_or(DiagnosticsMode::Developer));
     let active_diagnostics_mode = route_diagnostics_mode.unwrap_or_else(|| diagnostics_mode());
-    let mut presence_visible = use_signal(|| true);
+    let mut presence_visible =
+        use_signal(|| state_store.read().presence_visibility().allows_presence_send());
     let mut dnd_enabled = use_signal(|| false);
     let mut dnd_mode = use_signal(|| "off".to_owned());
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
@@ -363,6 +396,8 @@ pub fn SettingsPanel(
     // (strand → realm → default) before sending `ck.receipt.read`.
     let mut read_receipt_default_send =
         use_signal(|| state_store.read().read_receipt_default_send());
+    let mut read_receipt_default_display =
+        use_signal(|| state_store.read().read_receipt_default_display());
     let mut read_receipt_realm_overrides =
         use_signal(|| state_store.read().read_receipt_realm_overrides());
     let mut read_receipt_override_input = use_signal(String::new);
@@ -1861,7 +1896,26 @@ pub fn SettingsPanel(
                     label {
                         Checkbox {
                             checked: if presence_visible() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                            on_checked_change: move |state: CheckboxState| presence_visible.set(bool::from(state)),
+                            on_checked_change: move |state: CheckboxState| {
+                                let visible = bool::from(state);
+                                presence_visible.set(visible);
+                                state_store.write().set_presence_visibility(
+                                    if visible {
+                                        crate::local_state::PresenceVisibility::Public
+                                    } else {
+                                        crate::local_state::PresenceVisibility::Nobody
+                                    },
+                                );
+                                status.set(format!(
+                                    "Presence: {}",
+                                    if visible { "public" } else { "hidden" }
+                                ));
+                                push_presence_visibility_account_data(
+                                    base_url(),
+                                    token(),
+                                    state_store,
+                                );
+                            },
                         }
                         " Show presence to others"
                     }
@@ -1885,30 +1939,35 @@ pub fn SettingsPanel(
                                 // so other devices pick up the change.
                                 // Endpoint may 404/501 — we swallow and keep
                                 // local authoritative.
-                                let body = build_read_receipt_preferences_body(
-                                    send,
-                                    &state_store
-                                        .read()
-                                        .read_receipt_realm_overrides(),
-                                    &state_store
-                                        .read()
-                                        .read_receipt_strand_overrides(),
+                                push_read_receipt_account_data(
+                                    base_url(),
+                                    token(),
+                                    state_store,
                                 );
-                                let base = base_url();
-                                let api_token = token();
-                                spawn(async move {
-                                    let _ = with_authed_api(&base, api_token, |api| async move {
-                                        api.set_account_data(
-                                            READ_RECEIPT_ACCOUNT_DATA_KEY,
-                                            body,
-                                        )
-                                        .await
-                                    })
-                                    .await;
-                                });
                             },
                         }
                         " Send read receipts by default"
+                    }
+                    label {
+                        Checkbox {
+                            "data-testid": "read-receipts-display-default-toggle",
+                            checked: if read_receipt_default_display() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                            on_checked_change: move |state: CheckboxState| {
+                                let display = bool::from(state);
+                                read_receipt_default_display.set(display);
+                                state_store.write().set_read_receipt_default_display(display);
+                                status.set(format!(
+                                    "Read receipts: display = {}",
+                                    if display { "show" } else { "hide" }
+                                ));
+                                push_read_receipt_account_data(
+                                    base_url(),
+                                    token(),
+                                    state_store,
+                                );
+                            },
+                        }
+                        " Show others' read receipts by default"
                     }
                     div { class: "event-head",
                         span { "Realm exceptions" }

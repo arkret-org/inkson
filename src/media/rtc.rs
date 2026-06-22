@@ -26,11 +26,15 @@ pub use cokret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use cokret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
     CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, FrameKeyContext, IceConfig,
-    MediaIceConfigRequestBody, MediaIceMode, MediaServiceAnchors, MlsExporterSource, RealmId,
-    call_media_token_exchange, derive_frame_key, resolve_verification_method_key_from_document,
-    verify_call_media_token_outcome, verify_ice_config_outcome,
+    MediaDecryptPolicyValue, MediaIceConfigRequestBody, MediaIceMode, MediaPlaintextService,
+    MediaServiceAnchors, MlsExporterSource, MlsGovernanceBindingPayload,
+    PlaintextDataClassKind, PlaintextVisibleServicesPayload, RealmId, call_media_token_exchange,
+    derive_frame_key, derive_media_decrypt_metadata_digest,
+    resolve_verification_method_key_from_document, verify_call_media_token_outcome,
+    verify_ice_config_outcome, verify_media_decrypt_metadata,
 };
 use ed25519_dalek::VerifyingKey;
+use serde_json::Value;
 
 use crate::api::CokretApi;
 
@@ -244,6 +248,10 @@ pub struct MediaJoinRequest {
     /// `ck.realm.media_service.service_id`. Token + ICE issuers MUST
     /// resolve to one of these; an empty set fails closed.
     pub media_service_dids: Vec<String>,
+    /// Local evidence that the selected `ck.realm.media_service` event is
+    /// covered by the current MLS governance binding. Token/ICE issuer anchors
+    /// are not trusted until this verifies.
+    pub governance_evidence: Option<MediaGovernanceEvidence>,
 }
 
 impl MediaJoinRequest {
@@ -287,6 +295,184 @@ impl MediaJoinRequest {
         }
         Ok(anchors)
     }
+
+    fn verify_governance_evidence(&self) -> Result<(), RtcClientError> {
+        let evidence = self
+            .governance_evidence
+            .as_ref()
+            .ok_or(RtcClientError::MediaServiceBindingUncovered)?;
+        evidence.verify_for_join(self)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MediaGovernanceEvidence {
+    pub governance_binding: MlsGovernanceBindingPayload,
+    pub media_service_payload: Value,
+    pub policy_components_payload: Option<Value>,
+    pub plaintext_visible_services_payload: Option<PlaintextVisibleServicesPayload>,
+    pub media_plaintext_ui_confirmed: bool,
+}
+
+impl MediaGovernanceEvidence {
+    pub fn media_service_decrypts_enabled(&self) -> bool {
+        policy_media_service_decrypts(self.policy_components_payload.as_ref())
+    }
+
+    fn verify_for_join(&self, request: &MediaJoinRequest) -> Result<(), RtcClientError> {
+        if self.governance_binding.next_epoch() != request.epoch_id {
+            return Err(RtcClientError::MlsGovernanceBindingStale);
+        }
+        let service_id = media_service_payload_service_id(&self.media_service_payload)
+            .ok_or(RtcClientError::MediaServiceBindingUncovered)?;
+        if !request.media_service_dids.iter().any(|did| did == service_id) {
+            return Err(RtcClientError::TokenIssuerUnauthorised);
+        }
+        if !media_service_payload_has_focus(&self.media_service_payload, &request.focus_id) {
+            return Err(RtcClientError::FocusMismatch);
+        }
+
+        let policy_root = recompute_media_policy_root(
+            &request.realm_id,
+            &self.media_service_payload,
+            self.policy_components_payload.as_ref(),
+            self.plaintext_visible_services_payload.as_ref(),
+        )?;
+        if &policy_root != self.governance_binding.policy_root() {
+            return Err(RtcClientError::MediaServiceBindingUncovered);
+        }
+
+        if self.media_service_decrypts_enabled() {
+            self.verify_plaintext_media_authorization(service_id)?;
+        }
+        Ok(())
+    }
+
+    fn verify_plaintext_media_authorization(
+        &self,
+        service_id: &str,
+    ) -> Result<(), RtcClientError> {
+        if !self.media_plaintext_ui_confirmed {
+            return Err(RtcClientError::MediaPlaintextServiceNotAuthorised);
+        }
+        let plaintext_payload = self
+            .plaintext_visible_services_payload
+            .as_ref()
+            .ok_or(RtcClientError::MediaPlaintextServiceNotAuthorised)?;
+        let service_did = Did::new(service_id.to_owned())
+            .map_err(|_| RtcClientError::MediaPlaintextServiceNotAuthorised)?;
+        let authorized = plaintext_payload.services.iter().any(|service| {
+            service.service_did == service_did
+                && service
+                    .purposes
+                    .iter()
+                    .any(|purpose| purpose == "media_plaintext")
+                && service
+                    .data_classes
+                    .iter()
+                    .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
+        });
+        if !authorized {
+            return Err(RtcClientError::MediaPlaintextServiceNotAuthorised);
+        }
+
+        let binding_digest = self
+            .governance_binding
+            .discussion_metadata_digest()
+            .ok_or(RtcClientError::MlsGovernanceBindingStale)?;
+        let recomputed =
+            derive_media_decrypt_metadata_digest(&MediaDecryptPolicyValue {
+                media_service_decrypts: true,
+                plaintext_visible_services: plaintext_payload
+                    .services
+                    .iter()
+                    .filter(|service| {
+                        service
+                            .purposes
+                            .iter()
+                            .any(|purpose| purpose == "media_plaintext")
+                            && service
+                                .data_classes
+                                .iter()
+                                .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
+                    })
+                    .map(|service| MediaPlaintextService {
+                        service_did: service.service_did.clone(),
+                    })
+                    .collect(),
+            })
+            .map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
+        verify_media_decrypt_metadata(binding_digest, &recomputed)
+            .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
+    }
+}
+
+fn recompute_media_policy_root(
+    realm_id: &str,
+    media_service_payload: &Value,
+    policy_components_payload: Option<&Value>,
+    plaintext_visible_services_payload: Option<&PlaintextVisibleServicesPayload>,
+) -> Result<cokret_sdk::Hash, RtcClientError> {
+    let realm_id = RealmId::new(realm_id.to_owned())
+        .map_err(|_| RtcClientError::MediaServiceBindingUncovered)?;
+    let subject = realm_id.as_str();
+    let mut cells = std::collections::BTreeMap::new();
+    cells.insert(
+        media_policy_cell("ck.component.realm.media_service.v1", subject)?,
+        cokret_sdk::lattice::CellState::Value(media_service_payload.clone()),
+    );
+    if let Some(payload) = policy_components_payload {
+        cells.insert(
+            media_policy_cell("ck.component.realm.policy_components.v1", subject)?,
+            cokret_sdk::lattice::CellState::Value(payload.clone()),
+        );
+    }
+    if let Some(payload) = plaintext_visible_services_payload {
+        let value = serde_json::to_value(payload)
+            .map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
+        cells.insert(
+            media_policy_cell("ck.component.realm.plaintext_visible_services.v1", subject)?,
+            cokret_sdk::lattice::CellState::Value(value),
+        );
+    }
+    cokret_sdk::state::compute_state_root(&cells)
+        .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
+}
+
+fn media_policy_cell(
+    family: &str,
+    realm_id: &str,
+) -> Result<cokret_sdk::CellRef, RtcClientError> {
+    cokret_sdk::CellRef::new(format!("ck:cell:{family}:{realm_id}"))
+        .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
+}
+
+fn media_service_payload_service_id(payload: &Value) -> Option<&str> {
+    payload.get("service_id").and_then(Value::as_str)
+}
+
+fn media_service_payload_has_focus(payload: &Value, focus_id: &str) -> bool {
+    payload
+        .get("foci")
+        .and_then(Value::as_array)
+        .map(|foci| {
+            foci.iter().any(|focus| {
+                focus.get("focus_id").and_then(Value::as_str) == Some(focus_id)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn policy_media_service_decrypts(payload: Option<&Value>) -> bool {
+    payload
+        .and_then(|value| {
+            value
+                .get("media_service_decrypts")
+                .or_else(|| value.pointer("/components/media_service_decrypts"))
+                .or_else(|| value.pointer("/media/media_service_decrypts"))
+        })
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 async fn register_media_service_keys(
@@ -481,6 +667,7 @@ pub async fn join_call_media(
     mls_exporter: &impl MlsExporterSource,
 ) -> Result<JoinedMediaSession, RtcClientError> {
     let ids = request.typed_ids()?;
+    request.verify_governance_evidence()?;
     let anchors = request.anchors(api).await?;
 
     // CALL-1 — token exchange + anchored verification.
@@ -684,6 +871,8 @@ fn classify_protocol_error(err: &cokret_sdk::Error) -> RtcClientError {
 mod tests {
     use std::collections::BTreeSet;
 
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -747,11 +936,135 @@ mod tests {
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
             media_service_dids: Vec::new(),
+            governance_evidence: None,
         };
         assert_eq!(
             request.anchor_dids().unwrap_err(),
             RtcClientError::TokenIssuerUnauthorised
         );
+    }
+
+    #[test]
+    fn media_join_requires_current_governance_binding() {
+        let request = governed_join_request(None);
+        assert_eq!(
+            request.verify_governance_evidence(),
+            Err(RtcClientError::MediaServiceBindingUncovered)
+        );
+    }
+
+    #[test]
+    fn media_plaintext_decrypt_requires_ui_confirmation() {
+        let request = governed_join_request(Some(media_governance_evidence(true, false)));
+        assert_eq!(
+            request.verify_governance_evidence(),
+            Err(RtcClientError::MediaPlaintextServiceNotAuthorised)
+        );
+    }
+
+    #[test]
+    fn media_plaintext_decrypt_accepts_three_layer_evidence() {
+        let request = governed_join_request(Some(media_governance_evidence(true, true)));
+        assert!(request.verify_governance_evidence().is_ok());
+    }
+
+    #[test]
+    fn opaque_media_service_accepts_binding_coverage_without_plaintext_grant() {
+        let request = governed_join_request(Some(media_governance_evidence(false, false)));
+        assert!(request.verify_governance_evidence().is_ok());
+    }
+
+    fn governed_join_request(
+        governance_evidence: Option<MediaGovernanceEvidence>,
+    ) -> MediaJoinRequest {
+        MediaJoinRequest {
+            realm_id: "ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
+            call_id: "ck:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            actor_id: "did:web:alice.example".to_owned(),
+            device_id: "ck:device:01904100-0000-7000-8000-000000000005".to_owned(),
+            focus_id: "fra-1".to_owned(),
+            epoch_id: 7,
+            desired_media: DesiredMedia::audio_video(),
+            media_service_dids: vec!["did:web:media.example".to_owned()],
+            governance_evidence,
+        }
+    }
+
+    fn media_governance_evidence(
+        media_service_decrypts: bool,
+        media_plaintext_ui_confirmed: bool,
+    ) -> MediaGovernanceEvidence {
+        let media_service_payload = json!({
+            "service_id": "did:web:media.example",
+            "ice_config_endpoint": "https://media.example/_cokret/self/rtc/ice-config",
+            "foci": [
+                {
+                    "focus_id": "fra-1",
+                    "type": "livekit",
+                    "token_endpoint": "https://media.example/_cokret/self/rtc/token"
+                }
+            ]
+        });
+        let policy_components_payload = media_service_decrypts.then(|| {
+            json!({
+                "policy_revision": 3,
+                "media_service_decrypts": true
+            })
+        });
+        let plaintext_visible_services_payload = media_service_decrypts.then(|| {
+            PlaintextVisibleServicesPayload::new(vec![cokret_sdk::PlaintextVisibleService::new(
+                Did::new("did:web:media.example".to_owned()).unwrap(),
+                "media_service",
+                vec![PlaintextDataClassKind::MediaPlaintext],
+                vec!["media_plaintext".to_owned()],
+                cokret_sdk::PlaintextServiceVisibility::PrivatePlaintext,
+            )])
+        });
+        let policy_root = recompute_media_policy_root(
+            "ck:realm:01904100-0000-7000-8000-9b64700c6ee8",
+            &media_service_payload,
+            policy_components_payload.as_ref(),
+            plaintext_visible_services_payload.as_ref(),
+        )
+        .unwrap();
+        let governance_binding = MlsGovernanceBindingPayload::realm(
+            RealmId::new("ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()).unwrap(),
+            "Z3JvdXA",
+            6,
+            7,
+            vec![cokret_sdk::EventId::new(
+                "ck:event:01904100-0000-7000-8000-000000000001".to_owned(),
+            )
+            .unwrap()],
+            policy_root,
+            cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+            "ck.reducer.realm.v1",
+        )
+        .unwrap();
+        let governance_binding = if let Some(payload) = plaintext_visible_services_payload.as_ref()
+        {
+            let digest = derive_media_decrypt_metadata_digest(&MediaDecryptPolicyValue {
+                media_service_decrypts,
+                plaintext_visible_services: payload
+                    .services
+                    .iter()
+                    .map(|service| MediaPlaintextService {
+                        service_did: service.service_did.clone(),
+                    })
+                    .collect(),
+            })
+            .unwrap();
+            governance_binding.with_discussion_metadata_digest(digest)
+        } else {
+            governance_binding
+        };
+        MediaGovernanceEvidence {
+            governance_binding,
+            media_service_payload,
+            policy_components_payload,
+            plaintext_visible_services_payload,
+            media_plaintext_ui_confirmed,
+        }
     }
 
     #[test]

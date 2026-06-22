@@ -444,6 +444,54 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     assert!(state.load().raw_operations.is_empty());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
+    let mut state = temp_state_store("remove-frontier");
+    state.set_realm_seal_view(
+        TEST_REALM_ID,
+        crate::local_state::LocalSealView {
+            frontier: vec!["ck:event:0196419b-0000-7000-8000-000000000099".to_owned()],
+            ..crate::local_state::LocalSealView::default()
+        },
+    );
+    let revoke_frontier =
+        cokret_sdk::EventId::new("ck:event:0196419b-0000-7000-8000-000000000001".to_owned())
+            .unwrap();
+    let proposal_ref =
+        cokret_sdk::EventId::new("ck:event:0196419b-0000-7000-8000-000000000002".to_owned())
+            .unwrap();
+    let commit = cokret_sdk::MlsCommitEnvelope {
+        group_id: "mls-remove-group".to_owned(),
+        epoch: 8,
+        commit: "commit-bytes".to_owned(),
+        commit_digest: cokret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+        ratchet_tree: None,
+        app_state_ref: None,
+    };
+
+    let event =
+        kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
+            &state,
+            TEST_REALM_ID,
+            None,
+            "did:web:alice.example",
+            &commit,
+            vec![proposal_ref],
+            std::slice::from_ref(&revoke_frontier),
+        )
+        .unwrap();
+
+    assert_eq!(
+        event.content["governance_binding"]["membership_frontier"],
+        json!([revoke_frontier.as_str()])
+    );
+    assert_ne!(
+        event.content["governance_binding"]["membership_frontier"][0],
+        json!("ck:event:0196419b-0000-7000-8000-000000000099")
+    );
+}
+
 #[test]
 fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
     let mut state = temp_state_store("metadata-only");

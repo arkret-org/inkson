@@ -172,6 +172,20 @@ impl LocalStateStore {
             .collect()
     }
 
+    pub fn presence_visibility(&self) -> PresenceVisibility {
+        self.load().presence_visibility
+    }
+
+    pub fn set_presence_visibility(&mut self, visibility: PresenceVisibility) {
+        self.ensure_cached_loaded();
+        self.cached.presence_visibility = visibility;
+        let _ = self.flush();
+    }
+
+    pub fn presence_should_send(&self) -> bool {
+        self.presence_visibility().allows_presence_send()
+    }
+
     // ── Read receipt preferences (spec client-preferences.md §3.6) ─
 
     pub fn read_receipt_default_send(&self) -> bool {
@@ -181,6 +195,16 @@ impl LocalStateStore {
     pub fn set_read_receipt_default_send(&mut self, send: bool) {
         self.ensure_cached_loaded();
         self.cached.read_receipt_default_send = send;
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_default_display(&self) -> bool {
+        self.load().read_receipt_default_display
+    }
+
+    pub fn set_read_receipt_default_display(&mut self, display: bool) {
+        self.ensure_cached_loaded();
+        self.cached.read_receipt_default_display = display;
         let _ = self.flush();
     }
 
@@ -215,6 +239,39 @@ impl LocalStateStore {
         self.load().read_receipt_realm_overrides
     }
 
+    pub fn read_receipt_realm_display_override(&self, realm_id: &str) -> Option<bool> {
+        self.load()
+            .read_receipt_realm_display_overrides
+            .get(realm_id)
+            .copied()
+    }
+
+    pub fn set_read_receipt_realm_display_override(
+        &mut self,
+        realm_id: impl Into<String>,
+        display: Option<bool>,
+    ) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        match display {
+            Some(value) => {
+                self.cached
+                    .read_receipt_realm_display_overrides
+                    .insert(realm_id, value);
+            }
+            None => {
+                self.cached
+                    .read_receipt_realm_display_overrides
+                    .remove(&realm_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_realm_display_overrides(&self) -> BTreeMap<String, bool> {
+        self.load().read_receipt_realm_display_overrides
+    }
+
     pub fn read_receipt_strand_override(&self, strand_id: &str) -> Option<bool> {
         self.load()
             .read_receipt_strand_overrides
@@ -244,6 +301,39 @@ impl LocalStateStore {
 
     pub fn read_receipt_strand_overrides(&self) -> BTreeMap<String, bool> {
         self.load().read_receipt_strand_overrides
+    }
+
+    pub fn read_receipt_strand_display_override(&self, strand_id: &str) -> Option<bool> {
+        self.load()
+            .read_receipt_strand_display_overrides
+            .get(strand_id)
+            .copied()
+    }
+
+    pub fn set_read_receipt_strand_display_override(
+        &mut self,
+        strand_id: impl Into<String>,
+        display: Option<bool>,
+    ) {
+        self.ensure_cached_loaded();
+        let strand_id = strand_id.into();
+        match display {
+            Some(value) => {
+                self.cached
+                    .read_receipt_strand_display_overrides
+                    .insert(strand_id, value);
+            }
+            None => {
+                self.cached
+                    .read_receipt_strand_display_overrides
+                    .remove(&strand_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_strand_display_overrides(&self) -> BTreeMap<String, bool> {
+        self.load().read_receipt_strand_display_overrides
     }
 
     // ── Realm remarks (spec client-preferences.md §3.7) ─
@@ -324,6 +414,25 @@ impl LocalStateStore {
             return *value;
         }
         snapshot.read_receipt_default_send
+    }
+
+    pub fn read_receipt_should_display(
+        &self,
+        strand_id: Option<&str>,
+        realm_id: Option<&str>,
+    ) -> bool {
+        let snapshot = self.load();
+        if let Some(fid) = strand_id
+            && let Some(value) = snapshot.read_receipt_strand_display_overrides.get(fid)
+        {
+            return *value;
+        }
+        if let Some(rid) = realm_id
+            && let Some(value) = snapshot.read_receipt_realm_display_overrides.get(rid)
+        {
+            return *value;
+        }
+        snapshot.read_receipt_default_display
     }
 
     pub fn set_notification_kind_enabled(&mut self, kind: impl Into<String>, enabled: bool) {

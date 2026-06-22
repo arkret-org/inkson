@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use super::types::CallParticipant;
+use crate::media::rtc::MediaGovernanceEvidence;
 use crate::views::helpers::short_protocol_id;
 
 pub(super) fn operation_body(payload: &Value) -> &Value {
@@ -161,6 +162,80 @@ pub(super) fn media_service_selection(
         .next()
         .unwrap_or_else(|| default_focus_id(&media_dids));
     (media_dids, focus_id)
+}
+
+pub(super) fn media_governance_evidence(
+    state: &crate::local_state::ClientLocalState,
+    realm_id: &str,
+    media_plaintext_ui_confirmed: bool,
+) -> Option<MediaGovernanceEvidence> {
+    let media_service_payload = latest_body_for_kind(state, realm_id, "ck.realm.media_service")?;
+    let policy_components_payload =
+        latest_body_for_kind(state, realm_id, "ck.realm.policy_components");
+    let plaintext_visible_services_payload =
+        latest_body_for_kind(state, realm_id, "ck.realm.plaintext_visible_services")
+            .and_then(|body| serde_json::from_value(body).ok());
+    let governance_binding = state
+        .raw_operations
+        .iter()
+        .rev()
+        .filter(|record| record.realm_id.as_deref() == Some(realm_id))
+        .find_map(|record| {
+            let kind = record
+                .payload
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !matches!(kind, "ck.mls.commit" | "ck.mls.genesis") {
+                return None;
+            }
+            operation_body(&record.payload)
+                .get("governance_binding")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+        })?;
+    Some(MediaGovernanceEvidence {
+        governance_binding,
+        media_service_payload,
+        policy_components_payload,
+        plaintext_visible_services_payload,
+        media_plaintext_ui_confirmed,
+    })
+}
+
+pub(super) fn media_service_decrypts_enabled(
+    state: &crate::local_state::ClientLocalState,
+    realm_id: &str,
+) -> bool {
+    latest_body_for_kind(state, realm_id, "ck.realm.policy_components")
+        .as_ref()
+        .and_then(|body| {
+            body.get("media_service_decrypts")
+                .or_else(|| body.pointer("/components/media_service_decrypts"))
+                .or_else(|| body.pointer("/media/media_service_decrypts"))
+        })
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn latest_body_for_kind(
+    state: &crate::local_state::ClientLocalState,
+    realm_id: &str,
+    expected_kind: &str,
+) -> Option<Value> {
+    state
+        .raw_operations
+        .iter()
+        .rev()
+        .find(|record| {
+            record.realm_id.as_deref() == Some(realm_id)
+                && record
+                    .payload
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    == Some(expected_kind)
+        })
+        .map(|record| operation_body(&record.payload).clone())
 }
 
 /// Fallback used only before the media-service projection is hydrated. A

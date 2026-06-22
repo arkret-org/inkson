@@ -173,6 +173,9 @@ impl LocalStateStore {
             .read_receipt_realm_overrides
             .remove(projection_id);
         self.cached
+            .read_receipt_realm_display_overrides
+            .remove(projection_id);
+        self.cached
             .read_receipt_policy_snapshots
             .remove(projection_id);
         // `read_cursors` are keyed by `"{realm}\n{kind}\n{ref}\n{track}"` —

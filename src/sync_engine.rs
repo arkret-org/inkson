@@ -414,7 +414,17 @@ async fn run_circle_scope_rotate_pass(
                 if generation() != start_generation {
                     return;
                 }
-                let target_principal_id = target.to_string();
+                let target_principal_id = target.principal_id().to_string();
+                let revocation_membership_frontier = target.membership_frontier().to_vec();
+                if revocation_membership_frontier.is_empty() {
+                    tracing::debug!(
+                        %realm_id,
+                        %circle_id,
+                        %target_principal_id,
+                        "sync_engine: Circle scope-rotate skipped without revoke/import membership frontier",
+                    );
+                    continue;
+                }
                 let draft = {
                     let store = ctx.state_store.read();
                     crate::circle_mls::build_circle_remove_scope_rotate_draft(
@@ -425,6 +435,7 @@ async fn run_circle_scope_rotate_pass(
                         &actor_id,
                         &device_id,
                         &target_principal_id,
+                        &revocation_membership_frontier,
                     )
                 };
                 let draft = match draft {
@@ -1371,6 +1382,21 @@ fn apply_account_data(
             continue;
         }
         // ck.account.blocklist — personal block list.
+        if data_type == "ck.presence.visibility" {
+            let Some(visibility) = entry
+                .get("content")
+                .and_then(|content| content.get("presence_visibility"))
+                .and_then(Value::as_str)
+                .and_then(crate::local_state::PresenceVisibility::try_from_wire)
+            else {
+                tracing::warn!(
+                    "sync engine: ignoring malformed ck.presence.visibility account_data"
+                );
+                continue;
+            };
+            store.set_presence_visibility(visibility);
+            continue;
+        }
         if data_type == "ck.account.blocklist" {
             let Some(content) = entry.get("content") else {
                 continue;

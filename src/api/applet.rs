@@ -16,8 +16,7 @@ impl CokretApi {
     // `require_realm_admin` gate. These are the yougen-side callers for the
     // spec applet self surface
     // (`/_cokret/self/applets/install[/preview]`, `/{id}/revoke`); the
-    // soland-private `/_soland/...` ghost-provision path is intentionally
-    // not surfaced here.
+    // soland-private ghost-provision path is intentionally not surfaced here.
 
     /// `POST /_cokret/self/applets/install/preview` —
     /// `ck.self.applet.install.command.preview`. Returns the install plan

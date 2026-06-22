@@ -387,6 +387,7 @@ pub fn RouterView() -> Element {
     // single login session, matching the `DidResolutionCache` docs.
     let mut did_cache =
         use_context_provider(|| Signal::new(crate::did_resolver::DidResolutionCache::default()));
+    let did_resolution_health = use_signal(crate::components::DidResolutionHealth::healthy);
     let mut theme = use_signal(move || initial_theme);
     let system_theme_is_night = use_signal(browser_prefers_dark_theme);
     {
@@ -872,6 +873,7 @@ pub fn RouterView() -> Element {
                     session_boot_state,
                     call_signal_hub,
                     did_cache,
+                    did_resolution_health,
                 },
             );
         } else if !base.trim().is_empty() {
@@ -2200,6 +2202,7 @@ pub fn RouterView() -> Element {
             // banner is pulled from a process-wide queue populated by
             // `api::decode_cokret_error`'s `maybe_dispatch_policy_deny`.
             crate::components::PolicyDenyBanner {}
+            crate::components::DidResolutionHealthBanner { health: did_resolution_health }
             // CKP-0007 P3B.3 — global Circle-error toast, fed by the
             // HTTP layer's `maybe_dispatch_circle_error` next to the
             // policy-deny dispatcher. Renders nothing when no error
@@ -2434,6 +2437,7 @@ pub fn RouterView() -> Element {
                                     session_boot_state,
                                     call_signal_hub,
                                     did_cache,
+                                    did_resolution_health,
                                 },
                             )
                         },
@@ -2614,6 +2618,7 @@ pub fn RouterView() -> Element {
                                                         session_boot_state,
                                                         call_signal_hub,
                                                         did_cache,
+                                                        did_resolution_health,
                                                     },
                                                 );
                                             }

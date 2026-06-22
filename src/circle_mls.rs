@@ -84,6 +84,7 @@ pub fn build_circle_remove_scope_rotate_draft(
     actor_id: &str,
     device_id: &str,
     target_principal_id: &str,
+    revocation_membership_frontier: &[cokret_sdk::EventId],
 ) -> Result<CircleScopeRotateDraft, String> {
     let circle = circle_id.trim();
     if circle.is_empty() {
@@ -98,6 +99,7 @@ pub fn build_circle_remove_scope_rotate_draft(
             actor_id,
             device_id,
             target_principal_id,
+            revocation_membership_frontier,
         )
         .map_err(|err| err.user_message())?;
     if remove.proposals.is_empty() {
@@ -117,13 +119,14 @@ pub fn build_circle_remove_scope_rotate_draft(
         events.push(proposal_event);
     }
     let commit_event =
-        crate::views::kanban::kanban_mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
+        crate::views::kanban::kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
             state_store,
             realm_id,
             Some(circle),
             actor_id,
             &remove.commit,
             proposal_refs,
+            revocation_membership_frontier,
         )?;
     events.push(commit_event);
     Ok(CircleScopeRotateDraft {
@@ -201,7 +204,16 @@ pub async fn drain_circle_scope_rotate_obligations(
             continue;
         }
         for target in circle.pending_mls_removals {
-            let target_principal_id = target.to_string();
+            let target_principal_id = target.principal_id().to_string();
+            let revocation_membership_frontier = target.membership_frontier().to_vec();
+            if revocation_membership_frontier.is_empty() {
+                outcome.skipped.push(CircleScopeRotateDrainSkip {
+                    circle_id: circle_id.clone(),
+                    target_principal_id: Some(target_principal_id),
+                    reason: "missing_removal_membership_frontier".to_owned(),
+                });
+                continue;
+            }
             let draft = match build_circle_remove_scope_rotate_draft(
                 state_store,
                 secure_store,
@@ -210,6 +222,7 @@ pub async fn drain_circle_scope_rotate_obligations(
                 actor_id,
                 device_id,
                 &target_principal_id,
+                &revocation_membership_frontier,
             ) {
                 Ok(draft) => draft,
                 Err(reason) => {

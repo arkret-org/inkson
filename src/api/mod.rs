@@ -96,8 +96,8 @@ use crate::models::{
     EphemeralSubmitResult, GrantList, IdentityDescribeOutcome, IdentityResolveOutcome,
     IndexSearchView, InvitesView, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome,
     MediaIceConfigOutcome, MediaIceConfigRequestBody, ModerationReportOutcome, OP_SNAPSHOT_HEAD,
-    OkOutcome, PushRegisterView, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult,
-    ReceiptResult, ResolveHandleView, ResolveRealmOutcome, SearchActorsView,
+    OkOutcome, PresenceResult, PushRegisterView, RealmCreateResult, RealmJoinCandidate,
+    RealmPolicyResult, ReceiptResult, ResolveHandleView, ResolveRealmOutcome, SearchActorsView,
     SearchOrganizationsView, ServerDescription, SpaceCreateResult, SubmitEventResult,
     SyncDescribeView, TypingResult, VerifyDeviceResult,
 };

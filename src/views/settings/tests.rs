@@ -44,22 +44,36 @@ fn is_likely_valid_did_accepts_canonical_shapes_and_rejects_garbage() {
 }
 
 /// The canonical `ck.read_receipt.preferences` body shape other devices
-/// read via `/sync` account_data. Locks the field names
-/// (`default_send`, `realm_overrides`, `strand_overrides`) so a future
-/// rename can't silently desync devices.
+/// read via `/sync` account_data. Locks the SDK/spec field names so a
+/// future rename can't silently desync devices.
 #[test]
 fn build_read_receipt_preferences_body_has_canonical_field_shape() {
     let mut realms = BTreeMap::new();
     realms.insert("ck:realm:demo".to_owned(), false);
+    let mut realm_display = BTreeMap::new();
+    realm_display.insert("ck:realm:display-only".to_owned(), false);
     let mut strands = BTreeMap::new();
     strands.insert("ck:strand:demo".to_owned(), true);
-    let body = build_read_receipt_preferences_body(true, &realms, &strands);
-    assert_eq!(body["default_send"], serde_json::Value::Bool(true));
-    assert_eq!(body["realm_overrides"]["ck:realm:demo"], false);
-    assert_eq!(body["strand_overrides"]["ck:strand:demo"], true);
-    // Keys we don't expect in this body — explicit guards so a typo
-    // (e.g. `default` instead of `default_send`) regression-bisects.
-    assert!(body.get("default").is_none());
+    let mut strand_display = BTreeMap::new();
+    strand_display.insert("ck:strand:demo".to_owned(), false);
+    let body = build_read_receipt_preferences_body(
+        true,
+        false,
+        &realms,
+        &realm_display,
+        &strands,
+        &strand_display,
+    );
+    assert_eq!(body["default"]["send"], serde_json::Value::Bool(true));
+    assert_eq!(body["default"]["display"], serde_json::Value::Bool(false));
+    assert_eq!(body["realms"]["ck:realm:demo"]["send"], false);
+    assert_eq!(body["realms"]["ck:realm:display-only"]["display"], false);
+    assert_eq!(body["strands"]["ck:strand:demo"]["send"], true);
+    assert_eq!(body["strands"]["ck:strand:demo"]["display"], false);
+    // Guard removed flat keys so devices don't drift back to the old shape.
+    assert!(body.get("default_send").is_none());
+    assert!(body.get("realm_overrides").is_none());
+    assert!(body.get("strand_overrides").is_none());
     assert!(body.get("read_receipt_default_send").is_none());
 }
 
@@ -68,6 +82,18 @@ fn build_read_receipt_preferences_body_has_canonical_field_shape() {
 #[test]
 fn read_receipt_account_data_key_matches_spec() {
     assert_eq!(READ_RECEIPT_ACCOUNT_DATA_KEY, "ck.read_receipt.preferences");
+}
+
+#[test]
+fn presence_visibility_account_data_matches_spec() {
+    assert_eq!(
+        PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY,
+        "ck.presence.visibility"
+    );
+    let hidden = build_presence_visibility_body(crate::local_state::PresenceVisibility::Nobody);
+    assert_eq!(hidden["presence_visibility"], "nobody");
+    let public = build_presence_visibility_body(crate::local_state::PresenceVisibility::Public);
+    assert_eq!(public["presence_visibility"], "public");
 }
 
 #[test]

@@ -36,7 +36,7 @@ pub enum AccountDataKey {
     ClientUi,
     /// `ck.read_receipt.preferences` — global + per-Realm + per-strand send override.
     ClientReadReceipts,
-    /// `client.presence` — per-Realm typing / online / last-seen toggles.
+    /// `ck.presence.visibility` — principal-private presence fanout policy.
     ClientPresence,
     /// `ck.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
@@ -55,7 +55,7 @@ impl AccountDataKey {
         match self {
             Self::ClientUi => "client.ui",
             Self::ClientReadReceipts => "ck.read_receipt.preferences",
-            Self::ClientPresence => "client.presence",
+            Self::ClientPresence => "ck.presence.visibility",
             Self::ClientBlocklist => "ck.account.blocklist",
             Self::ClientNotifications => "ck.push_rules",
             Self::ClientDndSchedule => "ck.dnd_schedule",
@@ -68,7 +68,7 @@ impl AccountDataKey {
         match s {
             "client.ui" => Self::ClientUi,
             "ck.read_receipt.preferences" => Self::ClientReadReceipts,
-            "client.presence" => Self::ClientPresence,
+            "ck.presence.visibility" => Self::ClientPresence,
             "ck.account.blocklist" => Self::ClientBlocklist,
             "ck.push_rules" => Self::ClientNotifications,
             "ck.dnd_schedule" => Self::ClientDndSchedule,

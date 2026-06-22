@@ -348,6 +348,51 @@ pub(crate) fn kanban_mls_commit_event_from_store_for_effective_scope_with_propos
     commit_envelope: &cokret_sdk::MlsCommitEnvelope,
     proposal_refs: Vec<cokret_sdk::EventId>,
 ) -> Result<cokret_sdk::Event, String> {
+    kanban_mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+        state_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        commit_envelope,
+        proposal_refs,
+        None,
+    )
+}
+
+pub(crate) fn kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
+    proposal_refs: Vec<cokret_sdk::EventId>,
+    revocation_membership_frontier: &[cokret_sdk::EventId],
+) -> Result<cokret_sdk::Event, String> {
+    let membership_frontier =
+        crate::mls::runtime::canonical_mls_remove_membership_frontier(
+            revocation_membership_frontier,
+        )
+        .map_err(|err| err.user_message())?;
+    kanban_mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+        state_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        commit_envelope,
+        proposal_refs,
+        Some(membership_frontier),
+    )
+}
+
+fn kanban_mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
+    proposal_refs: Vec<cokret_sdk::EventId>,
+    explicit_membership_frontier: Option<Vec<cokret_sdk::EventId>>,
+) -> Result<cokret_sdk::Event, String> {
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -366,7 +411,8 @@ pub(crate) fn kanban_mls_commit_event_from_store_for_effective_scope_with_propos
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
     let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS commit Realm id: {err:?}"))?;
-    let membership_frontier = kanban_mls_membership_frontier(&seal_view, &event_id_typed);
+    let membership_frontier = explicit_membership_frontier
+        .unwrap_or_else(|| kanban_mls_membership_frontier(&seal_view, &event_id_typed));
     let policy_root = kanban_mls_policy_root(&seal_view, realm_id)?;
     let governance_binding = match circle {
         Some(circle_id) => {

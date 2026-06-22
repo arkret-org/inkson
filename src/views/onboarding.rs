@@ -25,6 +25,9 @@ use dioxus_router::Link;
 use crate::api::CokretApi;
 use crate::identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised};
 use crate::local_state::LocalStateStore;
+use crate::recovery_strand::{
+    FirstBackupGateBlockReason, FirstBackupGateStatus, first_backup_gate_status_from_payloads,
+};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
@@ -577,10 +580,10 @@ pub fn OnboardingPanel(
 }
 
 /// CKP B-C — first-backup gate. The inception key cannot retire
-/// until a `backup_class=did_recovery` envelope has been published.
-/// This component polls `GET /_cokret/self/keys/backups?backup_class=did_recovery`
-/// and renders a hard-blocked panel until at least one such envelope
-/// is observed. On `ok=true` the gate flips to "satisfied".
+/// until an accepted `backup_class=did_recovery` first envelope matches the
+/// active recovery policy. This component reads the active recovery policy,
+/// lists did_recovery backups, and renders a blocked panel until the list
+/// contains a matching `recovery_public_key` backup.
 #[component]
 pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: String) -> Element {
     let mut gate_satisfied = use_signal(|| false);
@@ -594,34 +597,45 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
             let api_token = token();
             spawn(async move {
                 match with_authed_api(&base, api_token, |api| async move {
-                    // CKP B-C / §3.3: recovery strand calls
-                    // `LIST?series_id=` (or the bare `LIST` with
-                    // `backup_class=did_recovery` filter). For the
-                    // first-backup gate we only need at least one
-                    // did_recovery envelope to exist; pass
-                    // `series_id=None` so we see all series and
-                    // filter on `backup_class`.
-                    api.list_key_backups_by_series(None, Some("did_recovery"))
-                        .await
+                    let policy = api.get_recovery_policy().await?;
+                    let backups = api
+                        .list_key_backups_by_series(None, Some("did_recovery"))
+                        .await?;
+                    Ok::<_, anyhow::Error>((policy, backups))
                 })
                 .await
                 {
-                    Ok(value) => {
-                        let count = value
-                            .get("backups")
-                            .and_then(|b| b.as_array())
-                            .map(|a| a.len())
-                            .unwrap_or(0);
-                        if count > 0 {
-                            gate_satisfied.set(true);
-                            status.set(format!(
-                                "first-backup gate satisfied: {count} did_recovery envelope(s) on record"
-                            ));
-                        } else {
-                            gate_satisfied.set(false);
-                            status.set(
-                                "no did_recovery envelope on record — publish one before retiring the inception key".to_owned()
-                            );
+                    Ok((policy, backups)) => {
+                        last_error_code.set(String::new());
+                        match first_backup_gate_status_from_payloads(&policy, &backups) {
+                            FirstBackupGateStatus::Satisfied { backup_id } => {
+                                gate_satisfied.set(true);
+                                status.set(format!(
+                                    "first-backup gate satisfied: accepted did_recovery backup {} matches the active recovery_policy_ref",
+                                    short_protocol_id(&backup_id)
+                                ));
+                            }
+                            FirstBackupGateStatus::Blocked(
+                                FirstBackupGateBlockReason::NoActiveRecoveryPolicy,
+                            ) => {
+                                gate_satisfied.set(false);
+                                status.set(
+                                    "no active accepted recovery_policy on record; publish one before retiring the inception key".to_owned()
+                                );
+                            }
+                            FirstBackupGateStatus::Blocked(
+                                FirstBackupGateBlockReason::NoMatchingDidRecoveryBackup {
+                                    policy_id,
+                                    policy_version,
+                                },
+                            ) => {
+                                gate_satisfied.set(false);
+                                status.set(format!(
+                                    "no accepted did_recovery backup matches active recovery_policy_ref {}@{} with recipient_method=recovery_public_key",
+                                    short_protocol_id(&policy_id),
+                                    policy_version
+                                ));
+                            }
                         }
                     }
                     Err(err) => {

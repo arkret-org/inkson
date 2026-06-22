@@ -48,7 +48,7 @@ pub struct ActiveRecoveryPolicy {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AccountRecoveryState {
     pub active_policy: Option<ActiveRecoveryPolicy>,
-    pub did_recovery_backup_count: usize,
+    pub accepted_did_recovery_first_backup_count: usize,
     pub recovery_public_key_secret_storage_backup_count: usize,
     pub local_recovery_key_fingerprint: Option<String>,
 }
@@ -57,7 +57,7 @@ impl AccountRecoveryState {
     /// The account is recoverable only when the server has both the accepted
     /// policy and the DID recovery backup required by the first-backup gate.
     pub fn server_recovery_configured(&self) -> bool {
-        self.active_policy.is_some() && self.did_recovery_backup_count > 0
+        self.active_policy.is_some() && self.accepted_did_recovery_first_backup_count > 0
     }
 
     /// Local fingerprints prove only that this browser once saw a recovery key.
@@ -74,13 +74,14 @@ impl AccountRecoveryState {
 /// into [`ActiveRecoveryPolicy`]. Returns `None` when no policy is accepted.
 pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPolicy> {
     let p = response.get("active_policy").filter(|v| !v.is_null())?;
+    let policy_id = p.get("policy_id").and_then(Value::as_str)?.trim();
+    let policy_version = p.get("version").and_then(Value::as_u64)?;
+    if policy_id.is_empty() || policy_version == 0 {
+        return None;
+    }
     Some(ActiveRecoveryPolicy {
-        policy_id: p
-            .get("policy_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        policy_version: p.get("version").and_then(Value::as_u64).unwrap_or_default(),
+        policy_id: policy_id.to_owned(),
+        policy_version,
         trust_domain: p
             .get("trust_domain")
             .and_then(Value::as_str)
@@ -98,18 +99,52 @@ pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPo
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FirstBackupGateStatus {
+    Satisfied { backup_id: String },
+    Blocked(FirstBackupGateBlockReason),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FirstBackupGateBlockReason {
+    NoActiveRecoveryPolicy,
+    NoMatchingDidRecoveryBackup {
+        policy_id: String,
+        policy_version: u64,
+    },
+}
+
+pub fn first_backup_gate_status_from_payloads(
+    recovery_policy_response: &Value,
+    backup_list_payload: &Value,
+) -> FirstBackupGateStatus {
+    let Some(policy) = parse_active_recovery_policy(recovery_policy_response) else {
+        return FirstBackupGateStatus::Blocked(FirstBackupGateBlockReason::NoActiveRecoveryPolicy);
+    };
+    match matching_did_recovery_first_backup_id(backup_list_payload, &policy) {
+        Some(backup_id) => FirstBackupGateStatus::Satisfied { backup_id },
+        None => FirstBackupGateStatus::Blocked(
+            FirstBackupGateBlockReason::NoMatchingDidRecoveryBackup {
+                policy_id: policy.policy_id,
+                policy_version: policy.policy_version,
+            },
+        ),
+    }
+}
+
 pub fn account_recovery_state_from_payloads(
     recovery_policy_response: &Value,
     backup_list_payload: &Value,
     local_recovery_key_fingerprint: Option<String>,
 ) -> AccountRecoveryState {
+    let active_policy = parse_active_recovery_policy(recovery_policy_response);
+    let accepted_did_recovery_first_backup_count = active_policy
+        .as_ref()
+        .map(|policy| count_matching_did_recovery_first_backups(backup_list_payload, policy))
+        .unwrap_or(0);
     AccountRecoveryState {
-        active_policy: parse_active_recovery_policy(recovery_policy_response),
-        did_recovery_backup_count: count_backups_by_class_and_method(
-            backup_list_payload,
-            "did_recovery",
-            "recovery_public_key",
-        ),
+        active_policy,
+        accepted_did_recovery_first_backup_count,
         recovery_public_key_secret_storage_backup_count: count_backups_by_class_and_method(
             backup_list_payload,
             "secret_storage",
@@ -139,6 +174,19 @@ fn count_backups_by_class_and_method(
                     .and_then(Value::as_str)
                     == Some(recipient_method)
         })
+        .count()
+}
+
+fn count_matching_did_recovery_first_backups(
+    list_payload: &Value,
+    policy: &ActiveRecoveryPolicy,
+) -> usize {
+    list_payload
+        .get("backups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|backup| did_recovery_backup_matches_active_policy(backup, policy))
         .count()
 }
 
@@ -322,7 +370,7 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     let list = api
         .list_key_backups_by_series(None, Some("did_recovery"))
         .await?;
-    if let Some(backup_id) = matching_did_recovery_backup_id(&list, &policy) {
+    if let Some(backup_id) = matching_did_recovery_first_backup_id(&list, &policy) {
         return Ok(backup_id);
     }
 
@@ -357,7 +405,7 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     Ok(backup_id)
 }
 
-fn matching_did_recovery_backup_id(
+pub fn matching_did_recovery_first_backup_id(
     list_payload: &Value,
     policy: &ActiveRecoveryPolicy,
 ) -> Option<String> {
@@ -366,26 +414,48 @@ fn matching_did_recovery_backup_id(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .find(|backup| {
-            backup.get("backup_class").and_then(Value::as_str) == Some("did_recovery")
-                && backup
-                    .get("encryption")
-                    .and_then(|encryption| encryption.get("recipient_method"))
-                    .and_then(Value::as_str)
-                    == Some("recovery_public_key")
-                && backup
-                    .get("recovery_policy_ref")
-                    .and_then(|policy_ref| policy_ref.get("policy_id"))
-                    .and_then(Value::as_str)
-                    == Some(policy.policy_id.as_str())
-                && backup
-                    .get("recovery_policy_ref")
-                    .and_then(|policy_ref| policy_ref.get("policy_version"))
-                    .and_then(Value::as_u64)
-                    == Some(policy.policy_version)
+        .filter_map(|backup| {
+            if !did_recovery_backup_matches_active_policy(backup, policy) {
+                return None;
+            }
+            backup
+                .get("backup_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|backup_id| !backup_id.is_empty())
+                .map(str::to_owned)
         })
-        .and_then(|backup| backup.get("backup_id").and_then(Value::as_str))
-        .map(str::to_owned)
+        .next()
+}
+
+fn did_recovery_backup_matches_active_policy(
+    backup: &Value,
+    policy: &ActiveRecoveryPolicy,
+) -> bool {
+    backup.get("backup_class").and_then(Value::as_str) == Some("did_recovery")
+        && backup
+            .get("encryption")
+            .and_then(|encryption| encryption.get("recipient_method"))
+            .and_then(Value::as_str)
+            == Some("recovery_public_key")
+        && backup
+            .get("recovery_policy_ref")
+            .and_then(|policy_ref| policy_ref.get("policy_id"))
+            .and_then(Value::as_str)
+            == Some(policy.policy_id.as_str())
+        && backup
+            .get("recovery_policy_ref")
+            .and_then(|policy_ref| policy_ref.get("policy_version"))
+            .and_then(Value::as_u64)
+            == Some(policy.policy_version)
+        && backup_series_seq_is_first_when_present(backup)
+}
+
+fn backup_series_seq_is_first_when_present(backup: &Value) -> bool {
+    match backup.get("series_seq") {
+        Some(value) => value.as_u64() == Some(0),
+        None => true,
+    }
 }
 
 /// Build the `recovery-session.schema.json` `create_request` body.
@@ -560,6 +630,12 @@ mod tests {
             parse_active_recovery_policy(&json!({ "active_policy": null })),
             None
         );
+        assert_eq!(
+            parse_active_recovery_policy(&json!({
+                "active_policy": { "policy_id": "", "version": 1 }
+            })),
+            None
+        );
         let parsed = parse_active_recovery_policy(&json!({
             "active_policy": {
                 "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
@@ -656,7 +732,7 @@ mod tests {
             account_recovery_state_from_payloads(&policy, &json!({"backups": []}), None);
         assert!(!no_backup.server_recovery_configured());
 
-        let configured = account_recovery_state_from_payloads(
+        let missing_policy_ref = account_recovery_state_from_payloads(
             &policy,
             &json!({
                 "backups": [{
@@ -666,7 +742,41 @@ mod tests {
             }),
             None,
         );
+        assert!(!missing_policy_ref.server_recovery_configured());
+
+        let configured = account_recovery_state_from_payloads(
+            &policy,
+            &json!({
+                "backups": [{
+                    "backup_class": "did_recovery",
+                    "encryption": { "recipient_method": "recovery_public_key" },
+                    "recovery_policy_ref": {
+                        "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                        "policy_version": 1
+                    },
+                    "series_seq": 0
+                }]
+            }),
+            None,
+        );
         assert!(configured.server_recovery_configured());
+
+        let wrong_policy = account_recovery_state_from_payloads(
+            &policy,
+            &json!({
+                "backups": [{
+                    "backup_class": "did_recovery",
+                    "encryption": { "recipient_method": "recovery_public_key" },
+                    "recovery_policy_ref": {
+                        "policy_id": "ck:policy:019a6aa0-0000-7000-8000-000000000000",
+                        "policy_version": 1
+                    },
+                    "series_seq": 0
+                }]
+            }),
+            None,
+        );
+        assert!(!wrong_policy.server_recovery_configured());
     }
 
     #[test]
@@ -695,13 +805,88 @@ mod tests {
                     "recovery_policy_ref": {
                         "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
                         "policy_version": 2
-                    }
+                    },
+                    "series_seq": 0
                 }
             ]
         });
         assert_eq!(
-            matching_did_recovery_backup_id(&payload, &policy).as_deref(),
+            matching_did_recovery_first_backup_id(&payload, &policy).as_deref(),
             Some("ck:backup:019a6aa0-0000-7000-8000-000000000002")
+        );
+    }
+
+    #[test]
+    fn matching_did_recovery_backup_rejects_non_first_series_seq_when_present() {
+        let policy = ActiveRecoveryPolicy {
+            policy_id: "ck:policy:019a6aa0-0000-7000-8000-0000000000bb".to_owned(),
+            policy_version: 2,
+            trust_domain: "ck:trust_domain:soland.local".to_owned(),
+            allowed_proof_kinds: vec!["recovery_unlock".to_owned()],
+        };
+        let payload = json!({
+            "backups": [{
+                "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000002",
+                "backup_class": "did_recovery",
+                "encryption": { "recipient_method": "recovery_public_key" },
+                "recovery_policy_ref": {
+                    "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                    "policy_version": 2
+                },
+                "series_seq": 1
+            }]
+        });
+        assert_eq!(
+            matching_did_recovery_first_backup_id(&payload, &policy),
+            None
+        );
+    }
+
+    #[test]
+    fn first_backup_gate_status_requires_active_policy_and_matching_backup() {
+        let policy = json!({
+            "active_policy": {
+                "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "version": 1,
+                "trust_domain": "ck:trust_domain:soland.local",
+                "allowed_proof_kinds": ["principal_signing"],
+            }
+        });
+        assert_eq!(
+            first_backup_gate_status_from_payloads(
+                &json!({ "active_policy": null }),
+                &json!({ "backups": [] })
+            ),
+            FirstBackupGateStatus::Blocked(FirstBackupGateBlockReason::NoActiveRecoveryPolicy)
+        );
+        assert_eq!(
+            first_backup_gate_status_from_payloads(&policy, &json!({ "backups": [] })),
+            FirstBackupGateStatus::Blocked(
+                FirstBackupGateBlockReason::NoMatchingDidRecoveryBackup {
+                    policy_id: "ck:policy:019a6aa0-0000-7000-8000-0000000000bb".to_owned(),
+                    policy_version: 1,
+                },
+            )
+        );
+        assert_eq!(
+            first_backup_gate_status_from_payloads(
+                &policy,
+                &json!({
+                    "backups": [{
+                        "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000002",
+                        "backup_class": "did_recovery",
+                        "encryption": { "recipient_method": "recovery_public_key" },
+                        "recovery_policy_ref": {
+                            "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                            "policy_version": 1
+                        },
+                        "series_seq": 0
+                    }]
+                })
+            ),
+            FirstBackupGateStatus::Satisfied {
+                backup_id: "ck:backup:019a6aa0-0000-7000-8000-000000000002".to_owned(),
+            }
         );
     }
 

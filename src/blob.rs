@@ -131,13 +131,36 @@ fn encrypt_asset(
     Ok(finish_asset(ciphertext, envelope))
 }
 
+fn derive_thumbnail_content_key(
+    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
+    source_blob_ref: &str,
+    epoch: u64,
+    thumbnail_media_type: &str,
+) -> [u8; MLS_ATTACHMENT_KEY_LEN] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"cokret-thumbnail-content-key-v1\0");
+    hasher.update(mls_exported_secret);
+    hasher.update(b"\0source_blob_ref\0");
+    hasher.update(source_blob_ref.as_bytes());
+    hasher.update(b"\0epoch\0");
+    hasher.update(epoch.to_be_bytes());
+    hasher.update(b"\0media_type\0");
+    hasher.update(thumbnail_media_type.as_bytes());
+    let digest = hasher.finalize();
+    let mut key = [0u8; MLS_ATTACHMENT_KEY_LEN];
+    key.copy_from_slice(&digest);
+    key
+}
+
 /// Encrypt a full-resolution attachment (plus an optional thumbnail) against
 /// the SDK's canonical AEAD codec.
 ///
-/// `mls_exported_secret` is the 32-byte MLS-exporter content key, used verbatim
-/// as the SDK `content_key`. The body attachment picks stream vs whole-file by
-/// size ([`STREAM_ATTACHMENT_THRESHOLD`]); the thumbnail is always whole-file
-/// (spec §3.3.4). `media_type` is the *plaintext* media type recorded in the
+/// `mls_exported_secret` is the 32-byte MLS-exporter content key. The body
+/// attachment uses it as the SDK `content_key`; the thumbnail derives a
+/// separate content key bound to the source ciphertext blob ref. The body
+/// attachment picks stream vs whole-file by size
+/// ([`STREAM_ATTACHMENT_THRESHOLD`]); the thumbnail is always whole-file (spec
+/// §3.3.4). `media_type` is the *plaintext* media type recorded in the
 /// AAD-bound envelope; `thumbnail_media_type` defaults to `image/jpeg` when
 /// `None`.
 #[allow(clippy::too_many_arguments)]
@@ -158,14 +181,21 @@ pub fn encrypt_mls_attachment_bundle(
         media_type,
         false,
     )?;
+    let thumbnail_media_type = thumbnail_media_type.unwrap_or("image/jpeg");
+    let thumbnail_key = derive_thumbnail_content_key(
+        mls_exported_secret,
+        attachment.blob_ref(),
+        epoch,
+        thumbnail_media_type,
+    );
     let thumbnail = thumbnail_plaintext
         .map(|bytes| {
             encrypt_asset(
                 bytes,
-                mls_exported_secret,
+                &thumbnail_key,
                 epoch,
                 &key_ref,
-                thumbnail_media_type.unwrap_or("image/jpeg"),
+                thumbnail_media_type,
                 // Thumbnails are always whole-file (spec §3.3.4).
                 true,
             )
@@ -315,8 +345,16 @@ mod tests {
         // ciphertext-only metadata: the wire transport media type is opaque,
         // but the envelope records the plaintext media type for the receiver.
         assert_eq!(thumbnail.envelope.media_type, "image/jpeg");
-        let recovered =
-            decrypt_whole_file(&thumbnail.ciphertext, &thumbnail.envelope, &key).unwrap();
+        assert!(decrypt_whole_file(&thumbnail.ciphertext, &thumbnail.envelope, &key).is_err());
+        let thumbnail_key =
+            derive_thumbnail_content_key(&key, bundle.attachment.blob_ref(), 7, "image/jpeg");
+        assert_ne!(thumbnail_key, key);
+        let recovered = decrypt_whole_file(
+            &thumbnail.ciphertext,
+            &thumbnail.envelope,
+            &thumbnail_key,
+        )
+        .unwrap();
         assert_eq!(recovered, thumb);
     }
 

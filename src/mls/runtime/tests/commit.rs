@@ -2,6 +2,30 @@
 
 use crate::mls::runtime::*;
 
+fn event_id(value: &str) -> cokret_sdk::EventId {
+    cokret_sdk::EventId::new(value.to_owned()).unwrap()
+}
+
+#[test]
+fn mls_remove_membership_frontier_requires_revocation_evidence() {
+    let err = canonical_mls_remove_membership_frontier(&[]).unwrap_err();
+
+    assert!(
+        err.user_message()
+            .contains("accepted ck.device.revoke event or imported revocation Control Move")
+    );
+}
+
+#[test]
+fn mls_remove_membership_frontier_is_canonicalized_without_seal_fallback() {
+    let b = event_id("ck:event:0196419b-0000-7000-8000-000000000002");
+    let a = event_id("ck:event:0196419b-0000-7000-8000-000000000001");
+
+    let frontier = canonical_mls_remove_membership_frontier(&[b.clone(), a.clone(), b]).unwrap();
+
+    assert_eq!(frontier, vec![a, event_id("ck:event:0196419b-0000-7000-8000-000000000002")]);
+}
+
 #[test]
 fn force_epoch_advance_only_for_overdue_minimal_metadata_realm() {
     use chrono::{Duration, Utc};

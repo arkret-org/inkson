@@ -19,6 +19,7 @@ mod identity;
 mod mls_snapshot;
 mod move_submission;
 mod private_plaintext;
+mod presence;
 mod projections;
 mod read_receipt;
 mod remark;

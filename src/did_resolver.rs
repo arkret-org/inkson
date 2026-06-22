@@ -536,6 +536,22 @@ impl DidResolutionCache {
         self.entries.is_empty()
     }
 
+    /// Return whether any cached identity evidence is still inside its TTL at
+    /// `now`. This is a read-only UX/status helper; authority paths still use
+    /// [`Self::get`] so expired entries are evicted before trust decisions.
+    pub fn has_fresh_entry(&self, now: DateTime<Utc>) -> bool {
+        self.entries
+            .values()
+            .any(|entry| entry.freshness(now) == Freshness::Fresh)
+    }
+
+    /// Return whether the cache contains evidence but none of it is fresh at
+    /// `now`. Display code can use this to distinguish stale fallback from a
+    /// complete identity-resolution outage.
+    pub fn has_only_stale_entries(&self, now: DateTime<Utc>) -> bool {
+        !self.entries.is_empty() && !self.has_fresh_entry(now)
+    }
+
     /// Look up `did` and return a clone of the cached document if a
     /// valid entry exists. Expired entries are evicted as a side
     /// effect so `len()` reflects the post-cleanup state.
@@ -738,6 +754,21 @@ mod tests {
         cache.insert(did.clone(), doc, t0, Duration::seconds(60));
         assert_eq!(cache.len(), 0);
         assert!(cache.get(&did, t0).is_none());
+    }
+
+    #[test]
+    fn cache_reports_fresh_and_stale_summary() {
+        let mut cache = DidResolutionCache::new(8);
+        let (did, doc) = sample_document("did:web:alice.example");
+        let t0 = Utc::now();
+        assert!(!cache.has_fresh_entry(t0));
+        assert!(!cache.has_only_stale_entries(t0));
+
+        cache.insert(did, doc, t0, Duration::seconds(60));
+        assert!(cache.has_fresh_entry(t0 + Duration::seconds(30)));
+        assert!(!cache.has_only_stale_entries(t0 + Duration::seconds(30)));
+        assert!(!cache.has_fresh_entry(t0 + Duration::seconds(60)));
+        assert!(cache.has_only_stale_entries(t0 + Duration::seconds(60)));
     }
 
     // ── Y1 freshness / resolve_with_cache ────────────────────────────

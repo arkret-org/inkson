@@ -7,10 +7,11 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use super::{
-    DND_ACCOUNT_DATA_KEY, PUSH_RULES_ACCOUNT_DATA_KEY, READ_RECEIPT_ACCOUNT_DATA_KEY,
-    build_read_receipt_preferences_body,
+    DND_ACCOUNT_DATA_KEY, PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, PUSH_RULES_ACCOUNT_DATA_KEY,
+    READ_RECEIPT_ACCOUNT_DATA_KEY, build_read_receipt_preferences_body,
 };
 use crate::local_state::LocalStateStore;
+use crate::local_state::PresenceVisibility;
 use crate::models::AccountDataSetResult;
 use crate::notification_rules::WatchLevel;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -40,8 +41,11 @@ pub(super) fn push_read_receipt_account_data(
 ) {
     let body = build_read_receipt_preferences_body(
         state_store.read().read_receipt_default_send(),
+        state_store.read().read_receipt_default_display(),
         &state_store.read().read_receipt_realm_overrides(),
+        &state_store.read().read_receipt_realm_display_overrides(),
         &state_store.read().read_receipt_strand_overrides(),
+        &state_store.read().read_receipt_strand_display_overrides(),
     );
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
@@ -59,6 +63,41 @@ pub(super) fn push_read_receipt_account_data(
             Err(err) => {
                 tracing::warn!(
                     "ck.account_data.set for read-receipt prefs failed: {}",
+                    err.display()
+                );
+            }
+        }
+    });
+}
+
+pub(super) fn build_presence_visibility_body(visibility: PresenceVisibility) -> serde_json::Value {
+    json!({
+        "presence_visibility": visibility.as_wire()
+    })
+}
+
+pub(super) fn push_presence_visibility_account_data(
+    base_url: String,
+    api_token: String,
+    state_store: Signal<LocalStateStore>,
+) {
+    let body = build_presence_visibility_body(state_store.read().presence_visibility());
+    spawn(async move {
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.set_account_data(PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, body)
+                .await
+        })
+        .await
+        {
+            Ok(AccountDataSetResult::Stored { .. }) => {}
+            Ok(AccountDataSetResult::Unsupported { status }) => {
+                tracing::debug!(
+                    "soland ck.account_data.set for ck.presence.visibility returned {status}; local presence policy remains authoritative"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "ck.account_data.set for ck.presence.visibility failed: {}",
                     err.display()
                 );
             }

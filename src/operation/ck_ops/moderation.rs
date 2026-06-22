@@ -2,8 +2,8 @@
 //!
 //! Daily moderation governance is authored as self-signed protocol
 //! events submitted via `ck.self.events.command.submit`
-//! (`POST /_cokret/self/events`); the `/_soland/admin/moderation` write
-//! path is retired. The soland P2 reducer (`apply_moderation`) projects
+//! (`POST /_cokret/self/events`); the product-admin moderation write path
+//! is retired. The soland P2 reducer (`apply_moderation`) projects
 //! these into `ck.component.moderation_state.v1` /
 //! `ck.component.moderation.appeal.v1` and enforces the §5.5.2
 //! separation-of-duties / atomicity constraints.

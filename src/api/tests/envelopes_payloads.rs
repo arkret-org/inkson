@@ -142,12 +142,17 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
     .unwrap();
 
     assert_eq!(envelope.kind, "ck.presence");
+    assert_eq!(
+        envelope.payload["realm_id"],
+        "ck:realm:0196419b-0000-7000-8000-000000000000"
+    );
     assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
-    assert_eq!(envelope.payload["status"], "online");
+    assert_eq!(envelope.payload["state"], "online");
     assert_eq!(
         envelope.payload["last_active_at"],
         "2026-06-22T10:00:00Z/PT1H"
     );
+    assert_eq!(envelope.payload["ttl_ms"], 30000);
 }
 
 #[test]

@@ -9,12 +9,17 @@ use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_P
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::api::CokretApi;
 use crate::models::AccountDataSetResult;
+
+pub use cokret_sdk::{
+    FileTransferAccess, FileTransferAccessVisibility, FileTransferAad, FileTransferEncryption,
+    FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferKeyMessage, FileTransferRecord,
+    FileTransferState,
+};
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_KIND: &str = "file_transfer";
@@ -23,6 +28,7 @@ pub const FILE_TRANSFER_BLOB_SCHEME: &str = "ck.file_transfer.encrypted_blob.v1"
 pub const FILE_TRANSFER_SCHEMA: &str = "ck.schema.file_transfer.v1";
 pub const FILE_TRANSFER_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
 pub const FILE_TRANSFER_RETENTION_DAYS: i64 = 7;
+pub const FILE_TRANSFER_KEY_HPKE_INFO: &[u8] = b"cokret-file-transfer-key-hpke-x25519-v1";
 
 const CONTENT_KEY_LEN: usize = 32;
 const XCHACHA_NONCE_LEN: usize = 24;
@@ -48,71 +54,6 @@ impl FileTransferCryptoContext {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileTransferRecord {
-    pub kind: String,
-    pub transfer_id: String,
-    pub blob_ref: String,
-    pub content_digest: String,
-    pub blob_size_bytes: u64,
-    pub media_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filename: Option<String>,
-    pub plaintext_size_bytes: u64,
-    pub access: FileTransferAccess,
-    pub encryption: FileTransferEncryption,
-    pub origin_device_id: String,
-    pub created_at: String,
-    pub updated_hlc: String,
-    pub retention_expires_at: String,
-    pub state: FileTransferState,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileTransferAccess {
-    pub visibility: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub recipient_device_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileTransferEncryption {
-    pub scheme: String,
-    pub aead_profile: String,
-    pub nonce: String,
-    pub aad: FileTransferAad,
-    pub key_delivery: FileTransferKeyDelivery,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileTransferAad {
-    pub schema: String,
-    pub purpose: String,
-    pub transfer_id: String,
-    pub origin_device_id: String,
-    pub created_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileTransferKeyDelivery {
-    pub method: String,
-    pub content_key: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileTransferState {
-    Available,
-    Downloaded,
-    Dismissed,
-    Deleted,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTransferItem {
     pub account_data_key: String,
@@ -124,6 +65,30 @@ pub struct FileTransferItem {
 pub struct FileTransferUploadResult {
     pub item: FileTransferItem,
     pub server_response: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileTransferRecipientDevice {
+    pub actor_id: String,
+    pub device_id: String,
+    pub hpke_public_key: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct FileTransferDeviceBoundUploadResult {
+    pub item: FileTransferItem,
+    pub server_response: Value,
+    pub device_message_responses: Vec<cokret_sdk::DeviceMessagesSendOutcome>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileTransferDeviceKeyDispatch {
+    pub target_actor_id: String,
+    pub target_device_id: String,
+    pub txn_id: String,
+    pub kind: String,
+    pub expires_at: String,
+    pub content: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -220,6 +185,73 @@ pub async fn upload_actor_private_file(
     })
 }
 
+pub async fn upload_device_bound_file(
+    api: &CokretApi,
+    crypto: &FileTransferCryptoContext,
+    actor_id: &str,
+    device_id: &str,
+    filename: Option<&str>,
+    media_type: &str,
+    recipient_devices: Vec<FileTransferRecipientDevice>,
+    plaintext: Vec<u8>,
+) -> anyhow::Result<FileTransferDeviceBoundUploadResult> {
+    let prepared =
+        prepare_actor_private_file(crypto, actor_id, device_id, filename, media_type, plaintext)?;
+    let account_data_key = prepared.account_data_key.clone();
+    let upload = api
+        .upload_file_transfer_ciphertext_auto(prepared.ciphertext.clone(), &prepared.content_digest)
+        .await?;
+    let uploaded_digest = upload.content_digest.to_string();
+    if uploaded_digest != prepared.content_digest {
+        anyhow::bail!("file-transfer blob upload digest mismatch");
+    }
+    let blob_ref = upload.blob_ref.to_string();
+    verify_content_addressed_blob_ref(&blob_ref, &prepared.content_digest)?;
+
+    let (record, dispatches) = prepared.into_device_bound_record_and_messages(
+        blob_ref,
+        upload.size_bytes,
+        recipient_devices,
+    )?;
+    let derived_account_data_key = record_account_key(&record, crypto)?;
+    if derived_account_data_key != account_data_key {
+        anyhow::bail!("file-transfer account_data key derivation drift");
+    }
+    let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
+    let outcome = api.set_account_data(&account_data_key, envelope).await?;
+    let server_response = match outcome {
+        AccountDataSetResult::Stored { response } => response,
+        AccountDataSetResult::Unsupported { status } => {
+            anyhow::bail!("ck.account_data.set unsupported for file transfer: {status}");
+        }
+    };
+
+    let mut device_message_responses = Vec::with_capacity(dispatches.len());
+    for dispatch in dispatches {
+        let response = api
+            .send_device_message_envelope(
+                &dispatch.txn_id,
+                &dispatch.target_actor_id,
+                &dispatch.target_device_id,
+                &dispatch.kind,
+                &dispatch.expires_at,
+                dispatch.content,
+            )
+            .await?;
+        device_message_responses.push(response);
+    }
+
+    Ok(FileTransferDeviceBoundUploadResult {
+        item: FileTransferItem {
+            account_data_key,
+            record,
+            updated_at: None,
+        },
+        server_response,
+        device_message_responses,
+    })
+}
+
 pub async fn decrypt_file_transfer_item(
     api: &CokretApi,
     item: &FileTransferItem,
@@ -235,7 +267,74 @@ pub fn decrypt_file_transfer_ciphertext(
     ciphertext: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
     validate_ciphertext_binding(record, ciphertext)?;
-    let content_key = decode_fixed::<CONTENT_KEY_LEN>(&record.encryption.key_delivery.content_key)?;
+    let content_key_value = match &record.encryption.key_delivery {
+        FileTransferKeyDelivery::AccountDataWrappedKey { content_key } => content_key,
+        FileTransferKeyDelivery::ToDeviceWrappedKey { .. } => {
+            anyhow::bail!("file-transfer device_bound requires a to-device key message");
+        }
+    };
+    let content_key = decode_fixed::<CONTENT_KEY_LEN>(content_key_value)?;
+    decrypt_file_transfer_ciphertext_with_key(record, ciphertext, &content_key)
+}
+
+pub fn decrypt_file_transfer_ciphertext_with_device_key_message(
+    record: &FileTransferRecord,
+    ciphertext: &[u8],
+    key_message: &Value,
+    recipient_private_key: &[u8],
+    recipient_actor_id: &str,
+    recipient_device_id: &str,
+) -> anyhow::Result<Vec<u8>> {
+    validate_ciphertext_blob_binding(record, ciphertext)?;
+    let content_key = open_file_transfer_device_key_message(
+        record,
+        key_message,
+        recipient_private_key,
+        recipient_actor_id,
+        recipient_device_id,
+    )?;
+    decrypt_file_transfer_ciphertext_with_key(record, ciphertext, &content_key)
+}
+
+pub fn try_decrypt_file_transfer_from_device_message(
+    record: &FileTransferRecord,
+    ciphertext: &[u8],
+    envelope: &Value,
+    recipient_private_key: &[u8],
+    recipient_actor_id: &str,
+    recipient_device_id: &str,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    if envelope.get("kind").and_then(Value::as_str)
+        != Some(cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND)
+    {
+        return Ok(None);
+    }
+    if envelope
+        .get("recipient_device_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value != recipient_device_id)
+    {
+        anyhow::bail!("file-transfer key envelope recipient_device_id mismatch");
+    }
+    let content = envelope
+        .get("content")
+        .ok_or_else(|| anyhow::anyhow!("file-transfer key envelope missing content"))?;
+    decrypt_file_transfer_ciphertext_with_device_key_message(
+        record,
+        ciphertext,
+        content,
+        recipient_private_key,
+        recipient_actor_id,
+        recipient_device_id,
+    )
+    .map(Some)
+}
+
+fn decrypt_file_transfer_ciphertext_with_key(
+    record: &FileTransferRecord,
+    ciphertext: &[u8],
+    content_key: &[u8; CONTENT_KEY_LEN],
+) -> anyhow::Result<Vec<u8>> {
     let nonce = decode_fixed::<XCHACHA_NONCE_LEN>(&record.encryption.nonce)?;
     let aad_bytes = crate::canonical::canonical_json_bytes(&record.encryption.aad)?;
     let cipher = XChaCha20Poly1305::new((&content_key).into());
@@ -375,7 +474,7 @@ impl PreparedFileTransfer {
         blob_ref: String,
         blob_size_bytes: u64,
     ) -> anyhow::Result<FileTransferRecord> {
-        Ok(FileTransferRecord {
+        let record = FileTransferRecord {
             kind: FILE_TRANSFER_RECORD_KIND.to_owned(),
             transfer_id: self.transfer_id,
             blob_ref,
@@ -385,7 +484,7 @@ impl PreparedFileTransfer {
             filename: self.filename,
             plaintext_size_bytes: self.plaintext_size_bytes,
             access: FileTransferAccess {
-                visibility: "actor_private".to_owned(),
+                visibility: FileTransferAccessVisibility::ActorPrivate,
                 recipient_device_ids: Vec::new(),
             },
             encryption: FileTransferEncryption {
@@ -393,8 +492,7 @@ impl PreparedFileTransfer {
                 aead_profile: FILE_TRANSFER_AEAD_PROFILE.to_owned(),
                 nonce: URL_SAFE_NO_PAD.encode(self.nonce),
                 aad: self.aad,
-                key_delivery: FileTransferKeyDelivery {
-                    method: "account_data_wrapped_key".to_owned(),
+                key_delivery: FileTransferKeyDelivery::AccountDataWrappedKey {
                     content_key: URL_SAFE_NO_PAD.encode(self.content_key),
                 },
             },
@@ -403,8 +501,249 @@ impl PreparedFileTransfer {
             updated_hlc: self.updated_hlc,
             retention_expires_at: self.retention_expires_at,
             state: FileTransferState::Available,
-        })
+        };
+        record
+            .validate()
+            .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
+        Ok(record)
     }
+
+    fn into_device_bound_record_and_messages(
+        self,
+        blob_ref: String,
+        blob_size_bytes: u64,
+        recipient_devices: Vec<FileTransferRecipientDevice>,
+    ) -> anyhow::Result<(FileTransferRecord, Vec<FileTransferDeviceKeyDispatch>)> {
+        if recipient_devices.is_empty() {
+            anyhow::bail!("device_bound file-transfer requires recipient devices");
+        }
+        let mut seen_devices = std::collections::BTreeSet::new();
+        let mut recipients = Vec::with_capacity(recipient_devices.len());
+        for recipient in recipient_devices {
+            let actor_id = recipient.actor_id.trim().to_owned();
+            let device_id = recipient.device_id.trim().to_owned();
+            cokret_sdk::Did::new(actor_id.clone())
+                .map_err(|error| anyhow::anyhow!("invalid file-transfer recipient actor: {error}"))?;
+            cokret_sdk::DeviceId::new(device_id.clone()).map_err(|error| {
+                anyhow::anyhow!("invalid file-transfer recipient device_id: {error}")
+            })?;
+            if !seen_devices.insert(device_id.clone()) {
+                anyhow::bail!("device_bound file-transfer recipient_device_ids must be unique");
+            }
+            let hpke_public_key = recipient.hpke_public_key.trim().to_owned();
+            if hpke_public_key.is_empty() {
+                anyhow::bail!("device_bound file-transfer recipient HPKE key is required");
+            }
+            recipients.push(FileTransferRecipientDevice {
+                actor_id,
+                device_id,
+                hpke_public_key,
+            });
+        }
+
+        let nonce = URL_SAFE_NO_PAD.encode(self.nonce);
+        let content_key = self.content_key;
+        let record = FileTransferRecord {
+            kind: FILE_TRANSFER_RECORD_KIND.to_owned(),
+            transfer_id: self.transfer_id,
+            blob_ref,
+            content_digest: self.content_digest,
+            blob_size_bytes,
+            media_type: self.media_type,
+            filename: self.filename,
+            plaintext_size_bytes: self.plaintext_size_bytes,
+            access: FileTransferAccess {
+                visibility: FileTransferAccessVisibility::DeviceBound,
+                recipient_device_ids: recipients
+                    .iter()
+                    .map(|recipient| recipient.device_id.clone())
+                    .collect(),
+            },
+            encryption: FileTransferEncryption {
+                scheme: FILE_TRANSFER_BLOB_SCHEME.to_owned(),
+                aead_profile: FILE_TRANSFER_AEAD_PROFILE.to_owned(),
+                nonce,
+                aad: self.aad,
+                key_delivery: FileTransferKeyDelivery::ToDeviceWrappedKey {
+                    key_message_kind: cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND.to_owned(),
+                },
+            },
+            origin_device_id: self.origin_device_id,
+            created_at: self.created_at,
+            updated_hlc: self.updated_hlc,
+            retention_expires_at: self.retention_expires_at,
+            state: FileTransferState::Available,
+        };
+        record
+            .validate()
+            .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
+
+        let expires_at = (chrono::Utc::now() + chrono::Duration::hours(24))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let mut dispatches = Vec::with_capacity(recipients.len());
+        for recipient in &recipients {
+            dispatches.push(build_file_transfer_device_key_dispatch(
+                &record,
+                &content_key,
+                recipient,
+                &expires_at,
+            )?);
+        }
+        Ok((record, dispatches))
+    }
+}
+
+fn build_file_transfer_device_key_dispatch(
+    record: &FileTransferRecord,
+    content_key: &[u8; CONTENT_KEY_LEN],
+    recipient: &FileTransferRecipientDevice,
+    expires_at: &str,
+) -> anyhow::Result<FileTransferDeviceKeyDispatch> {
+    if !record
+        .access
+        .recipient_device_ids
+        .iter()
+        .any(|device_id| device_id == &recipient.device_id)
+    {
+        anyhow::bail!("file-transfer recipient device is not in recipient_device_ids");
+    }
+    let recipient_public_key = URL_SAFE_NO_PAD
+        .decode(recipient.hpke_public_key.as_bytes())
+        .map_err(|error| anyhow::anyhow!("file-transfer recipient HPKE public key: {error}"))?;
+    let aad = file_transfer_key_message_aad(
+        record,
+        recipient.actor_id.as_str(),
+        recipient.device_id.as_str(),
+        expires_at,
+    )?;
+    let sealed = crate::hpke_backup::hpke_seal(
+        &recipient_public_key,
+        FILE_TRANSFER_KEY_HPKE_INFO,
+        &aad,
+        content_key,
+    )?;
+    let key_message = FileTransferKeyMessage {
+        transfer_id: record.transfer_id.clone(),
+        blob_ref: record.blob_ref.clone(),
+        aead_profile: record.encryption.aead_profile.clone(),
+        nonce: record.encryption.nonce.clone(),
+        content_digest: record.content_digest.clone(),
+        key_envelope: FileTransferKeyEnvelope {
+            scheme: cokret_sdk::FILE_TRANSFER_KEY_ENVELOPE_SCHEME.to_owned(),
+            enc: URL_SAFE_NO_PAD.encode(sealed.enc),
+            ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
+            aad_digest: sha256_digest(&aad),
+        },
+        expires_at: expires_at.to_owned(),
+    };
+    key_message
+        .validate_record_binding(record)
+        .map_err(|error| anyhow::anyhow!("file-transfer key message invalid: {error}"))?;
+    let content = serde_json::to_value(key_message)
+        .map_err(|error| anyhow::anyhow!("file-transfer key message JSON: {error}"))?;
+    Ok(FileTransferDeviceKeyDispatch {
+        target_actor_id: recipient.actor_id.clone(),
+        target_device_id: recipient.device_id.clone(),
+        txn_id: file_transfer_device_key_txn_id(
+            &record.transfer_id,
+            &recipient.actor_id,
+            &recipient.device_id,
+        ),
+        kind: cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND.to_owned(),
+        expires_at: expires_at.to_owned(),
+        content,
+    })
+}
+
+fn open_file_transfer_device_key_message(
+    record: &FileTransferRecord,
+    key_message: &Value,
+    recipient_private_key: &[u8],
+    recipient_actor_id: &str,
+    recipient_device_id: &str,
+) -> anyhow::Result<[u8; CONTENT_KEY_LEN]> {
+    let key_message: FileTransferKeyMessage = serde_json::from_value(key_message.clone())
+        .map_err(|error| anyhow::anyhow!("file-transfer key message decode failed: {error}"))?;
+    key_message
+        .validate_record_binding(record)
+        .map_err(|error| anyhow::anyhow!("file-transfer key message binding failed: {error}"))?;
+    let recipient_actor_id = recipient_actor_id.trim();
+    let recipient_device_id = recipient_device_id.trim();
+    cokret_sdk::Did::new(recipient_actor_id.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid file-transfer recipient actor: {error}"))?;
+    cokret_sdk::DeviceId::new(recipient_device_id.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid file-transfer recipient device_id: {error}"))?;
+    if !record
+        .access
+        .recipient_device_ids
+        .iter()
+        .any(|device_id| device_id == recipient_device_id)
+    {
+        anyhow::bail!("file-transfer key message recipient device is not authorized");
+    }
+
+    let aad = file_transfer_key_message_aad(
+        record,
+        recipient_actor_id,
+        recipient_device_id,
+        key_message.expires_at.as_str(),
+    )?;
+    if key_message.key_envelope.aad_digest != sha256_digest(&aad) {
+        anyhow::bail!("file-transfer key envelope aad_digest mismatch");
+    }
+    let enc = URL_SAFE_NO_PAD
+        .decode(key_message.key_envelope.enc.as_bytes())
+        .map_err(|error| anyhow::anyhow!("file-transfer key envelope enc: {error}"))?;
+    let sealed_key = URL_SAFE_NO_PAD
+        .decode(key_message.key_envelope.ciphertext.as_bytes())
+        .map_err(|error| anyhow::anyhow!("file-transfer key envelope ciphertext: {error}"))?;
+    let opened = crate::hpke_backup::hpke_open(
+        recipient_private_key,
+        &enc,
+        FILE_TRANSFER_KEY_HPKE_INFO,
+        &aad,
+        &sealed_key,
+    )?;
+    if opened.len() != CONTENT_KEY_LEN {
+        anyhow::bail!("file-transfer opened content key length mismatch");
+    }
+    let mut content_key = [0u8; CONTENT_KEY_LEN];
+    content_key.copy_from_slice(&opened);
+    Ok(content_key)
+}
+
+fn file_transfer_key_message_aad(
+    record: &FileTransferRecord,
+    recipient_actor_id: &str,
+    recipient_device_id: &str,
+    expires_at: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let aad = json!({
+        "kind": cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND,
+        "transfer_id": record.transfer_id.as_str(),
+        "blob_ref": record.blob_ref.as_str(),
+        "aead_profile": record.encryption.aead_profile.as_str(),
+        "nonce": record.encryption.nonce.as_str(),
+        "content_digest": record.content_digest.as_str(),
+        "recipient_actor_id": recipient_actor_id,
+        "recipient_device_id": recipient_device_id,
+        "expires_at": expires_at,
+    });
+    crate::canonical::canonical_json_bytes(&aad)
+}
+
+fn file_transfer_device_key_txn_id(
+    transfer_id: &str,
+    recipient_actor_id: &str,
+    recipient_device_id: &str,
+) -> String {
+    let digest = Sha256::digest(format!(
+        "{transfer_id}\n{recipient_actor_id}\n{recipient_device_id}"
+    ));
+    format!(
+        "file-transfer-key-{transfer_id}-{}",
+        &crate::canonical::hex_encode(&digest)[..16]
+    )
 }
 
 fn file_transfer_item_from_account_data(
@@ -512,8 +851,12 @@ fn open_record_envelope(
             },
         )
         .map_err(|error| anyhow::anyhow!("file-transfer record open failed: {error}"))?;
-    serde_json::from_slice(&plaintext)
-        .map_err(|error| anyhow::anyhow!("file-transfer record JSON decode failed: {error}"))
+    let record: FileTransferRecord = serde_json::from_slice(&plaintext)
+        .map_err(|error| anyhow::anyhow!("file-transfer record JSON decode failed: {error}"))?;
+    record
+        .validate()
+        .map_err(|error| anyhow::anyhow!("file-transfer record validation failed: {error}"))?;
+    Ok(record)
 }
 
 fn validate_record_envelope_aad(aad: &Value, account_data_key: &str) -> anyhow::Result<()> {
@@ -547,6 +890,26 @@ fn validate_ciphertext_binding(
     record: &FileTransferRecord,
     ciphertext: &[u8],
 ) -> anyhow::Result<()> {
+    validate_ciphertext_blob_binding(record, ciphertext)?;
+    if !matches!(
+        &record.encryption.key_delivery,
+        FileTransferKeyDelivery::AccountDataWrappedKey { .. }
+    ) {
+        anyhow::bail!("file-transfer key delivery method unsupported");
+    }
+    if record.access.visibility != FileTransferAccessVisibility::ActorPrivate {
+        anyhow::bail!("file-transfer access visibility unsupported");
+    }
+    Ok(())
+}
+
+fn validate_ciphertext_blob_binding(
+    record: &FileTransferRecord,
+    ciphertext: &[u8],
+) -> anyhow::Result<()> {
+    record
+        .validate()
+        .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
     let digest = sha256_digest(ciphertext);
     if record.content_digest != digest {
         anyhow::bail!("file-transfer ciphertext digest mismatch");
@@ -560,12 +923,6 @@ fn validate_ciphertext_binding(
     }
     if record.encryption.aead_profile != FILE_TRANSFER_AEAD_PROFILE {
         anyhow::bail!("file-transfer AEAD profile mismatch");
-    }
-    if record.encryption.key_delivery.method != "account_data_wrapped_key" {
-        anyhow::bail!("file-transfer key delivery method unsupported");
-    }
-    if record.access.visibility != "actor_private" {
-        anyhow::bail!("file-transfer access visibility unsupported");
     }
     validate_content_aad(record)?;
     Ok(())
@@ -712,6 +1069,41 @@ mod tests {
 
     const ACTOR: &str = "did:web:alice.example";
     const DEVICE: &str = "ck:device:01904100-0000-7000-8000-000000000001";
+    const RECIPIENT_DEVICE: &str = "ck:device:01904100-0000-7000-8000-000000000002";
+    const OTHER_DEVICE: &str = "ck:device:01904100-0000-7000-8000-000000000003";
+
+    fn device_bound_fixture() -> (FileTransferRecord, Vec<u8>, Vec<u8>, Value) {
+        let crypto = FileTransferCryptoContext::from_account_secret("test-account-secret").unwrap();
+        let prepared = prepare_actor_private_file(
+            &crypto,
+            ACTOR,
+            DEVICE,
+            Some("vault.txt"),
+            "text/plain",
+            b"device-only".to_vec(),
+        )
+        .unwrap();
+        let ciphertext = prepared.ciphertext.clone();
+        let blob_ref = format!(
+            "ck:blob:sha256:{}",
+            prepared.content_digest.trim_start_matches("sha256:")
+        );
+        let (recipient_sk, recipient_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+        let (record, dispatches) = prepared
+            .into_device_bound_record_and_messages(
+                blob_ref,
+                ciphertext.len() as u64,
+                vec![FileTransferRecipientDevice {
+                    actor_id: ACTOR.to_owned(),
+                    device_id: RECIPIENT_DEVICE.to_owned(),
+                    hpke_public_key: URL_SAFE_NO_PAD.encode(recipient_pk),
+                }],
+            )
+            .unwrap();
+        assert_eq!(dispatches.len(), 1);
+        assert_eq!(dispatches[0].kind, cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND);
+        (record, ciphertext, recipient_sk, dispatches[0].content.clone())
+    }
 
     #[test]
     fn prepared_file_round_trips_through_record_envelope_and_content_aead() {
@@ -747,6 +1139,102 @@ mod tests {
 
         let plaintext = decrypt_file_transfer_ciphertext(&items[0].record, &ciphertext).unwrap();
         assert_eq!(plaintext, b"hello file");
+    }
+
+    #[test]
+    fn device_bound_file_round_trips_through_to_device_key_message() {
+        let (record, ciphertext, recipient_sk, key_message) = device_bound_fixture();
+
+        assert_eq!(
+            record.access.visibility,
+            FileTransferAccessVisibility::DeviceBound
+        );
+        assert_eq!(
+            record.access.recipient_device_ids,
+            vec![RECIPIENT_DEVICE.to_owned()]
+        );
+        assert!(decrypt_file_transfer_ciphertext(&record, &ciphertext).is_err());
+
+        let plaintext = decrypt_file_transfer_ciphertext_with_device_key_message(
+            &record,
+            &ciphertext,
+            &key_message,
+            &recipient_sk,
+            ACTOR,
+            RECIPIENT_DEVICE,
+        )
+        .unwrap();
+        assert_eq!(plaintext, b"device-only");
+    }
+
+    #[test]
+    fn device_bound_file_opens_from_to_device_inbox_envelope() {
+        let (record, ciphertext, recipient_sk, key_message) = device_bound_fixture();
+        let envelope = json!({
+            "kind": cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND,
+            "recipient_device_id": RECIPIENT_DEVICE,
+            "content": key_message,
+        });
+
+        let plaintext = try_decrypt_file_transfer_from_device_message(
+            &record,
+            &ciphertext,
+            &envelope,
+            &recipient_sk,
+            ACTOR,
+            RECIPIENT_DEVICE,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(plaintext, b"device-only");
+
+        assert!(
+            try_decrypt_file_transfer_from_device_message(
+                &record,
+                &ciphertext,
+                &json!({"kind": "ck.key.verification.request"}),
+                &recipient_sk,
+                ACTOR,
+                RECIPIENT_DEVICE,
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn device_bound_key_message_drift_fails_closed() {
+        let (record, ciphertext, recipient_sk, mut key_message) = device_bound_fixture();
+        key_message["nonce"] = Value::String("different_nonce".to_owned());
+
+        assert!(
+            decrypt_file_transfer_ciphertext_with_device_key_message(
+                &record,
+                &ciphertext,
+                &key_message,
+                &recipient_sk,
+                ACTOR,
+                RECIPIENT_DEVICE,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn device_bound_unlisted_device_fails_closed() {
+        let (record, ciphertext, recipient_sk, key_message) = device_bound_fixture();
+
+        assert!(
+            decrypt_file_transfer_ciphertext_with_device_key_message(
+                &record,
+                &ciphertext,
+                &key_message,
+                &recipient_sk,
+                ACTOR,
+                OTHER_DEVICE,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -796,14 +1284,15 @@ mod tests {
         )
         .unwrap();
         let ciphertext = prepared.ciphertext.clone();
-        let record = prepared
-            .into_record(
-                "ck:blob:sha256:0000000000000000000000000000000000000000000000000000000000000000"
-                    .to_owned(),
-                ciphertext.len() as u64,
-            )
-            .unwrap();
-        assert!(decrypt_file_transfer_ciphertext(&record, &ciphertext).is_err());
+        assert!(
+            prepared
+                .into_record(
+                    "ck:blob:sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_owned(),
+                    ciphertext.len() as u64,
+                )
+                .is_err()
+        );
     }
 
     #[test]

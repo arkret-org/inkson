@@ -984,6 +984,11 @@ pub struct TypingResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PresenceResult {
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReceiptResult {
     pub ok: bool,
 }

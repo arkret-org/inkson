@@ -84,6 +84,20 @@ impl CokretApi {
         })
     }
 
+    pub async fn send_presence(
+        &self,
+        realm_id: &str,
+        actor: &str,
+        state: &str,
+        last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<PresenceResult> {
+        let envelope = build_presence_envelope(realm_id, actor, state, last_active_at)?;
+        let response = self.submit_ephemeral_envelope(&envelope).await?;
+        Ok(PresenceResult {
+            ok: response.accepted,
+        })
+    }
+
     /// Round R2/R3 (T02) — read receipts (`ck.receipt.read`) are wire-scope-
     /// ephemeral. They MUST strand through `ck.self.ephemeral.command.send`; the
     /// `ck.self.events.command.submit` durable path and deployment-local `/receipts`
@@ -485,7 +499,7 @@ mod tests {
             "prev_refs": [],
             "payload": {
                 "actor_id": "did:web:alice.example",
-                "status": "online"
+                "state": "online"
             },
             "proofs": [proof]
         }))

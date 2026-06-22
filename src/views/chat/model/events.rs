@@ -343,11 +343,15 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .copied()
         .find(|candidate| crate::disappearing::message_event_is_expiry_stub(candidate));
     let is_expiry_stub = expiry_stub_candidate.is_some();
+    let late_recovery_transition = crate::late_recovery::evaluate_late_recovery_transition_event(event);
+    let late_recovery_rejection = late_recovery_transition
+        .rejection_reason_code()
+        .map(ToOwned::to_owned);
     // Author-owned plaintext sidecar: look up the body the author stored on
     // encrypted send, keyed by `message:{message_id}` under the discussion
     // strand. Falls back to the decoded payload body (another member's message
     // we CAN decrypt, or a plaintext message).
-    let sidecar_body = if is_expiry_stub {
+    let sidecar_body = if is_expiry_stub || !late_recovery_transition.allows_plaintext() {
         None
     } else {
         state_store.and_then(|store| {
@@ -363,6 +367,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // `None` (→ Decrypting/KeyMissing) when the snapshot/secret is unavailable.
     let decrypted_body = if !is_expiry_stub
         && !body_from_sidecar
+        && late_recovery_transition.allows_plaintext()
         && let (Some((actor_id, device_id)), Some(store), Some(encrypted)) = (
             decrypt_identity,
             state_store,
@@ -375,6 +380,8 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     let body_was_decrypted = decrypted_body.is_some();
     let body = if let Some(stub) = expiry_stub_candidate {
         crate::disappearing::message_expiry_stub_body(stub)
+    } else if late_recovery_rejection.is_some() {
+        String::new()
     } else {
         match sidecar_body.or(decrypted_body) {
             Some(plaintext) => plaintext,
@@ -455,6 +462,8 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     };
     let crypto_state = if is_expiry_stub {
         MessageCryptoState::Plaintext
+    } else if late_recovery_rejection.is_some() {
+        MessageCryptoState::LateRecoveryRejected
     } else if scope_mismatch || proof_verdict == ChatProofVerdict::Unresolved {
         // Either a Circle-scope mismatch, OR a present sender proof whose verify
         // key is not yet resolvable from the directory cache — flag for
@@ -498,7 +507,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         revisions: Vec::new(),
         pending: false,
         failed: false,
-        error: None,
+        error: late_recovery_rejection,
         mentions: mentions_from_candidates(&candidates),
         crypto_state,
     })
@@ -740,17 +749,12 @@ pub(crate) fn sync_presence_actor(event: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-pub(crate) fn sync_presence_status(event: &Value) -> Option<String> {
+pub(crate) fn sync_presence_state(event: &Value) -> Option<String> {
     event
-        .get("presence")
-        .and_then(|presence| {
-            presence
-                .as_str()
-                .or_else(|| presence.get("status").and_then(Value::as_str))
-        })
-        .or_else(|| event.get("status").and_then(Value::as_str))
+        .get("state")
+        .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|status| !status.is_empty())
+        .filter(|state| !state.is_empty())
         .map(ToOwned::to_owned)
 }
 
@@ -800,7 +804,7 @@ pub(crate) fn presence_maps_from_sync_events(
         }
         states.insert(
             actor,
-            sync_presence_status(event).unwrap_or_else(|| "offline".to_owned()),
+            sync_presence_state(event).unwrap_or_else(|| "offline".to_owned()),
         );
     }
     matched_remote.then_some((states, labels))

@@ -366,6 +366,74 @@
 }
 .toast.danger { background: var(--danger); color: white; }
 
+.did-resolution-health-banner {
+  position: fixed;
+  top: calc(var(--topbar-h, 56px) + 12px);
+  right: 16px;
+  z-index: var(--layer-toast);
+  width: min(420px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid var(--warning);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--surface-solid, var(--surface));
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+}
+.did-resolution-health-banner--outage {
+  border-color: var(--danger);
+}
+.did-resolution-health-banner-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.did-resolution-health-banner-icon {
+  display: inline-flex;
+  color: var(--warning);
+}
+.did-resolution-health-banner--outage .did-resolution-health-banner-icon {
+  color: var(--danger);
+}
+.did-resolution-health-banner strong {
+  min-width: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.did-resolution-health-banner-label {
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.did-resolution-health-banner--outage .did-resolution-health-banner-label {
+  background: rgba(185, 28, 28, 0.10);
+  color: var(--danger);
+}
+.did-resolution-health-banner p {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .did-resolution-health-banner {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+  }
+}
+
 /* Modal overlay */
 .modal-backdrop {
   position: fixed; inset: 0;

@@ -184,48 +184,6 @@ impl DisplayMetadata {
     }
 }
 
-/// Presence policy as defined by the spec.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PresencePolicy {
-    /// Actor DID. Wire field `actor_id` per the v1 naming rule (single
-    /// protocol subject uses `_id` even when the value is a DID). `alias` keeps
-    /// already-stored `actor_id` payloads readable.
-    #[serde(alias = "actor_id")]
-    pub actor_id: String,
-    /// Whether presence is enabled.
-    pub enabled: bool,
-    /// Per-Realm presence settings.
-    pub realm_policies: HashMap<String, RealmPresencePolicy>,
-    /// Default policy for new Realms.
-    pub default_policy: RealmPresencePolicy,
-    /// When this policy was last updated.
-    pub updated_at: Hlc,
-}
-
-/// Per-Realm presence policy.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RealmPresencePolicy {
-    /// Share online status.
-    pub share_online: bool,
-    /// Share typing indicators.
-    pub share_typing: bool,
-    /// Share read receipts.
-    pub share_read_receipts: bool,
-    /// Share last seen time.
-    pub share_last_seen: bool,
-}
-
-impl Default for RealmPresencePolicy {
-    fn default() -> Self {
-        Self {
-            share_online: true,
-            share_typing: true,
-            share_read_receipts: true,
-            share_last_seen: true,
-        }
-    }
-}
-
 /// Read marker for multi-device sync.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadMarker {
@@ -423,8 +381,6 @@ pub struct DiscoveryManager {
     org_profiles: HashMap<String, OrgProfileStatus>,
     /// Display metadata cache.
     display_metadata: HashMap<String, DisplayMetadata>,
-    /// Presence policies.
-    presence_policies: HashMap<String, PresencePolicy>,
     /// Marker merger.
     marker_merger: MarkerMerger,
 }
@@ -463,17 +419,6 @@ impl DiscoveryManager {
     /// Get display metadata.
     pub fn get_display_metadata(&self, actor_id: &str) -> Option<&DisplayMetadata> {
         self.display_metadata.get(actor_id)
-    }
-
-    /// Set presence policy.
-    pub fn set_presence_policy(&mut self, policy: PresencePolicy) {
-        self.presence_policies
-            .insert(policy.actor_id.clone(), policy);
-    }
-
-    /// Get presence policy.
-    pub fn get_presence_policy(&self, actor_id: &str) -> Option<&PresencePolicy> {
-        self.presence_policies.get(actor_id)
     }
 
     /// Get the marker merger.
@@ -517,15 +462,6 @@ mod tests {
         let metadata = DisplayMetadata::new("did:web:alice");
         assert_eq!(metadata.actor_id, "did:web:alice");
         assert!(metadata.display_name.is_none());
-    }
-
-    #[test]
-    fn test_presence_policy_default() {
-        let policy = RealmPresencePolicy::default();
-        assert!(policy.share_online);
-        assert!(policy.share_typing);
-        assert!(policy.share_read_receipts);
-        assert!(policy.share_last_seen);
     }
 
     #[test]

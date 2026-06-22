@@ -33,6 +33,57 @@ fn read_receipt_resolution_strand_overrides_realm_overrides_default() {
 }
 
 #[test]
+fn read_receipt_display_resolution_is_local_rendering_only() {
+    let path = temp_state_path("read-receipt-display-resolve");
+    let mut store = LocalStateStore::with_path(path.clone());
+    assert!(store.read_receipt_default_display());
+    assert!(store.read_receipt_should_display(None, Some("ck:realm:any")));
+
+    store.set_read_receipt_default_display(false);
+    store.set_read_receipt_realm_display_override("ck:realm:demo", Some(true));
+    store.set_read_receipt_strand_display_override("ck:strand:demo", Some(false));
+
+    let reader = LocalStateStore::with_path(path);
+    assert!(!reader.read_receipt_default_display());
+    assert!(!reader.read_receipt_should_display(
+        Some("ck:strand:demo"),
+        Some("ck:realm:demo")
+    ));
+    assert!(reader.read_receipt_should_display(
+        Some("ck:strand:other"),
+        Some("ck:realm:demo")
+    ));
+    assert!(!reader.read_receipt_should_display(None, Some("ck:realm:other")));
+}
+
+#[test]
+fn read_receipt_display_is_not_locked_by_server_disclosure_policy() {
+    let path = temp_state_path("read-receipt-display-policy");
+    let mut store = LocalStateStore::with_path(path);
+    store.set_read_receipt_default_display(false);
+    store.set_read_receipt_policy_snapshot(
+        "ck:realm:demo",
+        Some(ReadReceiptPolicySnapshot {
+            disclosure: "required".to_owned(),
+            visibility: Some("members".to_owned()),
+        }),
+    );
+    assert!(store.read_receipt_should_send(None, Some("ck:realm:demo")));
+    assert!(!store.read_receipt_should_display(None, Some("ck:realm:demo")));
+
+    store.set_read_receipt_default_display(true);
+    store.set_read_receipt_policy_snapshot(
+        "ck:realm:demo",
+        Some(ReadReceiptPolicySnapshot {
+            disclosure: "disabled".to_owned(),
+            visibility: Some("private".to_owned()),
+        }),
+    );
+    assert!(!store.read_receipt_should_send(None, Some("ck:realm:demo")));
+    assert!(store.read_receipt_should_display(None, Some("ck:realm:demo")));
+}
+
+#[test]
 fn read_receipt_clearing_override_falls_back_to_default() {
     let path = temp_state_path("read-receipt-clear");
     let mut store = LocalStateStore::with_path(path);

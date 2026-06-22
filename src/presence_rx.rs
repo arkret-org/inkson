@@ -11,8 +11,9 @@
 //! Spec sources:
 //! - `discovery/read-receipts.md §6` — `ck.read_cursor.advance` carries a
 //!   `ck.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
-//! - `discovery/profiles-presence.md` — `ck.presence` carries `{actor_id, status, last_seen?}` with
-//!   status ∈ {`online`, `away`, `dnd`, `offline`}.
+//! - `discovery/profiles-presence.md` — `ck.presence` carries
+//!   `{state, actor_id, last_active_at?, ttl_ms?}` with
+//!   state in {`online`, `idle`, `dnd`, `offline`}.
 //! - `strand-and-message.md §10` — `ck.typing` is short-TTL signaling carrying `{actor_id,
 //!   strand_id, started_at}`.
 //!
@@ -28,12 +29,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Presence status as published in `ck.presence` payloads.
+/// Presence state as published in `ck.presence` payloads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresenceStatus {
     Online,
-    Away,
+    Idle,
     Dnd,
     Offline,
 }
@@ -41,11 +42,11 @@ pub enum PresenceStatus {
 impl PresenceStatus {
     /// Parse the wire string. Unknown values fall back to `Offline`
     /// per spec — the receiver MUST NOT crash on a new server
-    /// adding a status variant.
+    /// adding a state variant.
     pub fn from_wire(s: &str) -> Self {
         match s {
             "online" => Self::Online,
-            "away" => Self::Away,
+            "idle" => Self::Idle,
             "dnd" => Self::Dnd,
             _ => Self::Offline,
         }
@@ -54,7 +55,7 @@ impl PresenceStatus {
     pub fn as_wire(self) -> &'static str {
         match self {
             Self::Online => "online",
-            Self::Away => "away",
+            Self::Idle => "idle",
             Self::Dnd => "dnd",
             Self::Offline => "offline",
         }
@@ -77,9 +78,11 @@ pub struct TypingEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresenceEvent {
     pub actor_id: String,
-    pub status: PresenceStatus,
+    pub state: PresenceStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_seen: Option<i64>,
+    pub last_active_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
 }
 
 /// `ck.read_cursor.advance` event parsed from the wire. HLC is kept as a
@@ -130,6 +133,11 @@ pub enum PresenceRxError {
         expected: &'static str,
         actual: String,
     },
+    #[error("{event_kind} payload has invalid field `{field}`")]
+    InvalidField {
+        event_kind: &'static str,
+        field: &'static str,
+    },
 }
 
 /// Parse a `ck.typing` envelope's payload into a [`TypingEvent`].
@@ -147,11 +155,96 @@ pub fn parse_typing(envelope: &cokret_sdk::Event) -> Result<TypingEvent, Presenc
 pub fn parse_presence(envelope: &cokret_sdk::Event) -> Result<PresenceEvent, PresenceRxError> {
     require_kind(envelope.kind.as_str(), "ck.presence")?;
     let payload = &envelope.content;
-    let status_str = required_str(payload, "ck.presence", "status")?;
+    let state_str = required_str(payload, "ck.presence", "state")?;
+    let last_active_at = payload
+        .get("last_active_at")
+        .and_then(|v| v.as_str())
+        .map(|value| {
+            validate_presence_last_active_at(value)?;
+            Ok::<_, PresenceRxError>(value.to_owned())
+        })
+        .transpose()?;
     Ok(PresenceEvent {
         actor_id: required_str(payload, "ck.presence", "actor_id")?.to_owned(),
-        status: PresenceStatus::from_wire(status_str),
-        last_seen: payload.get("last_seen").and_then(|v| v.as_i64()),
+        state: PresenceStatus::from_wire(state_str),
+        last_active_at,
+        ttl_ms: payload.get("ttl_ms").and_then(|v| v.as_u64()),
+    })
+}
+
+fn validate_presence_last_active_at(value: &str) -> Result<(), PresenceRxError> {
+    if value.contains('/') {
+        let mut parts = value.split('/');
+        let Some(start) = parts.next() else {
+            return invalid_presence_field("last_active_at");
+        };
+        let Some(duration) = parts.next() else {
+            return invalid_presence_field("last_active_at");
+        };
+        if parts.next().is_some() {
+            return invalid_presence_field("last_active_at");
+        }
+        let start = parse_utc_timestamp(start)?;
+        let bucket_seconds = parse_iso_time_duration_seconds(duration)?;
+        if start.timestamp().rem_euclid(bucket_seconds) != 0 {
+            return invalid_presence_field("last_active_at");
+        }
+        return Ok(());
+    }
+    parse_utc_timestamp(value).map(|_| ())
+}
+
+fn parse_utc_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>, PresenceRxError> {
+    if !value.ends_with('Z') {
+        return invalid_presence_field("last_active_at");
+    }
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .map_err(|_| PresenceRxError::InvalidField {
+            event_kind: "ck.presence",
+            field: "last_active_at",
+        })
+}
+
+fn parse_iso_time_duration_seconds(value: &str) -> Result<i64, PresenceRxError> {
+    let rest = value
+        .strip_prefix("PT")
+        .filter(|rest| !rest.is_empty())
+        .ok_or(PresenceRxError::InvalidField {
+            event_kind: "ck.presence",
+            field: "last_active_at",
+        })?;
+    let mut total = 0i64;
+    let mut digits = String::new();
+    for ch in rest.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            continue;
+        }
+        let amount = digits
+            .parse::<i64>()
+            .map_err(|_| PresenceRxError::InvalidField {
+                event_kind: "ck.presence",
+                field: "last_active_at",
+            })?;
+        digits.clear();
+        total += match ch {
+            'H' => amount * 60 * 60,
+            'M' => amount * 60,
+            'S' => amount,
+            _ => return invalid_presence_field("last_active_at"),
+        };
+    }
+    if !digits.is_empty() || total <= 0 {
+        return invalid_presence_field("last_active_at");
+    }
+    Ok(total)
+}
+
+fn invalid_presence_field<T>(field: &'static str) -> Result<T, PresenceRxError> {
+    Err(PresenceRxError::InvalidField {
+        event_kind: "ck.presence",
+        field,
     })
 }
 
@@ -401,13 +494,42 @@ mod tests {
     }
 
     #[test]
-    fn parse_presence_falls_back_to_offline_for_unknown_status() {
+    fn parse_presence_accepts_state_and_bucketed_last_active_at() {
         let env = envelope(
             "ck.presence",
-            json!({"actor_id": "did:web:alice", "status": "bogus"}),
+            json!({
+                "actor_id": "did:web:alice",
+                "state": "idle",
+                "last_active_at": "2026-06-22T10:00:00Z/PT1H",
+                "ttl_ms": 30000
+            }),
         );
         let parsed = parse_presence(&env).expect("parse");
-        assert_eq!(parsed.status, PresenceStatus::Offline);
+        assert_eq!(parsed.state, PresenceStatus::Idle);
+        assert_eq!(
+            parsed.last_active_at.as_deref(),
+            Some("2026-06-22T10:00:00Z/PT1H")
+        );
+        assert_eq!(parsed.ttl_ms, Some(30000));
+    }
+
+    #[test]
+    fn parse_presence_rejects_unaligned_bucket() {
+        let env = envelope(
+            "ck.presence",
+            json!({
+                "actor_id": "did:web:alice",
+                "state": "idle",
+                "last_active_at": "2026-06-22T10:34:00Z/PT1H"
+            }),
+        );
+        assert!(matches!(
+            parse_presence(&env),
+            Err(PresenceRxError::InvalidField {
+                field: "last_active_at",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -492,8 +614,9 @@ mod tests {
         let mut agg = PresenceAggregate::new();
         agg.ingest_presence(PresenceEvent {
             actor_id: "did:web:alice".to_owned(),
-            status: PresenceStatus::Away,
-            last_seen: Some(1000),
+            state: PresenceStatus::Idle,
+            last_active_at: Some("2026-06-22T10:00:00Z/PT1H".to_owned()),
+            ttl_ms: Some(30000),
         });
         agg.ingest_read_cursor(ReadMarkerEvent {
             realm_id: "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
@@ -511,7 +634,7 @@ mod tests {
             },
         });
         let presence = agg.presence_for("did:web:alice").unwrap();
-        assert_eq!(presence.status, PresenceStatus::Away);
+        assert_eq!(presence.state, PresenceStatus::Idle);
         let scope = ReadScopeEvent {
             kind: "strand".to_owned(),
             object_ref: Some("ck:strand:01904100-0000-7000-8000-000000000001".to_owned()),
@@ -532,10 +655,10 @@ mod tests {
     }
 
     #[test]
-    fn presence_status_round_trips_through_wire_strings() {
+    fn presence_state_round_trips_through_wire_strings() {
         for variant in [
             PresenceStatus::Online,
-            PresenceStatus::Away,
+            PresenceStatus::Idle,
             PresenceStatus::Dnd,
             PresenceStatus::Offline,
         ] {

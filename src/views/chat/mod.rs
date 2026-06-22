@@ -89,6 +89,19 @@ fn chat_visible_read_receipt_should_send(
     )
 }
 
+fn chat_visible_read_receipt_should_display(
+    store: &LocalStateStore,
+    strand_id: &str,
+    realm_id: &str,
+) -> bool {
+    let strand_id = strand_id.trim();
+    let realm_id = realm_id.trim();
+    store.read_receipt_should_display(
+        (!strand_id.is_empty()).then_some(strand_id),
+        (!realm_id.is_empty()).then_some(realm_id),
+    )
+}
+
 #[component]
 pub fn ChatPanel(
     base_url: String,
@@ -192,12 +205,13 @@ pub fn ChatPanel(
     // other actors who have sent a `ck.typing` ephemeral within the
     // TTL window returned by the live sync projection.
     let typing_actors = use_signal(Vec::<String>::new);
-    // G3.Y2 — presence. Maps `actor_id -> "online"|"away"|"offline"`.
+    // G3.Y2 — presence. Maps `actor_id -> "online"|"idle"|"dnd"|"offline"`.
     // Refreshed from the global SyncEngine's account-subscribe projection
     // when `sync_cursor` advances.
     let presence_states = use_signal(std::collections::BTreeMap::<String, String>::new);
     let presence_labels = use_signal(std::collections::BTreeMap::<String, String>::new);
     let mut presence_sync_key_seen = use_signal(String::new);
+    let mut presence_announce_key_seen = use_signal(String::new);
     // G3.Y2 — discussion promote modal. Holds the source message id
     // (or Strand id) + the desired private discussion title.
     let mut promote_discussion_draft =
@@ -215,6 +229,40 @@ pub fn ChatPanel(
     // reveal opt-ins so the user can peek at an otherwise-hidden body
     // without clearing the block.
     let mut blocked_show_anyway = use_signal(std::collections::BTreeSet::<String>::new);
+
+    {
+        let base = base_url.clone();
+        let realm = selected_realm_id.clone();
+        let actor = account_did.clone();
+        let state_store_for_presence = state_store;
+        use_effect(move || {
+            let realm = trim_realm_id(&realm);
+            let actor = actor.trim().to_owned();
+            let visibility = state_store_for_presence.read().presence_visibility();
+            let api_token = token();
+            let announce_key = format!("{realm}|{actor}|{}", visibility.as_wire());
+            if presence_announce_key_seen.peek().as_str() == announce_key {
+                return;
+            }
+            presence_announce_key_seen.set(announce_key);
+            if realm.is_empty()
+                || actor.is_empty()
+                || api_token.trim().is_empty()
+                || !visibility.allows_presence_send()
+            {
+                return;
+            }
+            let base = base.clone();
+            spawn(async move {
+                let _ = crate::views::helpers::with_authed_api(
+                    &base,
+                    api_token,
+                    |api| async move { api.send_presence(&realm, &actor, "online", None).await },
+                )
+                .await;
+            });
+        });
+    }
 
     {
         let mut shared_pins_for_sync = shared_pins;
@@ -1358,6 +1406,7 @@ pub fn ChatPanel(
                                 MessageCryptoState::Decrypting => "decrypting",
                                 MessageCryptoState::KeyMissing => "key_missing",
                                 MessageCryptoState::NeedsVerification => "needs_verification",
+                                MessageCryptoState::LateRecoveryRejected => "late_recovery_rejected",
                             },
                             // Right-click toggles a context menu with separate
                             // shared pin and holder-private saved actions.
@@ -1786,6 +1835,20 @@ pub fn ChatPanel(
                                                 span { {crate::i18n::tr("chat.crypto.needs_verification")} }
                                             }
                                         },
+                                        MessageCryptoState::LateRecoveryRejected => rsx! {
+                                            div {
+                                                class: "crypto-status-row crypto-status-late-recovery-rejected",
+                                                "data-testid": "crypto-status-late-recovery-rejected",
+                                                span { class: "crypto-status-icon", "\u{26a0}" }
+                                                span {
+                                                    {
+                                                        msg.error
+                                                            .as_deref()
+                                                            .unwrap_or("late_recovery_rejected")
+                                                    }
+                                                }
+                                            }
+                                        },
                                     }
                                 }
                                 if let Some(reply_id) = msg.reply_to.as_ref() {
@@ -2068,7 +2131,15 @@ pub fn ChatPanel(
                                     // mounts when there is data so
                                     // cotest can assert against it.
                                     let readers: Vec<String> = Vec::new();
-                                    if !readers.is_empty() {
+                                    let should_display = {
+                                        let store = state_store.read();
+                                        chat_visible_read_receipt_should_display(
+                                            &store,
+                                            &selected_channel_value,
+                                            &selected_realm_id,
+                                        )
+                                    };
+                                    if should_display && !readers.is_empty() {
                                         let attr = readers.join(",");
                                         rsx! {
                                             div {
@@ -2781,6 +2852,11 @@ pub fn ChatPanel(
                 let rr_strand_override =
                     state_store.read().read_receipt_strand_override(&strand_id_for_rr);
                 let rr_active = rr_strand_override.unwrap_or(rr_default_send);
+                let rr_default_display = state_store.read().read_receipt_default_display();
+                let rr_strand_display_override = state_store
+                    .read()
+                    .read_receipt_strand_display_override(&strand_id_for_rr);
+                let rr_display_active = rr_strand_display_override.unwrap_or(rr_default_display);
                 rsx! {
                 aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-settings-panel",
                     div { class: "discussion-panel-head",
@@ -2839,6 +2915,25 @@ pub fn ChatPanel(
                                         state_store
                                             .write()
                                             .set_read_receipt_strand_override(
+                                                strand_id.clone(),
+                                                Some(new_value),
+                                            );
+                                    }
+                                },
+                            }
+                        }
+                        label { class: "settings-row",
+                            span { "Show others' read receipts" }
+                            Checkbox {
+                                "data-testid": "discussion-settings-read-receipts-display",
+                                checked: if rr_display_active { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: {
+                                    let strand_id = strand_id_for_rr.clone();
+                                    move |state: CheckboxState| {
+                                        let new_value = bool::from(state);
+                                        state_store
+                                            .write()
+                                            .set_read_receipt_strand_display_override(
                                                 strand_id.clone(),
                                                 Some(new_value),
                                             );

@@ -516,19 +516,16 @@ impl CokretApi {
                     == Some(did)
             })
             .cloned()
-            .unwrap_or_else(
-                || json!({"actor_id": did, "status": "offline", "presence": "offline"}),
-            );
-        let status = presence
-            .get("status")
+            .unwrap_or_else(|| json!({"actor_id": did, "state": "offline"}));
+        let state = presence
+            .get("state")
             .and_then(Value::as_str)
-            .or_else(|| presence.get("presence").and_then(Value::as_str))
             .unwrap_or("offline");
         Ok(json!({
             "actor": did,
             "display_name": did,
             "presence": {
-                "status": status,
+                "state": state,
             },
         }))
     }
@@ -583,7 +580,6 @@ impl CokretApi {
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("catchup", "true");
-            query.append_pair("set_presence", "online");
             if let Some(cursor) = after {
                 query.append_pair("after", cursor);
             }

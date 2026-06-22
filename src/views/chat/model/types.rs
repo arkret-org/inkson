@@ -49,7 +49,7 @@ pub(crate) struct StrandScopeCircle {
 /// Derived from the presence of `content.encrypted_content` on the
 /// envelope plus what the local MLS group can currently do with it.
 /// `Plaintext` is the default; encrypted messages cycle
-/// `Decrypting → (Plaintext | KeyMissing | NeedsVerification)`.
+/// `Decrypting -> (Plaintext | KeyMissing | NeedsVerification)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum MessageCryptoState {
     /// Body is already plaintext (no `encrypted_content`).
@@ -63,6 +63,9 @@ pub(crate) enum MessageCryptoState {
     /// Sender device hasn't been verified (cross-signing missing or
     /// fingerprint mismatch). The body still decrypted, but we flag it.
     NeedsVerification,
+    /// A late-recovery transition was attempted, but the required membership,
+    /// key-share-source, or expiry/retention guard rejected it.
+    LateRecoveryRejected,
 }
 
 impl MessageCryptoState {

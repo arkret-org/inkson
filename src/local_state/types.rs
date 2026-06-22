@@ -181,6 +181,42 @@ fn default_true() -> bool {
     true
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceVisibility {
+    #[default]
+    Public,
+    ContactsOnly,
+    Nobody,
+}
+
+impl PresenceVisibility {
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::ContactsOnly => "contacts_only",
+            Self::Nobody => "nobody",
+        }
+    }
+
+    pub fn from_wire(value: &str) -> Self {
+        Self::try_from_wire(value).unwrap_or_default()
+    }
+
+    pub fn try_from_wire(value: &str) -> Option<Self> {
+        match value {
+            "public" => Some(Self::Public),
+            "contacts_only" => Some(Self::ContactsOnly),
+            "nobody" => Some(Self::Nobody),
+            _ => None,
+        }
+    }
+
+    pub fn allows_presence_send(self) -> bool {
+        !matches!(self, Self::Nobody)
+    }
+}
+
 pub(crate) fn raw_operation_kind(payload: &Value) -> Option<&str> {
     payload
         .get("kind")
@@ -493,6 +529,8 @@ pub struct ClientLocalState {
     pub notification_projection: Vec<Value>,
     #[serde(default)]
     pub presence_projection: Vec<Value>,
+    #[serde(default)]
+    pub presence_visibility: PresenceVisibility,
     /// Persisted per-device to-device inbox. Both account.subscribe
     /// `delta.to_device.messages[]` and explicit `device_messages` pulls are
     /// funneled through this queue before protocol-specific handlers consume
@@ -509,22 +547,26 @@ pub struct ClientLocalState {
     pub realm_watch_levels: BTreeMap<String, WatchLevel>,
     #[serde(default)]
     pub muted_notification_kinds: BTreeMap<String, bool>,
-    /// Read receipt send preferences (spec
+    /// Read receipt preferences (spec
     /// `discovery/client-preferences.md` §3.6, account-data key
     /// `ck.read_receipt.preferences`).
     ///
-    /// `read_receipt_default_send` is the global fallback (default: send).
-    /// `read_receipt_realm_overrides` and `read_receipt_strand_overrides`
-    /// are per-scope overrides; resolution order is (strand → realm →
-    /// default), matching the SDK's `ReadReceiptPreferences::effective_send`.
+    /// Send and display preferences resolve independently.
+    /// Send and display override maps share the same scope order.
     /// Until the server wires `ck.account_data.set` for this key,
     /// preferences live only on this device.
     #[serde(default = "default_true")]
     pub read_receipt_default_send: bool,
+    #[serde(default = "default_true")]
+    pub read_receipt_default_display: bool,
     #[serde(default)]
     pub read_receipt_realm_overrides: BTreeMap<String, bool>,
     #[serde(default)]
+    pub read_receipt_realm_display_overrides: BTreeMap<String, bool>,
+    #[serde(default)]
     pub read_receipt_strand_overrides: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub read_receipt_strand_display_overrides: BTreeMap<String, bool>,
     /// Server-declared `ck.realm.read_receipt_policy` snapshots, keyed by
     /// realm id. Populated when sync (P0 M3) lands — surfaces the
     /// disclosure / visibility values from the
@@ -818,13 +860,17 @@ impl Default for ClientLocalState {
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
             presence_projection: Vec::new(),
+            presence_visibility: PresenceVisibility::Public,
             to_device_inbox: Vec::new(),
             notification_client_state: BTreeMap::new(),
             realm_watch_levels: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),
             read_receipt_default_send: true,
+            read_receipt_default_display: true,
             read_receipt_realm_overrides: BTreeMap::new(),
+            read_receipt_realm_display_overrides: BTreeMap::new(),
             read_receipt_strand_overrides: BTreeMap::new(),
+            read_receipt_strand_display_overrides: BTreeMap::new(),
             read_receipt_policy_snapshots: BTreeMap::new(),
             seal_views: BTreeMap::new(),
             push_registration: None,

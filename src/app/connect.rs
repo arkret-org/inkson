@@ -169,6 +169,10 @@ pub(super) struct ConnectContext {
     /// snapshot of this cache; back-fills are written back. Shared with the
     /// SyncEngine's `did_cache` so both receive paths reuse resolved documents.
     pub(super) did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    /// App-shell DID resolution health banner state. The root identity
+    /// describe probe updates this on every connect/manual refresh; authority
+    /// resolution remains fail-closed in `did_resolver`.
+    pub(super) did_resolution_health: Signal<crate::components::DidResolutionHealth>,
 }
 
 pub(super) fn redirect_to_login(navigator: Navigator) {
@@ -337,7 +341,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         let mut needs_device_authorization = ctx.needs_device_authorization;
         let mut device_authorization_check_complete = ctx.device_authorization_check_complete;
         let mut account_has_other_devices = ctx.account_has_other_devices;
+        let mut did_resolution_health = ctx.did_resolution_health;
 
+        did_resolution_health.set(crate::components::DidResolutionHealth::healthy());
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(false);
         account_has_other_devices.set(false);
@@ -368,6 +374,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             last_error.set(Some(message.clone()));
                             server_probe_status.set(message);
                             server_description.set(None);
+                            did_resolution_health.set(
+                                crate::components::DidResolutionHealth::unsupported_principal_server(),
+                            );
                             session_boot_state.set(if token().trim().is_empty() {
                                 SessionBootState::Unauthenticated
                             } else {
@@ -419,6 +428,21 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         None
                     }
                 };
+
+                let identity_health = match api.identity_describe().await {
+                    Ok(identity) => {
+                        crate::components::DidResolutionHealth::from_identity_description(&identity)
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "identity describe probe failed");
+                        let cache = ctx.did_cache.read();
+                        crate::components::DidResolutionHealth::from_identity_probe_failure(
+                            &cache,
+                            chrono::Utc::now(),
+                        )
+                    }
+                };
+                did_resolution_health.set(identity_health);
 
                 let mut session_credential = token();
                 if session_credential.trim().is_empty() {
@@ -981,6 +1005,21 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
+                                if data_type == "ck.presence.visibility" {
+                                    let Some(visibility) = entry
+                                        .get("content")
+                                        .and_then(|content| content.get("presence_visibility"))
+                                        .and_then(serde_json::Value::as_str)
+                                        .and_then(crate::local_state::PresenceVisibility::try_from_wire)
+                                    else {
+                                        tracing::warn!(
+                                            "ignoring malformed ck.presence.visibility account_data"
+                                        );
+                                        continue;
+                                    };
+                                    store.set_presence_visibility(visibility);
+                                    continue;
+                                }
                                 if data_type == "ck.account.blocklist" {
                                     let Some(content) = entry.get("content") else {
                                         continue;
@@ -1271,6 +1310,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 last_error.set(Some(format!("invalid URL: {error}")));
                 server_probe_status.set(format!("server describe skipped: invalid URL: {error}"));
                 server_description.set(None);
+                let cache = ctx.did_cache.read();
+                did_resolution_health.set(
+                    crate::components::DidResolutionHealth::from_identity_probe_failure(
+                        &cache,
+                        chrono::Utc::now(),
+                    ),
+                );
             }
         }
         session_boot_state.set(if token().trim().is_empty() {

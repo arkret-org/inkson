@@ -167,24 +167,33 @@ pub fn build_receipt_read_envelope(
 pub fn build_presence_envelope(
     realm_id: &str,
     actor_id: &str,
-    status: &str,
+    state: &str,
     last_active_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
+    if !matches!(state, "online" | "idle" | "offline" | "dnd") {
+        anyhow::bail!("ck.presence state {state:?} is not a canonical presence state");
+    }
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
-    let realm = cokret_sdk::RealmId::new(realm_id)
+    let realm_id_wire = trim_realm_id(realm_id);
+    let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.presence: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_id)
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.presence: {err}"))?;
     let mut payload = serde_json::Map::new();
+    payload.insert("realm_id".into(), Value::String(realm_id_wire));
     payload.insert("actor_id".into(), Value::String(actor_id.to_owned()));
-    payload.insert("status".into(), Value::String(status.to_owned()));
+    payload.insert("state".into(), Value::String(state.to_owned()));
     if let Some(ts) = last_active_at {
         payload.insert(
             "last_active_at".into(),
             Value::String(bucket_presence_timestamp(ts)),
         );
     }
+    payload.insert(
+        "ttl_ms".into(),
+        Value::Number((EPHEMERAL_DEFAULT_TTL_SECS * 1000).into()),
+    );
     cokret_sdk::EphemeralEnvelope::new(
         "ck.presence",
         realm,

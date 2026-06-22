@@ -152,6 +152,51 @@ fn chat_visible_read_receipt_send_respects_preferences() {
 }
 
 #[test]
+fn chat_visible_read_receipt_display_respects_local_preferences() {
+    let temp = std::env::temp_dir().join(format!("yougen-chat-rr-display-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    assert!(chat_visible_read_receipt_should_display(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_default_display(false);
+    assert!(!chat_visible_read_receipt_should_display(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_realm_display_override("ck:realm:demo", Some(true));
+    assert!(chat_visible_read_receipt_should_display(
+        &store,
+        "ck:strand:other",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_strand_display_override("ck:strand:demo", Some(false));
+    assert!(!chat_visible_read_receipt_should_display(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_policy_snapshot(
+        "ck:realm:demo",
+        Some(crate::local_state::ReadReceiptPolicySnapshot {
+            disclosure: "required".to_owned(),
+            visibility: Some("public".to_owned()),
+        }),
+    );
+    assert!(!chat_visible_read_receipt_should_display(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+}
+
+#[test]
 fn chat_message_create_operation_emits_schema_canonical_content() {
     let op = chat_message_create_operation(
         "ck:realm:01904100-0000-7000-8000-000000000010",
@@ -645,6 +690,91 @@ fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
 
     assert_eq!(message.body, "[expired]");
     assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
+}
+
+#[test]
+fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
+    let temp = std::env::temp_dir().join(format!("yougen-late-recovery-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    let realm = "ck:realm:local";
+    let strand = "ck:strand:announce";
+    let message_id = "ck:message:late";
+    store.save_private_plaintext(
+        realm,
+        strand,
+        &format!("message:{message_id}"),
+        "late plaintext",
+    );
+    let rejected = json!({
+        "event_id": "ck:event:late",
+        "kind": "ck.message.create",
+        "actor_id": "did:web:alice.example",
+        "realm_id": realm,
+        "strand_id": strand,
+        "message_id": message_id,
+        "decryption_state": "decryption_failed",
+        "late_recovery": {
+            "receiver_visible_at_t0": false,
+            "source_rechecked_current_share_policy": true,
+            "event_expired": false
+        },
+        "content": {
+            "encrypted_content": true
+        }
+    });
+
+    let message =
+        chat_message_from_event_with_sidecar(realm, &rejected, Some(&store), None).expect("message");
+
+    assert_eq!(message.body, "");
+    assert_eq!(
+        message.crypto_state,
+        MessageCryptoState::LateRecoveryRejected
+    );
+    assert_eq!(
+        message.error.as_deref(),
+        Some(crate::late_recovery::REASON_LATE_RECOVERY_REJECTED_MEMBERSHIP)
+    );
+}
+
+#[test]
+fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
+    let temp = std::env::temp_dir().join(format!("yougen-late-recovery-ok-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    let realm = "ck:realm:local";
+    let strand = "ck:strand:announce";
+    let message_id = "ck:message:late-ok";
+    store.save_private_plaintext(
+        realm,
+        strand,
+        &format!("message:{message_id}"),
+        "late plaintext",
+    );
+    let accepted = json!({
+        "event_id": "ck:event:late-ok",
+        "kind": "ck.message.create",
+        "actor_id": "did:web:alice.example",
+        "realm_id": realm,
+        "strand_id": strand,
+        "message_id": message_id,
+        "decryption_state": "decryption_failed",
+        "late_recovery": {
+            "receiver_visible_at_t0": true,
+            "source_rechecked_current_share_policy": true,
+            "event_expired": false,
+            "content_key_destroyed_by_retention": false
+        },
+        "content": {
+            "encrypted_content": true
+        }
+    });
+
+    let message =
+        chat_message_from_event_with_sidecar(realm, &accepted, Some(&store), None).expect("message");
+
+    assert_eq!(message.body, "late plaintext");
+    assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
+    assert_eq!(message.error, None);
 }
 
 #[test]
@@ -1290,13 +1420,13 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
     ];
     let events = vec![
         json!({
-            "user_id": "did:web:bob.example",
-            "presence": "online",
+            "actor_id": "did:web:bob.example",
+            "state": "online",
             "updated_at": "2026-05-29T04:12:43Z"
         }),
         json!({
             "actor_id": "did:web:mallory.example",
-            "presence": "online"
+            "state": "online"
         }),
     ];
 
@@ -1344,6 +1474,7 @@ fn message_crypto_state_pending_detects_grey_states() {
     assert!(MessageCryptoState::Decrypting.is_pending());
     assert!(MessageCryptoState::KeyMissing.is_pending());
     assert!(!MessageCryptoState::NeedsVerification.is_pending());
+    assert!(!MessageCryptoState::LateRecoveryRejected.is_pending());
 }
 
 #[test]

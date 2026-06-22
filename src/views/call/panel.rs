@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::json;
 
 use super::media::{
@@ -7,8 +8,9 @@ use super::media::{
 use super::moderator::ModeratorControls;
 use super::projection::{
     build_roster, call_state_participant_actor_device_map, call_state_participant_device_map,
-    call_state_participant_identities, expected_participant_set, media_service_selection,
-    participant_list_from_input, set_local_state,
+    call_state_participant_identities, expected_participant_set, media_governance_evidence,
+    media_service_decrypts_enabled, media_service_selection, participant_list_from_input,
+    set_local_state,
 };
 use super::signaling::{
     apply_inbox_items, emit_async, emit_signal, end_call, relay_local_signals, spawn_reject,
@@ -19,6 +21,7 @@ use super::types::{
 use crate::local_state::LocalStateStore;
 use crate::media::rtc::{DesiredMedia, MediaJoinRequest};
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
 use crate::views::call_signals::CallSignalHub;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -69,6 +72,7 @@ pub fn CallPanel(
     let mut peer_input = use_signal(|| peer.clone());
     let mut group_input = use_signal(|| "did:web:bob.example\ndid:web:carol.example".to_owned());
     let mut want_video_signal = use_signal(|| want_video);
+    let mut media_plaintext_confirmed = use_signal(|| false);
 
     // Transport handle — `None` until a media session is joined.
     let transport = use_signal(|| Option::<SharedTransport>::None);
@@ -169,6 +173,10 @@ pub fn CallPanel(
                 .unwrap_or(false)
         })
         .count();
+    let media_plaintext_confirmation_required = {
+        let snapshot = state_store.read().load();
+        media_service_decrypts_enabled(&snapshot, &active_realm())
+    };
 
     // ── Start an outgoing call (1:1 or SFU). ─────────────────────────
     let start_call = {
@@ -202,6 +210,7 @@ pub fn CallPanel(
                 known_actor_devices,
                 known_participant_identities,
                 known_participant_devices,
+                governance_evidence,
                 realm_mls_snapshot,
             ) = {
                 let store = state_store.read();
@@ -213,6 +222,11 @@ pub fn CallPanel(
                     call_state_participant_actor_device_map(&snapshot, &realm_id, &call),
                     call_state_participant_identities(&snapshot, &realm_id, &call),
                     call_state_participant_device_map(&snapshot, &realm_id, &call),
+                    media_governance_evidence(
+                        &snapshot,
+                        &realm_id,
+                        media_plaintext_confirmed(),
+                    ),
                     store.mls_snapshot_for(&realm_id),
                 )
             };
@@ -261,6 +275,7 @@ pub fn CallPanel(
                         DesiredMedia::audio_only()
                     },
                     media_service_dids: media_dids,
+                    governance_evidence,
                 };
                 match join_and_build_transport(
                     &base,
@@ -476,7 +491,10 @@ pub fn CallPanel(
                             class: "input",
                             "data-testid": "call-realm-input",
                             value: "{active_realm}",
-                            oninput: move |e| active_realm.set(e.value()),
+                            oninput: move |e| {
+                                active_realm.set(e.value());
+                                media_plaintext_confirmed.set(false);
+                            },
                         }
                         label { "Peer (1:1)" }
                         input {
@@ -493,6 +511,18 @@ pub fn CallPanel(
                             value: "{group_input}",
                             oninput: move |e| group_input.set(e.value()),
                         }
+                        if media_plaintext_confirmation_required {
+                            label { class: "checkbox-row",
+                                Checkbox {
+                                    "data-testid": "call-media-plaintext-confirm",
+                                    checked: if media_plaintext_confirmed() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                    on_checked_change: move |state: CheckboxState| {
+                                        media_plaintext_confirmed.set(bool::from(state));
+                                    },
+                                }
+                                span { "Media service can decrypt this call" }
+                            }
+                        }
                         div { class: "actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
@@ -508,7 +538,9 @@ pub fn CallPanel(
                             Button {
                                 variant: ButtonVariant::Primary,
                                 "data-testid": "call-start-voice-button",
-                                disabled: active_realm.read().trim().is_empty() || peer_input.read().trim().is_empty(),
+                                disabled: active_realm.read().trim().is_empty()
+                                    || peer_input.read().trim().is_empty()
+                                    || (media_plaintext_confirmation_required && !media_plaintext_confirmed()),
                                 onclick: {
                                     let mut start = start_call.clone();
                                     move |_| start(CallMode::P2p)
@@ -518,7 +550,8 @@ pub fn CallPanel(
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 "data-testid": "call-start-group-button",
-                                disabled: active_realm.read().trim().is_empty(),
+                                disabled: active_realm.read().trim().is_empty()
+                                    || (media_plaintext_confirmation_required && !media_plaintext_confirmed()),
                                 onclick: {
                                     let mut start = start_call.clone();
                                     move |_| start(CallMode::Sfu)
@@ -566,10 +599,23 @@ pub fn CallPanel(
                             span { "Incoming call" }
                             span { class: "mono", "{short_protocol_id(&peer_input())}" }
                         }
+                        if media_plaintext_confirmation_required {
+                            label { class: "checkbox-row",
+                                Checkbox {
+                                    "data-testid": "call-incoming-media-plaintext-confirm",
+                                    checked: if media_plaintext_confirmed() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                    on_checked_change: move |state: CheckboxState| {
+                                        media_plaintext_confirmed.set(bool::from(state));
+                                    },
+                                }
+                                span { "Media service can decrypt this call" }
+                            }
+                        }
                         div { class: "actions",
                             Button {
                                 variant: ButtonVariant::Primary,
                                 "data-testid": "call-accept-button",
+                                disabled: media_plaintext_confirmation_required && !media_plaintext_confirmed(),
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
@@ -586,6 +632,7 @@ pub fn CallPanel(
                                             focus_id,
                                             known_participant_identities,
                                             known_participant_devices,
+                                            governance_evidence,
                                             realm_mls_snapshot,
                                         ) = {
                                             let store = state_store.read();
@@ -600,6 +647,11 @@ pub fn CallPanel(
                                                 ),
                                                 call_state_participant_device_map(
                                                     &snapshot, &realm_id, &call,
+                                                ),
+                                                media_governance_evidence(
+                                                    &snapshot,
+                                                    &realm_id,
+                                                    media_plaintext_confirmed(),
                                                 ),
                                                 store.mls_snapshot_for(&realm_id),
                                             )
@@ -617,6 +669,7 @@ pub fn CallPanel(
                                                 epoch_id: 0,
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
                                                 media_service_dids: media_dids,
+                                                governance_evidence,
                                             };
                                             match join_and_build_transport(
                                                 &base,
