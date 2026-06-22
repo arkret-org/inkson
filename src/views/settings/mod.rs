@@ -334,33 +334,10 @@ pub(crate) fn push_contact_remark_account_data(
             }
             return;
         }
-        let body = match serde_json::to_value(&remark) {
-            Ok(value) => value,
-            Err(error) => {
-                tracing::warn!("contact remark serialisation failed: {error}");
-                return;
-            }
-        };
-        let key_for_log = key.clone();
-        match with_authed_api(&base_url, api_token, |api| {
-            let key = key.clone();
-            async move { api.set_account_data(&key, body).await }
-        })
-        .await
-        {
-            Ok(crate::models::AccountDataSetResult::Stored { .. }) => {}
-            Ok(crate::models::AccountDataSetResult::Unsupported { status }) => {
-                tracing::debug!(
-                    "soland ck.account_data.set for {key_for_log} returned {status}; local state still authoritative"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "ck.account_data.set for {key_for_log} failed: {}",
-                    err.display()
-                );
-            }
-        }
+        tracing::warn!(
+            key = %key,
+            "skipping plaintext contact remark account_data upload; encrypted envelope is unavailable"
+        );
     });
 }
 

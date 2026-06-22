@@ -270,41 +270,12 @@ pub(super) fn push_realm_remark_account_data_impl(
             }
             return;
         }
-        let body = match serde_json::to_value(&remark) {
-            Ok(value) => value,
-            Err(error) => {
-                tracing::warn!("Realm remark serialisation failed: {error}");
-                if let Some((status, label)) = failure_status.as_mut() {
-                    status.set(format!("{label}: {error}"));
-                }
-                return;
-            }
-        };
-        let key_for_log = key.clone();
-        match with_authed_api(&base_url, api_token, |api| {
-            let key = key.clone();
-            async move { api.set_account_data(&key, body).await }
-        })
-        .await
-        {
-            Ok(crate::models::AccountDataSetResult::Stored { .. }) => {}
-            Ok(crate::models::AccountDataSetResult::Unsupported { status }) => {
-                tracing::debug!(
-                    "soland ck.account_data.set for {key_for_log} returned {status}; local state still authoritative"
-                );
-                if let Some((status_signal, label)) = failure_status.as_mut() {
-                    status_signal.set(format!("{label}: HTTP {status}"));
-                }
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "ck.account_data.set for {key_for_log} failed: {}",
-                    err.display()
-                );
-                if let Some((status, label)) = failure_status.as_mut() {
-                    status.set(format!("{label}: {}", err.display()));
-                }
-            }
+        tracing::warn!(
+            key = %key,
+            "skipping plaintext Realm remark account_data upload; encrypted envelope is unavailable"
+        );
+        if let Some((status, label)) = failure_status.as_mut() {
+            status.set(format!("{label}: encrypted account-data sync unavailable"));
         }
     });
 }
