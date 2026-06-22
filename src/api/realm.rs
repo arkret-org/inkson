@@ -36,6 +36,7 @@ impl CokretApi {
         trust_domain: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
+        alias: Option<&str>,
     ) -> anyhow::Result<RealmCreateResult> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
@@ -66,6 +67,7 @@ impl CokretApi {
             trust_domain,
             &invitees,
             &plaintext_visible_services,
+            alias,
         )?;
         // Genesis Realm bootstrap has no prior snapshot head. The
         // `ck.realm.create` precondition asserts `head_eq null`; follow-up

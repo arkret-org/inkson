@@ -41,6 +41,7 @@ pub(super) fn RealmsSection(
     mut seed_members: Signal<String>,
     mut realm_title: Signal<String>,
     mut realm_summary: Signal<String>,
+    mut realm_alias: Signal<String>,
     mut realm_discoverability: Signal<String>,
     mut realm_policy_join_rule: Signal<String>,
     mut realm_policy_history_visibility: Signal<String>,
@@ -70,6 +71,7 @@ pub(super) fn RealmsSection(
     let active_create_step = create_step();
     let title_value = realm_title();
     let summary_value = realm_summary();
+    let alias_value = realm_alias();
     let discoverability_value = realm_discoverability();
     let join_rule_value = realm_policy_join_rule();
     let history_visibility_value = realm_policy_history_visibility();
@@ -223,6 +225,16 @@ pub(super) fn RealmsSection(
                                     rows: "3",
                                     placeholder: "What this Realm is for.",
                                     oninput: move |event: FormEvent| realm_summary.set(event.value())
+                                }
+                            }
+                            div { class: "setup-field",
+                                Label { html_for: "realm-alias-input-input", "Realm alias (optional)" }
+                                Input {
+                                    id: "realm-alias-input-input",
+                                    "data-testid": "realm-alias-input",
+                                    value: "{alias_value}",
+                                    placeholder: "engineering",
+                                    oninput: move |event: FormEvent| realm_alias.set(event.value())
                                 }
                             }
                         }
@@ -618,6 +630,7 @@ pub(super) fn RealmsSection(
                                             crate::components::try_needs_mls_backup_signal();
                                         let title = realm_title();
                                         let summary = realm_summary();
+                                        let alias = realm_alias();
                                         let discoverability = realm_discoverability();
                                         let join_rule = realm_policy_join_rule();
                                         let history_visibility = realm_policy_history_visibility();
@@ -697,6 +710,7 @@ pub(super) fn RealmsSection(
                                                         &trust_domain,
                                                         invitees.clone(),
                                                         plaintext_services.clone(),
+                                                        (!alias.trim().is_empty()).then(|| alias.trim()),
                                                     ).await {
                                                     Ok(realm) => {
                                                         // R15: ck.realm.create now returns

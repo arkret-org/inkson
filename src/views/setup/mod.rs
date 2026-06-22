@@ -51,6 +51,7 @@ pub fn SetupPanel(
     let seed_members = use_signal(String::new);
     let realm_title = use_signal(String::new);
     let realm_summary = use_signal(String::new);
+    let realm_alias = use_signal(String::new);
     let realm_discoverability = use_signal(|| "listed".to_owned());
     let realm_policy_join_rule = use_signal(|| "invite".to_owned());
     let realm_policy_history_visibility = use_signal(|| "shared".to_owned());
@@ -104,6 +105,7 @@ pub fn SetupPanel(
                     seed_members,
                     realm_title,
                     realm_summary,
+                    realm_alias,
                     realm_discoverability,
                     realm_policy_join_rule,
                     realm_policy_history_visibility,

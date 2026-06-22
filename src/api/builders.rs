@@ -182,6 +182,7 @@ pub fn build_realm_bootstrap_events(
     trust_domain: &str,
     invitees: &[String],
     plaintext_visible_services: &[String],
+    alias: Option<&str>,
 ) -> anyhow::Result<Vec<cokret_sdk::Event>> {
     // Spec realm-and-space.md §2.6: creator membership is auto-derived
     // by the reducer from `ck.realm.create`'s `created_by == actor_id`
@@ -211,6 +212,7 @@ pub fn build_realm_bootstrap_events(
         digest_algorithm,
         trust_domain,
         plaintext_visible_services,
+        alias,
     )?);
     if let Some(policy_components) =
         recommended_realm_policy_components_for_profile(encryption_profile)
@@ -273,6 +275,7 @@ pub fn build_realm_create_event(
     digest_algorithm: &str,
     trust_domain: &str,
     plaintext_visible_services: &[String],
+    alias: Option<&str>,
 ) -> anyhow::Result<cokret_sdk::Event> {
     // Per spec realm-and-space.md §2.3: high_assurance security_class
     // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
@@ -311,6 +314,15 @@ pub fn build_realm_create_event(
         && !summary.trim().is_empty()
     {
         object["summary"] = Value::String(summary.trim().to_owned());
+    }
+    // Realm alias localpart (object-addressing.md §3.3). soland binds it to the
+    // deployment authority domain, then validates / uniques it on projection;
+    // here we just carry the raw user input (localpart or canonical) under
+    // `object.alias`. The `#` share sigil is display-only and never sent.
+    if let Some(alias) = alias
+        && !alias.trim().is_empty()
+    {
+        object["alias"] = Value::String(alias.trim().trim_start_matches('#').to_owned());
     }
     let plaintext_services = plaintext_visible_services
         .iter()

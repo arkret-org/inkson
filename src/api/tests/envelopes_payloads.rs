@@ -176,6 +176,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         "ck:trust_domain:server.example",
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
+        None,
     )
     .unwrap();
     let kinds = events
@@ -296,6 +297,7 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
         "sha256",
         "ck:trust_domain:server.example",
         &[],
+        None,
     )
     .unwrap();
 
@@ -336,6 +338,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         // transition (LatticeOp.from carries an explicit null).
         &["bob:example.com".to_owned()],
         &["did:web:server.example".to_owned()],
+        None,
     )
     .unwrap();
 
@@ -373,6 +376,7 @@ fn realm_bootstrap_handle_seed_materializes_user_and_principal_server_dids() {
         "ck:trust_domain:server.example",
         &["bob:example.com".to_owned()],
         &[],
+        None,
     )
     .unwrap();
     let member = events
@@ -521,6 +525,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         "ck:trust_domain:server.example",
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
+        None,
     )
     .unwrap();
 

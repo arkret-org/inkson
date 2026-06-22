@@ -244,6 +244,7 @@ fn build_realm_create_event_matches_event_schema() {
         "sha256",
         "ck:trust_domain:server.example",
         &[],
+        None,
     )
     .expect("build_realm_create_event succeeds");
     stamp_wire_fields(&mut envelope);
@@ -397,6 +398,7 @@ fn build_member_state_event_matches_event_schema() {
         "ck:trust_domain:server.example",
         &[TEST_INVITEE_DID.to_owned()],
         &[],
+        None,
     )
     .expect("build_realm_bootstrap_events succeeds");
     let mut envelope = events

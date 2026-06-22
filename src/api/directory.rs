@@ -294,12 +294,33 @@ impl CokretApi {
         self.get_json("_cokret/find/directory/describe").await
     }
 
-    pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveRealmOutcome> {
-        let realm = cokret_sdk::RealmId::new(realm_id)
-            .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
+    /// Resolve a Realm by either its `ck:realm:<uuid>` id OR a human-readable
+    /// realm alias (`engineering`, `engineering:acme.example`, `#engineering…`).
+    ///
+    /// The input is classified: a valid [`cokret_sdk::RealmId`] is sent as
+    /// `realm_id`; otherwise it is treated as an alias — the `#` share sigil is
+    /// stripped and the bare localpart / canonical form is sent as `alias`,
+    /// which soland binds to its deployment authority domain and validates
+    /// (object-addressing.md §3.3). The client need not know the deployment
+    /// domain to look up by a bare localpart.
+    pub async fn resolve_realm(
+        &self,
+        realm_id_or_alias: &str,
+    ) -> anyhow::Result<ResolveRealmOutcome> {
+        let input = realm_id_or_alias.trim();
+        let (realm_id, alias) = match cokret_sdk::RealmId::new(input) {
+            Ok(realm) => (Some(realm), None),
+            Err(_) => {
+                let alias = input.trim_start_matches('#').trim();
+                if alias.is_empty() {
+                    return Err(anyhow::anyhow!("empty realm id / alias"));
+                }
+                (None, Some(alias.to_owned()))
+            }
+        };
         let body = cokret_sdk::models::DirectoryResolveRealmRequestBody {
-            realm_id: Some(realm),
-            alias: None,
+            realm_id,
+            alias,
             invite_token: None,
             signed_link: None,
             requester: None,

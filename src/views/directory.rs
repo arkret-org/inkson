@@ -51,11 +51,18 @@ fn realm_member_count_bucket_text(bucket: &cokret_sdk::models::RealmMemberCountB
 
 fn realm_tree_node_from_preview(preview: cokret_sdk::models::RealmPreview) -> RealmTreeNode {
     let id = preview.realm_id.as_str().to_owned();
+    let alias = preview.alias.clone();
     let title = preview
         .title
-        .or(preview.alias)
+        .or_else(|| alias.clone())
         .unwrap_or_else(|| id.clone());
     let mut tags = std::collections::BTreeSet::new();
+    // Render the realm alias with its `#` share sigil (object-addressing.md
+    // §3.3) as a directory tag so it shows alongside the title — the realm-side
+    // counterpart of a user handle's `@`.
+    if let Some(alias) = alias.as_deref() {
+        tags.insert(format!("#{alias}"));
+    }
     if let Some(discoverability) = preview.discoverability.clone() {
         tags.insert(discoverability);
     }

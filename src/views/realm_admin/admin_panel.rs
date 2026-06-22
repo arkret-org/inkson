@@ -35,6 +35,7 @@ pub fn RealmAdminPanel(
     let mut metadata_title = use_signal(String::new);
     let mut metadata_summary = use_signal(String::new);
     let mut metadata_avatar_blob_ref = use_signal(String::new);
+    let mut metadata_alias = use_signal(String::new);
     let mut metadata_loaded_for = use_signal(String::new);
     let mut join_rule = use_signal(|| "open".to_owned());
     let mut principal_admission_enabled = use_signal(|| false);
@@ -602,6 +603,14 @@ pub fn RealmAdminPanel(
                             placeholder: "Optional summary",
                             oninput: move |event: FormEvent| metadata_summary.set(event.value()),
                         }
+                        Label { html_for: "realm-alias-input", "Alias" }
+                        Input {
+                            id: "realm-alias-input",
+                            "data-testid": "realm-alias-input",
+                            value: "{metadata_alias}",
+                            placeholder: "engineering (blank keeps current)",
+                            oninput: move |event: FormEvent| metadata_alias.set(event.value()),
+                        }
                         label { "Avatar" }
                         crate::components::AvatarUploader {
                             current_blob_ref: metadata_avatar_blob_ref(),
@@ -637,6 +646,7 @@ pub fn RealmAdminPanel(
                                         let title = metadata_title().trim().to_owned();
                                         let summary = metadata_summary().trim().to_owned();
                                         let avatar_blob_ref = metadata_avatar_blob_ref().trim().to_owned();
+                                        let alias = metadata_alias().trim().to_owned();
                                         if title.is_empty() {
                                             status_msg.set(
                                                 "profile update failed: title is required by spec".to_owned(),
@@ -679,6 +689,12 @@ pub fn RealmAdminPanel(
                                                 json!(avatar_blob_ref)
                                             },
                                         );
+                                        // Realm alias rename (object-addressing.md §3.3): only patch
+                                        // when the admin entered a value, so leaving it blank keeps
+                                        // the current alias. soland re-normalizes + uniques it.
+                                        if !alias.is_empty() {
+                                            patch.insert("alias".to_owned(), json!(alias));
+                                        }
                                         let patch = Value::Object(patch);
                                         spawn(async move {
                                             match crate::views::helpers::with_authed_api(
