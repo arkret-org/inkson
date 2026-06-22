@@ -4,6 +4,7 @@ import { mockCokretContract } from "./mockCokretContract";
 
 const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
 const SETUP_REALM = "ck:realm:01js0setupflow000000000000";
+const LOW_FLOOR_REALM = "ck:realm:01lowfloor0000000000000000";
 const CHILD_REALM = "ck:realm:01launchchild0000000000000";
 const GRANDCHILD_REALM = "ck:realm:01launchdeep00000000000000";
 const DIRECT_BOB_REALM = "ck:realm:01directbob000000000000000";
@@ -20,6 +21,10 @@ const DEMO_STRAND_SECURITY_SIGNOFF = "ck:strand:0196419b-0000-7000-8000-00000000
 const DEMO_STRAND_SECONDARY_CARD = "ck:strand:0196419b-0000-7000-8000-000000000104";
 const DEMO_BLOB_REF =
   "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91";
+const ENROLLMENT_AUTHORITY_DID =
+  "did:key:z6MknBuwKMPAzbhp6EwCnaxsEDk4G2KFeWRu273gYVuTY5jw";
+const ENROLLMENT_AUTHORITY_VM =
+  `${ENROLLMENT_AUTHORITY_DID}#z6MknBuwKMPAzbhp6EwCnaxsEDk4G2KFeWRu273gYVuTY5jw`;
 
 type SpaceContainerProjection = {
   container_space_id: string;
@@ -52,6 +57,7 @@ type MockCokretApiOptions = {
   accountDevices?: MockAccountDevice[];
   enableDeviceEnrollment?: boolean;
   includeDemoRealms?: boolean;
+  includeLowFloorRealm?: boolean;
 };
 
 type MockAccountDevice = {
@@ -94,6 +100,21 @@ function canonicalSha256(value: unknown) {
   return `sha256:${createHash("sha256").update(canonicalJson(value), "utf8").digest("hex")}`;
 }
 
+function isDid(value: unknown): value is string {
+  return typeof value === "string" && /^did:[a-z0-9]+:[^\s#?]+$/.test(value);
+}
+
+function isDeviceId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^ck:device:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
+  );
+}
+
+function isDeviceOrDid(value: unknown): value is string {
+  return isDeviceId(value) || isDid(value);
+}
+
 function signedEventDigest(event: Record<string, unknown>) {
   const digestPayload = { ...event };
   delete digestPayload.proofs;
@@ -107,6 +128,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
   const primaryHandle = options.primaryHandle === undefined ? "alice:local.host" : options.primaryHandle;
   const currentDeviceId = options.currentDeviceId ?? "ck:device:01964137-0000-7000-8000-0000000000a1";
   const includeDemoRealms = options.includeDemoRealms ?? true;
+  const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
   const accountDevices = new Map<string, MockAccountDevice>();
   for (const device of options.accountDevices ?? [
     {
@@ -304,8 +326,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         kind: "ck.device.authorize",
         realm_id: "ck:realm:01964137-0000-7000-8000-00000000c0de",
         actor_id: accountPrincipalId,
-        executed_by: "did:web:auth.local.host",
-        authorization_ref: `${accountPrincipalId}#device-enrollment`,
+        executed_by: ENROLLMENT_AUTHORITY_DID,
+        authorization_ref: `${accountPrincipalId}#enrollment-authority`,
         actor_seq: typeof body.actor_seq === "number" ? body.actor_seq : 1,
         created_at: "2026-06-22T00:00:00Z",
         hlc: "019641370000-0000-12345678",
@@ -318,12 +340,12 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
             typeof body.device_public_key === "string"
               ? body.device_public_key
               : "z6MkExamplePublicKey",
-          authorized_by: "did:web:auth.local.host",
+          authorized_by: ENROLLMENT_AUTHORITY_DID,
           not_before: "2026-06-22T00:00:00Z",
           enrollment_authority_binding: {
             kind: "service_attested",
-            authority_did: "did:web:auth.local.host",
-            authorization_ref: `${accountPrincipalId}#device-enrollment`,
+            authority_did: ENROLLMENT_AUTHORITY_DID,
+            authorization_ref: `${accountPrincipalId}#enrollment-authority`,
           },
         },
       };
@@ -332,10 +354,10 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         {
           kind: "detached_jws",
           alg: "EdDSA",
-          verification_method: "did:web:auth.local.host#enroll-key-1",
+          verification_method: ENROLLMENT_AUTHORITY_VM,
           event_digest: eventDigest,
           created_at: "2026-06-22T00:00:00Z",
-          domain: "did:web:auth.local.host",
+          domain: ENROLLMENT_AUTHORITY_DID,
           audience: "did:web:server.local",
           jws: "ey.ey.sig",
         },
@@ -343,7 +365,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, {
         principal_id: accountPrincipalId,
         device_id: deviceId,
-        authority_did: "did:web:auth.local.host",
+        authority_did: ENROLLMENT_AUTHORITY_DID,
         authorized_event: authorizedEvent,
       });
     }
@@ -591,9 +613,29 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       const submittedEvents = Array.isArray(body.events) ? body.events : [body];
       for (const event of submittedEvents) {
         if (event.kind === "ck.device.authorize") {
+          const payload = event.payload ?? event.content ?? {};
+          const binding = payload.enrollment_authority_binding ?? {};
+          if (
+            !isDid(payload.principal_id) ||
+            !isDeviceId(payload.device_id) ||
+            typeof payload.device_public_key !== "string" ||
+            payload.device_public_key.trim() === "" ||
+            !isDeviceOrDid(payload.authorized_by) ||
+            binding.kind !== "service_attested" ||
+            !isDid(binding.authority_did) ||
+            typeof binding.authorization_ref !== "string" ||
+            binding.authorization_ref.trim() === ""
+          ) {
+            return json(route, {
+              ok: false,
+              error: {
+                code: "schema_violation",
+                message: "ck.device.authorize payload violates mock SDK artifact schema",
+              },
+            }, 400);
+          }
           const authorizedDeviceId =
-            event.payload?.device_id ??
-            event.content?.device_id ??
+            payload.device_id ??
             event.device_id;
           if (typeof authorizedDeviceId === "string") {
             markDeviceAuthorized(authorizedDeviceId);
@@ -952,6 +994,21 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
                   summary: {
                     title: "Launch Deep Realm",
                     summary: "Related scope fixture",
+                  },
+                  timeline: { events: [], limited: false },
+                  state: { events: [] },
+                  ephemeral: { events: [] },
+                  unread: { notification_count: 0, highlight_count: 0 },
+                },
+              }
+            : {}),
+          ...(includeLowFloorRealm
+            ? {
+                [LOW_FLOOR_REALM]: {
+                  summary: {
+                    title: "Low floor fixture Realm",
+                    summary: "Mocks the live first-account PCR floor advisory condition",
+                    encryption_profile: "none",
                   },
                   timeline: { events: [], limited: false },
                   state: { events: [] },

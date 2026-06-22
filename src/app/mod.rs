@@ -1183,9 +1183,9 @@ pub fn RouterView() -> Element {
     {
         // Proactive one-time 24-word Recovery Key setup nudge for new users.
         // When the account is otherwise healthy but no recovery path is
-        // configured (the lowest-priority RecoverySetupReminder state), open the
-        // setup modal once and persist a flag so it never auto-pops again — the
-        // passive dashboard banner remains as the steady-state reminder. The
+        // configured (the RecoverySetupReminder state), open the setup modal
+        // once and persist a flag so it never auto-pops again — the passive
+        // dashboard banner remains as the steady-state reminder. The
         // in-memory `recovery_auto_prompt_fired` guard makes "once" robust within
         // a session. See account_health::should_auto_prompt_recovery_setup and
         // docs/user-strands-key-lifecycle.md §3/S1.
@@ -2220,6 +2220,7 @@ pub fn RouterView() -> Element {
                 state_store,
             }
             if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
+                && !recovery_key_setup_prompt()
                 && !encryption_floor_prompt_dismissed()
                 && !encryption_floor_prompt_acknowledged
             {

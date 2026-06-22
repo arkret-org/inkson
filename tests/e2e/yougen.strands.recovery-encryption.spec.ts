@@ -79,6 +79,7 @@ test("first registered device opens 24-word recovery setup instead of existing-d
     ],
     enableDeviceEnrollment: true,
     includeDemoRealms: false,
+    includeLowFloorRealm: true,
   });
   await page.evaluate(() => localStorage.clear());
   await page.addInitScript(() => {
@@ -117,13 +118,35 @@ test("first registered device opens 24-word recovery setup instead of existing-d
     grant_jwt: "sx:e2e-first-token",
   });
 
+  const deviceEnrollResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().includes("/_cokret/gate/account/device-enroll") &&
+      response.request().method() === "POST",
+  );
+  const eventSubmitResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/_cokret/self/events") &&
+      response.request().method() === "POST",
+  );
   await page.reload({ waitUntil: "domcontentloaded" });
+  const [deviceEnrollResponse, eventSubmitResponse] = await Promise.all([
+    deviceEnrollResponsePromise,
+    eventSubmitResponsePromise,
+  ]);
+  expect(deviceEnrollResponse.status()).toBe(200);
+  expect(eventSubmitResponse.status()).toBe(200);
+  await expect(eventSubmitResponse.json()).resolves.toMatchObject({
+    status: "accepted",
+    rejected: [],
+  });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
 
   const setupModal = latestTestId(page, "recovery-key-setup-modal");
   await expect(setupModal).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
   const generatedKeyField = latestTestId(page, "recovery-key-setup-generated-key");
   await expect(generatedKeyField).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
   const generatedRecoveryKey = await generatedKeyField.inputValue();
   expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
   await expect(page.getByTestId("device-authorization-modal")).toHaveCount(0);
