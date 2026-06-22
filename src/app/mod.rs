@@ -944,6 +944,7 @@ pub fn RouterView() -> Element {
         let mut restore_payload_cache = mls_restore_payload_cache;
         let mut state_store_for_detection = state_store;
         let secure_store_ready_for_detection = secure_store_bootstrap_ready;
+        let account_recovery_configured_for_detection = account_recovery_configured;
         use_effect(move || {
             if !secure_store_ready_for_detection() {
                 return;
@@ -953,6 +954,7 @@ pub fn RouterView() -> Element {
             let actor = account_did();
             let device = device_id();
             let generation = sync_generation();
+            let account_recovery_configured_value = account_recovery_configured_for_detection();
             if !matches!(session_boot_state(), SessionBootState::Authenticated) {
                 needs_mls_unlock.set(false);
                 needs_mls_backup.set(false);
@@ -1011,7 +1013,7 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let detection_key = format!(
-                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}"
+                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
             );
             if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
                 return;
@@ -1118,6 +1120,7 @@ pub fn RouterView() -> Element {
                                     &store,
                                     secure_store.as_ref(),
                                     &actor,
+                                    account_recovery_configured_value,
                                 )
                             };
                             needs_mls_recovery_setup.set(!should_backup && should_recovery_setup);
@@ -1414,6 +1417,7 @@ pub fn RouterView() -> Element {
         let mut needs_mls_recovery_setup_for_bootstrap = needs_mls_recovery_setup;
         let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
         let secure_store_ready_for_bootstrap = secure_store_bootstrap_ready;
+        let account_recovery_configured_for_bootstrap = account_recovery_configured;
         use_effect(move || {
             if !secure_store_ready_for_bootstrap() {
                 return;
@@ -1431,6 +1435,7 @@ pub fn RouterView() -> Element {
             let actor = account_did();
             let device = device_id();
             let description = server_description();
+            let account_recovery_configured_value = account_recovery_configured_for_bootstrap();
             let Some(bootstrap_key) = mls_welcome_bootstrap_key(
                 &base,
                 &session,
@@ -1474,7 +1479,7 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;
@@ -1625,6 +1630,7 @@ pub fn RouterView() -> Element {
                                     &store,
                                     secure_store.as_ref(),
                                     &detect_actor,
+                                    account_recovery_configured_value,
                                 )
                             };
                             needs_mls_recovery_setup_for_bootstrap

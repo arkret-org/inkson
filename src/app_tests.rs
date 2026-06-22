@@ -770,6 +770,7 @@ fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
         &store,
         &secure,
         "did:web:alice.example",
+        Some(false),
     ));
 }
 
@@ -803,6 +804,69 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
         &store,
         &secure,
         "did:web:alice.example",
+        Some(false),
+    ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() {
+    let mut store = isolated_store("mls-recovery-account-configured");
+    store.save_realm_tree_projection(
+        "ck:realm:encrypted".to_owned(),
+        serde_json::json!({
+            "summary": {
+                "title": "Encrypted",
+                "encryption_profile": "mls_rfc9420",
+            }
+        }),
+    );
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let payload = serde_json::json!({ "backups": [] });
+
+    assert!(!mls_recovery_setup_missing(
+        &payload,
+        &store,
+        &secure,
+        "did:web:alice.example",
+        Some(true),
+    ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_did_backup() {
+    let actor = "did:web:alice.example";
+    let mut store = isolated_store("mls-recovery-local-did-backup");
+    store.save_realm_tree_projection(
+        "ck:realm:encrypted".to_owned(),
+        serde_json::json!({
+            "summary": {
+                "title": "Encrypted",
+                "encryption_profile": "mls_rfc9420",
+            }
+        }),
+    );
+    store.save_private_data(
+        actor,
+        "recovery.state.v1",
+        serde_json::json!({
+            "recovery_key_fingerprint": "sha256:abc",
+            "recovery_key_rotated_at": "2026-06-13T00:00:00Z"
+        })
+        .to_string(),
+    );
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let payload = serde_json::json!({
+        "backups": [{
+            "backup_id": "ck:backup:did-recovery",
+            "backup_class": "did_recovery",
+            "encryption": { "recipient_method": "recovery_public_key" },
+        }]
+    });
+
+    assert!(!mls_recovery_setup_missing(
+        &payload, &store, &secure, actor, None,
     ));
 }
 

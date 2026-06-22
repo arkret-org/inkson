@@ -285,11 +285,44 @@ fn device_status_field_authorization(status: &str) -> Option<bool> {
     device_status_authorization(status)
 }
 
+fn did_recovery_public_key_backup_present(list_payload: &Value) -> bool {
+    list_payload
+        .get("backups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|backup| {
+            backup.get("backup_class").and_then(Value::as_str) == Some("did_recovery")
+                && backup
+                    .get("encryption")
+                    .and_then(|encryption| encryption.get("recipient_method"))
+                    .and_then(Value::as_str)
+                    == Some("recovery_public_key")
+        })
+}
+
+fn recovery_key_path_configured_for_mls_setup(
+    list_payload: &Value,
+    state_store: &LocalStateStore,
+    actor_id: &str,
+    account_recovery_configured: Option<bool>,
+) -> bool {
+    if matches!(account_recovery_configured, Some(true)) {
+        return true;
+    }
+    if !did_recovery_public_key_backup_present(list_payload) {
+        return false;
+    }
+    crate::views::recovery::local_recovery_key_fingerprint(state_store, actor_id).is_some()
+        || crate::views::recovery::local_recovery_public_key(state_store, actor_id).is_some()
+}
+
 pub(crate) fn mls_recovery_setup_missing(
     list_payload: &Value,
     state_store: &LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
+    account_recovery_configured: Option<bool>,
 ) -> bool {
     if crate::mls::account_recovery::select_preferred_mls_account_secret_backup(list_payload)
         .is_some()
@@ -300,6 +333,14 @@ pub(crate) fn mls_recovery_setup_missing(
     if matches!(
         crate::mls::runtime::load_account_mls_secret(secure_store, actor_id),
         Ok(Some(_))
+    ) {
+        return false;
+    }
+    if recovery_key_path_configured_for_mls_setup(
+        list_payload,
+        state_store,
+        actor_id,
+        account_recovery_configured,
     ) {
         return false;
     }

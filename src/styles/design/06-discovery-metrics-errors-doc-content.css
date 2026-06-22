@@ -369,7 +369,7 @@
 /* Modal overlay */
 .modal-backdrop {
   position: fixed; inset: 0;
-  background: rgba(20, 22, 30, 0.55);
+  background: rgba(8, 13, 20, 0.72);
   display: grid; place-items: center;
   z-index: var(--layer-modal);
   backdrop-filter: blur(2px);
@@ -400,6 +400,7 @@
 
 .mls-recovery-modal {
   width: min(640px, calc(100vw - 32px));
+  background: var(--surface-solid, var(--surface));
 }
 .mls-recovery-modal-body {
   display: flex;
@@ -484,7 +485,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(20, 22, 30, 0.55);
+  background: rgba(8, 13, 20, 0.72);
   backdrop-filter: blur(2px);
 }
 
