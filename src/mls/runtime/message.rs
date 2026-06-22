@@ -2,7 +2,8 @@
 //! minimal-metadata AAD policy enforcement.
 
 use super::{
-    MlsRuntimeError, load_device_snapshot_secret, load_or_create_device_snapshot_secret,
+    MlsRuntimeError, delete_mls_key_package_identity_state, load_device_snapshot_secret,
+    load_mls_key_package_identity_state, load_or_create_device_snapshot_secret,
     should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
@@ -31,6 +32,12 @@ impl WelcomeApplyOutcome {
             self.first_error = Some(reason);
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct WelcomeMessageEntry {
+    content: serde_json::Value,
+    key_package_id: Option<String>,
 }
 
 pub fn decrypt_application_payload(
@@ -111,10 +118,27 @@ fn export_receive_chain_envelope(
     .with_app_messages_observed(observed))
 }
 
-pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
-    // Spec form is `{ messages: [ { kind, content, … } ] }`
-    // (`DeviceMessagesGetOutcome` / `DeviceMessageEnvelope`); the discriminator
-    // is `kind` and the payload lives under `content`.
+fn welcome_entry_key_package_id(entry: &serde_json::Value) -> Option<String> {
+    entry
+        .get("unsigned")
+        .and_then(|unsigned| unsigned.get("key_package_id"))
+        .or_else(|| {
+            entry
+                .get("content")
+                .and_then(|content| content.get("key_package_id"))
+        })
+        .or_else(|| {
+            entry
+                .get("content")
+                .and_then(|content| content.get("keypackage_id"))
+        })
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn collect_welcome_message_entries(value: &serde_json::Value) -> Vec<WelcomeMessageEntry> {
     let mut welcomes = Vec::new();
     let Some(messages) = value
         .get("messages")
@@ -131,10 +155,78 @@ pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Val
             == Some("ck.mls.welcome")
             && let Some(content) = entry.get("content")
         {
-            welcomes.push(content.clone());
+            welcomes.push(WelcomeMessageEntry {
+                content: content.clone(),
+                key_package_id: welcome_entry_key_package_id(entry),
+            });
         }
     }
     welcomes
+}
+
+pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    // Spec form is `{ messages: [ { kind, content, unsigned, ... } ] }`
+    // (`DeviceMessagesGetOutcome` / `DeviceMessageEnvelope`); the discriminator
+    // is `kind` and the payload lives under `content`.
+    collect_welcome_message_entries(value)
+        .into_iter()
+        .map(|entry| entry.content)
+        .collect()
+}
+
+pub fn mls_group_id_for_realm(realm_id: &str) -> String {
+    cokret_sdk::base64url_encode(realm_id.trim().as_bytes())
+}
+
+pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: &str) -> bool {
+    if message
+        .get("kind")
+        .or_else(|| message.get("type"))
+        .and_then(|t| t.as_str())
+        != Some("ck.mls.welcome")
+    {
+        return false;
+    }
+    let expected_group_id = mls_group_id_for_realm(realm_id);
+    message
+        .get("content")
+        .and_then(|content| content.get("group_id"))
+        .and_then(serde_json::Value::as_str)
+        == Some(expected_group_id.as_str())
+}
+
+pub fn collect_mls_welcome_messages_for_realm(
+    messages: &[serde_json::Value],
+    realm_id: &str,
+) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .filter(|message| mls_welcome_message_matches_realm(message, realm_id))
+        .cloned()
+        .collect()
+}
+
+pub fn local_mls_welcome_hint_for_realm(messages: &[serde_json::Value], realm_id: &str) -> String {
+    let mut hints = messages
+        .iter()
+        .filter(|message| mls_welcome_message_matches_realm(message, realm_id))
+        .map(|message| {
+            message
+                .get("unsigned")
+                .and_then(|unsigned| unsigned.get("mls_welcome_id"))
+                .or_else(|| {
+                    message
+                        .get("content")
+                        .and_then(|content| content.get("welcome_hash"))
+                })
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    hints.sort();
+    hints.dedup();
+    format!("{}:{}", hints.len(), hints.join(","))
 }
 
 fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<&'static str> {
@@ -157,7 +249,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
     device_id: &str,
     messages_value: &serde_json::Value,
 ) -> Result<WelcomeApplyOutcome, MlsRuntimeError> {
-    let welcome_entries = collect_welcome_entries(messages_value);
+    let welcome_entries = collect_welcome_message_entries(messages_value);
     // A totally-empty welcome set is a success with nothing to do.
     if welcome_entries.is_empty() {
         return Ok(WelcomeApplyOutcome::default());
@@ -175,7 +267,8 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // counted and the first reason retained so callers can report partial
     // success without failing the whole boot.
     let mut outcome = WelcomeApplyOutcome::default();
-    for welcome_value in welcome_entries {
+    for welcome_entry in welcome_entries {
+        let welcome_value = welcome_entry.content;
         if let Some(reason) = durable_welcome_payload_reject_reason(&welcome_value) {
             outcome.record_failure(format!("welcome claim envelope: {reason}"));
             continue;
@@ -188,15 +281,53 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        let identity = match cokret_sdk::CokretMlsIdentity::new_basic(
-            principal_did.clone(),
-            device_id_typed.clone(),
-        ) {
-            Ok(identity) => identity,
-            Err(err) => {
-                outcome.record_failure(format!("identity: {err:?}"));
-                continue;
-            }
+        let identity = match welcome_entry.key_package_id.as_deref() {
+            Some(key_package_id) => match load_mls_key_package_identity_state(
+                secure_store,
+                actor_id,
+                device_id,
+                key_package_id,
+            ) {
+                Ok(Some(serialized_state)) => {
+                    match cokret_sdk::CokretMlsIdentity::restore_from_private_state(
+                        principal_did.clone(),
+                        device_id_typed.clone(),
+                        &serialized_state,
+                    ) {
+                        Ok(identity) => identity,
+                        Err(err) => {
+                            outcome.record_failure(format!(
+                                "restore KeyPackage identity state: {err}"
+                            ));
+                            continue;
+                        }
+                    }
+                }
+                Ok(None) => match cokret_sdk::CokretMlsIdentity::new_basic(
+                    principal_did.clone(),
+                    device_id_typed.clone(),
+                ) {
+                    Ok(identity) => identity,
+                    Err(err) => {
+                        outcome.record_failure(format!("identity: {err:?}"));
+                        continue;
+                    }
+                },
+                Err(err) => {
+                    outcome.record_failure(format!("load KeyPackage identity state: {err}"));
+                    continue;
+                }
+            },
+            None => match cokret_sdk::CokretMlsIdentity::new_basic(
+                principal_did.clone(),
+                device_id_typed.clone(),
+            ) {
+                Ok(identity) => identity,
+                Err(err) => {
+                    outcome.record_failure(format!("identity: {err:?}"));
+                    continue;
+                }
+            },
         };
         let group = match cokret_sdk::CokretMlsGroup::join_from_welcome(identity, &welcome) {
             Ok(group) => group,
@@ -247,6 +378,21 @@ pub fn apply_welcome_messages_with_device_snapshot(
             &salt,
         );
         state_store.save_mls_snapshot(realm_id.to_owned(), snapshot);
+        if let Some(key_package_id) = welcome_entry.key_package_id.as_deref()
+            && let Err(err) = delete_mls_key_package_identity_state(
+                secure_store,
+                actor_id,
+                device_id,
+                key_package_id,
+            )
+        {
+            tracing::warn!(
+                %realm_id,
+                %key_package_id,
+                error = %err,
+                "failed to delete consumed MLS KeyPackage identity state",
+            );
+        }
         outcome.applied += 1;
     }
     Ok(outcome)

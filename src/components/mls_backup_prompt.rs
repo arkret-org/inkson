@@ -144,6 +144,11 @@ pub(crate) fn recovery_key_filename(localpart: &str) -> String {
     }
 }
 
+pub(crate) fn recovery_key_filename_from_handles(handles: &[String]) -> String {
+    let localpart = recovery_localpart_from_handles(handles);
+    recovery_key_filename(&localpart)
+}
+
 #[derive(Clone, Default)]
 struct MlsPrivatePlaintextBackupJob {
     base_url: String,
@@ -997,10 +1002,9 @@ pub fn MlsBackupPrompt(
                                     "data-testid": "mls-backup-download-key",
                                     onclick: {
                                         let key = generated_now.clone();
-                                        let localpart =
-                                            recovery_localpart_from_handles(&personal_handles());
-                                        let fname = recovery_key_filename(&localpart);
                                         move |_| {
+                                            let fname =
+                                                recovery_key_filename_from_handles(&personal_handles());
                                             download_text_as_file(&fname, &key);
                                         }
                                     },
@@ -1096,7 +1100,9 @@ pub fn MlsBackupPrompt(
 
 #[cfg(test)]
 mod tests {
-    use super::{recovery_key_filename, recovery_localpart_from_handles};
+    use super::{
+        recovery_key_filename, recovery_key_filename_from_handles, recovery_localpart_from_handles,
+    };
 
     #[test]
     fn localpart_comes_from_handle_not_did_ulid() {
@@ -1157,8 +1163,27 @@ mod tests {
     }
 
     #[test]
+    fn filename_from_handles_uses_primary_handle_localpart() {
+        assert_eq!(
+            recovery_key_filename_from_handles(&["alice:local.host".to_owned()]),
+            "cokret-recovery-key-alice.txt"
+        );
+        assert_eq!(
+            recovery_key_filename_from_handles(&[
+                "did:web:local.host:users:01ABC".to_owned(),
+                "bob:local.host".to_owned(),
+            ]),
+            "cokret-recovery-key-bob.txt"
+        );
+    }
+
+    #[test]
     fn filename_falls_back_when_localpart_empty() {
         assert_eq!(recovery_key_filename(""), "cokret-recovery-key.txt");
         assert_eq!(recovery_key_filename("   "), "cokret-recovery-key.txt");
+        assert_eq!(
+            recovery_key_filename_from_handles(&[]),
+            "cokret-recovery-key.txt"
+        );
     }
 }

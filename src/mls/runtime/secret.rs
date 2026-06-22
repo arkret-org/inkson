@@ -16,6 +16,8 @@ use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 const ACCOUNT_MLS_SECRET_PREFIX: &str = "yougen.mls_snapshot.account_secret";
 pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
+const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "yougen.mls_key_package.identity_state.v1";
+const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "yougen.mls_key_package.publish_marker.v1";
 
 /// Stored account-scoped MLS snapshot secret plus the local key version that
 /// carried it.
@@ -188,6 +190,145 @@ pub fn load_or_create_device_snapshot_secret(
     device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
     load_or_create_account_mls_secret(store, actor_id, device_id)
+}
+
+pub fn mls_key_package_identity_state_key(
+    actor_id: &str,
+    device_id: &str,
+    key_package_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    let actor = actor_id.trim();
+    let device = device_id.trim();
+    let key_package = key_package_id.trim();
+    if actor.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "actor_id is required for MLS KeyPackage identity state".to_owned(),
+        ));
+    }
+    if device.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "device_id is required for MLS KeyPackage identity state".to_owned(),
+        ));
+    }
+    if key_package.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "key_package_id is required for MLS KeyPackage identity state".to_owned(),
+        ));
+    }
+    Ok(format!(
+        "{MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX}.{actor}.{device}.{key_package}"
+    ))
+}
+
+pub fn store_mls_key_package_identity_state(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    key_package_id: &str,
+    serialized_state: &[u8],
+) -> Result<(), SecureKeyStoreError> {
+    if serialized_state.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "MLS KeyPackage identity state must not be empty".to_owned(),
+        ));
+    }
+    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    store.store_secret(&key, &URL_SAFE_NO_PAD.encode(serialized_state))
+}
+
+pub fn load_mls_key_package_identity_state(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    key_package_id: &str,
+) -> Result<Option<Vec<u8>>, SecureKeyStoreError> {
+    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    let Some(secret) = store.get_secret(&key)? else {
+        return Ok(None);
+    };
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    URL_SAFE_NO_PAD
+        .decode(trimmed.as_bytes())
+        .map(Some)
+        .map_err(|err| {
+            SecureKeyStoreError::Backend(format!("decode MLS KeyPackage identity state: {err}"))
+        })
+}
+
+pub fn delete_mls_key_package_identity_state(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    key_package_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    store.delete_secret(&key)
+}
+
+fn secure_key_component(value: &str, label: &str) -> Result<String, SecureKeyStoreError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(SecureKeyStoreError::Backend(format!(
+            "{label} is required for MLS KeyPackage publish marker"
+        )));
+    }
+    Ok(URL_SAFE_NO_PAD.encode(trimmed.as_bytes()))
+}
+
+pub fn mls_key_package_publish_marker_key(
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    let server = secure_key_component(server_scope, "server_scope")?;
+    let actor = secure_key_component(actor_id, "actor_id")?;
+    let device = secure_key_component(device_id, "device_id")?;
+    Ok(format!(
+        "{MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX}.{server}.{actor}.{device}"
+    ))
+}
+
+pub fn store_mls_key_package_publish_marker(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+    key_package_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key_package = key_package_id.trim();
+    if key_package.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "key_package_id is required for MLS KeyPackage publish marker".to_owned(),
+        ));
+    }
+    let key = mls_key_package_publish_marker_key(server_scope, actor_id, device_id)?;
+    store.store_secret(&key, key_package)
+}
+
+pub fn load_mls_key_package_publish_marker(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Option<String>, SecureKeyStoreError> {
+    let key = mls_key_package_publish_marker_key(server_scope, actor_id, device_id)?;
+    Ok(store
+        .get_secret(&key)?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
+}
+
+pub fn delete_mls_key_package_publish_marker(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key = mls_key_package_publish_marker_key(server_scope, actor_id, device_id)?;
+    store.delete_secret(&key)
 }
 
 /// Load (without creating) the snapshot secret for `(actor, device)`.

@@ -382,6 +382,168 @@ pub(crate) fn mls_welcome_bootstrap_key(
     ))
 }
 
+pub(crate) fn mls_key_package_publish_key(
+    base_url: &str,
+    session_credential: &str,
+    account_did: &str,
+    device_id: &str,
+    e2ee_ready: bool,
+    sync_bootstrap_complete: bool,
+) -> Option<String> {
+    if !e2ee_ready || !sync_bootstrap_complete {
+        return None;
+    }
+    let base = server_key(base_url);
+    let session = session_credential.trim();
+    let actor = account_did.trim();
+    let device = device_id.trim();
+    if base.is_empty() || session.is_empty() || actor.is_empty() || device.is_empty() {
+        return None;
+    }
+
+    let mut token_hash = DefaultHasher::new();
+    session.hash(&mut token_hash);
+    Some(format!(
+        "{base}|{actor}|{device}|{:016x}",
+        token_hash.finish()
+    ))
+}
+
+pub(crate) fn local_mls_key_package_publish_hint(
+    base_url: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> String {
+    let base_scope = server_key(base_url);
+    if base_scope.is_empty() || actor_id.trim().is_empty() || device_id.trim().is_empty() {
+        return "not-ready".to_owned();
+    }
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    match crate::mls::runtime::load_mls_key_package_publish_marker(
+        secure_store.as_ref(),
+        &base_scope,
+        actor_id,
+        device_id,
+    ) {
+        Ok(Some(key_package_id)) => {
+            match crate::mls::runtime::load_mls_key_package_identity_state(
+                secure_store.as_ref(),
+                actor_id,
+                device_id,
+                &key_package_id,
+            ) {
+                Ok(Some(_)) => format!("ready:{key_package_id}"),
+                Ok(None) => format!("stale:{key_package_id}"),
+                Err(error) => format!("error:{error}"),
+            }
+        }
+        Ok(None) => "none".to_owned(),
+        Err(error) => format!("error:{error}"),
+    }
+}
+
+pub(crate) async fn ensure_local_mls_key_package_published(
+    base_url: String,
+    session_credential: String,
+    actor_id: String,
+    device_id: String,
+) -> Result<Option<String>, String> {
+    let base_scope = server_key(&base_url);
+    if base_scope.is_empty()
+        || session_credential.trim().is_empty()
+        || actor_id.trim().is_empty()
+        || device_id.trim().is_empty()
+    {
+        return Ok(None);
+    }
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    if let Some(key_package_id) = crate::mls::runtime::load_mls_key_package_publish_marker(
+        secure_store.as_ref(),
+        &base_scope,
+        &actor_id,
+        &device_id,
+    )
+    .map_err(|error| format!("load MLS KeyPackage publish marker: {error}"))?
+    {
+        match crate::mls::runtime::load_mls_key_package_identity_state(
+            secure_store.as_ref(),
+            &actor_id,
+            &device_id,
+            &key_package_id,
+        ) {
+            Ok(Some(_)) => return Ok(Some(key_package_id)),
+            Ok(None) => {
+                crate::mls::runtime::delete_mls_key_package_publish_marker(
+                    secure_store.as_ref(),
+                    &base_scope,
+                    &actor_id,
+                    &device_id,
+                )
+                .map_err(|error| format!("delete stale MLS KeyPackage marker: {error}"))?;
+            }
+            Err(error) => {
+                return Err(format!("load MLS KeyPackage identity state: {error}"));
+            }
+        }
+    }
+
+    let principal = cokret_sdk::Did::new(actor_id.trim().to_owned())
+        .map_err(|error| format!("MLS principal_id: {error:?}"))?;
+    let device = cokret_sdk::DeviceId::new(device_id.trim().to_owned())
+        .map_err(|error| format!("MLS device_id: {error:?}"))?;
+    let identity = cokret_sdk::CokretMlsIdentity::new_basic(principal, device)
+        .map_err(|error| format!("create MLS identity: {error}"))?;
+    let record = identity
+        .key_package_record()
+        .map_err(|error| format!("create MLS KeyPackage: {error}"))?;
+    let key_package_id = record.keypackage_id.clone();
+    let private_state = identity
+        .export_private_state()
+        .map_err(|error| format!("export MLS KeyPackage identity state: {error}"))?;
+    crate::mls::runtime::store_mls_key_package_identity_state(
+        secure_store.as_ref(),
+        &actor_id,
+        &device_id,
+        &key_package_id,
+        &private_state,
+    )
+    .map_err(|error| format!("store MLS KeyPackage identity state: {error}"))?;
+
+    let publish_device_id = device_id.clone();
+    let publish_key_package_id = key_package_id.clone();
+    let outcome = crate::views::helpers::with_authed_api(
+        &base_url,
+        session_credential.clone(),
+        |api| async move {
+            api.publish_mls_key_package(&publish_device_id, &record)
+                .await
+        },
+    )
+    .await
+    .map_err(|error| error.display())?;
+    if outcome.accepted == 0 {
+        let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
+            secure_store.as_ref(),
+            &actor_id,
+            &device_id,
+            &publish_key_package_id,
+        );
+        return Err(format!(
+            "MLS KeyPackage upload rejected: {:?}",
+            outcome.rejected
+        ));
+    }
+    crate::mls::runtime::store_mls_key_package_publish_marker(
+        secure_store.as_ref(),
+        &base_scope,
+        &actor_id,
+        &device_id,
+        &key_package_id,
+    )
+    .map_err(|error| format!("store MLS KeyPackage publish marker: {error}"))?;
+    Ok(Some(key_package_id))
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MlsWelcomeBootstrapOutcome {
     pub(crate) applied: usize,
