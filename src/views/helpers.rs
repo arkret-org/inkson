@@ -138,7 +138,24 @@ fn generic_avatar_seed(seed: &str) -> bool {
 }
 
 fn handle_avatar_seed(value: &str) -> Option<String> {
-    crate::identity_handle::parse_user_handle(value).map(|handle| handle.localpart)
+    if let Some(handle) = crate::identity_handle::parse_user_handle(value) {
+        return Some(handle.localpart);
+    }
+    let trimmed = value.trim().trim_start_matches('@').trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("did:")
+        || trimmed.chars().any(char::is_whitespace)
+        || trimmed.contains('/')
+    {
+        return None;
+    }
+    Some(
+        trimmed
+            .split([':', '@'])
+            .next()
+            .unwrap_or(trimmed)
+            .to_owned(),
+    )
 }
 
 fn handle_subject_did(value: &str) -> Option<String> {
