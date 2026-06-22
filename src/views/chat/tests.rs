@@ -94,6 +94,64 @@ fn parses_message_event_with_nested_envelope_payload_shape() {
 }
 
 #[test]
+fn chat_visible_read_receipt_send_respects_preferences() {
+    let temp = std::env::temp_dir().join(format!("yougen-chat-rr-pref-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    assert!(chat_visible_read_receipt_should_send(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_default_send(false);
+    assert!(!chat_visible_read_receipt_should_send(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_realm_override("ck:realm:demo", Some(true));
+    assert!(chat_visible_read_receipt_should_send(
+        &store,
+        "ck:strand:other",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_strand_override("ck:strand:demo", Some(false));
+    assert!(!chat_visible_read_receipt_should_send(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_policy_snapshot(
+        "ck:realm:demo",
+        Some(crate::local_state::ReadReceiptPolicySnapshot {
+            disclosure: "required".to_owned(),
+            visibility: Some("public".to_owned()),
+        }),
+    );
+    assert!(chat_visible_read_receipt_should_send(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+
+    store.set_read_receipt_policy_snapshot(
+        "ck:realm:demo",
+        Some(crate::local_state::ReadReceiptPolicySnapshot {
+            disclosure: "disabled".to_owned(),
+            visibility: Some("private".to_owned()),
+        }),
+    );
+    assert!(!chat_visible_read_receipt_should_send(
+        &store,
+        "ck:strand:demo",
+        "ck:realm:demo",
+    ));
+}
+
+#[test]
 fn chat_message_create_operation_emits_schema_canonical_content() {
     let op = chat_message_create_operation(
         "ck:realm:01904100-0000-7000-8000-000000000010",

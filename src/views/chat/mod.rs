@@ -76,6 +76,19 @@ async fn resolve_agent_selector_mentions(
     mentions
 }
 
+fn chat_visible_read_receipt_should_send(
+    store: &LocalStateStore,
+    strand_id: &str,
+    realm_id: &str,
+) -> bool {
+    let strand_id = strand_id.trim();
+    let realm_id = realm_id.trim();
+    store.read_receipt_should_send(
+        (!strand_id.is_empty()).then_some(strand_id),
+        (!realm_id.is_empty()).then_some(realm_id),
+    )
+}
+
 #[component]
 pub fn ChatPanel(
     base_url: String,
@@ -339,21 +352,32 @@ pub fn ChatPanel(
         && latest_read_cursor().as_str() != top_event
     {
         latest_read_cursor.set(top_event.clone());
+        let should_send_receipt = {
+            let store = state_store.read();
+            chat_visible_read_receipt_should_send(
+                &store,
+                &selected_channel_value,
+                &selected_realm_id,
+            )
+        };
         // Post the visible read receipt through the canonical
         // ephemeral channel; local marker state keeps the rendered
         // testid surface stable while server projection catches up.
-        let base = base_url.clone();
-        let realm = selected_realm_id.clone();
-        let event_id = top_event.clone();
-        let actor = account_did.clone();
-        let api_token = token();
-        spawn(async move {
-            let _ = crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                api.send_receipt(&realm, &actor, &event_id, "ck.receipt.read")
-                    .await
-            })
-            .await;
-        });
+        if should_send_receipt {
+            let base = base_url.clone();
+            let realm = selected_realm_id.clone();
+            let event_id = top_event.clone();
+            let actor = account_did.clone();
+            let api_token = token();
+            spawn(async move {
+                let _ =
+                    crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
+                        api.send_receipt(&realm, &actor, &event_id, "ck.receipt.read")
+                            .await
+                    })
+                    .await;
+            });
+        }
     }
     // Both lookups are read-only `.iter().find()` scans, so they borrow the
     // single `all_messages_snapshot` clone instead of cloning the whole Vec

@@ -129,6 +129,28 @@ fn read_receipt_envelope_uses_actor_not_event_as_sender() {
 }
 
 #[test]
+fn presence_envelope_buckets_last_active_at_to_hour() {
+    let last_active_at = chrono::DateTime::parse_from_rfc3339("2026-06-22T10:34:56.789Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let envelope = build_presence_envelope(
+        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "did:web:alice.example",
+        "online",
+        Some(last_active_at),
+    )
+    .unwrap();
+
+    assert_eq!(envelope.kind, "ck.presence");
+    assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
+    assert_eq!(envelope.payload["status"], "online");
+    assert_eq!(
+        envelope.payload["last_active_at"],
+        "2026-06-22T10:00:00Z/PT1H"
+    );
+}
+
+#[test]
 fn canonical_space_join_rule_keeps_v1_invite_value() {
     assert_eq!(canonical_space_join_rule_v1("open"), "public");
     assert_eq!(canonical_space_join_rule_v1("request"), "knock");

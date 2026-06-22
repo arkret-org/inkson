@@ -180,7 +180,10 @@ pub fn build_presence_envelope(
     payload.insert("actor_id".into(), Value::String(actor_id.to_owned()));
     payload.insert("status".into(), Value::String(status.to_owned()));
     if let Some(ts) = last_active_at {
-        payload.insert("last_active_at".into(), Value::String(ts.to_rfc3339()));
+        payload.insert(
+            "last_active_at".into(),
+            Value::String(bucket_presence_timestamp(ts)),
+        );
     }
     cokret_sdk::EphemeralEnvelope::new(
         "ck.presence",
@@ -193,6 +196,14 @@ pub fn build_presence_envelope(
         None,
     )
     .map_err(|err| anyhow::anyhow!("presence envelope rejected: {err}"))
+}
+
+fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
+    let bucketed = ts.timestamp() - ts.timestamp().rem_euclid(60 * 60);
+    let start = chrono::DateTime::<chrono::Utc>::from_timestamp(bucketed, 0)
+        .unwrap_or(ts)
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    format!("{start}/PT1H")
 }
 
 /// Round 4 (spec a77b995) — build a `ck.call.signal` `EphemeralEnvelope`.

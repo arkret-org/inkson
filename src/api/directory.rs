@@ -334,6 +334,8 @@ impl CokretApi {
         let body = cokret_sdk::models::DirectoryResolveTargetRequestBody {
             address: address.to_owned(),
             requester: None,
+            proof_challenge: None,
+            claim_presentations: Vec::new(),
             proofs: Vec::new(),
             token: token.map(str::to_owned),
         };

@@ -48,6 +48,7 @@ pub(crate) fn resolve_handle_request_body(
         handle: handle.to_owned(),
         expected_did,
         proof_challenge: non_empty(context.proof_challenge),
+        claim_presentations: Vec::new(),
         intent,
         requester,
         audience: non_empty(context.audience),
