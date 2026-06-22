@@ -7,6 +7,13 @@
   text-align: center;
 }
 
+.member-pending-count-badge {
+  background: color-mix(in srgb, var(--warning) 26%, var(--surface));
+  color: var(--warning-ink);
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  font-weight: 650;
+}
+
 .members-invite-hint {
   margin-top: -2px;
   font-size: 12px;
@@ -90,6 +97,31 @@
 .member-profile-label {
   color: var(--text-3);
   font-weight: 650;
+}
+
+.member-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.member-pending-invites {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.member-pending-invite-row {
+  background: color-mix(in srgb, var(--surface-2) 84%, var(--warning) 8%);
+}
+
+.member-pending-invite-empty {
+  padding: 4px 2px 2px;
+  font-size: 12px;
 }
 
 .member-handle-list {
@@ -183,6 +215,16 @@
 .member-avatar-agent {
   background: var(--info-soft);
   color: var(--info-ink);
+}
+
+.member-avatar-pending {
+  background: color-mix(in srgb, var(--warning) 20%, var(--surface-2));
+  color: var(--warning-ink);
+}
+
+.member-avatar-pending .ui-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .member-avatar-agent .ui-icon {
