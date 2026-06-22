@@ -266,10 +266,20 @@ async fn rotate_session_grant(
     let dpop_proof = device_handle
         .mint_proof("POST", &htu, Some(&grant.grant_jwt))
         .map_err(|error| anyhow::anyhow!("mint rotation DPoP proof: {error}"))?;
+    let refresh_proof = device_handle
+        .mint_session_grant_refresh_proof(
+            &grant.grant_jwt,
+            &grant.principal_id,
+            &grant.device_id,
+            &grant.audience,
+        )
+        .map_err(|error| anyhow::anyhow!("mint rotation DID proof: {error}"))?;
     let outcome = refresh_session_grant(
         &gate_account_base,
         &grant.grant_jwt,
         Some(&grant.audience),
+        &grant.device_id,
+        refresh_proof,
         &dpop_proof,
     )
     .await?;
@@ -358,11 +368,13 @@ pub async fn refresh_session_grant(
     gate_account_base: &str,
     grant_jwt: &str,
     audience: Option<&str>,
+    device_id: &str,
+    proof: cokret_sdk::SessionGrantRefreshProof,
     dpop_proof: &str,
 ) -> anyhow::Result<cokret_sdk::SessionGrantRefreshOutcome> {
     let coauth = crate::coauth::CoauthApi::new(gate_account_base)?;
     coauth
-        .refresh_session_grant(grant_jwt, audience, dpop_proof)
+        .refresh_session_grant(grant_jwt, audience, device_id, proof, dpop_proof)
         .await
 }
 

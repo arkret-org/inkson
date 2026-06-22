@@ -37,13 +37,16 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer as _, SigningKey};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::dpop::{
     DpopClaims, DpopError, build_dpop_proof_ed25519, fresh_dpop_claims, jwk_thumbprint_ed25519,
 };
 use crate::local_state::{DpopDeviceKeyRecord, LocalStateStore};
+
+const SOFT_LOGOUT_RESTORE_OPERATION: &str = "resume_soft_logged_out_session";
 
 /// Errors surfaced when minting or loading the device DPoP key.
 #[derive(Debug, thiserror::Error)]
@@ -154,6 +157,129 @@ impl DpopHandle {
         )
         .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))
     }
+
+    pub fn mint_session_grant_refresh_proof(
+        &self,
+        grant_jwt: &str,
+        principal_id: &str,
+        device_id: &str,
+        audience: &str,
+    ) -> Result<cokret_sdk::SessionGrantRefreshProof, AuthDpopError> {
+        let verification_method = format!("{}#{}", principal_id.trim(), device_id.trim());
+        let request_canonical_digest = soft_logout_restore_request_canonical_digest(
+            grant_jwt,
+            principal_id,
+            device_id,
+            audience,
+            &verification_method,
+        )?;
+        let request_canonical_digest_hash = cokret_sdk::Hash::new(request_canonical_digest.clone())
+            .map_err(|error| {
+                AuthDpopError::SessionGrantProof(format!(
+                    "soft logout restore request digest: {error}"
+                ))
+            })?;
+        let challenge = soft_logout_refresh_challenge(self.jkt())?;
+        let issued_at = Utc::now();
+        let expires_at = issued_at + chrono::Duration::seconds(60);
+        let claims = SoftLogoutDidProofClaims {
+            principal_id,
+            device_id,
+            audience,
+            challenge: &challenge,
+            request_canonical_digest: &request_canonical_digest,
+            issued_at,
+            expires_at,
+        };
+        let payload = crate::canonical::canonical_json_bytes(&claims)
+            .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))?;
+        let signature =
+            sign_detached_jws_eddsa_with_kid(&self.signing_key, &verification_method, &payload)?;
+        Ok(cokret_sdk::SessionGrantRefreshProof {
+            proof_kind: Some(cokret_sdk::SessionGrantProofKind::DidBoundSignature),
+            challenge: Some(challenge),
+            request_canonical_digest: Some(request_canonical_digest_hash),
+            audience: Some(audience.to_owned()),
+            issued_at: Some(issued_at),
+            expires_at: Some(expires_at),
+            signature: Some(signature),
+            verification_method: Some(verification_method),
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct SoftLogoutDidProofClaims<'a> {
+    pub principal_id: &'a str,
+    pub device_id: &'a str,
+    pub audience: &'a str,
+    pub challenge: &'a str,
+    pub request_canonical_digest: &'a str,
+    pub issued_at: chrono::DateTime<Utc>,
+    pub expires_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct SoftLogoutRestoreRequestDigest<'a> {
+    pub operation: &'static str,
+    pub grant_jwt_hash: String,
+    pub principal_id: &'a str,
+    pub device_id: &'a str,
+    pub audience: &'a str,
+    pub holder_key_id: &'a str,
+}
+
+fn soft_logout_restore_request_canonical_digest(
+    grant_jwt: &str,
+    principal_id: &str,
+    device_id: &str,
+    audience: &str,
+    holder_key_id: &str,
+) -> Result<String, AuthDpopError> {
+    crate::canonical::canonical_sha256(&SoftLogoutRestoreRequestDigest {
+        operation: SOFT_LOGOUT_RESTORE_OPERATION,
+        grant_jwt_hash: crate::coauth::session_grant_jwt_hash(grant_jwt),
+        principal_id,
+        device_id,
+        audience,
+        holder_key_id,
+    })
+    .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))
+}
+
+fn soft_logout_refresh_challenge(jkt: &str) -> Result<String, AuthDpopError> {
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|err| AuthDpopError::Rng(err.to_string()))?;
+    Ok(format!(
+        "sg-refresh-{}-{}",
+        Utc::now().timestamp_millis(),
+        URL_SAFE_NO_PAD.encode(nonce)
+    )
+    .chars()
+    .chain(jkt.chars().take(8))
+    .collect())
+}
+
+fn sign_detached_jws_eddsa_with_kid(
+    signing_key: &SigningKey,
+    kid: &str,
+    payload: &[u8],
+) -> Result<String, AuthDpopError> {
+    let header = serde_json::json!({
+        "alg": "EdDSA",
+        "kid": kid,
+    });
+    let header_b64 = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&header)
+            .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))?,
+    );
+    let payload_b64 = URL_SAFE_NO_PAD.encode(payload);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let signature = signing_key.sign(signing_input.as_bytes()).to_bytes();
+    Ok(format!(
+        "{header_b64}..{}",
+        URL_SAFE_NO_PAD.encode(signature)
+    ))
 }
 
 /// RFC 9449 `ath` hash:

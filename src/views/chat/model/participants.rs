@@ -141,6 +141,9 @@ pub(crate) fn participant_handle_label_from_value(
     did: Option<&str>,
 ) -> Option<String> {
     let object = value.as_object()?;
+    if let Some(label) = participant_inline_handle_claim_label(object.get("handle_claims"), did) {
+        return Some(label);
+    }
     // R3.1 wire rename: spec field is `handle`. Older payloads may
     // still ship `handle_uri` (cokret:// URI form retired @ 7157ee8);
     // accept both for migration compatibility.
@@ -174,6 +177,36 @@ pub(crate) fn participant_handle_label_from_value(
                 .filter(|child| child.is_object())
                 .and_then(|child| participant_handle_label_from_value(child, did))
         })
+    })
+}
+
+fn participant_inline_handle_claim_label(
+    claims: Option<&Value>,
+    did: Option<&str>,
+) -> Option<String> {
+    let did = did?.trim();
+    if did.is_empty() {
+        return None;
+    }
+    claims?.as_array()?.iter().find_map(|claim| {
+        let claim_subject = claim
+            .get("subject")
+            .or_else(|| claim.get("subject_id"))
+            .and_then(Value::as_str)?;
+        if claim_subject.trim() != did {
+            return None;
+        }
+        let binding_state = claim
+            .get("binding_state")
+            .and_then(Value::as_str)
+            .unwrap_or("verified");
+        if !matches!(binding_state, "verified" | "active") {
+            return None;
+        }
+        claim
+            .get("handle")
+            .and_then(Value::as_str)
+            .and_then(mention_handle_label_from_value)
     })
 }
 
@@ -632,17 +665,25 @@ pub(crate) fn mention_candidate_for_participant(
         });
     }
 
-    mention_label_for_participant(participant).map(|display_name| {
-        crate::messaging::mentions::MentionCandidate {
-            did: participant.did.clone(),
-            display_name,
-            insert_label: String::new(),
-            subtitle: String::new(),
-            is_agent: false,
-            controller_subject_id: String::new(),
-            controller_handle_at_time: String::new(),
-            agent_slug_at_time: String::new(),
-        }
+    let handle_label = mention_label_for_participant(participant);
+    let has_handle_label = handle_label.is_some();
+    let display_name = handle_label
+        .clone()
+        .or_else(|| participant.display_name.clone())
+        .unwrap_or_else(|| short_principal_label(&participant.did));
+    Some(crate::messaging::mentions::MentionCandidate {
+        did: participant.did.clone(),
+        display_name,
+        insert_label: handle_label.unwrap_or_else(|| short_principal_label(&participant.did)),
+        subtitle: if has_handle_label {
+            String::new()
+        } else {
+            "member DID".to_owned()
+        },
+        is_agent: false,
+        controller_subject_id: String::new(),
+        controller_handle_at_time: String::new(),
+        agent_slug_at_time: String::new(),
     })
 }
 

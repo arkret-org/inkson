@@ -187,17 +187,7 @@ fn attach_current_session_material(
     let Some(handle) = crate::auth_dpop::load_device_key(store).ok().flatten() else {
         return api;
     };
-    let mut api = api.with_dpop_device(handle.clone());
-    if let Some(grant) = store.session_grant()
-        && let Ok(proof) = handle.mint_session_grant_introspection_proof(
-            &grant.grant_id,
-            &grant.grant_jwt,
-            &grant.audience,
-        )
-    {
-        api = api.with_session_grant_proof(proof);
-    }
-    api
+    api.with_dpop_device(handle)
 }
 
 fn current_base_api(base: &str, state_store: Signal<LocalStateStore>) -> anyhow::Result<CokretApi> {

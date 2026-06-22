@@ -114,11 +114,6 @@ pub struct CokretApi {
     /// used by chime push register/unregister calls.
     chime_session_grant: Option<String>,
     chime_session_grant_proof: Option<SessionGrantIntrospectionProof>,
-    /// Session-grant holder proof presented on every `/_cokret/self/*` request
-    /// alongside the grant credential + DPoP. coauth's grant introspection requires
-    /// it (otherwise `proof_required`/inactive); soland forwards it verbatim.
-    /// Minted from the same device key bound into the grant's `cnf.jkt`.
-    session_grant_proof: Option<SessionGrantIntrospectionProof>,
     network_state: Arc<RwLock<NetworkState>>,
     cancel_token: Option<CancellationToken>,
     /// SPEC-CR-001 — `ck.session.grant` signing key + its `keyid`. When set,
@@ -159,10 +154,6 @@ impl fmt::Debug for CokretApi {
             .field(
                 "chime_session_grant_proof",
                 &self.chime_session_grant_proof.as_ref().map(|_| "<proof>"),
-            )
-            .field(
-                "session_grant_proof",
-                &self.session_grant_proof.as_ref().map(|_| "<proof>"),
             )
             .field("cancel_token", &self.cancel_token)
             .field("dpop_device", &self.dpop_device.as_ref().map(|h| h.jkt()))

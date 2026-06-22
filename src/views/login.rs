@@ -537,27 +537,15 @@ async fn finish_oidc_callback(
     if actor.trim().is_empty() {
         return Err("Account Authority did not return an account DID.".to_owned());
     }
-    // ②(A+②): the held credential is the
-    // `ck.session.grant` itself; every `/_cokret/self/*` request presents it as
-    // `Authorization: Bearer <grant>` + a per-request `DPoP` proof bound to the
-    // grant's `cnf.jkt`. Verify the credential up front by reading the account
-    // viewer through a grant+DPoP-bound client (api-conventions.md §3.3).
-    // Mint the session-grant holder proof presented on every `/_cokret/self/*`
-    // call: coauth's grant introspection (which the Principal Server invokes)
-    // requires it to confirm possession of the grant's session key, otherwise it
-    // answers `proof_required` and the grant reads inactive.
-    let grant_introspection_proof = dpop_handle
-        .mint_session_grant_introspection_proof(
-            session_grant.id.as_deref().unwrap_or_default(),
-            &session_grant.grant_jwt,
-            session_grant.audience.as_deref().unwrap_or_default(),
-        )
-        .map_err(|error| format!("session-grant introspection proof mint failed: {error}"))?;
+    // ②(A+②): the held credential is the `ck.session.grant` itself; every
+    // `/_cokret/self/*` request presents it as `Authorization: Bearer <grant>` +
+    // a per-request `DPoP` proof bound to the grant's `cnf.jkt`. Verify the
+    // credential up front by reading the account viewer through a grant+DPoP
+    // client (api-conventions.md §3.3).
     let authed_principal = principal
         .clone()
         .with_bearer(session_grant.grant_jwt.clone())
-        .with_dpop_device(dpop_handle.clone())
-        .with_session_grant_proof(grant_introspection_proof);
+        .with_dpop_device(dpop_handle.clone());
     let account = authed_principal.account_me().await.map_err(|error| {
         format!("Principal server did not accept the session grant + DPoP: {error}")
     })?;

@@ -147,8 +147,12 @@ impl CoauthApi {
         &self,
         grant_jwt: &str,
         audience: Option<&str>,
+        device_id: &str,
+        proof: cokret_sdk::SessionGrantRefreshProof,
         dpop_proof: &str,
     ) -> anyhow::Result<cokret_sdk::SessionGrantRefreshOutcome> {
+        let device_id = cokret_sdk::DeviceId::new(device_id.trim().to_owned())
+            .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?;
         // Build the POST body from the spec's strong type so the `oneOf` /
         // required-field contract is enforced at compile time, not by hand.
         let body = serde_json::to_value(cokret_sdk::SessionGrantRefreshRequestBody {
@@ -156,8 +160,8 @@ impl CoauthApi {
             audience: audience
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned),
-            device_id: None,
-            proof: None,
+            device_id: Some(device_id),
+            proof: Some(proof),
         })?;
         self.post_json_with_dpop("session-grants/refresh", body, Some(dpop_proof))
             .await

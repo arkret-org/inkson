@@ -981,6 +981,35 @@ fn extracts_participant_handle_label_from_projection() {
 }
 
 #[test]
+fn extracts_participant_handle_label_from_inline_handle_claims() {
+    let projection = json!({
+        "members": [
+            {
+                "actor_id": "did:web:bob.example",
+                "subject_id": "did:web:bob.example",
+                "handle_claims": [{
+                    "schema": "ck.schema.handle_claim.v1",
+                    "handle": "bob:local.host",
+                    "subject": "did:web:bob.example",
+                    "binding_state": "verified"
+                }]
+            }
+        ]
+    });
+
+    let participants = space_participants(Some(&projection), "did:web:alice.example");
+    let bob = participants
+        .iter()
+        .find(|participant| participant.did == "did:web:bob.example")
+        .unwrap();
+
+    assert_eq!(
+        mention_label_for_participant(bob).as_deref(),
+        Some("bob:local.host")
+    );
+}
+
+#[test]
 fn mention_label_for_participant_falls_back_to_materialized_handle_did() {
     let participant = SpaceParticipant {
         did: "did:web:example.com:users:bob".to_owned(),
@@ -1324,6 +1353,27 @@ fn mention_candidate_for_agent_uses_controller_scoped_selector() {
     );
     assert_eq!(candidate.controller_handle_at_time, "alice:example.com");
     assert_eq!(candidate.agent_slug_at_time, "summary");
+}
+
+#[test]
+fn mention_candidate_without_handle_still_targets_member_did() {
+    let participant = SpaceParticipant {
+        did: "did:web:bob.example".to_owned(),
+        display_name: Some("Bob Example".to_owned()),
+        handle_label: None,
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: false,
+        agent_metadata: None,
+    };
+
+    let candidate =
+        mention_candidate_for_participant(&participant, std::slice::from_ref(&participant))
+            .expect("member mention candidate");
+    assert_eq!(candidate.did, "did:web:bob.example");
+    assert_eq!(candidate.display_name, "Bob Example");
+    assert_eq!(candidate.subtitle, "member DID");
 }
 
 #[test]

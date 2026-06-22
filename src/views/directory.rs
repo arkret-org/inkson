@@ -95,6 +95,10 @@ fn realm_tree_node_from_preview(preview: cokret_sdk::models::RealmPreview) -> Re
     }
 }
 
+fn organization_preview_value(preview: cokret_sdk::models::OrganizationPreview) -> Value {
+    serde_json::to_value(preview).unwrap_or(Value::Null)
+}
+
 #[component]
 pub fn DirectoryPanel(
     base_url: String,
@@ -459,7 +463,7 @@ pub fn DirectoryPanel(
                                                             search
                                                                 .organizations
                                                                 .into_iter()
-                                                                .map(|organization| organization.preview)
+                                                                .map(organization_preview_value)
                                                                 .collect(),
                                                         );
                                                     }
@@ -540,7 +544,7 @@ pub fn DirectoryPanel(
                                                                 search
                                                                     .organizations
                                                                     .into_iter()
-                                                                    .map(|organization| organization.preview)
+                                                                    .map(organization_preview_value)
                                                                     .collect(),
                                                             );
                                                         }
@@ -943,10 +947,10 @@ pub fn DirectoryPanel(
                                                     pagination.write().orgs_cursor = search.next_cursor.clone();
                                                     let mut current = org_results();
                                                     current.extend(
-                                                        search
-                                                            .organizations
-                                                            .into_iter()
-                                                            .map(|organization| organization.preview),
+                                                            search
+                                                                .organizations
+                                                                .into_iter()
+                                                                .map(organization_preview_value),
                                                     );
                                                     org_results.set(current);
                                                 }

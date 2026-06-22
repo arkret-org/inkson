@@ -8,7 +8,9 @@ import {
 
 registerStrandsBeforeEach();
 
-test("notifications are derived from index projections and respect per-realm mute rules", async ({ page }) => {
+test("notifications are derived from index projections and respect per-realm mute rules", async ({
+  page,
+}) => {
   await refreshServer(page);
   const workspaceUrl = page.url();
   await page.getByTestId("topbar-notifications-button").click();
@@ -16,25 +18,34 @@ test("notifications are derived from index projections and respect per-realm mut
   expect(page.url()).toBe(workspaceUrl);
   await expect(page.getByTestId("notifications-drawer")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
-  await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Realm");
+  await expect(page.getByTestId("notifications-panel")).toContainText(
+    "Alice sent a message in Demo Realm",
+  );
 
   await page
     .getByTestId("notification-item")
     .filter({ hasText: "Alice sent a message in Demo Realm" })
     .getByTestId("mute-realm-button")
     .click();
-  await expect(page.getByTestId("notifications-panel")).not.toContainText("Alice sent a message in Demo Realm");
+  await expect(page.getByTestId("notifications-panel")).not.toContainText(
+    "Alice sent a message in Demo Realm",
+  );
   await page.getByTestId("notifications-drawer-close").click();
   await expect(page.getByTestId("notifications-drawer")).toBeHidden();
 
   await openSettings(page);
   await page.getByTestId("settings-nav-item-notifications").click();
-  await expect(page.getByTestId("settings-muted-realm-row")).toHaveAttribute("data-realm-id", DEMO_REALM);
+  await expect(page.getByTestId("settings-muted-realm-row")).toHaveAttribute(
+    "data-realm-id",
+    DEMO_REALM,
+  );
   await page.getByTestId("settings-realm-override-remove").click();
   await expect(page.getByTestId("status-label")).toContainText("Removed");
 
   await page.getByTestId("topbar-notifications-button").click();
-  await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Realm");
+  await expect(page.getByTestId("notifications-panel")).toContainText(
+    "You were invited to review Demo Realm",
+  );
   const acceptInvite = page.waitForRequest(
     (request) =>
       request.url().endsWith("/_cokret/self/events") &&
@@ -45,14 +56,22 @@ test("notifications are derived from index projections and respect per-realm mut
     .filter({ hasText: "You were invited to review Demo Realm" })
     .getByTestId("notification-action")
     .click();
-  const acceptBody = await acceptInvite.then((request) => request.postDataJSON());
+  const acceptBody = await acceptInvite.then((request) =>
+    request.postDataJSON(),
+  );
   expect(acceptBody.kind).toBe("ck.member.state");
-  expect(acceptBody.payload.invite_ref).toBe("ck:invite:01904100-0000-7000-8000-000000000099");
+  expect(acceptBody.payload.invite_ref).toBe(
+    "ck:invite:01904100-0000-7000-8000-000000000099",
+  );
   expect(acceptBody.payload).not.toHaveProperty("invite_id");
-  await expect(page.getByTestId("notifications-status")).toContainText("Joined Realm");
+  await expect(page.getByTestId("notifications-status")).toContainText(
+    "Joined Realm",
+  );
 });
 
-test("topbar notifications drawer keeps the active realm navigation visible", async ({ page }) => {
+test("topbar notifications drawer keeps the active realm navigation visible", async ({
+  page,
+}) => {
   await refreshServer(page);
   await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
@@ -66,10 +85,14 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
   await expect(page.getByTestId("notifications-settings-hint")).toHaveCount(0);
   await expect(page.getByTestId("realm-context-bar")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toContainText("Latest");
-  await expect(page.getByTestId("notifications-panel")).not.toContainText("Notification settings");
+  await expect(page.getByTestId("notifications-panel")).not.toContainText(
+    "Notification settings",
+  );
 
   const drawerLayout = await page.evaluate(() => {
-    const header = document.querySelector(".workspace-header")?.getBoundingClientRect();
+    const header = document
+      .querySelector(".workspace-header")
+      ?.getBoundingClientRect();
     const panel = document
       .querySelector('[data-testid="notifications-drawer-panel"]')
       ?.getBoundingClientRect();
@@ -85,16 +108,24 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
       : null;
   });
   expect(drawerLayout).not.toBeNull();
-  expect(Math.abs(drawerLayout!.panelTop - drawerLayout!.headerBottom)).toBeLessThanOrEqual(1);
-  expect(Math.abs(drawerLayout!.panelRight - drawerLayout!.viewportWidth)).toBeLessThanOrEqual(1);
-  expect(Math.abs(drawerLayout!.panelBottom - drawerLayout!.viewportHeight)).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(drawerLayout!.panelTop - drawerLayout!.headerBottom),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(drawerLayout!.panelRight - drawerLayout!.viewportWidth),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(drawerLayout!.panelBottom - drawerLayout!.viewportHeight),
+  ).toBeLessThanOrEqual(1);
 
   await page.getByTestId("notifications-drawer-close").click();
   await expect(page.getByTestId("notifications-drawer")).toBeHidden();
   expect(page.url()).toBe(workspaceUrl);
 });
 
-test("directory search resolve and space selection strand works", async ({ page }) => {
+test("directory search resolve and space selection strand works", async ({
+  page,
+}) => {
   await page.getByTestId("topbar-search-button").click();
   await page.getByTestId("global-search-input").fill("demo");
   await page.getByTestId("global-search-input").press("Enter");
@@ -102,38 +133,63 @@ test("directory search resolve and space selection strand works", async ({ page 
 
   await page.getByTestId("directory-search-input").fill("demo");
   await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("directory-result")).toContainText("Cokret Demo Realm");
-  await expect(page.getByTestId("index-query-results")).toContainText("Cokret Demo Realm");
-  await expect(page.getByTestId("generic-entity-card")).toHaveAttribute("data-render-kind", "card");
+  await expect(page.getByTestId("directory-result")).toContainText(
+    "Cokret Demo Realm",
+  );
+  await expect(page.getByTestId("index-query-results")).toContainText(
+    "Cokret Demo Realm",
+  );
+  await expect(page.getByTestId("generic-entity-card")).toHaveAttribute(
+    "data-render-kind",
+    "card",
+  );
   await expect(page.getByTestId("entity-type-label")).toContainText("space");
   await expect(page.getByTestId("entity-facets")).toContainText("renderable");
-  await expect(page.getByTestId("projection-facets")).toContainText("item: stateful, rankable");
-  await expect(page.getByTestId("unknown-facets-debug")).toContainText("com.example.preview");
+  await expect(page.getByTestId("projection-facets")).toContainText(
+    "item: stateful, rankable",
+  );
+  await expect(page.getByTestId("unknown-facets-debug")).toContainText(
+    "com.example.preview",
+  );
 
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
-  await expect(page.getByTestId("status-label")).toContainText("resolved public");
-  await expect(page.getByTestId("directory-result").first()).toContainText("Cokret Demo Realm");
+  await expect(page.getByTestId("status-label")).toContainText(
+    "resolved public",
+  );
+  await expect(page.getByTestId("directory-result").first()).toContainText(
+    "Cokret Demo Realm",
+  );
 
   await page.getByTestId("directory-advanced-diagnostics-toggle").click();
   await page.getByTestId("tab-objects").click();
   await page.getByTestId("directory-search-input").fill("launch");
   await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("protocol-object-results")).toContainText("Launch checklist card");
-  await expect(page.getByTestId("protocol-object-results")).toContainText("Restricted discussion");
-  await expect(page.getByTestId("protocol-object-results")).toContainText("locked");
+  await expect(page.getByTestId("protocol-object-results")).toContainText(
+    "Launch checklist card",
+  );
+  await expect(page.getByTestId("protocol-object-results")).toContainText(
+    "Restricted discussion",
+  );
+  await expect(page.getByTestId("protocol-object-results")).toContainText(
+    "locked",
+  );
 
   await page.getByTestId("tab-organizations").click();
   await page.getByTestId("directory-search-input").fill("cokret");
   await page.getByTestId("directory-search-button").click();
   await expect(page.getByTestId("org-result")).toContainText("Cokret Labs");
-  await expect(page.getByTestId("org-result")).toContainText("listed");
+  await expect(page.getByTestId("org-result")).toContainText("cokret.example");
   await page.getByTestId("org-search-members").click();
   await expect(page.getByTestId("tab-actors")).toHaveClass(/primary/);
-  await expect(page.getByTestId("directory-search-input")).toHaveValue("cokret.example");
+  await expect(page.getByTestId("directory-search-input")).toHaveValue(
+    "cokret.example",
+  );
 });
 
-test("command palette closes with Escape and outside click", async ({ page }) => {
+test("command palette closes with Escape and outside click", async ({
+  page,
+}) => {
   await page.getByTestId("topbar-search-button").click();
   await expect(page.getByTestId("command-palette")).toBeVisible();
 
