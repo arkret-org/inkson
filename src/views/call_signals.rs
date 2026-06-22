@@ -338,10 +338,7 @@ fn verify_decoded_proof(
     crate::device_directory::verify_ephemeral_envelope_proof(&decoded.envelope, key)
 }
 
-async fn moderator_signal_authorized(
-    decoded: &DecodedCallSignal,
-    api: Option<&CokretApi>,
-) -> bool {
+async fn moderator_signal_authorized(decoded: &DecodedCallSignal, api: Option<&CokretApi>) -> bool {
     if !requires_call_moderate(decoded) {
         return true;
     }
@@ -470,7 +467,12 @@ fn authz_check_allows_moderation(outcome: &Value) -> bool {
         .get("decision")
         .and_then(Value::as_str)
         .map(|decision| matches!(decision, "allow" | "allowed"))
-        .unwrap_or_else(|| outcome.get("allowed").and_then(Value::as_bool).unwrap_or(false));
+        .unwrap_or_else(|| {
+            outcome
+                .get("allowed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
     if !allowed {
         return false;
     }
@@ -794,8 +796,7 @@ mod tests {
         assert!(requires_call_moderate(&kick));
         assert!(moderator_payload_shape_is_valid(&kick));
 
-        let kick_without_target =
-            decoded("moderation", 4, json!({ "data": { "action": "kick" } }));
+        let kick_without_target = decoded("moderation", 4, json!({ "data": { "action": "kick" } }));
         assert!(!moderator_payload_shape_is_valid(&kick_without_target));
 
         let kick_without_device = decoded(
@@ -827,7 +828,9 @@ mod tests {
                 "target_actor_id": "did:web:carol"
             }),
         );
-        assert!(!moderator_payload_shape_is_valid(&force_mute_without_device));
+        assert!(!moderator_payload_shape_is_valid(
+            &force_mute_without_device
+        ));
     }
 
     #[test]

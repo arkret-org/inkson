@@ -204,10 +204,9 @@ pub(super) fn apply_inbox_items(
                     .and_then(|d| d.get("target_device_id"))
                     .or_else(|| item.data.get("target_device_id"))
                     .and_then(|v| v.as_str());
-                let self_targeted =
-                    matches!(action, "kick" | "ban")
-                        && target.map(|t| t == actor).unwrap_or(false)
-                        && target_device.map(|t| t == device).unwrap_or(false);
+                let self_targeted = matches!(action, "kick" | "ban")
+                    && target.map(|t| t == actor).unwrap_or(false)
+                    && target_device.map(|t| t == device).unwrap_or(false);
                 if action == "end_for_all" || self_targeted {
                     if let Some(t) = transport() {
                         t.borrow_mut().close();

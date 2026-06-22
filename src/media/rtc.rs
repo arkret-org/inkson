@@ -153,9 +153,7 @@ impl RtcClientError {
                 Self::TranscriptionArtifactPipelineBypassed
             }
             "media_service_binding_uncovered" => Self::MediaServiceBindingUncovered,
-            "media_plaintext_service_not_authorised" => {
-                Self::MediaPlaintextServiceNotAuthorised
-            }
+            "media_plaintext_service_not_authorised" => Self::MediaPlaintextServiceNotAuthorised,
             "mls_governance_binding_stale" => Self::MlsGovernanceBindingStale,
             "desktop_media_unavailable" => Self::DesktopMediaUnavailable,
             _ => return None,
