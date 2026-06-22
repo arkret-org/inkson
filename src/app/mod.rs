@@ -465,6 +465,7 @@ pub fn RouterView() -> Element {
     // `ensure_sidebar_row_perms`) so we never probe authz for Realms whose
     // menu the user never touches.
     let sidebar_row_perms = use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
+    let mls_key_package_publish_key_seen = use_signal(|| Option::<String>::None);
     let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
     // Step 3 of the account-MLS-secret auto-unlock strand: set by the bootstrap
     // effect when this device has no local account secret yet but the server
@@ -1410,6 +1411,53 @@ pub fn RouterView() -> Element {
         None
     };
     {
+        let mut seen_publish_key = mls_key_package_publish_key_seen;
+        let secure_store_ready_for_publish = secure_store_bootstrap_ready;
+        use_effect(move || {
+            if !secure_store_ready_for_publish() {
+                return;
+            }
+            if crate::event_signer::active_signer().is_none() {
+                return;
+            }
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            let description = server_description();
+            let Some(publish_key) = mls_key_package_publish_key(
+                &base,
+                &session,
+                &actor,
+                &device,
+                profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
+                sync_bootstrap_complete(),
+            ) else {
+                return;
+            };
+            let publish_hint = local_mls_key_package_publish_hint(&base, &actor, &device);
+            let publish_key = format!("{publish_key}|kp={publish_hint}");
+            if seen_publish_key().as_deref() == Some(publish_key.as_str()) {
+                return;
+            }
+            seen_publish_key.set(Some(publish_key));
+            spawn(async move {
+                match ensure_local_mls_key_package_published(base, session, actor, device).await {
+                    Ok(Some(key_package_id)) => {
+                        tracing::debug!(
+                            key_package_id = %short_protocol_id(&key_package_id),
+                            "local MLS KeyPackage is published"
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "MLS KeyPackage publish bootstrap failed");
+                    }
+                }
+            });
+        });
+    }
+    {
         let bootstrap_route_uses_realm_context = route_uses_realm_context;
         let bootstrap_context_realm_id = context_realm_id.clone();
         let mut seen_bootstrap_key = mls_welcome_bootstrap_key_seen;
@@ -1459,7 +1507,9 @@ pub fn RouterView() -> Element {
             // so Dioxus re-fires this effect when the write saves the snapshot,
             // and fold both the local account-secret presence (`sec=`) and the
             // snapshot presence (`snap=`) into the key so the `seen` guard no
-            // longer matches once they flip false→true.
+            // longer matches once they flip false→true. The matching local
+            // Welcome hint is also folded in so a sync-delivered pending
+            // Welcome retriggers the drain after an earlier empty probe.
             let state_for_bootstrap_key = state_store_for_bootstrap.read();
             let has_local_mls_snapshot = state_for_bootstrap_key
                 .mls_snapshot_for(&bootstrap_realm_id)
@@ -1475,6 +1525,10 @@ pub fn RouterView() -> Element {
                 &actor,
             )
             .unwrap_or_default();
+            let local_pending_welcome_hint = crate::mls::runtime::local_mls_welcome_hint_for_realm(
+                &state_for_bootstrap_key.to_device_inbox(),
+                &bootstrap_realm_id,
+            );
             drop(state_for_bootstrap_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
@@ -1483,7 +1537,7 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|recovery={account_recovery_configured_value:?}"
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;

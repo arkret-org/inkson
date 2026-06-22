@@ -721,6 +721,21 @@ fn kanban_board_route_uses_realm_context_for_mls_bootstrap() {
 }
 
 #[test]
+fn kanban_board_task_route_uses_realm_context_for_mls_bootstrap() {
+    let route = Route::KanbanBoardTask {
+        realm_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+        board_id: "ck:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+        task_id: "ck:strand:019e67b1-0000-7000-8000-000000000001".to_owned(),
+    };
+
+    assert!(route_uses_realm_context(&route));
+    assert_eq!(
+        route.realm_id(),
+        Some("ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
+    );
+}
+
+#[test]
 fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
     let route = Route::KanbanBoard {
         realm_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
@@ -888,6 +903,30 @@ fn mls_welcome_bootstrap_key_waits_for_e2ee_profile_and_sync() {
         None
     );
     assert!(mls_welcome_bootstrap_key(base, session, actor, device, realm, true, true).is_some());
+}
+
+#[test]
+fn mls_key_package_publish_key_waits_for_e2ee_profile_and_sync() {
+    let base = "https://local.host/";
+    let session = "session-token";
+    let actor = "did:web:yougen.example";
+    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+
+    assert_eq!(
+        mls_key_package_publish_key(base, session, actor, device, false, true),
+        None
+    );
+    assert_eq!(
+        mls_key_package_publish_key(base, session, actor, device, true, false),
+        None
+    );
+    assert_eq!(
+        mls_key_package_publish_key(base, "", actor, device, true, true),
+        None
+    );
+    let key = mls_key_package_publish_key(base, session, actor, device, true, true)
+        .expect("ready session should publish an MLS KeyPackage");
+    assert!(!key.contains(session));
 }
 
 #[test]

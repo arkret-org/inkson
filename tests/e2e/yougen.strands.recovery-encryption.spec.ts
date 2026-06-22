@@ -48,6 +48,34 @@ test("first authenticated session surfaces a single recovery prompt by priority"
   await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
 });
 
+test("recovery key setup download filename includes account localpart", async ({ page }) => {
+  await latestTestId(page, "mls-recovery-missing-dismiss").click();
+  const setupModal = latestTestId(page, "recovery-key-setup-modal");
+  const autoOpened = await setupModal
+    .waitFor({ state: "visible", timeout: 2_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!autoOpened) {
+    await expect(latestTestId(page, "recovery-setup-banner")).toBeVisible();
+    await latestTestId(page, "recovery-setup-open-recovery").click();
+    await expect(setupModal).toBeVisible();
+  }
+
+  const generatedKeyField = latestTestId(page, "recovery-key-setup-generated-key");
+  await expect(generatedKeyField).toBeVisible();
+  const generatedRecoveryKey = await generatedKeyField.inputValue();
+  expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
+
+  const downloadPromise = page.waitForEvent("download");
+  await latestTestId(page, "recovery-key-setup-download-key").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("cokret-recovery-key-alice.txt");
+
+  await latestTestId(page, "recovery-key-setup-confirm-key").fill(generatedRecoveryKey);
+  await latestTestId(page, "recovery-key-setup-saved").click();
+  await expect(setupModal).toBeHidden();
+});
+
 test("dialog ignores inside drag release but closes on outside click", async ({ page }) => {
   await dismissBlockingRecoveryModal(page);
   await latestTestId(page, "recovery-setup-open-recovery").click();
@@ -226,6 +254,10 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   const generatedRecoveryKey = await generatedKeyField.inputValue();
   expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
   expect(generatedRecoveryKey).not.toMatch(/[A-Z0-9]{5}-[A-Z0-9]{5}/);
+  const downloadPromise = page.waitForEvent("download");
+  await latestTestId(page, "mls-backup-download-key").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("cokret-recovery-key-alice.txt");
   await expect(latestTestId(page, "mls-backup-generated-key-warning")).toContainText("Store these words now");
   await latestTestId(page, "mls-backup-confirm-key").fill("not the saved key");
   await latestTestId(page, "mls-backup-saved").click();

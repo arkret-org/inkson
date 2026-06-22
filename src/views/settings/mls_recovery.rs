@@ -346,10 +346,12 @@ pub fn SettingsMlsRecoveryPanel(
                                 "data-testid": "settings-mls-recovery-download-key",
                                 onclick: {
                                     let key = generated_now.clone();
-                                    let localpart =
-                                        crate::components::mls_backup_prompt::recovery_localpart_from_handles(&personal_handles);
-                                    let fname = crate::components::mls_backup_prompt::recovery_key_filename(&localpart);
+                                    let handles = personal_handles.clone();
                                     move |_| {
+                                        let fname =
+                                            crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                                                &handles,
+                                            );
                                         crate::components::mls_backup_prompt::download_text_as_file(&fname, &key);
                                     }
                                 },

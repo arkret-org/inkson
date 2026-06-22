@@ -471,6 +471,69 @@ fn malformed_welcome_is_counted_not_swallowed() {
     assert!(outcome.first_error.is_some());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn welcome_apply_uses_key_package_identity_state() {
+    let mut state = temp_state_store("welcome-keypackage-state");
+    let store = MemorySecureKeyStore::new();
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000c1";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000c2";
+    let alice = cokret_sdk::CokretMlsIdentity::new_basic(
+        cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+            .unwrap(),
+    )
+    .unwrap();
+    let bob = cokret_sdk::CokretMlsIdentity::new_basic(
+        cokret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
+        cokret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
+    )
+    .unwrap();
+    let bob_key_package = bob.key_package_record().unwrap();
+    let bob_private_state = bob.export_private_state().unwrap();
+    store_mls_key_package_identity_state(
+        &store,
+        bob_actor,
+        bob_device,
+        &bob_key_package.keypackage_id,
+        &bob_private_state,
+    )
+    .unwrap();
+    let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
+    let add = alice_group.add_member(&bob_key_package).unwrap();
+    let messages = json!({
+        "messages": [
+            {
+                "kind": "ck.mls.welcome",
+                "content": serde_json::to_value(&add.welcome).unwrap(),
+                "unsigned": {
+                    "key_package_id": bob_key_package.keypackage_id.clone(),
+                },
+            }
+        ]
+    });
+
+    let outcome = apply_welcome_messages_with_device_snapshot(
+        &mut state, &store, realm, bob_actor, bob_device, &messages,
+    )
+    .unwrap();
+
+    assert_eq!(outcome.applied, 1);
+    assert_eq!(outcome.failed, 0);
+    assert!(state.mls_snapshot_for(realm).is_some());
+    assert!(
+        load_mls_key_package_identity_state(
+            &store,
+            bob_actor,
+            bob_device,
+            &bob_key_package.keypackage_id,
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
 #[test]
 fn durable_welcome_payload_without_claim_envelope_fails_closed() {
     let mut state = temp_state_store("welcome-claim-envelope");
@@ -517,5 +580,49 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
             .as_deref()
             .unwrap_or_default()
             .contains(cokret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
+    );
+}
+
+#[test]
+fn local_welcome_hint_filters_by_realm_group_id() {
+    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let other_realm = "ck:realm:01904100-0000-7000-8000-000000000002";
+    let messages = vec![
+        json!({
+            "kind": "ck.mls.welcome",
+            "content": {
+                "group_id": mls_group_id_for_realm(realm),
+                "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            },
+            "unsigned": {
+                "mls_welcome_id": "ck:mls_welcome:01904100-0000-7000-8000-0000000000aa",
+            },
+        }),
+        json!({
+            "kind": "ck.mls.welcome",
+            "content": {
+                "group_id": mls_group_id_for_realm(other_realm),
+                "welcome_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            },
+        }),
+        json!({
+            "kind": "ck.key.verification.request",
+            "content": {
+                "group_id": mls_group_id_for_realm(realm),
+            },
+        }),
+    ];
+
+    assert_eq!(
+        collect_mls_welcome_messages_for_realm(&messages, realm).len(),
+        1
+    );
+    assert_eq!(
+        local_mls_welcome_hint_for_realm(&messages, realm),
+        "1:ck:mls_welcome:01904100-0000-7000-8000-0000000000aa"
+    );
+    assert_eq!(
+        local_mls_welcome_hint_for_realm(&messages, other_realm),
+        "1:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     );
 }

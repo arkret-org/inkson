@@ -149,6 +149,147 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
+    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+
+    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b2";
+    let alice = CokretMlsIdentity::new_basic(
+        Did::new("did:web:alice.example".to_owned()).unwrap(),
+        DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
+    )
+    .unwrap();
+    let bob = CokretMlsIdentity::new_basic(
+        Did::new(bob_actor.to_owned()).unwrap(),
+        DeviceId::new(bob_device.to_owned()).unwrap(),
+    )
+    .unwrap();
+    let bob_key_package = bob.key_package_record().unwrap();
+    let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
+    let add = alice_group.add_member(&bob_key_package).unwrap();
+
+    let mut state = temp_state_store("pending-local-welcome");
+    state.ingest_to_device_messages(&[json!({
+        "kind": "ck.mls.welcome",
+        "sender_principal_id": "did:web:alice.example",
+        "sender_device_id": "ck:device:01904100-0000-7000-8000-0000000000a1",
+        "recipient_principal_id": bob_actor,
+        "recipient_device_id": bob_device,
+        "sent_at": chrono::Utc::now().to_rfc3339(),
+        "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+        "content": serde_json::to_value(&add.welcome).unwrap(),
+        "unsigned": {
+            "mls_welcome_id": "ck:mls_welcome:01904100-0000-7000-8000-0000000000ff",
+        },
+    })]);
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let patch = json!({
+        "body": {"$op": "set", "value": "private body from invited member"},
+    });
+    let strand_id = "ck:strand:01904100-0000-7000-8000-0000000000ff";
+
+    let error = encrypt_private_card_detail_patch_values_with_store(
+        patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("MLS Welcome could not be applied from local device inbox"));
+    assert!(error.contains("NoMatchingKeyPackage"));
+    assert!(state.mls_snapshot_for(realm).is_none());
+    assert!(
+        state
+            .private_plaintext_for(realm, strand_id, "body")
+            .is_none()
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
+    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+
+    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b3";
+    let alice = CokretMlsIdentity::new_basic(
+        Did::new("did:web:alice.example".to_owned()).unwrap(),
+        DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
+    )
+    .unwrap();
+    let bob = CokretMlsIdentity::new_basic(
+        Did::new(bob_actor.to_owned()).unwrap(),
+        DeviceId::new(bob_device.to_owned()).unwrap(),
+    )
+    .unwrap();
+    let bob_key_package = bob.key_package_record().unwrap();
+    let bob_private_state = bob.export_private_state().unwrap();
+    let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
+    let add = alice_group.add_member(&bob_key_package).unwrap();
+
+    let mut state = temp_state_store("pending-local-welcome-with-state");
+    state.ingest_to_device_messages(&[json!({
+        "kind": "ck.mls.welcome",
+        "sender_principal_id": "did:web:alice.example",
+        "sender_device_id": "ck:device:01904100-0000-7000-8000-0000000000a1",
+        "recipient_principal_id": bob_actor,
+        "recipient_device_id": bob_device,
+        "sent_at": chrono::Utc::now().to_rfc3339(),
+        "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+        "content": serde_json::to_value(&add.welcome).unwrap(),
+        "unsigned": {
+            "mls_welcome_id": "ck:mls_welcome:01904100-0000-7000-8000-0000000000f1",
+            "key_package_id": bob_key_package.keypackage_id.clone(),
+        },
+    })]);
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    crate::mls::runtime::store_mls_key_package_identity_state(
+        &secure,
+        bob_actor,
+        bob_device,
+        &bob_key_package.keypackage_id,
+        &bob_private_state,
+    )
+    .unwrap();
+    let patch = json!({
+        "body": {"$op": "set", "value": "private body from invited member"},
+    });
+    let strand_id = "ck:strand:01904100-0000-7000-8000-0000000000ff";
+
+    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
+        patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
+    )
+    .unwrap();
+
+    assert!(state.mls_snapshot_for(realm).is_some());
+    assert_eq!(
+        patched["body"]["value"]["content_type"],
+        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
+    );
+    assert!(value_is_mls_envelope(&patched["body"]["value"]));
+    assert_eq!(
+        state
+            .private_plaintext_for(realm, strand_id, "body")
+            .as_deref(),
+        Some("\"private body from invited member\"")
+    );
+    assert!(
+        crate::mls::runtime::load_mls_key_package_identity_state(
+            &secure,
+            bob_actor,
+            bob_device,
+            &bob_key_package.keypackage_id,
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert!(mls_events.genesis.is_none());
+    assert!(mls_events.commit.is_none());
+    assert!(mls_events.snapshot.is_none());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let actor = "did:web:alice.example";
     let device = "ck:device:01904100-0000-7000-8000-000000000001";

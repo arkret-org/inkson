@@ -33,6 +33,19 @@ fn sign_keypackage_upload_batch(device_id: &str, key_packages: &[Value]) -> anyh
     }))
 }
 
+pub(crate) fn mls_key_package_record_upload_value(
+    record: &cokret_sdk::MlsKeyPackageRecord,
+) -> anyhow::Result<Value> {
+    let mut value = serde_json::to_value(record)?;
+    let Some(object) = value.as_object_mut() else {
+        anyhow::bail!("MLS KeyPackage record did not serialize to an object");
+    };
+    object
+        .entry("keypackage_digest".to_owned())
+        .or_insert_with(|| json!(record.keypackage_ref.as_str()));
+    Ok(value)
+}
+
 impl CokretApi {
     /// Publish an MLS `MlsKeyPackageRecord` to
     /// soland's `/_cokret/self/keys/keypackages/upload` endpoint so peers can
@@ -45,7 +58,7 @@ impl CokretApi {
         record: &cokret_sdk::MlsKeyPackageRecord,
     ) -> anyhow::Result<cokret_sdk::KeyPackagesUploadOutcome> {
         let device_id = device_id.trim();
-        let key_packages = vec![serde_json::to_value(record)?];
+        let key_packages = vec![mls_key_package_record_upload_value(record)?];
         let device_signature = sign_keypackage_upload_batch(device_id, &key_packages)?;
         let body = cokret_sdk::KeyPackagesUploadRequestBody {
             principal_id: record.principal_id.clone(),

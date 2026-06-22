@@ -141,6 +141,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key == PENDING_LOGOUT_SECRET_KEY
         || key.starts_with("yougen.mls_snapshot.account_secret.")
         || key.starts_with("yougen_mls_account_secret")
+        || key.starts_with("yougen.mls_key_package.identity_state.")
         || key.starts_with("coauth.session_credential.")
 }
 
@@ -152,7 +153,9 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
 /// kept out of localStorage entirely.
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_no_localstorage_mirror_key(key: &str) -> bool {
-    is_wasm_ed25519_seed_key(key) || key == PENDING_LOGOUT_SECRET_KEY
+    is_wasm_ed25519_seed_key(key)
+        || key == PENDING_LOGOUT_SECRET_KEY
+        || key.starts_with("yougen.mls_key_package.identity_state.")
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -472,6 +472,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
         .iter()
         .map(|(_, bytes)| bytes.clone())
         .collect::<Vec<_>>();
+    apply_local_mls_welcomes_for_realm(state_store, secure_store, realm_id, actor_id, device_id)?;
     let fresh_summary = ensure_creator_mls_snapshot_for_encrypted_scope(
         state_store,
         secure_store,
@@ -537,6 +538,43 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
             snapshot: new_snapshot,
         },
     ))
+}
+
+fn apply_local_mls_welcomes_for_realm(
+    state_store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<(), String> {
+    if state_store.mls_snapshot_for(realm_id).is_some() {
+        return Ok(());
+    }
+    let inbox = state_store.to_device_inbox();
+    let messages = crate::mls::runtime::collect_mls_welcome_messages_for_realm(&inbox, realm_id);
+    if messages.is_empty() {
+        return Ok(());
+    }
+    let messages_value = json!({ "messages": messages });
+    let outcome = crate::mls::runtime::apply_welcome_messages_with_device_snapshot(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        &messages_value,
+    )
+    .map_err(|err| err.user_message())?;
+    if state_store.mls_snapshot_for(realm_id).is_none() && outcome.failed > 0 {
+        return Err(format!(
+            "MLS Welcome could not be applied from local device inbox: {}",
+            outcome
+                .first_error
+                .as_deref()
+                .unwrap_or("unknown MLS Welcome error")
+        ));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

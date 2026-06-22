@@ -233,13 +233,11 @@ pub fn RecoveryKeySetupPrompt(
                                     "data-testid": "recovery-key-setup-download-key",
                                     onclick: {
                                         let key = generated_now.clone();
-                                        let localpart =
-                                            crate::components::mls_backup_prompt::recovery_localpart_from_handles(
-                                                &personal_handles(),
-                                            );
-                                        let filename =
-                                            crate::components::mls_backup_prompt::recovery_key_filename(&localpart);
                                         move |_| {
+                                            let filename =
+                                                crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                                                    &personal_handles(),
+                                                );
                                             crate::components::mls_backup_prompt::download_text_as_file(
                                                 &filename,
                                                 &key,
