@@ -62,6 +62,7 @@ impl TranscriptionState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallParticipant {
     pub actor_id: String,
+    pub device_id: Option<String>,
     pub display_name: String,
     pub muted: bool,
     pub speaking: bool,

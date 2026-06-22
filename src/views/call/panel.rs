@@ -6,9 +6,9 @@ use super::media::{
 };
 use super::moderator::ModeratorControls;
 use super::projection::{
-    build_roster, call_state_participant_device_map, call_state_participant_identities,
-    expected_participant_set, media_service_selection, participant_list_from_input,
-    set_local_state,
+    build_roster, call_state_participant_actor_device_map, call_state_participant_device_map,
+    call_state_participant_identities, expected_participant_set, media_service_selection,
+    participant_list_from_input, set_local_state,
 };
 use super::signaling::{
     apply_inbox_items, emit_async, emit_signal, end_call, relay_local_signals, spawn_reject,
@@ -147,6 +147,7 @@ pub fn CallPanel(
                 status,
                 last_error,
                 participants,
+                mic_muted,
             );
         });
     }
@@ -198,6 +199,7 @@ pub fn CallPanel(
             let (
                 media_dids,
                 focus_id,
+                known_actor_devices,
                 known_participant_identities,
                 known_participant_devices,
                 realm_mls_snapshot,
@@ -208,6 +210,7 @@ pub fn CallPanel(
                 (
                     media_dids,
                     focus_id,
+                    call_state_participant_actor_device_map(&snapshot, &realm_id, &call),
                     call_state_participant_identities(&snapshot, &realm_id, &call),
                     call_state_participant_device_map(&snapshot, &realm_id, &call),
                     store.mls_snapshot_for(&realm_id),
@@ -215,7 +218,7 @@ pub fn CallPanel(
             };
             active_call_id.set(call.clone());
             call_seq.set(0);
-            participants.set(build_roster(&actor, &peers));
+            participants.set(build_roster(&actor, &peers, &known_actor_devices));
             stage.set(CallStage::OutgoingRinging);
             status.set("placing call".to_owned());
             last_error.set(String::new());

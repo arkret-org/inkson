@@ -1249,6 +1249,18 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "Transcript destination is not a Cokret authenticated blob — refusing transcription.",
     );
     dict.set(
+        "error.call.media_service_binding_uncovered",
+        "Media service declaration is not covered by the current MLS governance binding. Refusing media join.",
+    );
+    dict.set(
+        "error.call.media_plaintext_service_not_authorised",
+        "This media service is not authorised to decrypt plaintext media. Refusing media negotiation.",
+    );
+    dict.set(
+        "error.call.mls_governance_binding_stale",
+        "MLS governance binding is stale for the current media policy. Refusing media negotiation.",
+    );
+    dict.set(
         "error.call.desktop_media_unavailable",
         "Desktop calling is not ready yet on this build — no media transport. Use a web client to place this call.",
     );

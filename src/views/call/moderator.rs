@@ -45,6 +45,10 @@ pub(super) fn ModeratorControls(
                                 if p.actor_id == actor {
                                     continue;
                                 }
+                                let target_actor_id = p.actor_id.clone();
+                                let Some(target_device_id) = p.device_id.clone() else {
+                                    continue;
+                                };
                                 emit_async(
                                     &base, &token(), &realm_id, &call_id, &actor, &device,
                                     "mute_state",
@@ -52,7 +56,8 @@ pub(super) fn ModeratorControls(
                                         "audio_muted": true,
                                         "video_muted": false,
                                         "by": "moderator",
-                                        "target_actor_id": p.actor_id,
+                                        "target_actor_id": target_actor_id,
+                                        "target_device_id": target_device_id,
                                     }),
                                     call_seq,
                                 );
@@ -85,6 +90,7 @@ pub(super) fn ModeratorControls(
             for p in participants().iter() {
                 {
                     let target = p.actor_id.clone();
+                    let target_device = p.device_id.clone();
                     let label = p.display_name.clone();
                     let base = base_url.clone();
                     let actor = actor.clone();
@@ -104,13 +110,21 @@ pub(super) fn ModeratorControls(
                                     let realm_id = realm_id.clone();
                                     let call_id = call_id.clone();
                                     let target = target.clone();
+                                    let target_device = target_device.clone();
                                     move |_| {
+                                        let Some(target_device_id) = target_device.clone() else {
+                                            return;
+                                        };
                                         emit_async(
                                             &base, &token(), &realm_id, &call_id, &actor, &device,
                                             "moderation",
                                             json!({
                                                 "signal_type": "moderation",
-                                                "data": { "action": "kick", "target_actor_id": target },
+                                                "data": {
+                                                    "action": "kick",
+                                                    "target_actor_id": target.clone(),
+                                                    "target_device_id": target_device_id,
+                                                },
                                             }),
                                             call_seq,
                                         );
@@ -128,13 +142,21 @@ pub(super) fn ModeratorControls(
                                     let realm_id = realm_id.clone();
                                     let call_id = call_id.clone();
                                     let target = target.clone();
+                                    let target_device = target_device.clone();
                                     move |_| {
+                                        let Some(target_device_id) = target_device.clone() else {
+                                            return;
+                                        };
                                         emit_async(
                                             &base, &token(), &realm_id, &call_id, &actor, &device,
                                             "moderation",
                                             json!({
                                                 "signal_type": "moderation",
-                                                "data": { "action": "ban", "target_actor_id": target },
+                                                "data": {
+                                                    "action": "ban",
+                                                    "target_actor_id": target.clone(),
+                                                    "target_device_id": target_device_id,
+                                                },
                                             }),
                                             call_seq,
                                         );

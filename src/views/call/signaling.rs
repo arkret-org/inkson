@@ -87,6 +87,7 @@ pub(super) fn apply_inbox_items(
     mut status: Signal<String>,
     mut last_error: Signal<String>,
     mut participants: Signal<Vec<CallParticipant>>,
+    mut mic_muted: Signal<bool>,
 ) {
     // Items that need an async relay (offer → answer) defer to a single
     // spawned task after the synchronous transport mutations are applied, so
@@ -168,6 +169,19 @@ pub(super) fn apply_inbox_items(
                 status.set(format!("call ended: {reason}"));
             }
             "mute_state" | "media_state" | "speaking" => {
+                if moderator_mute_targets_this_device(&item, &actor, &device)
+                    && let Some(muted) = item.data.get("audio_muted").and_then(|v| v.as_bool())
+                {
+                    mic_muted.set(muted);
+                    if let Some(t) = transport() {
+                        let _ = t.borrow_mut().set_audio_muted(muted);
+                    }
+                    status.set(if muted {
+                        format!("muted by moderator ({})", item.sender_actor)
+                    } else {
+                        format!("unmuted by moderator ({})", item.sender_actor)
+                    });
+                }
                 apply_peer_state(&mut participants, &item);
             }
             "moderation" => {
@@ -184,8 +198,16 @@ pub(super) fn apply_inbox_items(
                     .and_then(|d| d.get("target_actor_id"))
                     .or_else(|| item.data.get("target_actor_id"))
                     .and_then(|v| v.as_str());
+                let target_device = item
+                    .data
+                    .get("data")
+                    .and_then(|d| d.get("target_device_id"))
+                    .or_else(|| item.data.get("target_device_id"))
+                    .and_then(|v| v.as_str());
                 let self_targeted =
-                    matches!(action, "kick" | "ban") && target.map(|t| t == actor).unwrap_or(false);
+                    matches!(action, "kick" | "ban")
+                        && target.map(|t| t == actor).unwrap_or(false)
+                        && target_device.map(|t| t == device).unwrap_or(false);
                 if action == "end_for_all" || self_targeted {
                     if let Some(t) = transport() {
                         t.borrow_mut().close();
@@ -298,6 +320,25 @@ fn apply_peer_state(participants: &mut Signal<Vec<CallParticipant>>, item: &Call
     if changed {
         participants.set(roster);
     }
+}
+
+fn moderator_mute_targets_this_device(
+    item: &CallSignalInboxItem,
+    actor: &str,
+    device: &str,
+) -> bool {
+    item.signal_type == "mute_state"
+        && item.data.get("by").and_then(|v| v.as_str()) == Some("moderator")
+        && item
+            .data
+            .get("target_actor_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|target| target == actor)
+        && item
+            .data
+            .get("target_device_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|target| target == device)
 }
 
 /// Fire-and-forget signal emit (non-SDP control signals).
@@ -431,4 +472,41 @@ pub(super) fn end_call(
         json!({ "reason": "user_hangup" }),
         call_seq,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inbox_item(data: serde_json::Value) -> CallSignalInboxItem {
+        CallSignalInboxItem {
+            realm_id: "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            call_id: "ck:call:01904100-0000-7000-8000-000000000002".to_owned(),
+            signal_type: "mute_state".to_owned(),
+            seq: 1,
+            sender_actor: "did:web:moderator.example".to_owned(),
+            sender_device: "ck:device:01904100-0000-7000-8000-000000000003".to_owned(),
+            data,
+        }
+    }
+
+    #[test]
+    fn moderator_mute_targets_exact_actor_device() {
+        let item = inbox_item(json!({
+            "audio_muted": true,
+            "by": "moderator",
+            "target_actor_id": "did:web:alice.example",
+            "target_device_id": "ck:device:01904100-0000-7000-8000-000000000004"
+        }));
+        assert!(moderator_mute_targets_this_device(
+            &item,
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-000000000004"
+        ));
+        assert!(!moderator_mute_targets_this_device(
+            &item,
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-000000000005"
+        ));
+    }
 }

@@ -273,6 +273,51 @@ pub(super) fn call_state_participant_device_map(
     map
 }
 
+/// Read the `actor_id -> device_id` map from durable call state. This is
+/// needed for moderator-forced mute, whose wire shape must target both actor
+/// and device.
+pub(super) fn call_state_participant_actor_device_map(
+    state: &crate::local_state::ClientLocalState,
+    realm_id: &str,
+    call_id: &str,
+) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    for record in &state.raw_operations {
+        let kind = record
+            .payload
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if kind != "ck.call.state" || record.realm_id.as_deref() != Some(realm_id) {
+            continue;
+        }
+        let body = operation_body(&record.payload);
+        if call_state_media_artifact_boundary(body).is_err() {
+            continue;
+        }
+        if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
+            continue;
+        }
+        let Some(participants) = body.get("participants").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for participant in participants {
+            let actor_id = participant
+                .get("actor_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let device_id = participant
+                .get("device_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if !actor_id.trim().is_empty() && !device_id.trim().is_empty() {
+                map.insert(actor_id.to_owned(), device_id.to_owned());
+            }
+        }
+    }
+    map
+}
+
 /// Build the MEDIA-2 expected-participant identity set from durable call
 /// state, seeding the local token-exchange identity before the state sync
 /// loop has replayed our own write.
@@ -287,7 +332,11 @@ pub(super) fn expected_participant_set(
     expected
 }
 
-pub(super) fn build_roster(actor: &str, peers: &[String]) -> Vec<CallParticipant> {
+pub(super) fn build_roster(
+    actor: &str,
+    peers: &[String],
+    actor_devices: &BTreeMap<String, String>,
+) -> Vec<CallParticipant> {
     let mut ids = BTreeSet::new();
     let mut roster = Vec::new();
     for did in std::iter::once(actor).chain(peers.iter().map(String::as_str)) {
@@ -297,6 +346,7 @@ pub(super) fn build_roster(actor: &str, peers: &[String]) -> Vec<CallParticipant
         }
         roster.push(CallParticipant {
             actor_id: did.to_owned(),
+            device_id: actor_devices.get(did).cloned(),
             display_name: short_protocol_id(did),
             muted: false,
             speaking: false,
@@ -357,6 +407,7 @@ mod tests {
                 "did:web:bob.example".to_owned(),
                 "did:web:alice.example".to_owned(),
             ],
+            &BTreeMap::new(),
         );
         assert_eq!(roster.len(), 2);
         assert_eq!(roster[0].actor_id, "did:web:alice.example");
@@ -464,6 +515,41 @@ mod tests {
         );
         // The participant with no device_id is fail-closed: not in the map.
         assert!(!map.contains_key("ck:rtc_participant:carol"));
+    }
+
+    #[test]
+    fn call_state_participant_actor_device_map_pairs_actor_and_device() {
+        let mut state = crate::local_state::ClientLocalState::default();
+        state
+            .raw_operations
+            .push(crate::local_state::RawOperationRecord {
+                operation_id: "op-1".to_owned(),
+                realm_id: Some("ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "kind": "ck.call.state",
+                    "body": {
+                        "call_id": "ck:call:0196441c-0000-7000-8000-000000000000",
+                        "state": "active",
+                        "participants": [
+                            {
+                                "actor_id": "did:web:alice.example",
+                                "device_id": "ck:device:01904100-0000-7000-8000-00000000000a",
+                                "participant_identity": "ck:rtc_participant:alice"
+                            }
+                        ]
+                    }
+                }),
+            });
+        let map = call_state_participant_actor_device_map(
+            &state,
+            "ck:realm:01904100-0000-7000-8000-9b64700c6ee8",
+            "ck:call:0196441c-0000-7000-8000-000000000000",
+        );
+        assert_eq!(
+            map.get("did:web:alice.example").map(String::as_str),
+            Some("ck:device:01904100-0000-7000-8000-00000000000a")
+        );
     }
 
     #[test]

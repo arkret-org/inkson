@@ -296,7 +296,9 @@ pub async fn route_realm_call_signals(
             &decoded.sender_device,
         ) {
             crate::device_directory::CacheLookup::Hit(key) => {
-                if verify_decoded_proof(&decoded, &key) {
+                if verify_decoded_proof(&decoded, &key)
+                    && moderator_signal_authorized(&decoded, api).await
+                {
                     route_verified_decoded_signal(hub, decoded, local_actor);
                 }
                 // verify failed → fail-closed drop.
@@ -317,6 +319,7 @@ pub async fn route_realm_call_signals(
                 )
                 .await
                     && verify_decoded_proof(&decoded, &key)
+                    && moderator_signal_authorized(&decoded, Some(api)).await
                 {
                     route_verified_decoded_signal(hub, decoded, local_actor);
                 }
@@ -333,6 +336,153 @@ fn verify_decoded_proof(
     key: &cokret_sdk::signatures::PublicKeyMaterial,
 ) -> bool {
     crate::device_directory::verify_ephemeral_envelope_proof(&decoded.envelope, key)
+}
+
+async fn moderator_signal_authorized(
+    decoded: &DecodedCallSignal,
+    api: Option<&CokretApi>,
+) -> bool {
+    if !requires_call_moderate(decoded) {
+        return true;
+    }
+    if !moderator_payload_shape_is_valid(decoded) {
+        tracing::warn!(
+            realm_id = %decoded.realm_id,
+            call_id = %decoded.call_id,
+            sender = %decoded.sender_actor,
+            signal_type = %decoded.signal_type,
+            "dropping malformed moderator call signal"
+        );
+        return false;
+    }
+    let Some(api) = api else {
+        tracing::warn!(
+            realm_id = %decoded.realm_id,
+            call_id = %decoded.call_id,
+            sender = %decoded.sender_actor,
+            signal_type = %decoded.signal_type,
+            "dropping moderator call signal without authz client"
+        );
+        return false;
+    };
+    match api
+        .authz_check_resource_raw(
+            &decoded.sender_actor,
+            "ck.call.moderate",
+            Some(serde_json::json!({
+                "kind": "call",
+                "realm_id": decoded.realm_id.clone(),
+                "call_id": decoded.call_id.clone(),
+            })),
+        )
+        .await
+    {
+        Ok(outcome) if authz_check_allows_moderation(&outcome) => true,
+        Ok(outcome) => {
+            tracing::warn!(
+                realm_id = %decoded.realm_id,
+                call_id = %decoded.call_id,
+                sender = %decoded.sender_actor,
+                signal_type = %decoded.signal_type,
+                outcome = %outcome,
+                "dropping unauthorised moderator call signal"
+            );
+            false
+        }
+        Err(error) => {
+            tracing::warn!(
+                realm_id = %decoded.realm_id,
+                call_id = %decoded.call_id,
+                sender = %decoded.sender_actor,
+                signal_type = %decoded.signal_type,
+                ?error,
+                "dropping moderator call signal after authz check failure"
+            );
+            false
+        }
+    }
+}
+
+fn requires_call_moderate(decoded: &DecodedCallSignal) -> bool {
+    decoded.signal_type == "moderation"
+        || (decoded.signal_type == "mute_state"
+            && decoded.data.get("by").and_then(Value::as_str) == Some("moderator"))
+}
+
+fn moderator_payload_shape_is_valid(decoded: &DecodedCallSignal) -> bool {
+    match decoded.signal_type.as_str() {
+        "moderation" => match moderation_action(decoded) {
+            Some("kick" | "ban") => {
+                !moderation_target_actor(decoded).unwrap_or("").is_empty()
+                    && !moderation_target_device(decoded).unwrap_or("").is_empty()
+            }
+            Some("end_for_all") => true,
+            _ => false,
+        },
+        "mute_state" => {
+            decoded.data.get("by").and_then(Value::as_str) == Some("moderator")
+                && !decoded
+                    .data
+                    .get("target_actor_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .is_empty()
+                && !decoded
+                    .data
+                    .get("target_device_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .is_empty()
+        }
+        _ => true,
+    }
+}
+
+fn moderation_action(decoded: &DecodedCallSignal) -> Option<&str> {
+    decoded
+        .data
+        .get("data")
+        .and_then(|data| data.get("action"))
+        .or_else(|| decoded.data.get("action"))
+        .and_then(Value::as_str)
+}
+
+fn moderation_target_actor(decoded: &DecodedCallSignal) -> Option<&str> {
+    decoded
+        .data
+        .get("data")
+        .and_then(|data| data.get("target_actor_id"))
+        .or_else(|| decoded.data.get("target_actor_id"))
+        .and_then(Value::as_str)
+}
+
+fn moderation_target_device(decoded: &DecodedCallSignal) -> Option<&str> {
+    decoded
+        .data
+        .get("data")
+        .and_then(|data| data.get("target_device_id"))
+        .or_else(|| decoded.data.get("target_device_id"))
+        .and_then(Value::as_str)
+}
+
+fn authz_check_allows_moderation(outcome: &Value) -> bool {
+    let allowed = outcome
+        .get("decision")
+        .and_then(Value::as_str)
+        .map(|decision| matches!(decision, "allow" | "allowed"))
+        .unwrap_or_else(|| outcome.get("allowed").and_then(Value::as_bool).unwrap_or(false));
+    if !allowed {
+        return false;
+    }
+    let stale_freshness = outcome
+        .get("freshness_state")
+        .and_then(Value::as_str)
+        .is_some_and(|state| matches!(state, "stale" | "unknown"));
+    let stale_notary = outcome
+        .get("notary_status")
+        .and_then(Value::as_str)
+        .is_some_and(|state| matches!(state, "lagging" | "unreachable" | "unknown"));
+    !(stale_freshness || stale_notary)
 }
 
 /// Current ring/active snapshot a routing decision is taken against. Pulled
@@ -626,6 +776,79 @@ mod tests {
             }
             other => panic!("expected Enqueue, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn moderator_signal_shape_requires_targets() {
+        let kick = decoded(
+            "moderation",
+            3,
+            json!({
+                "data": {
+                    "action": "kick",
+                    "target_actor_id": "did:web:carol",
+                    "target_device_id": "ck:device:01904100-0000-7000-8000-00000000000c"
+                }
+            }),
+        );
+        assert!(requires_call_moderate(&kick));
+        assert!(moderator_payload_shape_is_valid(&kick));
+
+        let kick_without_target =
+            decoded("moderation", 4, json!({ "data": { "action": "kick" } }));
+        assert!(!moderator_payload_shape_is_valid(&kick_without_target));
+
+        let kick_without_device = decoded(
+            "moderation",
+            4,
+            json!({ "data": { "action": "kick", "target_actor_id": "did:web:carol" } }),
+        );
+        assert!(!moderator_payload_shape_is_valid(&kick_without_device));
+
+        let force_mute = decoded(
+            "mute_state",
+            5,
+            json!({
+                "audio_muted": true,
+                "by": "moderator",
+                "target_actor_id": "did:web:carol",
+                "target_device_id": "ck:device:01904100-0000-7000-8000-00000000000c"
+            }),
+        );
+        assert!(requires_call_moderate(&force_mute));
+        assert!(moderator_payload_shape_is_valid(&force_mute));
+
+        let force_mute_without_device = decoded(
+            "mute_state",
+            6,
+            json!({
+                "audio_muted": true,
+                "by": "moderator",
+                "target_actor_id": "did:web:carol"
+            }),
+        );
+        assert!(!moderator_payload_shape_is_valid(&force_mute_without_device));
+    }
+
+    #[test]
+    fn moderator_authz_requires_allow_and_freshness() {
+        assert!(authz_check_allows_moderation(&json!({
+            "decision": "allow",
+            "freshness_state": "fresh",
+            "notary_status": "fresh"
+        })));
+        assert!(!authz_check_allows_moderation(&json!({
+            "decision": "hard_deny",
+            "freshness_state": "fresh"
+        })));
+        assert!(!authz_check_allows_moderation(&json!({
+            "decision": "allow",
+            "freshness_state": "unknown"
+        })));
+        assert!(!authz_check_allows_moderation(&json!({
+            "decision": "allow",
+            "notary_status": "unreachable"
+        })));
     }
 
     #[test]

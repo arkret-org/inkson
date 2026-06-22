@@ -72,6 +72,18 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "转写目标不是 Cokret 认证 blob — 拒绝转写。",
     );
     dict.set(
+        "error.call.media_service_binding_uncovered",
+        "媒体服务声明未被当前 MLS governance binding 覆盖，已拒绝加入媒体。",
+    );
+    dict.set(
+        "error.call.media_plaintext_service_not_authorised",
+        "该媒体服务未被授权解密明文媒体，已拒绝媒体协商。",
+    );
+    dict.set(
+        "error.call.mls_governance_binding_stale",
+        "MLS governance binding 未覆盖当前媒体策略，已拒绝媒体协商。",
+    );
+    dict.set(
         "error.call.desktop_media_unavailable",
         "桌面端通话尚未就绪(此版本无媒体传输)。请改用 Web 客户端发起本次通话。",
     );

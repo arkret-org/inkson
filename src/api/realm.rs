@@ -219,13 +219,37 @@ impl CokretApi {
         action: &str,
         realm_id: &str,
     ) -> anyhow::Result<AuthzCheckOutcome> {
+        self.authz_check_resource(
+            actor,
+            action,
+            Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
+        )
+        .await
+    }
+
+    pub async fn authz_check_resource(
+        &self,
+        actor: &str,
+        action: &str,
+        resource: Option<Value>,
+    ) -> anyhow::Result<AuthzCheckOutcome> {
         let body = cokret_sdk::models::AuthzCheckRequestBody {
             actor_id: cokret_sdk::Did::new(actor.trim().to_owned())?,
             action: action.trim().to_owned(),
-            resource: Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
+            resource,
             context: None,
         };
         self.post_json("_cokret/self/authz/check", &body).await
+    }
+
+    pub async fn authz_check_resource_raw(
+        &self,
+        actor: &str,
+        action: &str,
+        resource: Option<Value>,
+    ) -> anyhow::Result<Value> {
+        let response = self.authz_check_resource(actor, action, resource).await?;
+        Ok(serde_json::to_value(response)?)
     }
 
     pub async fn authz_check_raw(

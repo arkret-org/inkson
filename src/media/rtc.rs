@@ -71,6 +71,15 @@ pub enum RtcClientError {
     RecordingArtifactPipelineBypassed,
     /// Transcription artifact was produced outside the Cokret blob pipeline.
     TranscriptionArtifactPipelineBypassed,
+    /// `ck.realm.media_service` is not covered by the current epoch's MLS
+    /// governance binding, so issuer anchoring must not proceed.
+    MediaServiceBindingUncovered,
+    /// The Realm policy did not authorize this media service to see
+    /// plaintext media.
+    MediaPlaintextServiceNotAuthorised,
+    /// The local MLS governance binding does not cover the current media
+    /// plaintext / policy cell values.
+    MlsGovernanceBindingStale,
     /// Desktop (native) build has no real media transport: this milestone
     /// ships without a bundled libwebrtc / LiveKit-Rust stack, so there is
     /// no RTP path. The call surface MUST surface this as "desktop calling
@@ -95,6 +104,9 @@ impl RtcClientError {
             Self::TranscriptionArtifactPipelineBypassed => {
                 "transcription_artifact_pipeline_bypassed"
             }
+            Self::MediaServiceBindingUncovered => "media_service_binding_uncovered",
+            Self::MediaPlaintextServiceNotAuthorised => "media_plaintext_service_not_authorised",
+            Self::MlsGovernanceBindingStale => "mls_governance_binding_stale",
             Self::DesktopMediaUnavailable => "desktop_media_unavailable",
         }
     }
@@ -115,6 +127,11 @@ impl RtcClientError {
             Self::TranscriptionArtifactPipelineBypassed => {
                 "error.call.transcription_artifact_pipeline_bypassed"
             }
+            Self::MediaServiceBindingUncovered => "error.call.media_service_binding_uncovered",
+            Self::MediaPlaintextServiceNotAuthorised => {
+                "error.call.media_plaintext_service_not_authorised"
+            }
+            Self::MlsGovernanceBindingStale => "error.call.mls_governance_binding_stale",
             Self::DesktopMediaUnavailable => "error.call.desktop_media_unavailable",
         }
     }
@@ -135,6 +152,11 @@ impl RtcClientError {
             "transcription_artifact_pipeline_bypassed" => {
                 Self::TranscriptionArtifactPipelineBypassed
             }
+            "media_service_binding_uncovered" => Self::MediaServiceBindingUncovered,
+            "media_plaintext_service_not_authorised" => {
+                Self::MediaPlaintextServiceNotAuthorised
+            }
+            "mls_governance_binding_stale" => Self::MlsGovernanceBindingStale,
             "desktop_media_unavailable" => Self::DesktopMediaUnavailable,
             _ => return None,
         })
@@ -642,6 +664,9 @@ fn classify_protocol_error(err: &cokret_sdk::Error) -> RtcClientError {
         RtcClientError::FocusMismatch,
         RtcClientError::UnknownFocusType,
         RtcClientError::RecordingArtifactPipelineBypassed,
+        RtcClientError::MediaServiceBindingUncovered,
+        RtcClientError::MediaPlaintextServiceNotAuthorised,
+        RtcClientError::MlsGovernanceBindingStale,
         RtcClientError::ParticipantBindingInvalid,
     ];
     for candidate in CODES {
@@ -703,6 +728,9 @@ mod tests {
             RtcClientError::E2eeKeySourceUnauthorised,
             RtcClientError::RecordingArtifactPipelineBypassed,
             RtcClientError::TranscriptionArtifactPipelineBypassed,
+            RtcClientError::MediaServiceBindingUncovered,
+            RtcClientError::MediaPlaintextServiceNotAuthorised,
+            RtcClientError::MlsGovernanceBindingStale,
             RtcClientError::DesktopMediaUnavailable,
         ] {
             assert_eq!(RtcClientError::from_wire(err.as_wire()), Some(err));
