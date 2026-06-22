@@ -723,8 +723,8 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
         }
     });
 
-    let message =
-        chat_message_from_event_with_sidecar(realm, &rejected, Some(&store), None).expect("message");
+    let message = chat_message_from_event_with_sidecar(realm, &rejected, Some(&store), None)
+        .expect("message");
 
     assert_eq!(message.body, "");
     assert_eq!(
@@ -769,8 +769,8 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
         }
     });
 
-    let message =
-        chat_message_from_event_with_sidecar(realm, &accepted, Some(&store), None).expect("message");
+    let message = chat_message_from_event_with_sidecar(realm, &accepted, Some(&store), None)
+        .expect("message");
 
     assert_eq!(message.body, "late plaintext");
     assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);

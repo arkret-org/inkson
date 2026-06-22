@@ -45,14 +45,8 @@ fn read_receipt_display_resolution_is_local_rendering_only() {
 
     let reader = LocalStateStore::with_path(path);
     assert!(!reader.read_receipt_default_display());
-    assert!(!reader.read_receipt_should_display(
-        Some("ck:strand:demo"),
-        Some("ck:realm:demo")
-    ));
-    assert!(reader.read_receipt_should_display(
-        Some("ck:strand:other"),
-        Some("ck:realm:demo")
-    ));
+    assert!(!reader.read_receipt_should_display(Some("ck:strand:demo"), Some("ck:realm:demo")));
+    assert!(reader.read_receipt_should_display(Some("ck:strand:other"), Some("ck:realm:demo")));
     assert!(!reader.read_receipt_should_display(None, Some("ck:realm:other")));
 }
 

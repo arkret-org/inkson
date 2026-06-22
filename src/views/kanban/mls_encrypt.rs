@@ -96,6 +96,17 @@ pub(super) fn kanban_mls_membership_frontier(
     frontier
 }
 
+fn kanban_self_update_membership_frontier(
+    base_group_state_ref: &str,
+) -> Result<Vec<cokret_sdk::EventId>, String> {
+    cokret_sdk::EventId::new(base_group_state_ref.to_owned())
+        .map(|event_id| vec![event_id])
+        .map_err(|_| {
+            "MLS self-update membership_frontier requires a ck:event base group-state ref"
+                .to_owned()
+        })
+}
+
 pub(super) fn kanban_mls_policy_root(
     seal_view: &LocalSealView,
     realm_id: &str,
@@ -368,11 +379,10 @@ pub(crate) fn kanban_mls_remove_commit_event_from_store_for_effective_scope_with
     proposal_refs: Vec<cokret_sdk::EventId>,
     revocation_membership_frontier: &[cokret_sdk::EventId],
 ) -> Result<cokret_sdk::Event, String> {
-    let membership_frontier =
-        crate::mls::runtime::canonical_mls_remove_membership_frontier(
-            revocation_membership_frontier,
-        )
-        .map_err(|err| err.user_message())?;
+    let membership_frontier = crate::mls::runtime::canonical_mls_remove_membership_frontier(
+        revocation_membership_frontier,
+    )
+    .map_err(|err| err.user_message())?;
     kanban_mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
         state_store,
         realm_id,
@@ -411,8 +421,10 @@ fn kanban_mls_commit_event_from_store_for_effective_scope_with_membership_fronti
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
     let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS commit Realm id: {err:?}"))?;
+    let base_group_state_ref = kanban_mls_base_epoch_ref_for_scope(&seal_view, realm_id, circle);
     let membership_frontier = explicit_membership_frontier
-        .unwrap_or_else(|| kanban_mls_membership_frontier(&seal_view, &event_id_typed));
+        .map(Ok)
+        .unwrap_or_else(|| kanban_self_update_membership_frontier(&base_group_state_ref))?;
     let policy_root = kanban_mls_policy_root(&seal_view, realm_id)?;
     let governance_binding = match circle {
         Some(circle_id) => {
@@ -445,7 +457,7 @@ fn kanban_mls_commit_event_from_store_for_effective_scope_with_membership_fronti
     let payload = cokret_sdk::MlsCommitPayload::new(
         commit_envelope.group_id.clone(),
         prev_epoch,
-        kanban_mls_base_epoch_ref_for_scope(&seal_view, realm_id, circle),
+        base_group_state_ref,
         proposal_refs,
         commit_envelope.epoch,
         commit_envelope.commit_digest.clone(),

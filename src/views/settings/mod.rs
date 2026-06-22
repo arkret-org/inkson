@@ -374,8 +374,12 @@ pub fn SettingsPanel(
     let mut diagnostics_mode =
         use_signal(|| route_diagnostics_mode.unwrap_or(DiagnosticsMode::Developer));
     let active_diagnostics_mode = route_diagnostics_mode.unwrap_or_else(|| diagnostics_mode());
-    let mut presence_visible =
-        use_signal(|| state_store.read().presence_visibility().allows_presence_send());
+    let mut presence_visible = use_signal(|| {
+        state_store
+            .read()
+            .presence_visibility()
+            .allows_presence_send()
+    });
     let mut dnd_enabled = use_signal(|| false);
     let mut dnd_mode = use_signal(|| "off".to_owned());
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));

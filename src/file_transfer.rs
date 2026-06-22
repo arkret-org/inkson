@@ -8,18 +8,17 @@ use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+pub use cokret_sdk::{
+    FileTransferAad, FileTransferAccess, FileTransferAccessVisibility, FileTransferEncryption,
+    FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferKeyMessage, FileTransferRecord,
+    FileTransferState,
+};
 use hkdf::Hkdf;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::api::CokretApi;
 use crate::models::AccountDataSetResult;
-
-pub use cokret_sdk::{
-    FileTransferAccess, FileTransferAccessVisibility, FileTransferAad, FileTransferEncryption,
-    FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferKeyMessage, FileTransferRecord,
-    FileTransferState,
-};
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_KIND: &str = "file_transfer";
@@ -337,7 +336,7 @@ fn decrypt_file_transfer_ciphertext_with_key(
 ) -> anyhow::Result<Vec<u8>> {
     let nonce = decode_fixed::<XCHACHA_NONCE_LEN>(&record.encryption.nonce)?;
     let aad_bytes = crate::canonical::canonical_json_bytes(&record.encryption.aad)?;
-    let cipher = XChaCha20Poly1305::new((&content_key).into());
+    let cipher = XChaCha20Poly1305::new(content_key.into());
     let plaintext = cipher
         .decrypt(
             XNonce::from_slice(&nonce),
@@ -522,8 +521,9 @@ impl PreparedFileTransfer {
         for recipient in recipient_devices {
             let actor_id = recipient.actor_id.trim().to_owned();
             let device_id = recipient.device_id.trim().to_owned();
-            cokret_sdk::Did::new(actor_id.clone())
-                .map_err(|error| anyhow::anyhow!("invalid file-transfer recipient actor: {error}"))?;
+            cokret_sdk::Did::new(actor_id.clone()).map_err(|error| {
+                anyhow::anyhow!("invalid file-transfer recipient actor: {error}")
+            })?;
             cokret_sdk::DeviceId::new(device_id.clone()).map_err(|error| {
                 anyhow::anyhow!("invalid file-transfer recipient device_id: {error}")
             })?;
@@ -1101,8 +1101,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(dispatches.len(), 1);
-        assert_eq!(dispatches[0].kind, cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND);
-        (record, ciphertext, recipient_sk, dispatches[0].content.clone())
+        assert_eq!(
+            dispatches[0].kind,
+            cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND
+        );
+        (
+            record,
+            ciphertext,
+            recipient_sk,
+            dispatches[0].content.clone(),
+        )
     }
 
     #[test]

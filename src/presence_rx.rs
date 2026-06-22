@@ -11,9 +11,8 @@
 //! Spec sources:
 //! - `discovery/read-receipts.md §6` — `ck.read_cursor.advance` carries a
 //!   `ck.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
-//! - `discovery/profiles-presence.md` — `ck.presence` carries
-//!   `{state, actor_id, last_active_at?, ttl_ms?}` with
-//!   state in {`online`, `idle`, `dnd`, `offline`}.
+//! - `discovery/profiles-presence.md` — `ck.presence` carries `{state, actor_id, last_active_at?,
+//!   ttl_ms?}` with state in {`online`, `idle`, `dnd`, `offline`}.
 //! - `strand-and-message.md §10` — `ck.typing` is short-TTL signaling carrying `{actor_id,
 //!   strand_id, started_at}`.
 //!

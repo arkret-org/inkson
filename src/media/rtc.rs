@@ -27,11 +27,10 @@ use cokret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
     CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, FrameKeyContext, IceConfig,
     MediaDecryptPolicyValue, MediaIceConfigRequestBody, MediaIceMode, MediaPlaintextService,
-    MediaServiceAnchors, MlsExporterSource, MlsGovernanceBindingPayload,
-    PlaintextDataClassKind, PlaintextVisibleServicesPayload, RealmId, call_media_token_exchange,
-    derive_frame_key, derive_media_decrypt_metadata_digest,
-    resolve_verification_method_key_from_document, verify_call_media_token_outcome,
-    verify_ice_config_outcome, verify_media_decrypt_metadata,
+    MediaServiceAnchors, MlsExporterSource, MlsGovernanceBindingPayload, PlaintextDataClassKind,
+    PlaintextVisibleServicesPayload, RealmId, call_media_token_exchange, derive_frame_key,
+    derive_media_decrypt_metadata_digest, resolve_verification_method_key_from_document,
+    verify_call_media_token_outcome, verify_ice_config_outcome, verify_media_decrypt_metadata,
 };
 use ed25519_dalek::VerifyingKey;
 use serde_json::Value;
@@ -325,7 +324,11 @@ impl MediaGovernanceEvidence {
         }
         let service_id = media_service_payload_service_id(&self.media_service_payload)
             .ok_or(RtcClientError::MediaServiceBindingUncovered)?;
-        if !request.media_service_dids.iter().any(|did| did == service_id) {
+        if !request
+            .media_service_dids
+            .iter()
+            .any(|did| did == service_id)
+        {
             return Err(RtcClientError::TokenIssuerUnauthorised);
         }
         if !media_service_payload_has_focus(&self.media_service_payload, &request.focus_id) {
@@ -348,10 +351,7 @@ impl MediaGovernanceEvidence {
         Ok(())
     }
 
-    fn verify_plaintext_media_authorization(
-        &self,
-        service_id: &str,
-    ) -> Result<(), RtcClientError> {
+    fn verify_plaintext_media_authorization(&self, service_id: &str) -> Result<(), RtcClientError> {
         if !self.media_plaintext_ui_confirmed {
             return Err(RtcClientError::MediaPlaintextServiceNotAuthorised);
         }
@@ -380,28 +380,27 @@ impl MediaGovernanceEvidence {
             .governance_binding
             .discussion_metadata_digest()
             .ok_or(RtcClientError::MlsGovernanceBindingStale)?;
-        let recomputed =
-            derive_media_decrypt_metadata_digest(&MediaDecryptPolicyValue {
-                media_service_decrypts: true,
-                plaintext_visible_services: plaintext_payload
-                    .services
-                    .iter()
-                    .filter(|service| {
-                        service
-                            .purposes
+        let recomputed = derive_media_decrypt_metadata_digest(&MediaDecryptPolicyValue {
+            media_service_decrypts: true,
+            plaintext_visible_services: plaintext_payload
+                .services
+                .iter()
+                .filter(|service| {
+                    service
+                        .purposes
+                        .iter()
+                        .any(|purpose| purpose == "media_plaintext")
+                        && service
+                            .data_classes
                             .iter()
-                            .any(|purpose| purpose == "media_plaintext")
-                            && service
-                                .data_classes
-                                .iter()
-                                .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
-                    })
-                    .map(|service| MediaPlaintextService {
-                        service_did: service.service_did.clone(),
-                    })
-                    .collect(),
-            })
-            .map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
+                            .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
+                })
+                .map(|service| MediaPlaintextService {
+                    service_did: service.service_did.clone(),
+                })
+                .collect(),
+        })
+        .map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
         verify_media_decrypt_metadata(binding_digest, &recomputed)
             .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
     }
@@ -428,8 +427,8 @@ fn recompute_media_policy_root(
         );
     }
     if let Some(payload) = plaintext_visible_services_payload {
-        let value = serde_json::to_value(payload)
-            .map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
+        let value =
+            serde_json::to_value(payload).map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
         cells.insert(
             media_policy_cell("ck.component.realm.plaintext_visible_services.v1", subject)?,
             cokret_sdk::lattice::CellState::Value(value),
@@ -439,10 +438,7 @@ fn recompute_media_policy_root(
         .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
 }
 
-fn media_policy_cell(
-    family: &str,
-    realm_id: &str,
-) -> Result<cokret_sdk::CellRef, RtcClientError> {
+fn media_policy_cell(family: &str, realm_id: &str) -> Result<cokret_sdk::CellRef, RtcClientError> {
     cokret_sdk::CellRef::new(format!("ck:cell:{family}:{realm_id}"))
         .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
 }
@@ -456,9 +452,8 @@ fn media_service_payload_has_focus(payload: &Value, focus_id: &str) -> bool {
         .get("foci")
         .and_then(Value::as_array)
         .map(|foci| {
-            foci.iter().any(|focus| {
-                focus.get("focus_id").and_then(Value::as_str) == Some(focus_id)
-            })
+            foci.iter()
+                .any(|focus| focus.get("focus_id").and_then(Value::as_str) == Some(focus_id))
         })
         .unwrap_or(false)
 }
@@ -1032,10 +1027,12 @@ mod tests {
             "Z3JvdXA",
             6,
             7,
-            vec![cokret_sdk::EventId::new(
-                "ck:event:01904100-0000-7000-8000-000000000001".to_owned(),
-            )
-            .unwrap()],
+            vec![
+                cokret_sdk::EventId::new(
+                    "ck:event:01904100-0000-7000-8000-000000000001".to_owned(),
+                )
+                .unwrap(),
+            ],
             policy_root,
             cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
             "ck.reducer.realm.v1",

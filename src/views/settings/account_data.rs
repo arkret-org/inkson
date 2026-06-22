@@ -10,8 +10,7 @@ use super::{
     DND_ACCOUNT_DATA_KEY, PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, PUSH_RULES_ACCOUNT_DATA_KEY,
     READ_RECEIPT_ACCOUNT_DATA_KEY, build_read_receipt_preferences_body,
 };
-use crate::local_state::LocalStateStore;
-use crate::local_state::PresenceVisibility;
+use crate::local_state::{LocalStateStore, PresenceVisibility};
 use crate::models::AccountDataSetResult;
 use crate::notification_rules::WatchLevel;
 use crate::views::helpers::{short_protocol_id, with_authed_api};

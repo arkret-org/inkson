@@ -222,11 +222,7 @@ pub fn CallPanel(
                     call_state_participant_actor_device_map(&snapshot, &realm_id, &call),
                     call_state_participant_identities(&snapshot, &realm_id, &call),
                     call_state_participant_device_map(&snapshot, &realm_id, &call),
-                    media_governance_evidence(
-                        &snapshot,
-                        &realm_id,
-                        media_plaintext_confirmed(),
-                    ),
+                    media_governance_evidence(&snapshot, &realm_id, media_plaintext_confirmed()),
                     store.mls_snapshot_for(&realm_id),
                 )
             };

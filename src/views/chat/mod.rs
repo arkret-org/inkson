@@ -254,12 +254,11 @@ pub fn ChatPanel(
             }
             let base = base.clone();
             spawn(async move {
-                let _ = crate::views::helpers::with_authed_api(
-                    &base,
-                    api_token,
-                    |api| async move { api.send_presence(&realm, &actor, "online", None).await },
-                )
-                .await;
+                let _ =
+                    crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
+                        api.send_presence(&realm, &actor, "online", None).await
+                    })
+                    .await;
             });
         });
     }

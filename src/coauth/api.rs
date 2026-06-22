@@ -156,6 +156,8 @@ impl CoauthApi {
             audience: audience
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned),
+            device_id: None,
+            proof: None,
         })?;
         self.post_json_with_dpop("session-grants/refresh", body, Some(dpop_proof))
             .await

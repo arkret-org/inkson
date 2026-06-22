@@ -7,10 +7,9 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
+use super::UiIcon;
 use crate::did_resolver::DidResolutionCache;
 use crate::models::IdentityDescribeOutcome;
-
-use super::UiIcon;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidResolutionHealthReason {
@@ -24,12 +23,8 @@ pub enum DidResolutionHealthReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DidResolutionHealth {
     Healthy,
-    Degraded {
-        reason: DidResolutionHealthReason,
-    },
-    Outage {
-        reason: DidResolutionHealthReason,
-    },
+    Degraded { reason: DidResolutionHealthReason },
+    Outage { reason: DidResolutionHealthReason },
 }
 
 struct DidResolutionHealthPresentation {
@@ -242,10 +237,7 @@ mod tests {
         let now = Utc::now();
         let cache = cache_with_entry(Duration::seconds(60), now);
         assert_eq!(
-            DidResolutionHealth::from_identity_probe_failure(
-                &cache,
-                now + Duration::seconds(30)
-            ),
+            DidResolutionHealth::from_identity_probe_failure(&cache, now + Duration::seconds(30)),
             DidResolutionHealth::Degraded {
                 reason: DidResolutionHealthReason::IdentityDescribeFailedFreshCache
             }
@@ -257,10 +249,7 @@ mod tests {
         let now = Utc::now();
         let cache = cache_with_entry(Duration::seconds(60), now);
         assert_eq!(
-            DidResolutionHealth::from_identity_probe_failure(
-                &cache,
-                now + Duration::seconds(60)
-            ),
+            DidResolutionHealth::from_identity_probe_failure(&cache, now + Duration::seconds(60)),
             DidResolutionHealth::Degraded {
                 reason: DidResolutionHealthReason::IdentityDescribeFailedStaleCache
             }

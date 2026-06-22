@@ -23,7 +23,10 @@ fn mls_remove_membership_frontier_is_canonicalized_without_seal_fallback() {
 
     let frontier = canonical_mls_remove_membership_frontier(&[b.clone(), a.clone(), b]).unwrap();
 
-    assert_eq!(frontier, vec![a, event_id("ck:event:0196419b-0000-7000-8000-000000000002")]);
+    assert_eq!(
+        frontier,
+        vec![a, event_id("ck:event:0196419b-0000-7000-8000-000000000002")]
+    );
 }
 
 #[test]

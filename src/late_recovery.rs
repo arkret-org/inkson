@@ -27,12 +27,11 @@
 //! auditable).
 
 use chrono::{DateTime, Duration, Utc};
-use serde_json::Value;
-
 pub use cokret_sdk::{
     REASON_LATE_RECOVERY_REJECTED_EXPIRED, REASON_LATE_RECOVERY_REJECTED_MEMBERSHIP,
     REASON_LATE_RECOVERY_SHARE_NOT_AUTHORIZED,
 };
+use serde_json::Value;
 
 /// One late-recovered event surfaced to message readers. Constructed from
 /// the server's `recovery.recovered_at` + the event's
@@ -167,9 +166,7 @@ impl LateRecoveryTransitionDecision {
 /// is treated as false so the transition fails closed in spec order. Expiry and
 /// retention guards reject only when the projection explicitly says the event
 /// is expired or the content key has been destroyed.
-pub fn evaluate_late_recovery_transition_event(
-    event: &Value,
-) -> LateRecoveryTransitionDecision {
+pub fn evaluate_late_recovery_transition_event(event: &Value) -> LateRecoveryTransitionDecision {
     let mut contexts = Vec::new();
     collect_late_recovery_contexts(event, &mut contexts, 0);
     if !late_recovery_marker_present(&contexts) {
@@ -263,11 +260,7 @@ pub fn late_recovered_event_from_audit_policy_access_event(
     .unwrap_or(LateRecoveryAuditAccessConversion::NotLateRecovery)
 }
 
-fn collect_late_recovery_contexts<'a>(
-    value: &'a Value,
-    out: &mut Vec<&'a Value>,
-    depth: usize,
-) {
+fn collect_late_recovery_contexts<'a>(value: &'a Value, out: &mut Vec<&'a Value>, depth: usize) {
     if depth > 4 || !value.is_object() {
         return;
     }
@@ -364,8 +357,7 @@ fn timestamp_from_contexts(value: &Value, keys: &[&str]) -> Option<DateTime<Utc>
 }
 
 fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
-    if string_from_value(event, &["kind", "type", "event_type"]) == Some("ck.audit.policy_access")
-    {
+    if string_from_value(event, &["kind", "type", "event_type"]) == Some("ck.audit.policy_access") {
         return event
             .get("payload")
             .or_else(|| event.get("content"))

@@ -13,12 +13,12 @@ pub mod circle_error_toast;
 /// discussion-of cross-link banner. Shared between the new-Strand form,
 /// the composer header, and the Strand detail view.
 pub mod circle_scope_picker;
-pub mod did_resolution_health_banner;
 pub mod device_authorization_prompt;
 /// Global same-principal device-pairing approval modal. Mounted once near the
 /// app shell; surfaces incoming `same_principal_device_authorization` to-device
 /// requests so an authorized device can approve/reject with code comparison.
 pub mod device_pair_approval_prompt;
+pub mod did_resolution_health_banner;
 pub mod dismissible_popup;
 pub mod empty_state;
 /// Entry-time warning for accounts whose visible PCR / Realm projections do
@@ -74,9 +74,9 @@ pub use circle_error_toast::{
 pub use circle_scope_picker::{
     CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };
-pub use did_resolution_health_banner::{DidResolutionHealth, DidResolutionHealthBanner};
 pub use device_authorization_prompt::DeviceAuthorizationPrompt;
 pub use device_pair_approval_prompt::DevicePairApprovalPrompt;
+pub use did_resolution_health_banner::{DidResolutionHealth, DidResolutionHealthBanner};
 pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use encryption_floor_prompt::EncryptionFloorPrompt;

@@ -144,25 +144,22 @@ pub(crate) fn mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> S
         })
 }
 
-/// Build the governance binding's `membership_frontier` from the seal view,
-/// falling back to the freshly minted commit event id when the seal view has
-/// no usable event ids yet.
+/// Build the governance binding's `membership_frontier` for a self-update
+/// Commit from the precise base MLS state it advances.
+///
+/// A self-update Commit does not consume invite/leave/ban/device-trust
+/// proposals, so it must not claim arbitrary Seal frontier/leaves as
+/// membership evidence. The base group state is the exact member set this
+/// Commit carries forward.
 pub(crate) fn mls_membership_frontier(
-    seal_view: &LocalSealView,
-    fallback_event_id: &cokret_sdk::EventId,
-) -> Vec<cokret_sdk::EventId> {
-    let mut frontier = seal_view
-        .frontier
-        .iter()
-        .chain(seal_view.leaves.iter())
-        .filter_map(|value| cokret_sdk::EventId::new(value.clone()).ok())
-        .collect::<Vec<_>>();
-    if frontier.is_empty() {
-        frontier.push(fallback_event_id.clone());
-    }
-    frontier.sort();
-    frontier.dedup();
-    frontier
+    base_group_state_ref: &str,
+) -> Result<Vec<cokret_sdk::EventId>, String> {
+    cokret_sdk::EventId::new(base_group_state_ref.to_owned())
+        .map(|event_id| vec![event_id])
+        .map_err(|_| {
+            "MLS self-update membership_frontier requires a ck:event base group-state ref"
+                .to_owned()
+        })
 }
 
 /// Derive the governance binding's `policy_root` hash from the seal view's
@@ -276,7 +273,7 @@ pub(crate) fn build_secure_send(
                 real_commit_envelope.group_id.clone(),
                 prev_epoch,
                 mls_commit_epoch,
-                mls_membership_frontier(seal_view, &commit_event_id_typed),
+                mls_membership_frontier(&base_group_state_ref)?,
                 policy_root,
                 cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
                 cokret_sdk::CORE_REDUCER_PROFILE,

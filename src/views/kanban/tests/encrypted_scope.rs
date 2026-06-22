@@ -381,6 +381,14 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         realm,
         json!({ "active_profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
     );
+    let base_group_state_ref = "ck:event:0196419b-0000-7000-8000-000000000010";
+    state.set_realm_seal_view(
+        realm,
+        crate::local_state::LocalSealView {
+            frontier: vec![base_group_state_ref.to_owned()],
+            ..crate::local_state::LocalSealView::default()
+        },
+    );
     envelope.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
     state.save_mls_snapshot(realm, envelope);
     let patch = json!({
@@ -439,7 +447,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     );
     assert_eq!(
         commit.content["governance_binding"]["membership_frontier"][0],
-        json!(commit.event_id.as_str())
+        json!(base_group_state_ref)
     );
     assert!(state.load().raw_operations.is_empty());
 }
@@ -470,17 +478,16 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
         app_state_ref: None,
     };
 
-    let event =
-        kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
-            &state,
-            TEST_REALM_ID,
-            None,
-            "did:web:alice.example",
-            &commit,
-            vec![proposal_ref],
-            std::slice::from_ref(&revoke_frontier),
-        )
-        .unwrap();
+    let event = kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
+        &state,
+        TEST_REALM_ID,
+        None,
+        "did:web:alice.example",
+        &commit,
+        vec![proposal_ref],
+        std::slice::from_ref(&revoke_frontier),
+    )
+    .unwrap();
 
     assert_eq!(
         event.content["governance_binding"]["membership_frontier"],

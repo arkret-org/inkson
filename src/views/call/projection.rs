@@ -229,11 +229,7 @@ fn latest_body_for_kind(
         .rev()
         .find(|record| {
             record.realm_id.as_deref() == Some(realm_id)
-                && record
-                    .payload
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    == Some(expected_kind)
+                && record.payload.get("kind").and_then(Value::as_str) == Some(expected_kind)
         })
         .map(|record| operation_body(&record.payload).clone())
 }

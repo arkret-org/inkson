@@ -343,7 +343,8 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .copied()
         .find(|candidate| crate::disappearing::message_event_is_expiry_stub(candidate));
     let is_expiry_stub = expiry_stub_candidate.is_some();
-    let late_recovery_transition = crate::late_recovery::evaluate_late_recovery_transition_event(event);
+    let late_recovery_transition =
+        crate::late_recovery::evaluate_late_recovery_transition_event(event);
     let late_recovery_rejection = late_recovery_transition
         .rejection_reason_code()
         .map(ToOwned::to_owned);

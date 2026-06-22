@@ -349,12 +349,8 @@ mod tests {
         let thumbnail_key =
             derive_thumbnail_content_key(&key, bundle.attachment.blob_ref(), 7, "image/jpeg");
         assert_ne!(thumbnail_key, key);
-        let recovered = decrypt_whole_file(
-            &thumbnail.ciphertext,
-            &thumbnail.envelope,
-            &thumbnail_key,
-        )
-        .unwrap();
+        let recovered =
+            decrypt_whole_file(&thumbnail.ciphertext, &thumbnail.envelope, &thumbnail_key).unwrap();
         assert_eq!(recovered, thumb);
     }
 
