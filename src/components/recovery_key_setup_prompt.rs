@@ -10,6 +10,7 @@ use dioxus_router::hooks::use_navigator;
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{generate_recovery_key, recovery_key_confirmation_matches};
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::recovery::RecoveryKeyBackupOutcome;
@@ -149,11 +150,12 @@ pub fn RecoveryKeySetupPrompt(
         && (current_status.contains("failed") || current_status.contains("could not be saved"));
 
     rsx! {
-        div {
-            class: "modal-overlay recovery-key-setup-overlay",
-            "data-testid": "recovery-key-setup-modal",
-            role: "presentation",
-            onclick: move |_| {
+        Dialog {
+            open: true,
+            on_open_change: move |next_open: bool| {
+                if next_open {
+                    return;
+                }
                 if generated_recovery_key().trim().is_empty() {
                     open.set(false);
                 } else {
@@ -163,16 +165,12 @@ pub fn RecoveryKeySetupPrompt(
                     );
                 }
             },
+            "data-testid": "recovery-key-setup-modal",
+            "aria-labelledby": "recovery-key-setup-title",
+            "aria-label": "Set up 24-word Recovery Key",
             div {
                 class: "modal event mls-recovery-modal mls-backup-banner recovery-key-setup-dialog",
-                role: "dialog",
-                "aria-modal": "true",
-                "aria-labelledby": "recovery-key-setup-title",
-                "aria-label": "Set up 24-word Recovery Key",
                 "data-testid": "recovery-key-setup-banner",
-                onclick: move |event: dioxus::events::MouseEvent| {
-                    event.stop_propagation();
-                },
                 onkeydown: move |event: dioxus::events::KeyboardEvent| {
                     if event.key().to_string() == "Escape" {
                         event.prevent_default();
