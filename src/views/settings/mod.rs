@@ -324,6 +324,7 @@ pub fn SettingsPanel(
     account_did: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
+    account_primary_handle: String,
     personal_handles: Vec<String>,
     personal_handles_status: String,
     can_list_handles_for_subject: bool,
@@ -1264,7 +1265,7 @@ pub fn SettingsPanel(
                                 account_did,
                                 device_id,
                                 state_store,
-                                personal_handles: personal_handles.clone(),
+                                account_primary_handle: account_primary_handle.clone(),
                             }
                             details { class: "event", "data-testid": "key-backup-guidance",
                                 summary { class: "event-head",

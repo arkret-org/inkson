@@ -497,6 +497,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         .key_package_record()
         .map_err(|error| format!("create MLS KeyPackage: {error}"))?;
     let key_package_id = record.keypackage_id.clone();
+    let key_package_ref = record.keypackage_ref.as_str().to_owned();
     let private_state = identity
         .export_private_state()
         .map_err(|error| format!("export MLS KeyPackage identity state: {error}"))?;
@@ -508,9 +509,20 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         &private_state,
     )
     .map_err(|error| format!("store MLS KeyPackage identity state: {error}"))?;
+    if key_package_ref != key_package_id {
+        crate::mls::runtime::store_mls_key_package_identity_state(
+            secure_store.as_ref(),
+            &actor_id,
+            &device_id,
+            &key_package_ref,
+            &private_state,
+        )
+        .map_err(|error| format!("store MLS KeyPackage identity ref state: {error}"))?;
+    }
 
     let publish_device_id = device_id.clone();
     let publish_key_package_id = key_package_id.clone();
+    let publish_key_package_ref = key_package_ref.clone();
     let outcome = crate::views::helpers::with_authed_api(
         &base_url,
         session_credential.clone(),
@@ -528,6 +540,14 @@ pub(crate) async fn ensure_local_mls_key_package_published(
             &device_id,
             &publish_key_package_id,
         );
+        if publish_key_package_ref != publish_key_package_id {
+            let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
+                secure_store.as_ref(),
+                &actor_id,
+                &device_id,
+                &publish_key_package_ref,
+            );
+        }
         return Err(format!(
             "MLS KeyPackage upload rejected: {:?}",
             outcome.rejected

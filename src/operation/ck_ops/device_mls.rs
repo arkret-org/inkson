@@ -98,3 +98,22 @@ pub fn mls_genesis_with_governance(
     .target_ref(group_id.to_owned())
     .body(payload.clone())
 }
+
+/// `ck.mls.welcome` event carrying the durable Welcome claim envelope and
+/// opaque Welcome ciphertext. The payload is passed as `Value` so callers can
+/// build from the actual MLS runtime output while still validating against the
+/// registered payload schema before submit.
+pub fn mls_welcome_with_governance(
+    realm_id: &str,
+    actor: &str,
+    group_id: &str,
+    payload: &Value,
+) -> OperationBuilder {
+    OperationBuilder::new(
+        realm_id,
+        actor,
+        cokret_sdk::events::kinds::EventKind::MlsWelcome,
+    )
+    .target_ref(group_id.to_owned())
+    .body(payload.clone())
+}

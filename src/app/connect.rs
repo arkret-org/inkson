@@ -140,6 +140,7 @@ pub(super) struct ConnectContext {
     pub(super) last_error: Signal<Option<String>>,
     pub(super) server_description: Signal<Option<ServerDescription>>,
     pub(super) server_probe_status: Signal<String>,
+    pub(super) account_primary_handle: Signal<String>,
     pub(super) personal_handles: Signal<Vec<String>>,
     pub(super) personal_handles_status: Signal<String>,
     /// A4a: shared UI theme signal so `/sync` can hydrate the theme
@@ -368,6 +369,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         let mut last_error = ctx.last_error;
         let mut server_description = ctx.server_description;
         let mut server_probe_status = ctx.server_probe_status;
+        let mut account_primary_handle = ctx.account_primary_handle;
         let mut personal_handles = ctx.personal_handles;
         let mut personal_handles_status = ctx.personal_handles_status;
         let mut theme = ctx.theme;
@@ -519,7 +521,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 let canonical_actor = match authed.account_me().await {
                     Ok(account) if !account.did.trim().is_empty() => {
                         account_personal_handle =
-                            personal_handle_from_account_handle(&account.handle, &base);
+                            personal_handle_from_account_handle(&account.handle);
                         account.did
                     }
                     Ok(_) => {
@@ -544,10 +546,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 match authed.account_me().await {
                                     Ok(account) if !account.did.trim().is_empty() => {
                                         account_personal_handle =
-                                            personal_handle_from_account_handle(
-                                                &account.handle,
-                                                &base,
-                                            );
+                                            personal_handle_from_account_handle(&account.handle);
                                         account.did
                                     }
                                     Ok(_) => {
@@ -601,13 +600,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         actor.clone()
                     }
                 };
-                if let Some(personal_handle) = account_personal_handle {
-                    personal_handles.set(vec![personal_handle]);
-                    personal_handles_status.set("1 handle".to_owned());
-                } else if personal_handles().is_empty() {
-                    personal_handles_status.set("Not published".to_owned());
-                }
                 if canonical_actor != actor {
+                    account_primary_handle.set(String::new());
+                    personal_handles.set(Vec::new());
+                    personal_handles_status.set("Not published".to_owned());
                     // Account changed since the last persisted run (the
                     // server's account viewer disagrees with our cached
                     // actor). When the previous actor was non-empty this
@@ -655,6 +651,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     state_store
                         .write()
                         .stamp_account_scope_owner(&canonical_actor);
+                }
+                if let Some(personal_handle) = account_personal_handle {
+                    account_primary_handle.set(personal_handle.clone());
+                    let handles = merge_personal_handles(&personal_handles(), [personal_handle]);
+                    personal_handles_status.set(personal_handles_status_for(&handles));
+                    personal_handles.set(handles);
+                } else {
+                    account_primary_handle.set(String::new());
+                    if personal_handles().is_empty() {
+                        personal_handles_status.set("Not published".to_owned());
+                    }
                 }
                 adopt_live_token_for_api(
                     &base,

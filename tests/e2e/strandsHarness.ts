@@ -300,6 +300,11 @@ export function registerStrandsBeforeEach() {
       advertiseListHandlesForSubject: !testInfo.title.startsWith(
         "account menu falls back to account localpart",
       ),
+      directoryPrimaryHandle: testInfo.title.startsWith(
+        "account menu keeps account handle when handle directory returns an empty page",
+      )
+        ? null
+        : undefined,
     });
     if (testInfo.title.startsWith("login page")) {
       return;

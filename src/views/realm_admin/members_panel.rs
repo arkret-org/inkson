@@ -1283,11 +1283,81 @@ fn PendingInviteRow(profile: MemberProfile) -> Element {
     }
 }
 
+async fn submit_mls_admission_for_invitee(
+    api: &crate::api::CokretApi,
+    mut state_store: Signal<LocalStateStore>,
+    realm_id: String,
+    actor_id: String,
+    device_id: String,
+    invitee_did: String,
+) -> anyhow::Result<Option<u64>> {
+    let needs_mls_admission = {
+        let store = state_store.read();
+        store.mls_snapshot_for(&realm_id).is_some()
+            || store.realm_projection_is_mls_encrypted(&realm_id)
+    };
+    if !needs_mls_admission {
+        return Ok(None);
+    }
+    let group_id = {
+        let store = state_store.read();
+        store
+            .mls_snapshot_for(&realm_id)
+            .map(|snapshot| snapshot.group_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "local MLS state is not ready; create or restore this device's MLS state before inviting into an encrypted Realm"
+                )
+            })?
+    };
+    let claim_nonce = crate::api::generate_mls_claim_nonce()?;
+    let claim_outcome = api
+        .claim_mls_key_package(
+            &invitee_did,
+            &realm_id,
+            &actor_id,
+            &claim_nonce,
+            None,
+            Some(&group_id),
+        )
+        .await?;
+    let failures = claim_outcome.failures;
+    let claim = claim_outcome.claims.into_iter().next().ok_or_else(|| {
+        let reason = failures
+            .first()
+            .map(|failure| format!("{failure:?}"))
+            .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
+        anyhow::anyhow!("{reason}")
+    })?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let admission = {
+        let store = state_store.read();
+        crate::mls::admission::build_realm_mls_admission_events_from_claim(
+            &store,
+            secure_store.as_ref(),
+            &realm_id,
+            &actor_id,
+            &device_id,
+            &claim,
+            &claim_nonce,
+        )
+        .map_err(|err| anyhow::anyhow!(err))?
+    };
+    let next_epoch = admission.snapshot.epoch;
+    api.submit_sdk_events_batch(&realm_id, vec![admission.commit, admission.welcome], None)
+        .await?;
+    state_store
+        .write()
+        .save_mls_snapshot(realm_id, admission.snapshot);
+    Ok(Some(next_epoch))
+}
+
 #[component]
 pub fn RealmMembersPanel(
     base_url: String,
     active_service_did: String,
     account_did: String,
+    device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
     sync_cursor: Signal<String>,
@@ -1608,11 +1678,15 @@ pub fn RealmMembersPanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let actor = account_did.clone();
+                                                let device = device_id.clone();
                                                 let realm = selected_realm_id.clone();
+                                                let state_store = state_store;
                                                 move |_| {
                                                     let base = base.clone();
                                                     let actor = actor.clone();
+                                                    let device = device.clone();
                                                     let realm = realm.clone();
+                                                    let mut state_store = state_store;
                                                     let api_token = token();
                                                     // Resolve the (did, consent_ref) pairs up front so the
                                                     // async task doesn't borrow the rendered rows.
@@ -1646,6 +1720,8 @@ pub fn RealmMembersPanel(
                                                         };
                                                         let mut ok = 0_usize;
                                                         let mut last_err = String::new();
+                                                        let mut last_mls_err = String::new();
+                                                        let mut mls_ok = 0_usize;
                                                         let mut ok_invites = Vec::<(String, String)>::new();
                                                         for (did, consent_ref) in targets {
                                                             match api
@@ -1654,6 +1730,20 @@ pub fn RealmMembersPanel(
                                                             {
                                                                 Ok(event_id) => {
                                                                     ok += 1;
+                                                                    match submit_mls_admission_for_invitee(
+                                                                        &api,
+                                                                        state_store,
+                                                                        realm.clone(),
+                                                                        actor.clone(),
+                                                                        device.clone(),
+                                                                        did.clone(),
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(Some(_)) => mls_ok += 1,
+                                                                        Ok(None) => {}
+                                                                        Err(err) => last_mls_err = err.to_string(),
+                                                                    }
                                                                     ok_invites.push((did, event_id.clone()));
                                                                     frontier_state.set(event_id);
                                                                 }
@@ -1683,17 +1773,29 @@ pub fn RealmMembersPanel(
                                                         selected_contacts.set(std::collections::BTreeSet::new());
                                                         if ok == total {
                                                             invite_modal_open.set(false);
-                                                            status_msg.set(
-                                                                crate::i18n::tr("realm_admin.invite_sent")
-                                                                    .replace("{ok}", &ok.to_string()),
-                                                            );
+                                                            let mut message = crate::i18n::tr("realm_admin.invite_sent")
+                                                                .replace("{ok}", &ok.to_string());
+                                                            if !last_mls_err.is_empty() {
+                                                                message.push_str(&format!(
+                                                                    "; MLS admission failed for at least one invite: {last_mls_err}"
+                                                                ));
+                                                            } else if mls_ok > 0 {
+                                                                message.push_str(&format!(
+                                                                    "; MLS Welcome queued for {mls_ok}"
+                                                                ));
+                                                            }
+                                                            status_msg.set(message);
                                                         } else {
-                                                            status_msg.set(
-                                                                crate::i18n::tr("realm_admin.invite_partial")
-                                                                    .replace("{ok}", &ok.to_string())
-                                                                    .replace("{total}", &total.to_string())
-                                                                    .replace("{error}", &last_err),
-                                                            );
+                                                            let mut message = crate::i18n::tr("realm_admin.invite_partial")
+                                                                .replace("{ok}", &ok.to_string())
+                                                                .replace("{total}", &total.to_string())
+                                                                .replace("{error}", &last_err);
+                                                            if !last_mls_err.is_empty() {
+                                                                message.push_str(&format!(
+                                                                    "; MLS admission failed for at least one invite: {last_mls_err}"
+                                                                ));
+                                                            }
+                                                            status_msg.set(message);
                                                         }
                                                     });
                                                 }
@@ -1737,11 +1839,15 @@ pub fn RealmMembersPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
+                                    let device = device_id.clone();
                                     let realm = selected_realm_id.clone();
+                                    let state_store = state_store;
                                     move |_| {
                                         let base = base.clone();
                                         let actor = actor.clone();
+                                        let device = device.clone();
                                         let realm = realm.clone();
+                                        let mut state_store = state_store;
                                         let api_token = token();
                                         let target = invite_target().trim().to_owned();
                                         if target.is_empty() {
@@ -1835,11 +1941,33 @@ pub fn RealmMembersPanel(
                                                             members.set(next_members);
                                                             invite_target.set(String::new());
                                                             invite_modal_open.set(false);
-                                                            status_msg.set(format!(
-                                                                "invited {} (pending) fact {}",
-                                                                invitee_label,
-                                                                short_protocol_id(&op_id)
-                                                            ));
+                                                            match submit_mls_admission_for_invitee(
+                                                                &api,
+                                                                state_store,
+                                                                realm.clone(),
+                                                                actor.clone(),
+                                                                device.clone(),
+                                                                invitee_did.clone(),
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(Some(epoch)) => status_msg.set(format!(
+                                                                    "invited {} (pending) fact {}; MLS Welcome queued at epoch {}",
+                                                                    invitee_label,
+                                                                    short_protocol_id(&op_id),
+                                                                    epoch
+                                                                )),
+                                                                Ok(None) => status_msg.set(format!(
+                                                                    "invited {} (pending) fact {}",
+                                                                    invitee_label,
+                                                                    short_protocol_id(&op_id)
+                                                                )),
+                                                                Err(error) => status_msg.set(format!(
+                                                                    "invited {} (pending) fact {}; MLS admission failed: {error}",
+                                                                    invitee_label,
+                                                                    short_protocol_id(&op_id)
+                                                                )),
+                                                            }
                                                         }
                                                         Err(error) => status_msg.set(format!("invite failed: {error}")),
                                                     }

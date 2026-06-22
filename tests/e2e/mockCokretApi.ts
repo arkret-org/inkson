@@ -53,6 +53,7 @@ type MockCokretApiOptions = {
   advertiseListHandlesForSubject?: boolean;
   accountPrincipalId?: string;
   primaryHandle?: string | null;
+  directoryPrimaryHandle?: string | null;
   currentDeviceId?: string;
   accountDevices?: MockAccountDevice[];
   enableDeviceEnrollment?: boolean;
@@ -126,6 +127,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
   const advertiseListHandlesForSubject = options.advertiseListHandlesForSubject ?? true;
   const accountPrincipalId = options.accountPrincipalId ?? "did:web:alice.example";
   const primaryHandle = options.primaryHandle === undefined ? "alice:local.host" : options.primaryHandle;
+  const directoryPrimaryHandle =
+    options.directoryPrimaryHandle === undefined ? primaryHandle : options.directoryPrimaryHandle;
   const currentDeviceId = options.currentDeviceId ?? "ck:device:01964137-0000-7000-8000-0000000000a1";
   const includeDemoRealms = options.includeDemoRealms ?? true;
   const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
@@ -1147,7 +1150,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     if (url.pathname === "/_cokret/find/directory/list-handles-for-subject" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       const subject = body.subject ?? accountPrincipalId;
-      if (!primaryHandle) {
+      if (!directoryPrimaryHandle) {
         return json(route, {
           subject,
           primary_handle: null,
@@ -1158,13 +1161,13 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       }
       return json(route, {
         subject,
-        primary_handle: primaryHandle,
+        primary_handle: directoryPrimaryHandle,
         as_of: "2026-04-28T12:00:00Z",
         has_more: false,
         claims: [
           {
             subject,
-            handle: primaryHandle,
+            handle: directoryPrimaryHandle,
             issuer: "did:web:server.local",
             issuer_service_did: "did:web:server.local",
             binding_state: "verified",

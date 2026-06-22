@@ -183,14 +183,15 @@ test("recovery key setup download filename includes account localpart", async ({
   await expect(setupModal).toBeHidden();
 });
 
-test("recovery key setup download filename falls back to account DID localpart", async ({
+test("recovery key setup download filename stays bare without primary handle claim", async ({
   page,
 }) => {
   await page.unroute("**/*");
   await mockCokretApi(page, {
-    advertiseListHandlesForSubject: false,
+    advertiseListHandlesForSubject: true,
     accountPrincipalId: "did:web:local.host:users:carol",
     primaryHandle: null,
+    directoryPrimaryHandle: "carol:local.host",
   });
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
@@ -215,7 +216,7 @@ test("recovery key setup download filename falls back to account DID localpart",
   const downloadPromise = page.waitForEvent("download");
   await latestTestId(page, "recovery-key-setup-download-key").click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("cokret-recovery-key-carol.txt");
+  expect(download.suggestedFilename()).toBe("cokret-recovery-key.txt");
 
   await latestTestId(page, "recovery-key-setup-confirm-key").fill(generatedRecoveryKey);
   await latestTestId(page, "recovery-key-setup-saved").click();
