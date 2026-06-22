@@ -7,13 +7,14 @@
 //! ensure, and the draft-approval surface. Each endpoint has a matching
 //! client-side call so the cross-project wire shape is verified end to end.
 
-use cokret_sdk::RealmId;
 use cokret_sdk::models::{
     AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentParticipation,
     AgentParticipationEntry, AgentParticipationScope, AgentParticipationSetRequestBody,
     AgentPauseRequestBody, AgentProvisionRequestBody, AgentResumeRequestBody,
-    AgentRotateKeyRequestBody, AgentSidecarThreadEnsureRequestBody, AgentView,
+    AgentRotateKeyRequestBody, AgentSidecarContextRef, AgentSidecarThreadEnsureRequestBody,
+    AgentView,
 };
+use cokret_sdk::{RealmId, StrandId};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
@@ -135,6 +136,7 @@ pub fn PersonalAgentAdminPanel(
     // takes the grant object as raw JSON.
     let mut grant_json = use_signal(|| "{}".to_owned());
     let mut sidecar_realm = use_signal(String::new);
+    let mut sidecar_context_strand = use_signal(String::new);
     let mut deactivate_confirm = use_signal(String::new);
     let mut last_op_status = use_signal(String::new);
     // CKP-0010 — participation editor (Realm-scope selection + resolved view).
@@ -1018,7 +1020,7 @@ pub fn PersonalAgentAdminPanel(
                     span { class: "badge blue", "ck.self.agent.sidecar_thread.command.ensure" }
                 }
                 div { class: "muted",
-                    "Ensures the controller-private sidecar objects for the selected agent in a Realm."
+                    "Ensures the controller-private sidecar objects for the selected agent and context Strand."
                 }
                 div { class: "workflow-form",
                     Input {
@@ -1027,12 +1029,19 @@ pub fn PersonalAgentAdminPanel(
                         value: "{sidecar_realm}",
                         oninput: move |event: FormEvent| sidecar_realm.set(event.value()),
                     }
+                    Input {
+                        "data-testid": "agent-admin-sidecar-context-strand-input",
+                        placeholder: "context strand_id",
+                        value: "{sidecar_context_strand}",
+                        oninput: move |event: FormEvent| sidecar_context_strand.set(event.value()),
+                    }
                     div { class: "actions",
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "agent-admin-sidecar-ensure-button",
                             disabled: selected_agent_id().is_empty()
                                 || sidecar_realm().trim().is_empty()
+                                || sidecar_context_strand().trim().is_empty()
                                 || controller_did.trim().is_empty(),
                             onclick: {
                                 let base = base_url.clone();
@@ -1043,6 +1052,7 @@ pub fn PersonalAgentAdminPanel(
                                     let base = base.clone();
                                     let api_token = token();
                                     let realm = sidecar_realm();
+                                    let context_strand = sidecar_context_strand();
                                     let controller = controller_did.clone();
                                     // Typed ids fail fast on malformed
                                     // input before the wire round-trip.
@@ -1050,6 +1060,13 @@ pub fn PersonalAgentAdminPanel(
                                         Ok(realm_id) => realm_id,
                                         Err(err) => {
                                             last_op_status.set(format!("invalid realm_id: {err:?}"));
+                                            return;
+                                        }
+                                    };
+                                    let context_strand_id = match StrandId::new(context_strand.trim().to_owned()) {
+                                        Ok(strand_id) => strand_id,
+                                        Err(err) => {
+                                            last_op_status.set(format!("invalid context strand_id: {err:?}"));
                                             return;
                                         }
                                     };
@@ -1068,16 +1085,18 @@ pub fn PersonalAgentAdminPanel(
                                         }
                                     };
                                     let body = AgentSidecarThreadEnsureRequestBody {
-                                        realm_id,
                                         controller_principal_id,
-                                        agent_principal_id,
+                                        addressed_agent_principal_ids: vec![agent_principal_id],
+                                        context_ref: AgentSidecarContextRef::strand(
+                                            realm_id,
+                                            context_strand_id,
+                                        ),
                                     };
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, move |api| {
-                                            let id = id.clone();
                                             let body = body.clone();
                                             async move {
-                                                api.agent_sidecar_thread_ensure(&id, &body).await
+                                                api.agent_sidecar_thread_ensure(&body).await
                                             }
                                         })
                                         .await

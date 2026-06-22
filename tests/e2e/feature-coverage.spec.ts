@@ -538,6 +538,9 @@ test.describe("feature coverage placeholders", () => {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
+    await expect(page.getByTestId("settings-notification-sound-toggle")).toBeAttached();
+    await expect(page.getByTestId("settings-notification-sound-test")).toBeVisible();
+    await dismissBlockingDialog(page);
     await page.getByTestId("push-register-button").click();
     const request = await pushRequestPromise;
     const bodyText = request.postData() ?? "{}";

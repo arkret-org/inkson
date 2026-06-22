@@ -177,20 +177,19 @@ impl CokretApi {
     /// `POST /_cokret/self/agent-sidecar-threads:ensure` —
     /// `ck.self.agent.sidecar_thread.command.ensure`. Idempotently derives the
     /// controller_agent_circle_key and ensures a sidecar Circle exists
-    /// between the controller and the native agent.
+    /// for the controller and the addressed native agents.
     pub async fn agent_sidecar_thread_ensure(
         &self,
-        agent_principal_id: &str,
         body: &cokret_sdk::AgentSidecarThreadEnsureRequestBody,
     ) -> anyhow::Result<cokret_sdk::AgentSidecarThreadEnsureOutcome> {
-        if body.agent_principal_id.as_str().trim() != agent_principal_id.trim() {
-            anyhow::bail!("agent_principal_id path argument does not match request body");
-        }
-        if body.realm_id.as_str().trim().is_empty() {
-            anyhow::bail!("realm_id is required");
-        }
         if body.controller_principal_id.as_str().trim().is_empty() {
             anyhow::bail!("controller_principal_id is required");
+        }
+        if body.context_ref.realm_id.as_str().trim().is_empty() {
+            anyhow::bail!("context_ref.realm_id is required");
+        }
+        if body.context_ref.strand_id.is_none() && body.context_ref.relation_id.is_none() {
+            anyhow::bail!("context_ref must include strand_id or relation_id");
         }
         self.post_json("_cokret/self/agent-sidecar-threads:ensure", body)
             .await

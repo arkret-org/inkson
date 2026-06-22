@@ -363,7 +363,10 @@ pub fn SettingsPanel(
     let mut dnd_enabled = use_signal(|| false);
     let mut dnd_mode = use_signal(|| "off".to_owned());
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
-    let notification_settings_status = use_signal(String::new);
+    let mut notification_settings_status = use_signal(String::new);
+    let mut notification_sound_enabled = use_signal(|| {
+        crate::notification_sound::notification_sound_enabled(&state_store.read(), &account_did())
+    });
     // Per-realm override editor state (spec push-notifications.md §4.3.2).
     // `new_override_realm` holds the realm id picked in the "add" row;
     // `new_override_level` is the watch level to apply. New overrides default
@@ -1557,6 +1560,51 @@ pub fn SettingsPanel(
                                     {render_notification_kind_toggle("reaction", "Reaction notifications", state_store, status)}
                                     {render_notification_kind_toggle("invite", "Invite notifications", state_store, status)}
                                     {render_notification_kind_toggle("message", "Message notifications", state_store, status)}
+                                }
+                                div { class: "actions",
+                                    label {
+                                        Checkbox {
+                                            "data-testid": "settings-notification-sound-toggle",
+                                            checked: if notification_sound_enabled() {
+                                                CheckboxState::Checked
+                                            } else {
+                                                CheckboxState::Unchecked
+                                            },
+                                            on_checked_change: move |state: CheckboxState| {
+                                                let enabled = bool::from(state);
+                                                notification_sound_enabled.set(enabled);
+                                                crate::notification_sound::set_notification_sound_enabled(
+                                                    &mut state_store.write(),
+                                                    &account_did(),
+                                                    enabled,
+                                                );
+                                                if enabled {
+                                                    crate::notification_sound::initialize_notification_audio();
+                                                }
+                                                notification_settings_status.set(if enabled {
+                                                    "Sound alerts enabled.".to_owned()
+                                                } else {
+                                                    "Sound alerts disabled.".to_owned()
+                                                });
+                                            },
+                                        }
+                                        if notification_sound_enabled() { " Sound alerts" } else { " Sound alerts off" }
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "settings-notification-sound-test",
+                                        disabled: !notification_sound_enabled(),
+                                        onclick: move |_| {
+                                            if notification_sound_enabled() {
+                                                crate::notification_sound::initialize_notification_audio();
+                                                crate::notification_sound::play_notification_sound();
+                                                notification_settings_status.set("Sound alert test played.".to_owned());
+                                            } else {
+                                                notification_settings_status.set("Enable sound alerts before testing.".to_owned());
+                                            }
+                                        },
+                                        "Test sound"
+                                    }
                                 }
                                 div { class: "actions",
                                     label {

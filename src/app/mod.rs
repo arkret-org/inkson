@@ -141,6 +141,7 @@ const DXC_THEME: &str = yoface::TOKENS_CSS;
 #[component]
 pub fn App() -> Element {
     ensure_default_push_token_provider();
+    use_hook(crate::notification_sound::initialize_notification_audio);
     rsx! {
         Router::<Route> {}
     }
@@ -423,11 +424,20 @@ pub fn RouterView() -> Element {
     let mut previous_unread_notification_count = use_signal(|| Option::<usize>::None);
     {
         let state_store_for_notification_sound = state_store;
+        let account_did_for_notification_sound = account_did;
         use_effect(move || {
-            let unread =
-                unread_notification_count(&state_store_for_notification_sound.read().load());
+            let store = state_store_for_notification_sound.read();
+            let unread = unread_notification_count(&store.load());
+            let sound_enabled = crate::notification_sound::notification_sound_enabled(
+                &store,
+                &account_did_for_notification_sound(),
+            );
             let previous = *previous_unread_notification_count.peek();
-            if previous.is_some_and(|previous| unread > previous) {
+            if crate::notification_sound::should_play_notification_sound(
+                previous,
+                unread,
+                sound_enabled,
+            ) {
                 crate::notification_sound::play_notification_sound();
             }
             if previous != Some(unread) {
