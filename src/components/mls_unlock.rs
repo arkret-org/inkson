@@ -204,6 +204,8 @@ pub fn MlsUnlockPrompt(
             div {
                 class: "modal event mls-recovery-modal mls-unlock-banner",
                 "data-testid": "mls-unlock-banner",
+                role: "dialog",
+                "aria-modal": "true",
                 div { class: "modal-head event-head",
                     h3 { id: "mls-unlock-title", {crate::i18n::tr("mls_unlock.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
@@ -341,6 +343,8 @@ pub fn MlsRecoverySetupMissingBanner(
             div {
                 class: "modal event mls-recovery-modal mls-recovery-missing-banner",
                 "data-testid": "mls-recovery-missing-banner",
+                role: "dialog",
+                "aria-modal": "true",
                 div { class: "modal-head event-head",
                     h3 { id: "mls-recovery-missing-title", {crate::i18n::tr("mls_recovery_missing.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_recovery_missing.subtitle")} }

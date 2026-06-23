@@ -881,13 +881,31 @@ pub(crate) fn sync_realm_ids_match(left: &str, right: &str) -> bool {
     normalize_sync_realm_id(left) == normalize_sync_realm_id(right)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TypingActorSnapshot {
+    pub(crate) actors: Vec<String>,
+    pub(crate) next_expires_at_ms: Option<i64>,
+}
+
+#[cfg(test)]
 pub(crate) fn typing_actors_from_sync_realms(
     realms: &std::collections::BTreeMap<String, Value>,
     realm_id: &str,
     strand_id: &str,
     account_did: &str,
 ) -> Vec<String> {
+    typing_actor_snapshot_from_sync_realms(realms, realm_id, strand_id, account_did).actors
+}
+
+pub(crate) fn typing_actor_snapshot_from_sync_realms(
+    realms: &std::collections::BTreeMap<String, Value>,
+    realm_id: &str,
+    strand_id: &str,
+    account_did: &str,
+) -> TypingActorSnapshot {
     let mut actors = std::collections::BTreeSet::<String>::new();
+    let mut next_expires_at_ms: Option<i64> = None;
+    let now = chrono::Utc::now();
     for (candidate_realm_id, body) in realms {
         if !sync_realm_ids_match(candidate_realm_id, realm_id) {
             continue;
@@ -907,16 +925,34 @@ pub(crate) fn typing_actors_from_sync_realms(
                 continue;
             };
             for entry in entries {
+                let Some(expires_at) = value_string_at(entry, &["expires_at"])
+                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                    .map(|value| value.with_timezone(&chrono::Utc))
+                else {
+                    continue;
+                };
+                if expires_at <= now {
+                    continue;
+                }
                 let actor = value_string_at(entry, &["actor", "actor_id"])
                     .unwrap_or_default()
                     .trim();
                 if !actor.is_empty() && actor != account_did {
                     actors.insert(actor.to_owned());
+                    let expires_at_ms = expires_at.timestamp_millis();
+                    next_expires_at_ms = Some(
+                        next_expires_at_ms
+                            .map(|current| current.min(expires_at_ms))
+                            .unwrap_or(expires_at_ms),
+                    );
                 }
             }
         }
     }
-    actors.into_iter().collect()
+    TypingActorSnapshot {
+        actors: actors.into_iter().collect(),
+        next_expires_at_ms,
+    }
 }
 
 pub(crate) fn sync_presence_actor(event: &Value) -> Option<String> {

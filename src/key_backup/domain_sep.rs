@@ -48,13 +48,7 @@ pub fn attach_key_backup_genesis_series(body: &mut Value) {
             .entry("series_id")
             .or_insert_with(|| json!(format!("ck:backup_series:{}", crate::operation::uuid_v7())));
         object.entry("series_seq").or_insert_with(|| json!(0));
-        // Genesis carries `supersedes: null` explicitly so it is present in the
-        // envelope and covered by `auth_data.signed_fields` (the schema requires
-        // signed_fields to contain `supersedes` on every envelope, and the
-        // fixture genesis case uses `null`). `apply_next_series` overwrites this
-        // with the predecessor backup_id for successors. soland treats a null
-        // `supersedes` as "no predecessor" (its `as_str()` read yields None), so
-        // the genesis chain check still passes.
-        object.entry("supersedes").or_insert(Value::Null);
+        object.remove("supersedes");
+        object.remove("supersedes_digest");
     }
 }

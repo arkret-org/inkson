@@ -621,9 +621,9 @@ fn mls_history_successor_chains_onto_previous_tail() {
     // a parallel genesis series.
     let env_v1 = history_envelope("ck:realm:a", "g-a", 1, ACCOUNT_SECRET);
     let genesis = history_body(&env_v1);
-    // Genesis shape: fresh series, seq 0, explicit `supersedes: null`.
+    // Genesis shape: fresh series, seq 0, no predecessor fields.
     assert_eq!(genesis["series_seq"], 0);
-    assert!(genesis["supersedes"].is_null());
+    assert!(genesis.get("supersedes").is_none());
     assert!(genesis.get("supersedes_digest").is_none());
 
     let env_v2 = history_envelope("ck:realm:a", "g-a", 2, ACCOUNT_SECRET);

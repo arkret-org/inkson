@@ -171,6 +171,8 @@ pub fn RecoveryKeySetupPrompt(
             div {
                 class: "modal event mls-recovery-modal mls-backup-banner recovery-key-setup-dialog",
                 "data-testid": "recovery-key-setup-banner",
+                role: "dialog",
+                "aria-modal": "true",
                 onkeydown: move |event: dioxus::events::KeyboardEvent| {
                     if event.key().to_string() == "Escape" {
                         event.prevent_default();

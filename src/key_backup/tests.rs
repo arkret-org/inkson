@@ -8,6 +8,7 @@ use crate::recovery_crypto::{VAULT_SALT_LEN, VaultKek, derive_vault_kek_with_sal
 const BACKUP_ID: &str = "ck:backup:01964137-0000-7000-8000-00000000beef";
 const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ck:device:01964137-0000-7000-8000-000000000001";
+const DEVICE_AUTHORIZE_EVENT: &str = "ck:event:01964137-0000-7000-8000-000000000123";
 
 fn test_root() -> VaultKek {
     derive_vault_kek_with_salt(b"correct horse battery staple", &[7u8; VAULT_SALT_LEN]).unwrap()
@@ -53,6 +54,8 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
             .is_some_and(is_protocol_backup_series_id)
     );
     assert_eq!(body["series_seq"], 0);
+    assert!(body.get("supersedes").is_none());
+    assert!(body.get("supersedes_digest").is_none());
     assert_eq!(body["encryption"]["recipient_method"], "passphrase_kdf");
     assert_eq!(body["encryption"]["kdf"]["name"], "argon2id");
     // Argon2id params come from the root KEK; salt/nonce/nonce_salt are real.
@@ -96,7 +99,14 @@ fn key_backup_auth_data_sign_verify_round_trip() {
         build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
     let signing_key = SigningKey::from_bytes(&[42u8; 32]);
     let vm = format!("{ACTOR}#cx_device_01964137");
-    sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, &vm, Some(7)).unwrap();
+    sign_key_backup_auth_data(
+        &mut body,
+        &signing_key,
+        DEVICE,
+        &vm,
+        Some(KeyBackupDeviceTrustAnchor::SskGeneration(7)),
+    )
+    .unwrap();
 
     assert_eq!(body["auth_data"]["verification_method"], vm);
     assert_eq!(body["auth_data"]["signature_algorithm"], "Ed25519");
@@ -111,9 +121,49 @@ fn key_backup_auth_data_sign_verify_round_trip() {
     for f in KEY_BACKUP_SIGNED_FIELDS_MANDATORY {
         assert!(signed.contains(&f.to_string()), "missing signed field {f}");
     }
+    assert!(
+        !signed.contains(&"supersedes".to_string()),
+        "genesis envelopes must not sign absent supersedes"
+    );
 
     verify_key_backup_auth_data(&body, &signing_key.verifying_key())
         .expect("freshly signed backup must verify");
+}
+
+#[test]
+fn key_backup_auth_data_sign_verify_service_attested_round_trip() {
+    let root = test_root();
+    let mut body =
+        build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
+    let signing_key = SigningKey::from_bytes(&[44u8; 32]);
+    sign_key_backup_auth_data(
+        &mut body,
+        &signing_key,
+        DEVICE,
+        "did:web:a#device",
+        Some(KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(
+            DEVICE_AUTHORIZE_EVENT.to_owned(),
+        )),
+    )
+    .unwrap();
+
+    assert_eq!(
+        body["auth_data"]["device_authorize_event_id"],
+        DEVICE_AUTHORIZE_EVENT
+    );
+    assert!(body["auth_data"].get("ssk_generation").is_none());
+    let parsed: cokret_sdk::KeyBackup = serde_json::from_value(body.clone()).unwrap();
+    assert_eq!(
+        parsed
+            .auth_data
+            .unwrap()
+            .device_authorize_event_id
+            .unwrap()
+            .as_str(),
+        DEVICE_AUTHORIZE_EVENT
+    );
+    verify_key_backup_auth_data(&body, &signing_key.verifying_key())
+        .expect("service-attested backup signature must verify");
 }
 
 #[test]
@@ -128,8 +178,14 @@ fn recovery_policy_ref_is_covered_by_signed_fields_when_present() {
         "policy_version": 3,
     });
     let signing_key = SigningKey::from_bytes(&[43u8; 32]);
-    sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, "did:web:a#device", Some(7))
-        .unwrap();
+    sign_key_backup_auth_data(
+        &mut body,
+        &signing_key,
+        DEVICE,
+        "did:web:a#device",
+        Some(KeyBackupDeviceTrustAnchor::SskGeneration(7)),
+    )
+    .unwrap();
     let signed: Vec<String> = body["auth_data"]["signed_fields"]
         .as_array()
         .unwrap()
@@ -159,7 +215,7 @@ fn sign_key_backup_with_active_device_is_noop_helper_signs_directly() {
         &signing_key,
         DEVICE,
         "did:web:alice.example#device",
-        Some(1),
+        Some(KeyBackupDeviceTrustAnchor::SskGeneration(1)),
     )
     .unwrap();
     verify_key_backup_auth_data(&body, &signing_key.verifying_key())
@@ -172,8 +228,14 @@ fn key_backup_auth_data_rejects_tamper_and_wrong_key() {
     let mut body =
         build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
     let signing_key = SigningKey::from_bytes(&[9u8; 32]);
-    sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, "did:web:a#device", Some(1))
-        .unwrap();
+    sign_key_backup_auth_data(
+        &mut body,
+        &signing_key,
+        DEVICE,
+        "did:web:a#device",
+        Some(KeyBackupDeviceTrustAnchor::SskGeneration(1)),
+    )
+    .unwrap();
 
     // Tamper a signed field (ciphertext is covered via ciphertext_digest, but
     // mutate backup_class which is in signed_fields) → verify fails.

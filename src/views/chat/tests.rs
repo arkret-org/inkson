@@ -1650,6 +1650,56 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
 }
 
 #[test]
+fn typing_actor_snapshot_filters_expired_and_self_entries() {
+    let now = chrono::Utc::now();
+    let expired = now - chrono::Duration::seconds(30);
+    let future = now + chrono::Duration::seconds(60);
+    let realms = std::collections::BTreeMap::from([(
+        "ck:realm:demo".to_owned(),
+        json!({
+            "ephemeral": [{
+                "type": "ck.typing",
+                "realm_id": "ck:realm:demo",
+                "strand_id": "ck:strand:demo",
+                "actors": [
+                    {
+                        "actor": "did:web:alice.example",
+                        "expires_at": future.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+                    },
+                    {
+                        "actor": "did:web:bob.example",
+                        "expires_at": expired.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+                    },
+                    {
+                        "actor": "did:web:self.example",
+                        "expires_at": future.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+                    }
+                ]
+            }]
+        }),
+    )]);
+
+    let snapshot = typing_actor_snapshot_from_sync_realms(
+        &realms,
+        "ck:realm:demo",
+        "ck:strand:demo",
+        "did:web:self.example",
+    );
+
+    assert_eq!(snapshot.actors, vec!["did:web:alice.example".to_owned()]);
+    assert_eq!(snapshot.next_expires_at_ms, Some(future.timestamp_millis()));
+    assert_eq!(
+        typing_actors_from_sync_realms(
+            &realms,
+            "ck:realm:demo",
+            "ck:strand:demo",
+            "did:web:self.example",
+        ),
+        vec!["did:web:alice.example".to_owned()]
+    );
+}
+
+#[test]
 fn watch_level_wire_round_trip() {
     for level in [
         WatchLevel::MentionsOnly,

@@ -924,6 +924,8 @@ pub fn MlsBackupPrompt(
             div {
                 class: "modal event mls-recovery-modal mls-backup-banner",
                 "data-testid": "mls-backup-banner",
+                role: "dialog",
+                "aria-modal": "true",
                 div { class: "modal-head event-head",
                     h3 { id: "mls-backup-title", {crate::i18n::tr("mls_backup.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_backup.subtitle")} }

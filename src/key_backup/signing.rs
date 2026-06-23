@@ -9,36 +9,36 @@ use super::{
     KEY_BACKUP_SIGNED_FIELDS_MANDATORY, KEY_BACKUP_UNLOCK_PROOF_SCHEMA, required_str_anyhow,
 };
 
+#[derive(Clone, Debug)]
+pub enum KeyBackupDeviceTrustAnchor {
+    SskGeneration(u64),
+    DeviceAuthorizeEventId(String),
+}
+
 /// Phase 2 (key-management.md §7.4.1, CKP-0013): sign a key-backup envelope with
 /// the device Ed25519 key. The signature covers
 /// `canonical_json(envelope without auth_data.signature)` — i.e. the rest of
-/// `auth_data` (verification_method / signed_fields / ssk_generation) is bound
-/// too, so it cannot be tampered. `ssk_generation`, when given, seals the
-/// envelope to the published cross-signing self-signing key generation.
+/// `auth_data` is bound too, so it cannot be tampered. The trust anchor seals
+/// the envelope to either the published cross-signing generation or the
+/// accepted service-attested device authorization event.
 pub fn sign_key_backup_auth_data(
     body: &mut Value,
     signing_key: &SigningKey,
     device_id: &str,
     verification_method: &str,
-    ssk_generation: Option<u64>,
+    trust_anchor: Option<KeyBackupDeviceTrustAnchor>,
 ) -> anyhow::Result<()> {
     if let Some(object) = body.as_object_mut() {
         object.remove("auth_data");
     }
-    let signed_fields: Vec<Value> = KEY_BACKUP_SIGNED_FIELDS
-        .iter()
-        .filter(|field| body.get(**field).is_some())
-        .map(|field| Value::String((*field).to_owned()))
-        .collect();
+    let signed_fields = key_backup_signed_fields_for_body(body);
     let mut auth = json!({
         "device_id": device_id,
         "verification_method": verification_method,
         "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
         "signed_fields": signed_fields,
     });
-    if let Some(generation) = ssk_generation {
-        auth["ssk_generation"] = Value::Number(serde_json::Number::from(generation));
-    }
+    apply_key_backup_trust_anchor(&mut auth, trust_anchor)?;
     body["auth_data"] = auth;
     // Sign over the envelope WITH auth_data present but WITHOUT the signature.
     let payload = crate::canonical::canonical_json_bytes(body)?;
@@ -59,6 +59,20 @@ pub fn sign_key_backup_with_active_device(
     body: &mut Value,
     device_id: &str,
 ) -> anyhow::Result<bool> {
+    sign_key_backup_with_active_device_and_trust_anchor(
+        body,
+        device_id,
+        Some(KeyBackupDeviceTrustAnchor::SskGeneration(
+            DEFAULT_SSK_GENERATION,
+        )),
+    )
+}
+
+pub fn sign_key_backup_with_active_device_and_trust_anchor(
+    body: &mut Value,
+    device_id: &str,
+    trust_anchor: Option<KeyBackupDeviceTrustAnchor>,
+) -> anyhow::Result<bool> {
     let Some(signer) = crate::event_signer::active_signer() else {
         return Ok(false);
     };
@@ -66,18 +80,15 @@ pub fn sign_key_backup_with_active_device(
     if let Some(object) = body.as_object_mut() {
         object.remove("auth_data");
     }
-    let signed_fields: Vec<Value> = KEY_BACKUP_SIGNED_FIELDS
-        .iter()
-        .filter(|field| body.get(**field).is_some())
-        .map(|field| Value::String((*field).to_owned()))
-        .collect();
-    body["auth_data"] = json!({
+    let signed_fields = key_backup_signed_fields_for_body(body);
+    let mut auth = json!({
         "device_id": device_id,
         "verification_method": signer.verification_method(),
         "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
-        "ssk_generation": DEFAULT_SSK_GENERATION,
         "signed_fields": signed_fields,
     });
+    apply_key_backup_trust_anchor(&mut auth, trust_anchor)?;
+    body["auth_data"] = auth;
     let payload = crate::canonical::canonical_json_bytes(body)?;
     let signature = signer
         .sign_raw(&payload)
@@ -103,12 +114,30 @@ pub fn verify_key_backup_auth_data(
     {
         return Err("auth_data.signature_algorithm must be Ed25519".to_owned());
     }
-    if auth
-        .get("ssk_generation")
-        .and_then(Value::as_u64)
-        .is_none_or(|generation| generation < 1)
+    let ssk_generation = auth.get("ssk_generation").and_then(Value::as_u64);
+    if auth.get("ssk_generation").is_some()
+        && ssk_generation.is_none_or(|generation| generation < 1)
     {
         return Err("auth_data.ssk_generation must be >= 1".to_owned());
+    }
+    let device_authorize_event_id = auth
+        .get("device_authorize_event_id")
+        .and_then(Value::as_str)
+        .filter(|event_id| !event_id.trim().is_empty());
+    if auth.get("device_authorize_event_id").is_some() && device_authorize_event_id.is_none() {
+        return Err("auth_data.device_authorize_event_id must be a non-empty string".to_owned());
+    }
+    match (ssk_generation, device_authorize_event_id) {
+        (Some(_), None) | (None, Some(_)) => {}
+        (None, None) => {
+            return Err("auth_data must include exactly one device trust anchor".to_owned());
+        }
+        (Some(_), Some(_)) => {
+            return Err(
+                "auth_data.ssk_generation and auth_data.device_authorize_event_id are mutually exclusive"
+                    .to_owned(),
+            );
+        }
     }
     let sig_b64 = auth
         .get("signature")
@@ -141,6 +170,36 @@ pub fn verify_key_backup_auth_data(
     verifying_key
         .verify(&payload, &signature)
         .map_err(|_| "untrusted_backup_signature: signature does not verify".to_owned())
+}
+
+fn key_backup_signed_fields_for_body(body: &Value) -> Vec<Value> {
+    KEY_BACKUP_SIGNED_FIELDS
+        .iter()
+        .filter(|field| body.get(**field).is_some())
+        .map(|field| Value::String((*field).to_owned()))
+        .collect()
+}
+
+fn apply_key_backup_trust_anchor(
+    auth: &mut Value,
+    trust_anchor: Option<KeyBackupDeviceTrustAnchor>,
+) -> anyhow::Result<()> {
+    match trust_anchor {
+        Some(KeyBackupDeviceTrustAnchor::SskGeneration(generation)) if generation >= 1 => {
+            auth["ssk_generation"] = Value::Number(serde_json::Number::from(generation));
+        }
+        Some(KeyBackupDeviceTrustAnchor::SskGeneration(_)) => {
+            anyhow::bail!("auth_data.ssk_generation must be >= 1");
+        }
+        Some(KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(event_id)) => {
+            if event_id.trim().is_empty() {
+                anyhow::bail!("auth_data.device_authorize_event_id must be a non-empty string");
+            }
+            auth["device_authorize_event_id"] = Value::String(event_id);
+        }
+        None => {}
+    }
+    Ok(())
 }
 
 pub fn build_key_backup_unlock_proof_active(
@@ -204,7 +263,6 @@ pub fn build_key_backup_unlock_proof_active(
         "proof_digest": proof_digest,
         "issued_at": issued_at,
         "auth_data": {
-            "device_id": requesting_device_id,
             "verification_method": signer.verification_method(),
             "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
             "signed_fields": signed_fields,
@@ -233,4 +291,51 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
     )?;
     api.get_key_backup_with_unlock_proof(&backup_id, &proof)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::event_signer::{build_ed25519_signer, replace_active_signer};
+
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn reset_signer() -> impl Drop {
+        let guard = TEST_MUTEX.lock().unwrap_or_else(|error| error.into_inner());
+        let _ = replace_active_signer(None);
+        struct Reset(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                let _ = replace_active_signer(None);
+            }
+        }
+        Reset(guard)
+    }
+
+    #[test]
+    fn unlock_proof_auth_data_matches_sdk_schema() {
+        let _guard = reset_signer();
+        let signer = Arc::new(build_ed25519_signer([11u8; 32], "did:web:alice.example"));
+        let _ = replace_active_signer(Some(signer));
+        let backup = json!({
+            "backup_id": "ck:backup:0196419b-0000-7000-8000-000000000001",
+            "backup_class": "mls_history",
+            "series_id": "ck:backup_series:0196419b-0000-7000-8000-000000000002",
+            "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        });
+
+        let proof = build_key_backup_unlock_proof_active(
+            &backup,
+            "did:web:alice.example",
+            "ck:device:0196419b-0000-7000-8000-000000000003",
+            None,
+        )
+        .expect("unlock proof builds");
+
+        assert!(proof["auth_data"].get("device_id").is_none());
+        serde_json::from_value::<cokret_sdk::KeyBackupUnlockProof>(proof)
+            .expect("unlock proof matches SDK schema");
+    }
 }

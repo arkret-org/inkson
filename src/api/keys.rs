@@ -77,6 +77,21 @@ pub(crate) fn sign_keys_upload_batch(
     sign_keys_upload_batch_with_signer(&signer, device_id, one_time_keys, fallback_keys)
 }
 
+fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -> Option<String> {
+    viewer
+        .get("devices")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|device| {
+            device.get("device_id").and_then(Value::as_str) == Some(device_id)
+                && device.get("status").and_then(Value::as_str) == Some("active")
+        })
+        .and_then(|device| device.get("authorized_event_ref").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|event_id| !event_id.is_empty())
+        .map(str::to_owned)
+}
+
 impl CokretApi {
     pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
         let mut one_time_keys = BTreeMap::new();
@@ -245,9 +260,50 @@ impl CokretApi {
         crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
             .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
         let record: cokret_sdk::KeyBackup = serde_json::from_value(payload)?;
+        let mut payload = serde_json::to_value(&record)?;
+        self.attach_key_backup_current_device_trust_anchor(&mut payload)
+            .await?;
+        crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
+            .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
+        let record: cokret_sdk::KeyBackup = serde_json::from_value(payload)?;
         let body = cokret_sdk::KeysBackupsPutRequestBody(record);
         self.put_json(&format!("_cokret/self/keys/backups/{backup_id}"), &body)
             .await
+    }
+
+    async fn attach_key_backup_current_device_trust_anchor(
+        &self,
+        payload: &mut Value,
+    ) -> anyhow::Result<()> {
+        let Some(device_id) = payload
+            .get("device_id")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                payload
+                    .get("auth_data")
+                    .and_then(|auth| auth.get("device_id"))
+                    .and_then(Value::as_str)
+            })
+            .map(str::to_owned)
+        else {
+            return Ok(());
+        };
+        let viewer = match self.list_devices().await {
+            Ok(viewer) => viewer,
+            Err(_) => return Ok(()),
+        };
+        let Some(event_id) = key_backup_authorized_event_ref_for_device(&viewer, &device_id) else {
+            return Ok(());
+        };
+        let signed = crate::key_backup::sign_key_backup_with_active_device_and_trust_anchor(
+            payload,
+            &device_id,
+            Some(crate::key_backup::KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(event_id)),
+        )?;
+        if !signed {
+            anyhow::bail!("active device signer is required for service-attested key backup");
+        }
+        Ok(())
     }
 
     pub async fn list_key_backups(&self) -> anyhow::Result<serde_json::Value> {

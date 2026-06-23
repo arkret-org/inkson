@@ -222,6 +222,7 @@ pub fn ChatPanel(
     // other actors who have sent a `ck.typing` ephemeral within the
     // TTL window returned by the live sync projection.
     let typing_actors = use_signal(Vec::<String>::new);
+    let typing_next_expires_at_ms = use_signal(|| Option::<i64>::None);
     // G3.Y2 — presence. Maps `actor_id -> "online"|"idle"|"dnd"|"offline"`.
     // Refreshed from the global SyncEngine's account-subscribe projection
     // when `sync_cursor` advances.
@@ -518,6 +519,7 @@ pub fn ChatPanel(
         };
         let participants_for_sync = participant_dids_for_presence.clone();
         let mut typing_actors_for_sync = typing_actors;
+        let mut typing_next_expires_at_ms_for_sync = typing_next_expires_at_ms;
         let mut presence_states_for_sync = presence_states;
         let mut presence_labels_for_sync = presence_labels;
         let self_label_for_sync = account_display_label.clone();
@@ -536,14 +538,17 @@ pub fn ChatPanel(
             presence_sync_key_seen.set(next_sync_key);
 
             let snapshot = state_store.read().load();
-            let active_typers = typing_actors_from_sync_realms(
+            let active_typing = typing_actor_snapshot_from_sync_realms(
                 &snapshot.realm_tree_projections,
                 &realm,
                 &strand,
                 &actor,
             );
-            if *typing_actors_for_sync.peek() != active_typers {
-                typing_actors_for_sync.set(active_typers);
+            if typing_actors_for_sync.peek().as_slice() != active_typing.actors.as_slice() {
+                typing_actors_for_sync.set(active_typing.actors.clone());
+            }
+            if *typing_next_expires_at_ms_for_sync.peek() != active_typing.next_expires_at_ms {
+                typing_next_expires_at_ms_for_sync.set(active_typing.next_expires_at_ms);
             }
 
             let (next_presence, next_labels) = presence_maps_from_sync_events(
@@ -575,6 +580,24 @@ pub fn ChatPanel(
             if *presence_labels_for_sync.peek() != next_labels {
                 presence_labels_for_sync.set(next_labels);
             }
+        });
+    }
+    {
+        let mut typing_actors_for_expiry = typing_actors;
+        let mut typing_next_expires_at_ms_for_expiry = typing_next_expires_at_ms;
+        use_effect(move || {
+            let Some(expires_at_ms) = typing_next_expires_at_ms_for_expiry() else {
+                return;
+            };
+            let delay_ms =
+                (expires_at_ms - chrono::Utc::now().timestamp_millis()).max(0) as u64 + 50;
+            spawn(async move {
+                crate::api::sleep_for(std::time::Duration::from_millis(delay_ms)).await;
+                if *typing_next_expires_at_ms_for_expiry.peek() == Some(expires_at_ms) {
+                    typing_actors_for_expiry.set(Vec::new());
+                    typing_next_expires_at_ms_for_expiry.set(None);
+                }
+            });
         });
     }
 
