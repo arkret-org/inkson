@@ -129,6 +129,37 @@ mod tests {
     }
 
     #[test]
+    fn mention_notification_survives_realm_mute_hydration() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000aa";
+        let mut local_state = ClientLocalState::default();
+        local_state
+            .realm_watch_levels
+            .insert(realm_id.to_owned(), WatchLevel::Muted);
+        let raw = vec![
+            json!({
+                "notification_id": "normal",
+                "notification_type": "message",
+                "realm_id": realm_id,
+                "body": "muted normal message",
+            }),
+            json!({
+                "notification_id": "mention",
+                "notification_type": "mention",
+                "realm_id": realm_id,
+                "body": "@bob muted mention override",
+                "mentions_actor": true,
+            }),
+        ];
+
+        let hydrated = hydrate_notifications(raw, &local_state, None, None);
+
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(hydrated[0].kind, "mention");
+        assert_eq!(hydrated[0].body, "@bob muted mention override");
+        assert!(notification_overrides_realm_mute(&hydrated[0]));
+    }
+
+    #[test]
     fn invite_title_is_preserved_for_accept_projection_hint() {
         let realm_id = "ck:realm:01904100-0000-7000-8000-000000000010";
         let invite = json!({

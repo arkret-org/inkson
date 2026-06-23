@@ -308,10 +308,12 @@ fn notification_from_value(
 ) -> Option<UiNotification> {
     let mut eval_ctx = notification_eval_context(&value);
     // Apply the receiver's per-realm watch override (None when unconfigured).
-    // Invites are exempt: they target a realm the receiver is not a member of,
-    // so a leftover per-realm mute (e.g. from a prior membership) is stale and
-    // must not short-circuit the invite out of the feed during hydration.
-    eval_ctx.realm_watch_level = if eval_ctx.notification_type == "invite" {
+    // Invites and directed overrides are exempt: invites can target a realm the
+    // receiver is not currently in, and mentions/priority notifications are the
+    // explicit spec exceptions that must survive a coarse realm mute. Event-level
+    // `watch_state=muted` still short-circuits because `watch_level` is more
+    // specific than this realm override.
+    eval_ctx.realm_watch_level = if eval_context_overrides_realm_mute(&eval_ctx) {
         None
     } else {
         realm_watch_override(local_state, &eval_ctx.realm_id)
@@ -560,6 +562,14 @@ fn realm_watch_override(local_state: &ClientLocalState, realm_id: &str) -> Optio
         return None;
     }
     local_state.realm_watch_levels.get(realm_id).copied()
+}
+
+fn eval_context_overrides_realm_mute(ctx: &NotificationEvalContext) -> bool {
+    matches!(
+        ctx.notification_type.as_str(),
+        "invite" | "mention" | "priority" | "critical" | "urgent"
+    ) || ctx.mentions_actor.unwrap_or(false)
+        || ctx.priority_override
 }
 
 pub(crate) fn realm_is_muted(local_state: &ClientLocalState, realm_id: &str) -> bool {
