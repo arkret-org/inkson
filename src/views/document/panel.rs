@@ -430,12 +430,11 @@ pub fn DocumentPanel(
                                     match with_authed_api(&base, token_val, |api| async move {
                                         let resp = api.submit_sdk_event(&op).await?;
                                         let mut relation_error = None;
-                                        if let Some(relation_op) = relation_op {
-                                            if let Err(err) =
+                                        if let Some(relation_op) = relation_op
+                                            && let Err(err) =
                                                 api.submit_sdk_event(&relation_op).await
-                                            {
-                                                relation_error = Some(format!("{err:#}"));
-                                            }
+                                        {
+                                            relation_error = Some(format!("{err:#}"));
                                         }
                                         Ok((resp, relation_error))
                                     })

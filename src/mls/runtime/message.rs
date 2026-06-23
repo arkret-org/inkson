@@ -358,11 +358,12 @@ pub fn apply_welcome_messages_with_device_snapshot(
         // generation/nonce reuse on the next send) and desync `expected_prev_epoch`
         // from the server. Skip when we already hold an equal-or-higher epoch for
         // the same group.
-        if let Some(existing) = state_store.mls_snapshot_for(realm_id) {
-            if existing.group_id == post_state.group_id && existing.epoch >= post_state.epoch {
-                outcome.skipped_stale += 1;
-                continue;
-            }
+        if let Some(existing) = state_store.mls_snapshot_for(realm_id)
+            && existing.group_id == post_state.group_id
+            && existing.epoch >= post_state.epoch
+        {
+            outcome.skipped_stale += 1;
+            continue;
         }
         let mut salt = [0u8; 16];
         if let Err(err) = getrandom::fill(&mut salt) {
@@ -501,6 +502,14 @@ pub fn encrypt_values_with_device_snapshot(
 /// winning commit, or a forced commit returned by this helper). `aad` MUST be
 /// the canonical `EncryptedEnvelopeAadV1` value, so the digest verification
 /// round-trips.
+type DeviceSnapshotEncryption = (
+    cokret_sdk::Hash,
+    Vec<cokret_sdk::Did>,
+    cokret_sdk::EncryptedPayload,
+    Option<cokret_sdk::MlsCommitEnvelope>,
+    Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+);
+
 pub fn encrypt_message_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -510,16 +519,7 @@ pub fn encrypt_message_with_device_snapshot(
     content_type: &str,
     aad: serde_json::Value,
     plaintext: &[u8],
-) -> Result<
-    (
-        cokret_sdk::Hash,
-        Vec<cokret_sdk::Did>,
-        cokret_sdk::EncryptedPayload,
-        Option<cokret_sdk::MlsCommitEnvelope>,
-        Option<crate::mls::persistence::MlsSnapshotEnvelope>,
-    ),
-    MlsRuntimeError,
-> {
+) -> Result<DeviceSnapshotEncryption, MlsRuntimeError> {
     let snapshot = state_store
         .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;

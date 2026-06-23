@@ -9,10 +9,10 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use super::model::{
-    Notification, NotificationAction, append_invite_notifications, apply_sync_projection_to_store,
-    drop_joined_invite_notifications, hydrate_notifications, joined_realm_ids,
-    merge_invite_notifications, notification_id_for_dedupe, raw_notifications_from_sources,
-    read_cursor_targets, realm_title_hints_from_values,
+    UiNotification, UiNotificationAction, append_invite_notifications,
+    apply_sync_projection_to_store, drop_joined_invite_notifications, hydrate_notifications,
+    joined_realm_ids, merge_invite_notifications, notification_id_for_dedupe,
+    raw_notifications_from_sources, read_cursor_targets, realm_title_hints_from_values,
 };
 use crate::api::{CokretApi, is_auth_expired_error};
 use crate::local_state::LocalStateStore;
@@ -55,7 +55,7 @@ pub(crate) fn refresh_notifications(
     base_url: String,
     session_credential: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
-    mut notifications: Signal<Vec<Notification>>,
+    mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
 ) {
     spawn(async move {
@@ -107,7 +107,7 @@ pub(crate) fn mark_all_notifications_read(
     actor_id: String,
     device_id: String,
     mut state_store: Signal<LocalStateStore>,
-    mut notifications: Signal<Vec<Notification>>,
+    mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
 ) {
     let snapshot = notifications();
@@ -179,13 +179,13 @@ pub(crate) fn run_notification_action(
     base_url: String,
     session_credential: Signal<String>,
     state_store: Signal<LocalStateStore>,
-    notifications: Signal<Vec<Notification>>,
+    notifications: Signal<Vec<UiNotification>>,
     status_msg: Signal<String>,
     notification_id: String,
-    action: NotificationAction,
+    action: UiNotificationAction,
 ) {
     match action {
-        NotificationAction::AcceptInvite {
+        UiNotificationAction::AcceptInvite {
             realm_id,
             invite_id,
             realm_label,
@@ -208,7 +208,7 @@ fn accept_invite_notification(
     base_url: String,
     session_credential: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
-    mut notifications: Signal<Vec<Notification>>,
+    mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
     notification_id: String,
     realm_id: String,
@@ -310,7 +310,7 @@ fn accept_invite_notification(
 
 fn hide_accepted_invite_notification(
     state_store: &mut Signal<LocalStateStore>,
-    notifications: &mut Signal<Vec<Notification>>,
+    notifications: &mut Signal<Vec<UiNotification>>,
     notification_id: &str,
     accepted_realm: &str,
 ) {

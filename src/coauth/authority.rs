@@ -122,7 +122,7 @@ pub(crate) fn resolve_gate_account_base(
         }
         let origin = authority.origin.trim();
         if !origin.is_empty() {
-            return Ok(gate_account_base_from_origin(origin)?);
+            return gate_account_base_from_origin(origin);
         }
     }
     anyhow::bail!("principal server describe is missing auth_metadata.account_authority")

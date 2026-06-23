@@ -103,7 +103,7 @@ fn list_to_text(list: &[String]) -> String {
 fn parse_list(value: &str) -> Vec<String> {
     let mut list = Vec::new();
     for item in value
-        .split(|ch: char| ch == ',' || ch == '\n' || ch == ';')
+        .split([',', '\n', ';'])
         .map(str::trim)
         .filter(|item| !item.is_empty())
     {

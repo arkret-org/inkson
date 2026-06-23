@@ -103,10 +103,10 @@ pub fn verify_key_backup_auth_data(
     {
         return Err("auth_data.signature_algorithm must be Ed25519".to_owned());
     }
-    if !auth
+    if auth
         .get("ssk_generation")
         .and_then(Value::as_u64)
-        .is_some_and(|generation| generation >= 1)
+        .is_none_or(|generation| generation < 1)
     {
         return Err("auth_data.ssk_generation must be >= 1".to_owned());
     }

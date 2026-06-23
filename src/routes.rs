@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_router::Routable;
 
-use crate::views::View;
+use crate::views::AppView;
 
 /// All navigable routes in the application.
 /// Each variant maps to a URL path and a corresponding View.
@@ -277,16 +277,16 @@ fn CallPage(
 
 impl Route {
     /// Convert a Route to the corresponding View enum variant.
-    pub fn to_view(&self) -> View {
+    pub fn to_view(&self) -> AppView {
         match self {
-            Route::Dashboard => View::Dashboard,
-            Route::Login | Route::AuthCallback => View::Login,
-            Route::RealmsManage | Route::Realm { .. } => View::Kanban,
-            Route::Chat { .. } | Route::DirectConversation { .. } => View::Chat,
-            Route::Contacts | Route::ContactsManage => View::Contacts,
-            Route::FileTransfer => View::FileTransfer,
-            Route::Directory => View::Directory,
-            Route::Setup | Route::SetupSection { .. } => View::Setup,
+            Route::Dashboard => AppView::Dashboard,
+            Route::Login | Route::AuthCallback => AppView::Login,
+            Route::RealmsManage | Route::Realm { .. } => AppView::Kanban,
+            Route::Chat { .. } | Route::DirectConversation { .. } => AppView::Chat,
+            Route::Contacts | Route::ContactsManage => AppView::Contacts,
+            Route::FileTransfer => AppView::FileTransfer,
+            Route::Directory => AppView::Directory,
+            Route::Setup | Route::SetupSection { .. } => AppView::Setup,
             Route::Settings
             | Route::SettingsSection { .. }
             | Route::NotificationsSettings
@@ -295,25 +295,25 @@ impl Route {
             | Route::SettingsRecovery
             | Route::Recovery
             | Route::Audit
-            | Route::Developer => View::Settings,
-            Route::VerifyDevice => View::VerifyDevice,
+            | Route::Developer => AppView::Settings,
+            Route::VerifyDevice => AppView::VerifyDevice,
             Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
-            | Route::RealmAdminSection { .. } => View::RealmAdmin,
+            | Route::RealmAdminSection { .. } => AppView::RealmAdmin,
             // Call / Applets routes still render their own panels but no
             // longer have dedicated `View` enum variants.
-            Route::Call { .. } | Route::Applets => View::Dashboard,
+            Route::Call { .. } | Route::Applets => AppView::Dashboard,
             Route::Kanban
             | Route::KanbanRealm { .. }
             | Route::KanbanBoard { .. }
             | Route::KanbanBoardTask { .. }
-            | Route::KanbanTask { .. } => View::Kanban,
-            Route::Notifications => View::Notifications,
-            Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => View::Document,
-            Route::Onboarding => View::Onboarding,
-            Route::Quarantine => View::Quarantine,
-            Route::Agents => View::Agents,
-            Route::Search => View::Search,
+            | Route::KanbanTask { .. } => AppView::Kanban,
+            Route::Notifications => AppView::Notifications,
+            Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => AppView::Document,
+            Route::Onboarding => AppView::Onboarding,
+            Route::Quarantine => AppView::Quarantine,
+            Route::Agents => AppView::Agents,
+            Route::Search => AppView::Search,
         }
     }
 
@@ -368,39 +368,39 @@ impl Route {
 }
 
 /// Convert a View enum variant to the default Route for that view.
-impl From<View> for Route {
-    fn from(view: View) -> Self {
+impl From<AppView> for Route {
+    fn from(view: AppView) -> Self {
         match view {
-            View::Dashboard => Route::Dashboard,
-            View::Login => Route::Login,
-            View::Chat => Route::Chat {
+            AppView::Dashboard => Route::Dashboard,
+            AppView::Login => Route::Login,
+            AppView::Chat => Route::Chat {
                 realm_id: String::new(),
             },
-            View::Contacts => Route::Contacts,
-            View::FileTransfer => Route::FileTransfer,
-            View::Directory => Route::Directory,
-            View::Setup => Route::Setup,
-            View::Settings => Route::Settings,
-            View::SettingsDevices => Route::SettingsDevices,
-            View::SettingsRecovery => Route::SettingsRecovery,
-            View::VerifyDevice => Route::VerifyDevice,
-            View::RealmAdmin => Route::RealmAdmin {
+            AppView::Contacts => Route::Contacts,
+            AppView::FileTransfer => Route::FileTransfer,
+            AppView::Directory => Route::Directory,
+            AppView::Setup => Route::Setup,
+            AppView::Settings => Route::Settings,
+            AppView::SettingsDevices => Route::SettingsDevices,
+            AppView::SettingsRecovery => Route::SettingsRecovery,
+            AppView::VerifyDevice => Route::VerifyDevice,
+            AppView::RealmAdmin => Route::RealmAdmin {
                 realm_id: String::new(),
             },
-            View::Kanban => Route::Kanban,
-            View::Notifications => Route::Notifications,
-            View::Document => Route::DocumentNew,
-            View::Recovery => Route::Recovery,
-            View::Onboarding => Route::Onboarding,
-            View::Quarantine => Route::Quarantine,
-            View::Agents => Route::Agents,
-            View::Search => Route::Search,
+            AppView::Kanban => Route::Kanban,
+            AppView::Notifications => Route::Notifications,
+            AppView::Document => Route::DocumentNew,
+            AppView::Recovery => Route::Recovery,
+            AppView::Onboarding => Route::Onboarding,
+            AppView::Quarantine => Route::Quarantine,
+            AppView::Agents => Route::Agents,
+            AppView::Search => Route::Search,
             // CKP-0007 P3B.2.5: Circle detail view. Default URL points
             // at the dashboard because the canonical `/circles/:id`
             // route carries a Circle id that is not addressable from
             // the View enum alone. The deep-link entry point is the
             // sidebar / picker row click, not the sidebar nav rail.
-            View::Circle => Route::Dashboard,
+            AppView::Circle => Route::Dashboard,
         }
     }
 }
@@ -437,7 +437,7 @@ mod tests {
             Route::Developer,
             // NOTE: Route::Call / Route::Applets are intentionally omitted.
             // Their dedicated `View` enum variants were removed, so they map
-            // to `View::Dashboard` and would not roundtrip.
+            // to `AppView::Dashboard` and would not roundtrip.
             Route::Kanban,
             Route::Notifications,
             Route::Document,
@@ -445,7 +445,7 @@ mod tests {
             Route::Recovery,
             Route::Onboarding,
             Route::Quarantine,
-            // G3.Y1 settings subroutes all round-trip through View::Settings.
+            // G3.Y1 settings subroutes all round-trip through AppView::Settings.
             Route::SettingsDevices,
             Route::SettingsDevicesPair,
             Route::SettingsRecovery,

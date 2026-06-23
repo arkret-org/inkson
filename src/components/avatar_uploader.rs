@@ -124,7 +124,10 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                                 status.set("No image selected.".to_owned());
                                 return;
                             }
-                            let file = files.into_iter().next().expect("non-empty");
+                            let Some(file) = files.into_iter().next() else {
+                                status.set("No image selected.".to_owned());
+                                return;
+                            };
                             let filename = file.name();
                             let content_type = file
                                 .content_type()

@@ -1,4 +1,5 @@
 use super::*;
+use crate::hlc::Hlc;
 
 impl LocalStateStore {
     pub fn save_notification_projection(&mut self, notifications: Vec<Value>) {

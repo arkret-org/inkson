@@ -98,7 +98,7 @@ impl LocalStateStore {
     /// sequence so concurrent views can't both advance the same group from
     /// the same base snapshot.
     pub fn mls_decrypt_serial_guard(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.mls_decrypt_serial.lock().unwrap()
+        self.lock_mls_decrypt_serial()
     }
 
     /// Look up a previously decrypted plaintext by the envelope's canonical
@@ -112,7 +112,7 @@ impl LocalStateStore {
     ) -> Option<Vec<u8>> {
         use base64::Engine as _;
         let encoded = {
-            let overlay = self.mls_receive_overlay.lock().unwrap();
+            let overlay = self.lock_mls_receive_overlay();
             overlay
                 .plaintexts
                 .get(realm_id)
@@ -212,7 +212,7 @@ impl LocalStateStore {
         use base64::Engine as _;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext);
         {
-            let mut overlay = self.mls_receive_overlay.lock().unwrap();
+            let mut overlay = self.lock_mls_receive_overlay();
             overlay.snapshots.insert(realm_id.to_owned(), envelope);
             overlay
                 .plaintexts

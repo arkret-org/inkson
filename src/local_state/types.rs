@@ -1,6 +1,4 @@
-use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
 
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
@@ -14,7 +12,6 @@ use zeroize::Zeroize;
 // helpers) and the parent constants (`RAW_OPERATIONS_MAX`, ...) are reached
 // through the parent module glob.
 use super::*;
-use crate::hlc::Hlc;
 use crate::notification_rules::WatchLevel;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -298,7 +298,7 @@ pub use ephemeral::*;
 pub use error_classify::*;
 pub use http_helpers::*;
 pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
-pub use request_helpers::*;
+pub(crate) use request_helpers::*;
 pub use sync_parse::*;
 pub use views::*;
 

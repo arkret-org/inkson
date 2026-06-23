@@ -200,6 +200,7 @@ impl OperationBuilder {
         self
     }
 
+    #[allow(clippy::expect_used)]
     pub fn redacts(mut self, redacts: impl Into<String>) -> Self {
         let redacts = redacts.into();
         self.redacts = Some(
@@ -208,6 +209,7 @@ impl OperationBuilder {
         self
     }
 
+    #[allow(clippy::expect_used)]
     pub fn build(self, node_id: &str) -> EventEnvelope {
         self.build_sdk_event(node_id)
             .expect("OperationBuilder emitted an invalid SDK Event")
@@ -217,6 +219,7 @@ impl OperationBuilder {
         self.build_sdk_event_with_deps(node_id, Vec::new())
     }
 
+    #[allow(clippy::expect_used)]
     pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> EventEnvelope {
         self.build_sdk_event_with_deps(node_id, deps)
             .expect("OperationBuilder emitted an invalid SDK Event")

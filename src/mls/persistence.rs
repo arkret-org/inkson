@@ -195,6 +195,7 @@ pub enum EnvelopeError {
 /// so a tampered envelope (e.g. an attacker swapping the recorded
 /// epoch / timestamp) fails the AEAD verification instead of
 /// decrypting cleanly.
+#[allow(clippy::expect_used)]
 pub fn encrypt_state(
     realm_id: &str,
     group_id: &str,
@@ -461,6 +462,7 @@ pub fn restore_envelope(
 
 // ───────────────────── Crypto primitives ────────────────────────
 
+#[allow(clippy::expect_used)]
 fn derive_key(snapshot_secret: &str, salt: &[u8]) -> [u8; 32] {
     let hkdf = Hkdf::<Sha256>::new(Some(salt), snapshot_secret.as_bytes());
     let mut out = [0u8; 32];

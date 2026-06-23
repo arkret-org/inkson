@@ -40,7 +40,7 @@ pub fn DashboardPanel(
     token: Signal<String>,
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     selected_realm_id: Signal<String>,
-    view: Signal<super::View>,
+    view: Signal<super::AppView>,
     state_store: Signal<LocalStateStore>,
     device_queue: usize,
     frontier_state: String,
@@ -216,7 +216,7 @@ pub fn DashboardPanel(
                 Link {
                     class: "metric",
                     to: Route::Notifications,
-                    onclick: move |_| view.set(super::View::Notifications),
+                    onclick: move |_| view.set(super::AppView::Notifications),
                     div { class: "lbl", {tr("dashboard.notifications_label")} }
                     div { class: "val", "data-testid": "dashboard-unread-notifications", "{unread_notifications}" }
                     div { class: "delta", if has_session { {tr("dashboard.notifications_delta_unread")} } else { {tr("dashboard.notifications_delta_signin")} } }
@@ -224,7 +224,7 @@ pub fn DashboardPanel(
                 Link {
                     class: "metric",
                     to: Route::Directory,
-                    onclick: move |_| view.set(super::View::Directory),
+                    onclick: move |_| view.set(super::AppView::Directory),
                     div { class: "lbl", "{projection_label}" }
                     div { class: "val", "{realm_tree_snapshot.len()}" }
                     div { class: "delta", if has_session { "{projection_browse_label}" } else { "{projection_signin_label}" } }
@@ -233,7 +233,7 @@ pub fn DashboardPanel(
                     class: "metric",
                     "data-testid": "dashboard-contacts-card",
                     to: Route::Contacts,
-                    onclick: move |_| view.set(super::View::Contacts),
+                    onclick: move |_| view.set(super::AppView::Contacts),
                     div { class: "lbl", {tr("nav.contacts")} }
                     div { class: "val", "data-testid": "dashboard-contacts-count", "{contacts_metric_value}" }
                     div { class: "delta", "{contacts_metric_delta}" }
@@ -246,7 +246,7 @@ pub fn DashboardPanel(
                             let id = space.id.clone();
                             move |_| {
                                 selected_realm_id.set(id.clone());
-                                view.set(super::View::Kanban);
+                                view.set(super::AppView::Kanban);
                             }
                         },
                         div { class: "lbl", "Active strands" }
@@ -257,7 +257,7 @@ pub fn DashboardPanel(
                     Link {
                         class: "metric",
                         to: Route::Setup,
-                        onclick: move |_| view.set(super::View::Setup),
+                        onclick: move |_| view.set(super::AppView::Setup),
                         div { class: "lbl", "Realm Setup" }
                         div { class: "val", if has_session { "Ready" } else { "Sign in" } }
                         div { class: "delta", "Bootstrap your first Realm and initial policy" }
@@ -265,7 +265,7 @@ pub fn DashboardPanel(
                     Link {
                         class: "metric",
                         to: Route::Onboarding,
-                        onclick: move |_| view.set(super::View::Onboarding),
+                        onclick: move |_| view.set(super::AppView::Onboarding),
                         div { class: "lbl", "Onboarding" }
                         div { class: "val", "4 steps" }
                         div { class: "delta", "Identity, device, and recovery setup" }
@@ -281,7 +281,7 @@ pub fn DashboardPanel(
                             Link {
                                 class: "btn icon sm ghost ml-auto",
                                 to: Route::Directory,
-                                onclick: move |_| view.set(super::View::Directory),
+                                onclick: move |_| view.set(super::AppView::Directory),
                                 title: "{projection_browse_label}",
                                 "aria-label": "{projection_browse_label}",
                                 UiIcon { name: "search" }
@@ -348,7 +348,7 @@ pub fn DashboardPanel(
                                                 let id = node.id.clone();
                                                 move |_| {
                                                     selected_realm_id.set(id.clone());
-                                                    view.set(super::View::Kanban);
+                                                    view.set(super::AppView::Kanban);
                                                 }
                                             },
                                             span { class: "avatar org", "{avatar_seed}" }
@@ -449,7 +449,7 @@ pub fn DashboardPanel(
                                 class: "btn icon sm ghost ml-auto",
                                 "data-testid": "pinned-notifications-open",
                                 to: Route::Notifications,
-                                onclick: move |_| view.set(super::View::Notifications),
+                                onclick: move |_| view.set(super::AppView::Notifications),
                                 title: "Open notifications",
                                 "aria-label": "Open notifications",
                                 UiIcon { name: "inbox" }
@@ -473,7 +473,7 @@ pub fn DashboardPanel(
                                         "data-testid": "dashboard-notification-card",
                                         key: "{notification.id}",
                                         to: Route::Notifications,
-                                        onclick: move |_| view.set(super::View::Notifications),
+                                        onclick: move |_| view.set(super::AppView::Notifications),
                                         span { class: "avatar xs", if notification.read { "✓" } else { "!" } }
                                         span { class: "grow",
                                             span { class: "title f-13", "{notification.title}" }
@@ -518,7 +518,7 @@ pub fn DashboardPanel(
                             Link {
                                 class: "secondary",
                                 to: Route::SettingsSection { section: "release".to_owned() },
-                                onclick: move |_| view.set(super::View::Settings),
+                                onclick: move |_| view.set(super::AppView::Settings),
                                 UiIcon { name: "settings" }
                                 "Advanced Diagnostics"
                             }

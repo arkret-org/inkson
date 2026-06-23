@@ -20,11 +20,16 @@ pub enum DidResolutionHealthReason {
     UnsupportedPrincipalServer,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum DidResolutionHealth {
+    #[default]
     Healthy,
-    Degraded { reason: DidResolutionHealthReason },
-    Outage { reason: DidResolutionHealthReason },
+    Degraded {
+        reason: DidResolutionHealthReason,
+    },
+    Outage {
+        reason: DidResolutionHealthReason,
+    },
 }
 
 struct DidResolutionHealthPresentation {
@@ -138,12 +143,6 @@ impl DidResolutionHealth {
                 }
             }),
         }
-    }
-}
-
-impl Default for DidResolutionHealth {
-    fn default() -> Self {
-        Self::Healthy
     }
 }
 

@@ -373,7 +373,7 @@ pub fn SettingsPanel(
     let route_diagnostics_mode = DiagnosticsMode::from_slug(route.settings_section());
     let mut diagnostics_mode =
         use_signal(|| route_diagnostics_mode.unwrap_or(DiagnosticsMode::Developer));
-    let active_diagnostics_mode = route_diagnostics_mode.unwrap_or_else(|| diagnostics_mode());
+    let active_diagnostics_mode = route_diagnostics_mode.unwrap_or(diagnostics_mode());
     let mut presence_visible = use_signal(|| {
         state_store
             .read()
@@ -469,6 +469,7 @@ pub fn SettingsPanel(
     let push_registration = state_store.read().push_registration();
     let push_label = crate::push::push_status_label(push_registration.as_ref());
     let has_session = !token().trim().is_empty();
+    #[allow(clippy::redundant_closure)]
     let mut invite_locator_subject = use_signal(|| account_did());
     let mut invite_locator_token = use_signal(|| {
         let did = account_did();
@@ -654,7 +655,14 @@ pub fn SettingsPanel(
                                                         );
                                                         return;
                                                     }
-                                                    let file = files.into_iter().next().expect("non-empty");
+                                                    let Some(file) = files.into_iter().next() else {
+                                                        pending_avatar_crop.set(None);
+                                                        avatar_uploading.set(false);
+                                                        avatar_upload_status.set(
+                                                            crate::i18n::tr("settings.avatar.error"),
+                                                        );
+                                                        return;
+                                                    };
                                                     let content_type = file
                                                         .content_type()
                                                         .unwrap_or_else(|| "application/octet-stream".to_owned());

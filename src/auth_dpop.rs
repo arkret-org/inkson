@@ -135,7 +135,7 @@ impl DpopHandle {
         htu: &str,
         ath: Option<&str>,
     ) -> Result<String, AuthDpopError> {
-        let mut claims: DpopClaims = fresh_dpop_claims(htm.to_owned(), htu.to_owned(), None);
+        let mut claims: DpopClaims = fresh_dpop_claims(htm.to_owned(), htu.to_owned(), None)?;
         claims.ath = ath.map(dpop_authorization_credential_hash);
         build_dpop_proof_ed25519(&self.signing_key, &claims).map_err(AuthDpopError::Mint)
     }

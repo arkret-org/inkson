@@ -29,7 +29,7 @@ pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
 
 #[derive(Clone, Debug)]
 pub enum AccountSubscribeSnapshotResult {
-    Delta(ClientSyncOutcome),
+    Delta(Box<ClientSyncOutcome>),
     ReconnectAfter {
         reconnect_after_ms: u64,
         reason: Option<String>,

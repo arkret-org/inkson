@@ -450,10 +450,9 @@ pub fn validate_structure(value: &Value, schema_name: &str) -> Result<(), Valida
 }
 
 fn validate_cursor_schema(value: &Value) -> Result<(), ValidationError> {
-    if !value.is_object() {
+    let Some(obj) = value.as_object() else {
         return Err(ValidationError::ExpectedObject("cursor".into()));
-    }
-    let obj = value.as_object().unwrap();
+    };
     if !obj.contains_key("version") {
         return Err(ValidationError::MissingField("version".into()));
     }
@@ -464,10 +463,9 @@ fn validate_cursor_schema(value: &Value) -> Result<(), ValidationError> {
 }
 
 fn validate_event_schema(value: &Value) -> Result<(), ValidationError> {
-    if !value.is_object() {
+    let Some(obj) = value.as_object() else {
         return Err(ValidationError::ExpectedObject("event".into()));
-    }
-    let obj = value.as_object().unwrap();
+    };
     for field in &[
         "event_id",
         "kind",
@@ -496,10 +494,9 @@ fn validate_event_schema(value: &Value) -> Result<(), ValidationError> {
 }
 
 fn validate_grant_schema(value: &Value) -> Result<(), ValidationError> {
-    if !value.is_object() {
+    let Some(obj) = value.as_object() else {
         return Err(ValidationError::ExpectedObject("grant".into()));
-    }
-    let obj = value.as_object().unwrap();
+    };
     for field in &["grant_id", "issuer", "subject", "actions"] {
         if !obj.contains_key(*field) {
             return Err(ValidationError::MissingField(field.to_string()));
@@ -509,10 +506,9 @@ fn validate_grant_schema(value: &Value) -> Result<(), ValidationError> {
 }
 
 fn validate_encrypted_envelope_schema(value: &Value) -> Result<(), ValidationError> {
-    if !value.is_object() {
+    let Some(obj) = value.as_object() else {
         return Err(ValidationError::ExpectedObject("encrypted-envelope".into()));
-    }
-    let obj = value.as_object().unwrap();
+    };
     for field in &["scheme", "version", "group_id", "epoch", "ciphertext"] {
         if !obj.contains_key(*field) {
             return Err(ValidationError::MissingField(field.to_string()));

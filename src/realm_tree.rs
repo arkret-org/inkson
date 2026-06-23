@@ -70,8 +70,8 @@ pub(crate) struct SpaceProjectionInput {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "__kind", rename_all = "snake_case")]
 pub(crate) enum OptimisticRealmTreeProjection {
-    Realm(RealmProjectionBody),
-    Space(SpaceProjectionBody),
+    Realm(Box<RealmProjectionBody>),
+    Space(Box<SpaceProjectionBody>),
 }
 
 impl OptimisticRealmTreeProjection {
@@ -90,7 +90,7 @@ impl OptimisticRealmTreeProjection {
         // Realm metadata is mirrored at the body top level *and* under
         // `summary` because downstream readers (e.g.
         // `realm_projection_is_encrypted`) probe both containers.
-        Self::Realm(RealmProjectionBody {
+        Self::Realm(Box::new(RealmProjectionBody {
             owner: owner.clone(),
             admins: admins.clone(),
             members: members.clone(),
@@ -113,7 +113,7 @@ impl OptimisticRealmTreeProjection {
                 metadata_encryption_floor: encryption_floor,
             },
             event_feed: ProjectionEventFeed::default(),
-        })
+        }))
     }
 
     pub(crate) fn space(input: SpaceProjectionInput) -> Self {
@@ -125,7 +125,7 @@ impl OptimisticRealmTreeProjection {
             parent_space_id,
             default_realm_id,
         } = input;
-        Self::Space(SpaceProjectionBody {
+        Self::Space(Box::new(SpaceProjectionBody {
             realm_id,
             space_kind: kind.clone(),
             parent_space_id,
@@ -136,11 +136,11 @@ impl OptimisticRealmTreeProjection {
                 space_kind: kind,
             },
             event_feed: ProjectionEventFeed::default(),
-        })
+        }))
     }
 
     pub(crate) fn into_value(self) -> Value {
-        serde_json::to_value(self).expect("optimistic realm tree projection serializes")
+        serde_json::to_value(self).unwrap_or(Value::Null)
     }
 }
 
@@ -261,18 +261,18 @@ pub(crate) fn projection_with_title_hint(
     if !next.is_object() {
         next = serde_json::json!({});
     }
-    let object = next
-        .as_object_mut()
-        .expect("projection body was normalized to an object");
+    let Some(object) = next.as_object_mut() else {
+        return serde_json::json!({});
+    };
     let summary = object
         .entry("summary".to_owned())
         .or_insert_with(|| serde_json::json!({}));
     if !summary.is_object() {
         *summary = serde_json::json!({});
     }
-    let summary_object = summary
-        .as_object_mut()
-        .expect("projection summary was normalized to an object");
+    let Some(summary_object) = summary.as_object_mut() else {
+        return next;
+    };
     summary_object.insert("title".to_owned(), Value::String(title.to_owned()));
     object
         .entry("__title_hint_source".to_owned())

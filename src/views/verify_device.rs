@@ -1179,18 +1179,26 @@ pub fn VerifyDevicePanel(
                                         // surface a clear "connect required"
                                         // error before the run begins instead
                                         // of relying on server-side rejection.
-                                        let trust_domain = state_store
+                                        let trust_domain = match state_store
                                             .read()
                                             .load()
                                             .server_trust_domain
                                             .clone()
                                             .and_then(|s| cokret_sdk::TypedTrustDomainId::new(s).ok())
-                                            .unwrap_or_else(|| {
-                                                cokret_sdk::TypedTrustDomainId::new(
-                                                    "ck:trust_domain:unknown.local",
-                                                )
-                                                .expect("sentinel trust domain")
-                                            });
+                                        {
+                                            Some(trust_domain) => trust_domain,
+                                            None => match cokret_sdk::TypedTrustDomainId::new(
+                                                "ck:trust_domain:unknown.local",
+                                            ) {
+                                                Ok(trust_domain) => trust_domain,
+                                                Err(error) => {
+                                                    cross_signing_state.set(format!(
+                                                        "Invalid fallback trust domain: {error}"
+                                                    ));
+                                                    return;
+                                                }
+                                            },
+                                        };
                                         let executor = CrossSigningExecutor::new(
                                             plan,
                                             principal.clone(),

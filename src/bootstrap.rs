@@ -704,16 +704,14 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         true,
         persist_error.as_deref(),
     ) && let Some(ack_token) = ack_token
-    {
-        if let Err(error) = crate::views::helpers::with_authed_api(
+        && let Err(error) = crate::views::helpers::with_authed_api(
             &base_url,
             session_credential.clone(),
             |api| async move { api.ack_device_messages(&ack_token).await },
         )
         .await
-        {
-            tracing::debug!(?error, "failed to ack durable MLS welcome device messages");
-        }
+    {
+        tracing::debug!(?error, "failed to ack durable MLS welcome device messages");
     }
 
     Ok(MlsWelcomeBootstrapOutcome {

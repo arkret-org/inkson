@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 
 use super::actions::{mark_all_notifications_read, refresh_notifications, run_notification_action};
 use super::model::{
-    NotificationGroup, hydrate_notifications, notification_kind_enabled,
+    UiNotificationGroup, hydrate_notifications, notification_kind_enabled,
     notification_overrides_realm_mute, notification_scope_kind, realm_is_muted,
 };
 use crate::components::{EmptyState, EmptyStateKind, UiIcon};
@@ -32,7 +32,7 @@ pub fn NotificationsPanel(
     );
 
     let mut notifications = use_signal(move || initial_notifications.clone());
-    let mut group_by = use_signal(|| NotificationGroup::Latest);
+    let mut group_by = use_signal(|| UiNotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
     let mut status_msg = use_signal(String::new);
@@ -60,17 +60,17 @@ pub fn NotificationsPanel(
         .collect::<Vec<_>>();
 
     match group_by() {
-        NotificationGroup::Latest => {
+        UiNotificationGroup::Latest => {
             visible_notifications.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
         }
-        NotificationGroup::ByRealm => {
+        UiNotificationGroup::ByRealm => {
             visible_notifications.sort_by(|left, right| {
                 left.realm_id
                     .cmp(&right.realm_id)
                     .then_with(|| right.timestamp.cmp(&left.timestamp))
             });
         }
-        NotificationGroup::ByType => {
+        UiNotificationGroup::ByType => {
             visible_notifications.sort_by(|left, right| {
                 left.kind
                     .cmp(&right.kind)
@@ -103,20 +103,20 @@ pub fn NotificationsPanel(
                 div { class: "segmented-control", role: "tablist", "aria-label": "Notification grouping",
                     Button {
                         variant: ButtonVariant::Secondary,
-                        class: if group_by() == NotificationGroup::Latest { "segment active" } else { "segment" },
-                        onclick: move |_| group_by.set(NotificationGroup::Latest),
+                        class: if group_by() == UiNotificationGroup::Latest { "segment active" } else { "segment" },
+                        onclick: move |_| group_by.set(UiNotificationGroup::Latest),
                         {crate::i18n::tr("notifications.view.latest")}
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
-                        class: if group_by() == NotificationGroup::ByRealm { "segment active" } else { "segment" },
-                        onclick: move |_| group_by.set(NotificationGroup::ByRealm),
+                        class: if group_by() == UiNotificationGroup::ByRealm { "segment active" } else { "segment" },
+                        onclick: move |_| group_by.set(UiNotificationGroup::ByRealm),
                         {crate::i18n::tr("notifications.view.realm")}
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
-                        class: if group_by() == NotificationGroup::ByType { "segment active" } else { "segment" },
-                        onclick: move |_| group_by.set(NotificationGroup::ByType),
+                        class: if group_by() == UiNotificationGroup::ByType { "segment active" } else { "segment" },
+                        onclick: move |_| group_by.set(UiNotificationGroup::ByType),
                         {crate::i18n::tr("notifications.view.type")}
                     }
                 }

@@ -177,7 +177,7 @@ impl CoauthApi {
     ) -> anyhow::Result<OidcDiscoveryDocument> {
         let url = Url::parse(discovery_url)
             .with_context(|| format!("invalid OIDC discovery URL: {discovery_url}"))?;
-        Ok(Client::new()
+        Client::new()
             .get(url)
             .send()
             .await
@@ -186,7 +186,7 @@ impl CoauthApi {
             .context("OIDC discovery returned an error status")?
             .json()
             .await
-            .context("parse OIDC discovery document")?)
+            .context("parse OIDC discovery document")
     }
 
     /// T1.Y1 — issue a `ck.session.grant` from an OIDC authorization-code
@@ -397,17 +397,6 @@ impl CoauthApi {
             .get("authorized_event")
             .cloned()
             .context("device-enroll response missing `authorized_event`")
-    }
-
-    async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        Ok(self
-            .http
-            .get(self.endpoint(path)?)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?)
     }
 
     async fn post_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {

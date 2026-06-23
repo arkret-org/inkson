@@ -268,14 +268,6 @@ pub(super) fn relation_create_payload_value(
         })
 }
 
-pub(super) fn patch_set(path: &str, value: Value) -> anyhow::Result<cokret_sdk::Patch> {
-    let mut patch = cokret_sdk::Patch::new();
-    patch
-        .insert_op(path, cokret_sdk::PatchOp::set(value))
-        .map_err(|err| anyhow::anyhow!("invalid ck.patch.v1 path {path:?}: {err}"))?;
-    Ok(patch)
-}
-
 pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<cokret_sdk::Patch> {
     let patch: cokret_sdk::Patch = serde_json::from_value(patch)
         .map_err(|err| anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}"))?;

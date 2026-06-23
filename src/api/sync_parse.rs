@@ -7,7 +7,7 @@ pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
 #[cfg(test)]
 pub(crate) fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOutcome> {
     match parse_account_subscribe_snapshot_outcome(bytes)? {
-        AccountSubscribeSnapshotResult::Delta(response) => Ok(response),
+        AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
         AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
             reason,
@@ -95,7 +95,7 @@ impl AccountSubscribeFolder {
                 if let Some(cursor) = self.latest_cursor {
                     response.cursor = cursor;
                 }
-                Ok(AccountSubscribeSnapshotResult::Delta(response))
+                Ok(AccountSubscribeSnapshotResult::Delta(Box::new(response)))
             }
             None => anyhow::bail!("account subscribe stream ended before a delta frame"),
         }

@@ -202,14 +202,14 @@ pub fn build_signed_genesis_recovery_policy(
     principal_id: &str,
     trust_domain: &str,
 ) -> anyhow::Result<Value> {
-    if let Some(signer) = crate::event_signer::active_signer() {
-        if principal_scoped_recovery_policy_verification_method(principal_id, &signer).is_ok() {
-            return build_signed_genesis_recovery_policy_with_signer(
-                principal_id,
-                trust_domain,
-                &signer,
-            );
-        }
+    if let Some(signer) = crate::event_signer::active_signer()
+        && principal_scoped_recovery_policy_verification_method(principal_id, &signer).is_ok()
+    {
+        return build_signed_genesis_recovery_policy_with_signer(
+            principal_id,
+            trust_domain,
+            &signer,
+        );
     }
 
     anyhow::bail!(
@@ -223,14 +223,14 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
     trust_domain: &str,
     device_id: &str,
 ) -> anyhow::Result<Value> {
-    if let Some(signer) = crate::event_signer::active_signer() {
-        if principal_scoped_recovery_policy_verification_method(principal_id, &signer).is_ok() {
-            return build_signed_genesis_recovery_policy_with_signer(
-                principal_id,
-                trust_domain,
-                &signer,
-            );
-        }
+    if let Some(signer) = crate::event_signer::active_signer()
+        && principal_scoped_recovery_policy_verification_method(principal_id, &signer).is_ok()
+    {
+        return build_signed_genesis_recovery_policy_with_signer(
+            principal_id,
+            trust_domain,
+            &signer,
+        );
     }
 
     let signer = default_principal_scoped_recovery_policy_signer(principal_id, device_id)?;

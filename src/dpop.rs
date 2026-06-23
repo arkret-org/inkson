@@ -160,6 +160,9 @@ pub enum DpopError {
     /// rather than panic just in case.
     #[error("DPoP encode failed: {0}")]
     Encode(String),
+    /// The platform RNG failed while minting a fresh nonce.
+    #[error("DPoP RNG failed: {0}")]
+    Rng(String),
 }
 
 /// Convenience constructor for [`DpopClaims`] that fills in a fresh
@@ -172,20 +175,20 @@ pub fn fresh_dpop_claims(
     htm: impl Into<String>,
     htu: impl Into<String>,
     nonce: Option<String>,
-) -> DpopClaims {
+) -> Result<DpopClaims, DpopError> {
     let mut bytes = [0u8; 16];
     // yougen routes randomness through `getrandom` everywhere else
     // (see `recovery_crypto`); stay consistent so audit logging
     // / RNG-feature flags don't have to special-case DPoP.
-    fill(&mut bytes).expect("getrandom should not fail");
-    DpopClaims {
+    fill(&mut bytes).map_err(|err| DpopError::Rng(err.to_string()))?;
+    Ok(DpopClaims {
         htm: htm.into(),
         htu: htu.into(),
         iat: chrono::Utc::now().timestamp(),
         jti: URL_SAFE_NO_PAD.encode(bytes),
         nonce,
         ath: None,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -328,7 +331,7 @@ mod tests {
 
     #[test]
     fn fresh_dpop_claims_fills_iat_and_jti() {
-        let claims = fresh_dpop_claims("POST", "https://soland.example/grants", None);
+        let claims = fresh_dpop_claims("POST", "https://soland.example/grants", None).unwrap();
         assert_eq!(claims.htm, "POST");
         assert_eq!(claims.htu, "https://soland.example/grants");
         assert!(claims.iat > 1_700_000_000);

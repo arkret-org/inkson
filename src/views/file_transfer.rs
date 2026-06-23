@@ -74,7 +74,6 @@ pub fn FileTransferPanel(
                             let base_url = base_url.clone();
                             let account_did = account_did.clone();
                             let device_id = device_id.clone();
-                            let backup_trigger_signal = backup_trigger_signal;
                             move |evt: Event<FormData>| {
                                 let files = evt.files();
                                 if files.is_empty() {

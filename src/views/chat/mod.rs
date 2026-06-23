@@ -623,17 +623,15 @@ pub fn ChatPanel(
             let mut loaded_moderation_appeal_prompts = Vec::new();
             if let Ok(account) = api.account_me().await
                 && account.did == account_did_for_load
-            {
-                if let Some(display_name) =
+                && let Some(display_name) =
                     account_handle_display_from_server(&account.handle, &base).or_else(|| {
                         clean_participant_display_name(
                             account.display_name.as_deref().unwrap_or(""),
                             Some(&account_did_for_load),
                         )
                     })
-                {
-                    account_display_name_for_load.set(display_name);
-                }
+            {
+                account_display_name_for_load.set(display_name);
             }
             if let Ok(sync) = api.account_subscribe_snapshot(None).await {
                 {
@@ -659,30 +657,33 @@ pub fn ChatPanel(
                 );
                 merge_channels(
                     &mut channels.write(),
-                    channels_from_sync_realms(&sync.realms, &[selected_realm_for_load.clone()]),
+                    channels_from_sync_realms(
+                        &sync.realms,
+                        std::slice::from_ref(&selected_realm_for_load),
+                    ),
                 );
                 sync_cursor.set(sync.cursor);
             }
 
-            if !selected_realm_for_load.trim().is_empty() {
-                if let Ok(backfill) = api.backfill(&selected_realm_for_load).await {
-                    merge_channels(
-                        &mut channels.write(),
-                        channels_from_events(&selected_realm_for_load, &backfill.events),
-                    );
-                    loaded_messages.extend(chat_messages_from_events_with_sidecar(
-                        &selected_realm_for_load,
-                        &backfill.events,
-                        Some(&state_store.read()),
-                        decrypt_identity,
-                    ));
-                    loaded_poll_cards.extend(poll_cards_from_events(&backfill.events));
-                    loaded_moderation_appeal_prompts.extend(moderation_appeal_prompts_from_events(
-                        &selected_realm_for_load,
-                        &backfill.events,
-                        &account_did_for_load,
-                    ));
-                }
+            if !selected_realm_for_load.trim().is_empty()
+                && let Ok(backfill) = api.backfill(&selected_realm_for_load).await
+            {
+                merge_channels(
+                    &mut channels.write(),
+                    channels_from_events(&selected_realm_for_load, &backfill.events),
+                );
+                loaded_messages.extend(chat_messages_from_events_with_sidecar(
+                    &selected_realm_for_load,
+                    &backfill.events,
+                    Some(&state_store.read()),
+                    decrypt_identity,
+                ));
+                loaded_poll_cards.extend(poll_cards_from_events(&backfill.events));
+                loaded_moderation_appeal_prompts.extend(moderation_appeal_prompts_from_events(
+                    &selected_realm_for_load,
+                    &backfill.events,
+                    &account_did_for_load,
+                ));
             }
 
             merge_channels(

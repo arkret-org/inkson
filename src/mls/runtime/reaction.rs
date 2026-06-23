@@ -42,6 +42,7 @@ pub struct EncryptedReaction {
 /// `tag = "sha256:" || hex(HMAC-SHA256(exporter_secret, NFC(canonical_emoji)))`.
 /// Split out from [`reaction_routing_tag_v1`] so it can be unit-tested with a
 /// fixed exporter secret (the MLS half is exercised separately).
+#[allow(clippy::expect_used)]
 pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoji: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;

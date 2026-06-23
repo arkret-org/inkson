@@ -90,7 +90,7 @@ pub mod setup;
 pub mod verify_device;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum View {
+pub enum AppView {
     Login,
     Dashboard,
     Chat,
@@ -137,7 +137,7 @@ pub enum View {
     /// Rendered for both `/settings/devices` and `/settings/devices/pair`
     /// because the pair strand is a single panel mounted on a sub-route.
     SettingsDevices,
-    /// `/settings/recovery` renders through `View::Settings` so the Settings
+    /// `/settings/recovery` renders through `AppView::Settings` so the Settings
     /// sidebar remains visible.
     SettingsRecovery,
     /// CKP-0007 P3B.2.5 — Circle detail panel at `/circles/:circle_id`.

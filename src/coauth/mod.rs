@@ -12,12 +12,11 @@ mod util;
 #[cfg(test)]
 mod tests;
 
-pub use api::*;
 pub use authority::*;
 pub use authorize::*;
 pub use callback::*;
 pub use proof::*;
-pub use util::*;
+pub(crate) use util::*;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
 /// Fallback OIDC `client_id` when `auth_metadata.methods[].oidc.client_id` is

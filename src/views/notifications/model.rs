@@ -19,14 +19,14 @@ use crate::notification_rules::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NotificationGroup {
+pub(crate) enum UiNotificationGroup {
     Latest,
     ByRealm,
     ByType,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum NotificationAction {
+pub(crate) enum UiNotificationAction {
     AcceptInvite {
         realm_id: String,
         invite_id: String,
@@ -35,7 +35,7 @@ pub(crate) enum NotificationAction {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Notification {
+pub(crate) struct UiNotification {
     pub(crate) id: String,
     pub(crate) source_event_id: Option<String>,
     pub(crate) title: String,
@@ -48,7 +48,7 @@ pub(crate) struct Notification {
     pub(crate) archived: bool,
     pub(crate) timestamp: String,
     pub(crate) action_label: Option<String>,
-    pub(crate) action: Option<NotificationAction>,
+    pub(crate) action: Option<UiNotificationAction>,
     /// T4.4 — User-facing hint surfaced when the watch level
     /// suppressed delivery (e.g. "You're not getting notifications
     /// for this discussion — change watch level"). `None` for
@@ -57,15 +57,17 @@ pub(crate) struct Notification {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NotificationReadTarget {
+pub(crate) struct UiNotificationReadTarget {
     pub(crate) realm_id: String,
     pub(crate) strand_id: Option<String>,
     pub(crate) event_id: String,
     pub(crate) timestamp: String,
 }
 
-pub(crate) fn read_cursor_targets(notifications: &[Notification]) -> Vec<NotificationReadTarget> {
-    let mut latest_by_realm = BTreeMap::<String, NotificationReadTarget>::new();
+pub(crate) fn read_cursor_targets(
+    notifications: &[UiNotification],
+) -> Vec<UiNotificationReadTarget> {
+    let mut latest_by_realm = BTreeMap::<String, UiNotificationReadTarget>::new();
     for notification in notifications {
         let Some(event_id) = notification.source_event_id.clone() else {
             continue;
@@ -73,7 +75,7 @@ pub(crate) fn read_cursor_targets(notifications: &[Notification]) -> Vec<Notific
         if notification.realm_id.trim().is_empty() {
             continue;
         }
-        let target = NotificationReadTarget {
+        let target = UiNotificationReadTarget {
             realm_id: notification.realm_id.clone(),
             strand_id: notification.strand_id.clone(),
             event_id,
@@ -275,7 +277,7 @@ pub(crate) fn hydrate_notifications(
     local_state: &ClientLocalState,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
-) -> Vec<Notification> {
+) -> Vec<UiNotification> {
     let joined_realms = local_state
         .realm_tree_projections
         .keys()
@@ -303,7 +305,7 @@ fn notification_from_value(
     local_state: &ClientLocalState,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
-) -> Option<Notification> {
+) -> Option<UiNotification> {
     let mut eval_ctx = notification_eval_context(&value);
     // Apply the receiver's per-realm watch override (None when unconfigured).
     // Invites are exempt: they target a realm the receiver is not a member of,
@@ -371,7 +373,7 @@ fn notification_from_value(
             if realm_id.is_empty() {
                 None
             } else {
-                Some(NotificationAction::AcceptInvite {
+                Some(UiNotificationAction::AcceptInvite {
                     realm_id: realm_id.clone(),
                     invite_id,
                     realm_label: realm_label.clone(),
@@ -384,7 +386,7 @@ fn notification_from_value(
     let timestamp = value_string(&value, &["timestamp", "created_at"])
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
-    Some(Notification {
+    Some(UiNotification {
         id,
         source_event_id,
         title,
@@ -459,7 +461,7 @@ fn default_notification_action(kind: &str) -> &'static str {
     }
 }
 
-pub(crate) fn notification_scope_kind(notification: &Notification) -> &'static str {
+pub(crate) fn notification_scope_kind(notification: &UiNotification) -> &'static str {
     if notification.kind == "invite" {
         "Realm"
     } else {
@@ -572,7 +574,7 @@ pub(crate) fn notification_kind_enabled(local_state: &ClientLocalState, kind: &s
         .unwrap_or(true)
 }
 
-pub(crate) fn notification_overrides_realm_mute(notification: &Notification) -> bool {
+pub(crate) fn notification_overrides_realm_mute(notification: &UiNotification) -> bool {
     matches!(
         notification.kind.as_str(),
         // Invites bypass a per-realm mute: a pending invitation targets a

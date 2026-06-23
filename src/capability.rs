@@ -108,13 +108,13 @@ impl ActionGroup {
     }
 }
 
-/// Constraint types as defined by the spec.
+/// UI-side capability constraints hydrated for local pre-gating.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "params")]
-pub enum Constraint {
+pub enum UiCapabilityConstraint {
     /// Time-based validity window. Spec uses the `not_before` / `expires_at`
     /// pair; `not_after` is a forbidden field name on the capability
-    /// constraint wire form.
+    /// UiCapabilityConstraint wire form.
     Temporal {
         not_before: Option<String>,
         expires_at: Option<String>,
@@ -165,9 +165,9 @@ pub enum Constraint {
     },
 }
 
-impl Constraint {
-    /// Evaluate whether this constraint is satisfied given the context.
-    pub fn evaluate(&self, ctx: &EvalContext) -> ConstraintResult {
+impl UiCapabilityConstraint {
+    /// Evaluate whether this UiCapabilityConstraint is satisfied given the context.
+    pub fn evaluate(&self, ctx: &UiCapabilityEvalContext) -> UiConstraintResult {
         match self {
             Self::Temporal {
                 not_before,
@@ -177,14 +177,14 @@ impl Constraint {
                 if let Some(before) = not_before
                     && now < before
                 {
-                    return ConstraintResult::Deny("before validity window".to_owned());
+                    return UiConstraintResult::Deny("before validity window".to_owned());
                 }
                 if let Some(after) = expires_at
                     && now > after
                 {
-                    return ConstraintResult::Deny("after validity window".to_owned());
+                    return UiConstraintResult::Deny("after validity window".to_owned());
                 }
-                ConstraintResult::Allow
+                UiConstraintResult::Allow
             }
             Self::FieldAccess {
                 allowed_fields,
@@ -193,16 +193,16 @@ impl Constraint {
                 if let Some(ref fields) = ctx.requested_fields {
                     for field in fields {
                         if denied_fields.contains(field) {
-                            return ConstraintResult::Deny(format!("field {field} is denied"));
+                            return UiConstraintResult::Deny(format!("field {field} is denied"));
                         }
                         if !allowed_fields.is_empty() && !allowed_fields.contains(field) {
-                            return ConstraintResult::Deny(format!(
+                            return UiConstraintResult::Deny(format!(
                                 "field {field} not in allowed list"
                             ));
                         }
                     }
                 }
-                ConstraintResult::Allow
+                UiConstraintResult::Allow
             }
             Self::TypeRestriction {
                 allowed_object_types,
@@ -211,20 +211,20 @@ impl Constraint {
                 if let Some(ref object_type) = ctx.object_type
                     && !allowed_object_types.contains(object_type)
                 {
-                    return ConstraintResult::Deny(format!(
+                    return UiConstraintResult::Deny(format!(
                         "object type {object_type} not allowed"
                     ));
                 }
                 if !allowed_facets.is_empty() {
                     for facet in allowed_facets {
                         if !ctx.facets.contains(facet) {
-                            return ConstraintResult::Deny(format!(
+                            return UiConstraintResult::Deny(format!(
                                 "facet {facet} not allowed or unavailable"
                             ));
                         }
                     }
                 }
-                ConstraintResult::Allow
+                UiConstraintResult::Allow
             }
             Self::ScopeLimitation {
                 space_ids,
@@ -234,32 +234,32 @@ impl Constraint {
                     && !space_ids.is_empty()
                     && !space_ids.contains(space)
                 {
-                    return ConstraintResult::Deny(format!("space {space} not in scope"));
+                    return UiConstraintResult::Deny(format!("space {space} not in scope"));
                 }
                 if let Some(ref container) = ctx.space_container_id
                     && !space_container_ids.is_empty()
                     && !space_container_ids.contains(container)
                 {
-                    return ConstraintResult::Deny(format!(
+                    return UiConstraintResult::Deny(format!(
                         "space container {container} not in scope"
                     ));
                 }
-                ConstraintResult::Allow
+                UiConstraintResult::Allow
             }
             Self::DelegationControl {
                 max_depth,
                 allowed_actions,
             } => {
                 if ctx.delegation_depth > *max_depth {
-                    return ConstraintResult::Deny("delegation depth exceeded".to_owned());
+                    return UiConstraintResult::Deny("delegation depth exceeded".to_owned());
                 }
                 if let Some(ref action) = ctx.action
                     && !allowed_actions.is_empty()
                     && !allowed_actions.contains(action)
                 {
-                    return ConstraintResult::Deny(format!("action {action} not delegatable"));
+                    return UiConstraintResult::Deny(format!("action {action} not delegatable"));
                 }
-                ConstraintResult::Allow
+                UiConstraintResult::Allow
             }
             Self::RateLimiting {
                 max_operations,
@@ -271,9 +271,9 @@ impl Constraint {
                     .copied()
                     .unwrap_or(0);
                 if count >= *max_operations {
-                    ConstraintResult::Deny("rate limit exceeded".to_owned())
+                    UiConstraintResult::Deny("rate limit exceeded".to_owned())
                 } else {
-                    ConstraintResult::Allow
+                    UiConstraintResult::Allow
                 }
             }
             Self::ApprovalWorkflow {
@@ -286,67 +286,67 @@ impl Constraint {
                     .filter(|a| approvers.contains(a))
                     .count() as u32;
                 if approved < *min_approvals {
-                    ConstraintResult::RequireReview(format!(
+                    UiConstraintResult::RequireReview(format!(
                         "need {} more approvals",
                         min_approvals - approved
                     ))
                 } else {
-                    ConstraintResult::Allow
+                    UiConstraintResult::Allow
                 }
             }
             Self::ClaimBased { required_claims } => {
                 for claim in required_claims {
                     if !ctx.claims.contains(claim) {
-                        return ConstraintResult::Deny(format!("missing claim: {claim}"));
+                        return UiConstraintResult::Deny(format!("missing claim: {claim}"));
                     }
                 }
-                ConstraintResult::Allow
+                UiConstraintResult::Allow
             }
             Self::Accountability {
                 audit_log,
                 retain_identity,
             } => {
                 if *audit_log && !ctx.audit_enabled {
-                    return ConstraintResult::Deny("audit log required".to_owned());
+                    return UiConstraintResult::Deny("audit log required".to_owned());
                 }
                 if *retain_identity && ctx.anonymous {
-                    return ConstraintResult::Deny("identity retention required".to_owned());
+                    return UiConstraintResult::Deny("identity retention required".to_owned());
                 }
-                ConstraintResult::Allow
+                UiConstraintResult::Allow
             }
             Self::EncryptionRequirement {
                 require_e2ee,
                 allowed_schemes,
             } => {
                 if *require_e2ee && !ctx.is_encrypted {
-                    return ConstraintResult::Deny("E2EE required".to_owned());
+                    return UiConstraintResult::Deny("E2EE required".to_owned());
                 }
                 if let Some(ref scheme) = ctx.encryption_scheme
                     && !allowed_schemes.is_empty()
                     && !allowed_schemes.contains(scheme)
                 {
-                    return ConstraintResult::Deny(format!(
+                    return UiConstraintResult::Deny(format!(
                         "encryption scheme {scheme} not allowed"
                     ));
                 }
-                ConstraintResult::Allow
+                UiConstraintResult::Allow
             }
         }
     }
 }
 
-/// Result of evaluating a constraint.
+/// Result of evaluating a UiCapabilityConstraint.
 #[derive(Clone, Debug, PartialEq)]
-pub enum ConstraintResult {
+pub enum UiConstraintResult {
     Allow,
     Deny(String),
     Quarantine(String),
     RequireReview(String),
 }
 
-/// Evaluation context for constraint checking.
+/// Evaluation context for UiCapabilityConstraint checking.
 #[derive(Clone, Debug, Default)]
-pub struct EvalContext {
+pub struct UiCapabilityEvalContext {
     pub current_time: String,
     pub requested_fields: Option<Vec<String>>,
     pub object_type: Option<String>,
@@ -364,10 +364,10 @@ pub struct EvalContext {
     pub encryption_scheme: Option<String>,
 }
 
-/// Resource selector for matching resources.
-/// Supports the EBNF syntax from the spec.
+/// UI-side resource selector for matching resources.
+/// Supports the EBNF syntax from the spec but is not the wire type.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ResourceSelector {
+pub enum UiResourceSelector {
     /// Match a specific space.
     Space(String),
     /// Match a specific canonical object.
@@ -381,16 +381,16 @@ pub enum ResourceSelector {
     /// Match everything.
     Wildcard,
     /// Match any of the selectors (disjunction).
-    Any(Vec<ResourceSelector>),
+    Any(Vec<UiResourceSelector>),
     /// Match all of the selectors (conjunction).
-    All(Vec<ResourceSelector>),
+    All(Vec<UiResourceSelector>),
     /// Exclude matching selectors.
-    Except(Box<ResourceSelector>, Vec<ResourceSelector>),
+    Except(Box<UiResourceSelector>, Vec<UiResourceSelector>),
 }
 
-impl ResourceSelector {
+impl UiResourceSelector {
     /// Check if this selector matches the given resource.
-    pub fn matches(&self, resource: &ResourceRef) -> bool {
+    pub fn matches(&self, resource: &UiResourceRef) -> bool {
         match self {
             Self::Space(id) => resource.space_id.as_ref() == Some(id),
             Self::Object(id) => resource.object_ref.as_ref() == Some(id),
@@ -409,7 +409,7 @@ impl ResourceSelector {
 
 /// Reference to a resource being evaluated.
 #[derive(Clone, Debug, Default)]
-pub struct ResourceRef {
+pub struct UiResourceRef {
     pub space_id: Option<String>,
     pub object_ref: Option<String>,
     pub object_type: Option<String>,
@@ -432,20 +432,20 @@ pub struct ResourceRef {
 /// removed. The authoritative grant lifecycle (issuance, proofs,
 /// delegation, revocation) lives on the server.
 #[derive(Clone, Debug, PartialEq)]
-pub struct CapabilityGrant {
+pub struct UiCapabilityGrant {
     /// The subject (who receives the capability).
     pub subject: String,
     /// Resources this grant applies to.
-    pub resource_selectors: Vec<ResourceSelector>,
+    pub resource_selectors: Vec<UiResourceSelector>,
     /// Actions allowed by this grant.
     pub actions: Vec<String>,
     /// Constraints on this grant.
-    pub constraints: Vec<Constraint>,
+    pub constraints: Vec<UiCapabilityConstraint>,
 }
 
 /// Authorization decision.
 #[derive(Clone, Debug, PartialEq)]
-pub enum AuthzDecision {
+pub enum UiAuthzDecision {
     Allow,
     Deny(String),
     Quarantine(String),
@@ -463,7 +463,7 @@ pub enum AuthzDecision {
 #[derive(Clone, Debug, Default)]
 pub struct CapabilityEngine {
     /// Grants the UI has hydrated for pre-gating, indexed by subject.
-    grants: Vec<CapabilityGrant>,
+    grants: Vec<UiCapabilityGrant>,
 }
 
 impl CapabilityEngine {
@@ -479,13 +479,13 @@ impl CapabilityEngine {
     /// projection path is wired up, grants arrive already
     /// server-validated; yougen simply mirrors them to pre-gate buttons.
     /// Do not treat a grant present here as proof of authorization.
-    pub fn add_grant(&mut self, grant: CapabilityGrant) {
+    pub fn add_grant(&mut self, grant: UiCapabilityGrant) {
         self.grants.push(grant);
     }
 
     /// Check whether a subject can perform an action on a resource.
     ///
-    /// **Fail-closed (R5):** absent an explicit, constraint-satisfied
+    /// **Fail-closed (R5):** absent an explicit, UiCapabilityConstraint-satisfied
     /// Allow this returns `Deny`. yougen never derives an Allow from the
     /// lack of a matching deny. This decision is advisory for the UI only;
     /// the server makes the authoritative call.
@@ -493,11 +493,11 @@ impl CapabilityEngine {
         &self,
         subject: &str,
         action: &str,
-        resource: &ResourceRef,
-        ctx: &EvalContext,
-    ) -> AuthzDecision {
+        resource: &UiResourceRef,
+        ctx: &UiCapabilityEvalContext,
+    ) -> UiAuthzDecision {
         // Find all grants for this subject
-        let applicable_grants: Vec<&CapabilityGrant> = self
+        let applicable_grants: Vec<&UiCapabilityGrant> = self
             .grants
             .iter()
             .filter(|g| g.subject == subject)
@@ -508,7 +508,7 @@ impl CapabilityEngine {
             .collect();
 
         if applicable_grants.is_empty() {
-            return AuthzDecision::Deny(format!("no grant found for {subject} to {action}"));
+            return UiAuthzDecision::Deny(format!("no grant found for {subject} to {action}"));
         }
 
         // Evaluate constraints in priority order: deny > quarantine > allow > require_review
@@ -524,14 +524,14 @@ impl CapabilityEngine {
             }
             for constraint in &grant.constraints {
                 match constraint.evaluate(ctx) {
-                    ConstraintResult::Allow => has_allow = true,
-                    ConstraintResult::Deny(reason) => {
-                        return AuthzDecision::Deny(reason);
+                    UiConstraintResult::Allow => has_allow = true,
+                    UiConstraintResult::Deny(reason) => {
+                        return UiAuthzDecision::Deny(reason);
                     }
-                    ConstraintResult::Quarantine(reason) => {
+                    UiConstraintResult::Quarantine(reason) => {
                         quarantine_reason = Some(reason);
                     }
-                    ConstraintResult::RequireReview(reason) => {
+                    UiConstraintResult::RequireReview(reason) => {
                         review_reason = Some(reason);
                     }
                 }
@@ -542,13 +542,15 @@ impl CapabilityEngine {
         // that does not produce an explicit Allow falls through to Deny
         // (fail-closed) rather than the previous fail-open default.
         if let Some(reason) = quarantine_reason {
-            AuthzDecision::Quarantine(reason)
+            UiAuthzDecision::Quarantine(reason)
         } else if has_allow {
-            AuthzDecision::Allow
+            UiAuthzDecision::Allow
         } else if let Some(reason) = review_reason {
-            AuthzDecision::RequireReview(reason)
+            UiAuthzDecision::RequireReview(reason)
         } else {
-            AuthzDecision::Deny(format!("no constraint admitted {subject} to {action}"))
+            UiAuthzDecision::Deny(format!(
+                "no UiCapabilityConstraint admitted {subject} to {action}"
+            ))
         }
     }
 
@@ -567,20 +569,20 @@ impl CapabilityEngine {
         &self,
         subject: &str,
         action: &str,
-        resource: &ResourceRef,
-        ctx: &EvalContext,
+        resource: &UiResourceRef,
+        ctx: &UiCapabilityEvalContext,
     ) -> CapabilityGate {
         let has_any_grant_for_subject = self.grants.iter().any(|g| g.subject == subject);
         if !has_any_grant_for_subject {
             return CapabilityGate::open();
         }
         match self.check(subject, action, resource, ctx) {
-            AuthzDecision::Allow => CapabilityGate::open(),
-            AuthzDecision::Deny(reason) => CapabilityGate::denied(reason),
-            AuthzDecision::Quarantine(reason) => {
+            UiAuthzDecision::Allow => CapabilityGate::open(),
+            UiAuthzDecision::Deny(reason) => CapabilityGate::denied(reason),
+            UiAuthzDecision::Quarantine(reason) => {
                 CapabilityGate::denied(format!("quarantine: {reason}"))
             }
-            AuthzDecision::RequireReview(reason) => {
+            UiAuthzDecision::RequireReview(reason) => {
                 CapabilityGate::denied(format!("review required: {reason}"))
             }
         }
@@ -619,20 +621,24 @@ impl CapabilityGate {
 mod tests {
     use super::*;
 
-    fn grant(subject: &str, actions: &[&str], constraints: Vec<Constraint>) -> CapabilityGrant {
-        CapabilityGrant {
+    fn grant(
+        subject: &str,
+        actions: &[&str],
+        constraints: Vec<UiCapabilityConstraint>,
+    ) -> UiCapabilityGrant {
+        UiCapabilityGrant {
             subject: subject.to_owned(),
-            resource_selectors: vec![ResourceSelector::Space("ck:space:test".to_owned())],
+            resource_selectors: vec![UiResourceSelector::Space("ck:space:test".to_owned())],
             actions: actions.iter().map(|s| (*s).to_owned()).collect(),
             constraints,
         }
     }
 
-    fn test_grant() -> CapabilityGrant {
+    fn test_grant() -> UiCapabilityGrant {
         grant(
             "did:web:bob",
             &["ck.strand.read", "ck.strand.update"],
-            vec![Constraint::Temporal {
+            vec![UiCapabilityConstraint::Temporal {
                 not_before: None,
                 expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
             }],
@@ -674,11 +680,11 @@ mod tests {
         // the server make the final call. This is the "we haven't
         // hydrated capability state yet" path.
         let engine = CapabilityEngine::new();
-        let resource = ResourceRef {
+        let resource = UiResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
-        let ctx = EvalContext::default();
+        let ctx = UiCapabilityEvalContext::default();
         let gate = engine.ui_gate("did:web:alice.example", "ck.space.archive", &resource, &ctx);
         assert!(gate.enabled);
         assert!(gate.reason.is_empty());
@@ -690,17 +696,17 @@ mod tests {
         // now active and denies space.archive because the grant only
         // covers realm.update.
         let mut engine = CapabilityEngine::new();
-        engine.add_grant(CapabilityGrant {
+        engine.add_grant(UiCapabilityGrant {
             subject: "did:web:alice.example".to_owned(),
-            resource_selectors: vec![ResourceSelector::Wildcard],
+            resource_selectors: vec![UiResourceSelector::Wildcard],
             actions: vec!["ck.realm.update".to_owned()],
             constraints: Vec::new(),
         });
-        let resource = ResourceRef {
+        let resource = UiResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
-        let ctx = EvalContext::default();
+        let ctx = UiCapabilityEvalContext::default();
         let gate = engine.ui_gate("did:web:alice.example", "ck.space.archive", &resource, &ctx);
         assert!(!gate.enabled);
         assert!(gate.reason.contains("ck.space.archive"));
@@ -709,17 +715,17 @@ mod tests {
     #[test]
     fn test_ui_gate_allows_when_grant_covers_action() {
         let mut engine = CapabilityEngine::new();
-        engine.add_grant(CapabilityGrant {
+        engine.add_grant(UiCapabilityGrant {
             subject: "did:web:alice.example".to_owned(),
-            resource_selectors: vec![ResourceSelector::Wildcard],
+            resource_selectors: vec![UiResourceSelector::Wildcard],
             actions: vec!["ck.space.archive".to_owned(), "ck.space.restore".to_owned()],
             constraints: Vec::new(),
         });
-        let resource = ResourceRef {
+        let resource = UiResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
-        let ctx = EvalContext::default();
+        let ctx = UiCapabilityEvalContext::default();
         let gate = engine.ui_gate("did:web:alice.example", "ck.space.archive", &resource, &ctx);
         assert!(gate.enabled);
         assert!(gate.reason.is_empty());
@@ -727,14 +733,14 @@ mod tests {
 
     #[test]
     fn test_resource_selector() {
-        let selector = ResourceSelector::Space("ck:space:test".to_owned());
-        let resource = ResourceRef {
+        let selector = UiResourceSelector::Space("ck:space:test".to_owned());
+        let resource = UiResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         assert!(selector.matches(&resource));
 
-        let resource_no_match = ResourceRef {
+        let resource_no_match = UiResourceRef {
             space_id: Some("ck:space:other".to_owned()),
             ..Default::default()
         };
@@ -743,22 +749,22 @@ mod tests {
 
     #[test]
     fn test_wildcard_selector() {
-        let selector = ResourceSelector::Wildcard;
-        let resource = ResourceRef::default();
+        let selector = UiResourceSelector::Wildcard;
+        let resource = UiResourceRef::default();
         assert!(selector.matches(&resource));
     }
 
     #[test]
     fn test_any_selector() {
-        let selector = ResourceSelector::Any(vec![
-            ResourceSelector::Space("ck:space:a".to_owned()),
-            ResourceSelector::Space("ck:space:b".to_owned()),
+        let selector = UiResourceSelector::Any(vec![
+            UiResourceSelector::Space("ck:space:a".to_owned()),
+            UiResourceSelector::Space("ck:space:b".to_owned()),
         ]);
-        let resource_a = ResourceRef {
+        let resource_a = UiResourceRef {
             space_id: Some("ck:space:a".to_owned()),
             ..Default::default()
         };
-        let resource_c = ResourceRef {
+        let resource_c = UiResourceRef {
             space_id: Some("ck:space:c".to_owned()),
             ..Default::default()
         };
@@ -768,15 +774,15 @@ mod tests {
 
     #[test]
     fn test_except_selector() {
-        let selector = ResourceSelector::Except(
-            Box::new(ResourceSelector::Wildcard),
-            vec![ResourceSelector::Space("ck:space:secret".to_owned())],
+        let selector = UiResourceSelector::Except(
+            Box::new(UiResourceSelector::Wildcard),
+            vec![UiResourceSelector::Space("ck:space:secret".to_owned())],
         );
-        let normal = ResourceRef {
+        let normal = UiResourceRef {
             space_id: Some("ck:space:normal".to_owned()),
             ..Default::default()
         };
-        let secret = ResourceRef {
+        let secret = UiResourceRef {
             space_id: Some("ck:space:secret".to_owned()),
             ..Default::default()
         };
@@ -789,28 +795,28 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(test_grant());
 
-        let resource = ResourceRef {
+        let resource = UiResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             object_ref: Some("ck:strand:0196419b-0000-7000-8000-000000000001".to_owned()),
             ..Default::default()
         };
-        let ctx = EvalContext {
+        let ctx = UiCapabilityEvalContext {
             current_time: "2026-01-01T00:00:00Z".to_owned(),
             ..Default::default()
         };
 
         let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
-        assert_eq!(decision, AuthzDecision::Allow);
+        assert_eq!(decision, UiAuthzDecision::Allow);
     }
 
     #[test]
     fn test_capability_engine_check_deny_no_grant() {
         let engine = CapabilityEngine::new();
-        let resource = ResourceRef::default();
-        let ctx = EvalContext::default();
+        let resource = UiResourceRef::default();
+        let ctx = UiCapabilityEvalContext::default();
 
         let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
-        assert!(matches!(decision, AuthzDecision::Deny(_)));
+        assert!(matches!(decision, UiAuthzDecision::Deny(_)));
     }
 
     #[test]
@@ -818,14 +824,14 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(test_grant());
 
-        let resource = ResourceRef {
+        let resource = UiResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
-        let ctx = EvalContext::default();
+        let ctx = UiCapabilityEvalContext::default();
 
         let decision = engine.check("did:web:bob", "ck.strand.archive", &resource, &ctx);
-        assert!(matches!(decision, AuthzDecision::Deny(_)));
+        assert!(matches!(decision, UiAuthzDecision::Deny(_)));
     }
 
     #[test]
@@ -833,14 +839,14 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(test_grant());
 
-        let resource = ResourceRef {
+        let resource = UiResourceRef {
             space_id: Some("ck:space:other".to_owned()),
             ..Default::default()
         };
-        let ctx = EvalContext::default();
+        let ctx = UiCapabilityEvalContext::default();
 
         let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
-        assert!(matches!(decision, AuthzDecision::Deny(_)));
+        assert!(matches!(decision, UiAuthzDecision::Deny(_)));
     }
 
     #[test]
@@ -850,135 +856,147 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(grant("did:web:bob", &["ck.strand.read"], Vec::new()));
 
-        let resource = ResourceRef {
+        let resource = UiResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
-        let ctx = EvalContext::default();
+        let ctx = UiCapabilityEvalContext::default();
         let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
-        assert_eq!(decision, AuthzDecision::Allow);
+        assert_eq!(decision, UiAuthzDecision::Allow);
     }
 
     #[test]
     fn test_capability_engine_check_require_review_not_allow() {
-        // R5 fail-closed: a grant whose only constraint resolves to
+        // R5 fail-closed: a grant whose only UiCapabilityConstraint resolves to
         // RequireReview must NOT silently become Allow.
         let mut engine = CapabilityEngine::new();
         engine.add_grant(grant(
             "did:web:bob",
             &["ck.strand.read"],
-            vec![Constraint::ApprovalWorkflow {
+            vec![UiCapabilityConstraint::ApprovalWorkflow {
                 approvers: vec!["did:web:alice".to_owned()],
                 min_approvals: 1,
             }],
         ));
 
-        let resource = ResourceRef {
+        let resource = UiResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
-        let ctx = EvalContext::default();
+        let ctx = UiCapabilityEvalContext::default();
         let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
-        assert!(matches!(decision, AuthzDecision::RequireReview(_)));
+        assert!(matches!(decision, UiAuthzDecision::RequireReview(_)));
     }
 
     #[test]
     fn test_constraint_temporal_allow() {
-        let constraint = Constraint::Temporal {
+        let UiCapabilityConstraint = UiCapabilityConstraint::Temporal {
             not_before: Some("2025-01-01T00:00:00Z".to_owned()),
             expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
         };
-        let ctx = EvalContext {
+        let ctx = UiCapabilityEvalContext {
             current_time: "2026-06-15T00:00:00Z".to_owned(),
             ..Default::default()
         };
-        assert_eq!(constraint.evaluate(&ctx), ConstraintResult::Allow);
+        assert_eq!(
+            UiCapabilityConstraint.evaluate(&ctx),
+            UiConstraintResult::Allow
+        );
     }
 
     #[test]
     fn test_constraint_temporal_deny() {
-        let constraint = Constraint::Temporal {
+        let UiCapabilityConstraint = UiCapabilityConstraint::Temporal {
             not_before: None,
             expires_at: Some("2025-01-01T00:00:00Z".to_owned()),
         };
-        let ctx = EvalContext {
+        let ctx = UiCapabilityEvalContext {
             current_time: "2026-06-15T00:00:00Z".to_owned(),
             ..Default::default()
         };
         assert!(matches!(
-            constraint.evaluate(&ctx),
-            ConstraintResult::Deny(_)
+            UiCapabilityConstraint.evaluate(&ctx),
+            UiConstraintResult::Deny(_)
         ));
     }
 
     #[test]
     fn test_constraint_field_access() {
-        let constraint = Constraint::FieldAccess {
+        let UiCapabilityConstraint = UiCapabilityConstraint::FieldAccess {
             allowed_fields: vec!["name".to_owned(), "email".to_owned()],
             denied_fields: vec!["ssn".to_owned()],
         };
 
-        let ctx_allowed = EvalContext {
+        let ctx_allowed = UiCapabilityEvalContext {
             requested_fields: Some(vec!["name".to_owned()]),
             ..Default::default()
         };
-        assert_eq!(constraint.evaluate(&ctx_allowed), ConstraintResult::Allow);
+        assert_eq!(
+            UiCapabilityConstraint.evaluate(&ctx_allowed),
+            UiConstraintResult::Allow
+        );
 
-        let ctx_denied = EvalContext {
+        let ctx_denied = UiCapabilityEvalContext {
             requested_fields: Some(vec!["ssn".to_owned()]),
             ..Default::default()
         };
         assert!(matches!(
-            constraint.evaluate(&ctx_denied),
-            ConstraintResult::Deny(_)
+            UiCapabilityConstraint.evaluate(&ctx_denied),
+            UiConstraintResult::Deny(_)
         ));
     }
 
     #[test]
     fn test_constraint_type_restriction_checks_facets() {
-        let constraint = Constraint::TypeRestriction {
+        let UiCapabilityConstraint = UiCapabilityConstraint::TypeRestriction {
             allowed_object_types: vec!["strand".to_owned()],
             allowed_facets: vec!["stateful".to_owned(), "rankable".to_owned()],
         };
 
-        let ctx_allowed = EvalContext {
+        let ctx_allowed = UiCapabilityEvalContext {
             object_type: Some("strand".to_owned()),
             facets: vec!["stateful".to_owned(), "rankable".to_owned()],
             ..Default::default()
         };
-        assert_eq!(constraint.evaluate(&ctx_allowed), ConstraintResult::Allow);
+        assert_eq!(
+            UiCapabilityConstraint.evaluate(&ctx_allowed),
+            UiConstraintResult::Allow
+        );
 
-        let ctx_denied = EvalContext {
+        let ctx_denied = UiCapabilityEvalContext {
             object_type: Some("strand".to_owned()),
             facets: vec!["stateful".to_owned()],
             ..Default::default()
         };
         assert!(matches!(
-            constraint.evaluate(&ctx_denied),
-            ConstraintResult::Deny(_)
+            UiCapabilityConstraint.evaluate(&ctx_denied),
+            UiConstraintResult::Deny(_)
         ));
     }
 
     #[test]
     fn test_constraint_rate_limiting() {
-        let constraint = Constraint::RateLimiting {
+        let UiCapabilityConstraint = UiCapabilityConstraint::RateLimiting {
             max_operations: 10,
             window_seconds: 60,
         };
 
-        let ctx_under = EvalContext {
+        let ctx_under = UiCapabilityEvalContext {
             operation_counts: HashMap::from([("60s".to_owned(), 5)]),
             ..Default::default()
         };
-        assert_eq!(constraint.evaluate(&ctx_under), ConstraintResult::Allow);
+        assert_eq!(
+            UiCapabilityConstraint.evaluate(&ctx_under),
+            UiConstraintResult::Allow
+        );
 
-        let ctx_over = EvalContext {
+        let ctx_over = UiCapabilityEvalContext {
             operation_counts: HashMap::from([("60s".to_owned(), 15)]),
             ..Default::default()
         };
         assert!(matches!(
-            constraint.evaluate(&ctx_over),
-            ConstraintResult::Deny(_)
+            UiCapabilityConstraint.evaluate(&ctx_over),
+            UiConstraintResult::Deny(_)
         ));
     }
 }

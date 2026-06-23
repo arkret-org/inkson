@@ -56,7 +56,4 @@ pub use model::{
     is_pairing_request_expired, participation_ceiling_reason, requested_scope_for_presets,
     verify_audit_chain,
 };
-// Crate-internal re-exports: private helpers exercised by the unit
-// tests in `tests.rs`.
-pub(crate) use model::{AuditVerifyStatus, verify_agent_audit_binding};
 pub use panel::AgentsPanel;

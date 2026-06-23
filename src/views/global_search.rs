@@ -94,7 +94,7 @@ pub fn local_decrypted_index_search(
     let query_trimmed = query.trim();
     if query_trimmed.is_empty()
         || limit == 0
-        || object_kinds.is_some_and(|kinds| !kinds.iter().any(|kind| *kind == "message"))
+        || object_kinds.is_some_and(|kinds| !kinds.contains(&"message"))
     {
         return IndexSearchView {
             query: query_trimmed.to_owned(),
@@ -106,8 +106,8 @@ pub fn local_decrypted_index_search(
     let query_lc = query_trimmed.to_lowercase();
     let realm_filter = realm_ids
         .iter()
-        .cloned()
         .filter(|realm_id| !realm_id.trim().is_empty())
+        .cloned()
         .collect::<std::collections::BTreeSet<_>>();
     let events =
         projection_events_from_sync_realms(realms, Some(store), Some((actor_id, device_id)));

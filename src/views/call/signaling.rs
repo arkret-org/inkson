@@ -120,15 +120,15 @@ pub(super) fn apply_inbox_items(
                             Err(err) => last_error.set(media_error_label(err)),
                         }
                     }
-                } else if let Some(sdp) = sdp_from_data(&item.data, "answer") {
-                    if let Some(t) = transport() {
-                        match t.borrow_mut().accept_answer(&sdp) {
-                            Ok(()) => {
-                                stage.set(CallStage::Active);
-                                status.set("connected".to_owned());
-                            }
-                            Err(err) => last_error.set(media_error_label(err)),
+                } else if let Some(sdp) = sdp_from_data(&item.data, "answer")
+                    && let Some(t) = transport()
+                {
+                    match t.borrow_mut().accept_answer(&sdp) {
+                        Ok(()) => {
+                            stage.set(CallStage::Active);
+                            status.set("connected".to_owned());
                         }
+                        Err(err) => last_error.set(media_error_label(err)),
                     }
                 }
             }

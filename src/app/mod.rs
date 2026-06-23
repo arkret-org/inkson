@@ -78,14 +78,14 @@ mod sidebar;
 mod sidebar_width;
 pub(crate) use clipboard::*;
 pub(crate) use command_palette::*;
-pub(crate) use connect::*;
+use connect::*;
 pub(crate) use context_bar::*;
 pub(crate) use feature_gate::*;
 pub(crate) use handles::*;
 pub(crate) use manage_pages::*;
-pub(crate) use session_boot::*;
-pub(crate) use sidebar::*;
-pub(crate) use sidebar_width::*;
+use session_boot::*;
+use sidebar::*;
+use sidebar_width::*;
 
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
@@ -588,7 +588,7 @@ pub fn RouterView() -> Element {
     // Tracks the last call_id navigated for so a re-render with the same
     // pending invite does not re-push the route.
     {
-        let navigator = navigator;
+        let call_navigator = navigator;
         let mut last_incoming_nav = use_signal(|| Option::<String>::None);
         use_effect(move || {
             let pending = call_signal_hub.incoming_call.read().clone();
@@ -596,7 +596,7 @@ pub fn RouterView() -> Element {
                 Some(info) => {
                     if last_incoming_nav.read().as_deref() != Some(info.call_id.as_str()) {
                         last_incoming_nav.set(Some(info.call_id.clone()));
-                        navigator.push(Route::Call {
+                        call_navigator.push(Route::Call {
                             call_id: info.call_id.clone(),
                             peer: info.peer_actor.clone(),
                             realm_id: info.realm_id.clone(),
@@ -3741,7 +3741,7 @@ pub fn RouterView() -> Element {
                                         },
                                         on_pick_realm: move |realm_id: String| {
                                             selected_realm_id.set(realm_id.clone());
-                                            view.set(crate::views::View::Kanban);
+                                            view.set(crate::views::AppView::Kanban);
                                             let _ = navigator.push(Route::Realm { realm_id });
                                             palette_open.set(false);
                                             topbar_search_expanded.set(false);

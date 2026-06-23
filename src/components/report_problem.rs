@@ -105,7 +105,9 @@ fn redact_prefixed_identifiers(line: &str) -> String {
             continue;
         }
 
-        let ch = rest.chars().next().expect("index is at a char boundary");
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
         redacted.push(ch);
         index += ch.len_utf8();
     }
@@ -115,10 +117,9 @@ fn redact_prefixed_identifiers(line: &str) -> String {
 fn advance_sensitive_token(line: &str, start: usize) -> usize {
     let mut index = start;
     while index < line.len() {
-        let ch = line[index..]
-            .chars()
-            .next()
-            .expect("index is at a char boundary");
+        let Some(ch) = line[index..].chars().next() else {
+            break;
+        };
         if ch.is_whitespace()
             || matches!(
                 ch,

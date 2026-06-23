@@ -98,20 +98,25 @@ pub fn rank_between(left: &str, right: &str) -> Result<String, RankError> {
     let mut i = 0usize;
     while prefix.len() < MAX_RANK_LEN {
         let l: i32 = if i < left_bytes.len() {
-            // SAFETY: validate() already ensured every byte is in alphabet.
-            char_value(left_bytes[i]).expect("validated")
+            char_value(left_bytes[i]).ok_or(RankError::Invalid {
+                reason: "invalid rank byte",
+                position: i,
+            })?
         } else {
             -1
         };
         let r: i32 = if !right_bytes.is_empty() && i < right_bytes.len() {
-            char_value(right_bytes[i]).expect("validated")
+            char_value(right_bytes[i]).ok_or(RankError::Invalid {
+                reason: "invalid rank byte",
+                position: i,
+            })?
         } else {
             BASE
         };
         if r - l > 1 {
             let mid = ((l + r) / 2) as usize;
             prefix.push(ALPHABET[mid]);
-            return Ok(String::from_utf8(prefix).expect("alphabet is ASCII"));
+            return Ok(String::from_utf8_lossy(&prefix).into_owned());
         }
         // No gap at this position. Descend into left[i] if present, or
         // extend with alphabet[0] and either return the new prefix or
@@ -123,7 +128,7 @@ pub fn rank_between(left: &str, right: &str) -> Result<String, RankError> {
             if !right_bytes.is_empty() && prefix.as_slice() == right_bytes {
                 return Err(RankError::Exhausted);
             }
-            return Ok(String::from_utf8(prefix).expect("alphabet is ASCII"));
+            return Ok(String::from_utf8_lossy(&prefix).into_owned());
         }
         i += 1;
     }
@@ -185,7 +190,7 @@ fn base62_encode_fixed(mut value: u128, width: usize) -> String {
         bytes[idx] = ALPHABET[digit];
         value /= BASE as u128;
     }
-    String::from_utf8(bytes).expect("alphabet is ASCII")
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[cfg(test)]

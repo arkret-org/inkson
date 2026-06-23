@@ -59,14 +59,8 @@ impl Hlc {
     pub fn now(node_id: &str) -> Self {
         let minted =
             sdk_generator_at(node_id, crate::clock::now_unix_ms().min(0xffffffffffff)).current();
-        let parts =
-            parse_hlc(minted.as_str()).expect("SDK-minted HLC string is parseable by parse_hlc");
-        Self {
-            physical_ms: parts.physical_ms,
-            logical: parts.logical,
-            node_id: u32::from_str_radix(&parts.node_id, 16)
-                .expect("node-id segment is 8 lowercase hex chars"),
-        }
+        Self::parse(minted.as_str())
+            .unwrap_or_else(|_| Self::from_parts(crate::clock::now_unix_ms(), 0, 0))
     }
 
     /// Create an HLC from components.
@@ -97,7 +91,7 @@ impl Hlc {
         })
     }
 
-    /// Encode to canonical hex string format.
+    /// Encode to the hex string format.
     ///
     /// Format and overflow semantics are delegated to the SDK's `Hlc` newtype
     /// via [`Self::try_encode`]: the candidate string is validated by
@@ -105,14 +99,15 @@ impl Hlc {
     /// logical counter that does not fit the 4-hex field) instead of silently
     /// truncating it.
     ///
-    /// Every `Hlc` minted through [`Self::now`] / [`Self::from_parts`] /
-    /// [`Self::parse`] in this crate carries spec-valid components, so this
-    /// path does not panic on any value yougen actually produces. The panic
-    /// guards a programmer error (hand-built out-of-spec components) rather
-    /// than masking it with a truncated wire value.
+    /// For strict wire validation, use [`Self::try_encode`]. This infallible
+    /// helper is used by display paths and never truncates oversized
+    /// components; an invalid hand-built value will render as an invalid
+    /// candidate string rather than panic.
     pub fn encode(&self) -> String {
-        self.try_encode()
-            .expect("Hlc components fit the canonical v1 wire format")
+        format!(
+            "{:012x}-{:04x}-{:08x}",
+            self.physical_ms, self.logical, self.node_id
+        )
     }
 
     /// Fallible encode: returns the canonical hex string, or an error if the

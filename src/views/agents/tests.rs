@@ -327,7 +327,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::super::{AuditVerifyStatus, verify_agent_audit_binding};
+    use super::super::model::{AuditVerifyStatus, verify_agent_audit_binding};
 
     fn build_ed25519_result_payload(
         session_id: &str,

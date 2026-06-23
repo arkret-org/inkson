@@ -100,8 +100,10 @@ fn start_recovery_key_generation(
             return;
         }
     };
-    let recovery_secret = normalize_recovery_key_input(&recovery_key)
-        .expect("generated recovery key is valid BIP-39");
+    let Some(recovery_secret) = normalize_recovery_key_input(&recovery_key) else {
+        action_status.set(crate::i18n::tr("mls_backup.status.generate_failed"));
+        return;
+    };
     let base = base_url();
     let session = token();
     let actor = account_did();

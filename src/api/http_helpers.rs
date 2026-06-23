@@ -448,10 +448,10 @@ pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmOutcome> 
     Ok(serde_json::from_value(value)?)
 }
 
-pub(crate) fn select_join_candidate<'a>(
-    resolved: &'a ResolveRealmOutcome,
+pub(crate) fn select_join_candidate(
+    resolved: &ResolveRealmOutcome,
     join_method: cokret_sdk::models::RealmJoinMethod,
-) -> anyhow::Result<&'a RealmJoinCandidate> {
+) -> anyhow::Result<&RealmJoinCandidate> {
     let realm_id = trim_realm_id(resolved.realm_preview.realm_id.as_str());
     resolved
         .join_candidates
@@ -463,12 +463,7 @@ pub(crate) fn select_join_candidate<'a>(
                 .iter()
                 .any(|op| op == "ck.self.events.command.submit")
         })
-        .filter(|candidate| {
-            candidate
-                .join_methods
-                .iter()
-                .any(|method| *method == join_method)
-        })
+        .filter(|candidate| candidate.join_methods.contains(&join_method))
         .filter(|candidate| join_candidate_is_current(candidate))
         .min_by(|left, right| {
             left.priority

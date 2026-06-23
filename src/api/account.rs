@@ -552,7 +552,7 @@ impl CokretApi {
         after: Option<&str>,
     ) -> anyhow::Result<ClientSyncOutcome> {
         match self.account_subscribe_snapshot_outcome(after).await? {
-            AccountSubscribeSnapshotResult::Delta(response) => Ok(response),
+            AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
             AccountSubscribeSnapshotResult::ReconnectAfter {
                 reconnect_after_ms,
                 reason,

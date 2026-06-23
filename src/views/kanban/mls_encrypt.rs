@@ -787,8 +787,6 @@ pub(super) fn dispatch_card_detail_update(
     let base_for_backup_trigger = base_url.clone();
     let actor_for_backup_trigger = actor_id.clone();
     let device_for_sidecar_backup = device_id.clone();
-    let mls_genesis_op = mls_genesis_op;
-    let mls_commit_op = mls_commit_op;
     let submit_event = op;
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the

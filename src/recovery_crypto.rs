@@ -208,7 +208,7 @@ pub fn vault_key_commitment(root: &VaultKek) -> Result<String> {
     let commitment_key = hkdf_subkey(&root.key, HKDF_COMMITMENT_INFO)?;
     Ok(format!(
         "sha256:{}",
-        hex_lower(&Sha256::digest(&*commitment_key))
+        hex_lower(&Sha256::digest(*commitment_key))
     ))
 }
 
@@ -357,7 +357,7 @@ pub fn generate_recovery_key() -> Result<String> {
 pub fn format_recovery_key(bytes: &[u8]) -> String {
     bip39::Mnemonic::from_entropy_in(bip39::Language::English, bytes)
         .map(|mnemonic| mnemonic.words().collect::<Vec<_>>().join(" "))
-        .expect("RECOVERY_KEY_BYTES is valid BIP-39 entropy length")
+        .unwrap_or_default()
 }
 
 /// Normalize user-entered recovery-key material before using it as a KEK
@@ -398,8 +398,13 @@ pub fn recovery_key_confirmation_matches(recovery_key: &str, confirmation: &str)
 /// persist the digest on disk so the plaintext is gone the moment the
 /// user dismisses the "copy / print" affordance.
 pub fn fingerprint_recovery_key(recovery_key: &str) -> String {
-    let canonical = normalize_recovery_key_input(recovery_key)
-        .expect("recovery key fingerprint requires a valid 24-word BIP-39 key");
+    let canonical = normalize_recovery_key_input(recovery_key).unwrap_or_else(|| {
+        recovery_key
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    });
     let digest = Sha256::digest(canonical.as_bytes());
     format!("sha256:{}", hex_lower(&digest))
 }

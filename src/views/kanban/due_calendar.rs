@@ -30,7 +30,7 @@ pub(super) fn due_calendar_today() -> NaiveDate {
 }
 
 pub(super) fn start_of_due_calendar_month(date: NaiveDate) -> NaiveDate {
-    date.with_day(1).expect("every month has day one")
+    date.with_day(1).unwrap_or(date)
 }
 
 pub(super) fn due_calendar_month_for_value(value: &str) -> NaiveDate {

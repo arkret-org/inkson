@@ -597,9 +597,8 @@ fn generate_ed25519_signing_key() -> anyhow::Result<SigningKey> {
 }
 
 fn canonical_utc_now() -> chrono::DateTime<Utc> {
-    Utc::now()
-        .with_nanosecond(0)
-        .expect("zero nanosecond is always valid")
+    let now = Utc::now();
+    now - chrono::Duration::nanoseconds(i64::from(now.nanosecond()))
 }
 
 #[cfg(test)]

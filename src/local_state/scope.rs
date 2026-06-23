@@ -31,7 +31,7 @@ impl LocalStateStore {
         // YOU-02-004: the MLS receive-chain overlay is account-scoped state —
         // wipe it with the rest so a stale decrypt write-back can't resurrect
         // the previous account's MLS snapshots through a later flush merge.
-        *self.mls_receive_overlay.lock().unwrap() = MlsReceiveOverlay::default();
+        *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         self.cached = ClientLocalState {
             local_identity: preserved_identity,
             push_registration: preserved_push,
@@ -110,7 +110,7 @@ impl LocalStateStore {
             let _ = secure_store.delete_secret(Self::SECURE_DPOP_DEVICE_KEY);
         }
         self.ensure_cached_loaded();
-        *self.mls_receive_overlay.lock().unwrap() = MlsReceiveOverlay::default();
+        *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         self.cached = ClientLocalState::default();
         let _ = self.flush();
     }

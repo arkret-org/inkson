@@ -169,7 +169,7 @@ impl CokretApi {
             asset.ciphertext.clone(),
             crate::blob::CIPHERTEXT_MEDIA_TYPE,
             Some(realm_id),
-            Some(&asset.ciphertext_digest()),
+            Some(asset.ciphertext_digest()),
             None,
             None,
         )?;

@@ -5,7 +5,7 @@ mod tests {
     use serde_json::json;
 
     use super::super::model::{
-        NotificationAction, append_invite_notifications, drop_joined_invite_notifications,
+        UiNotificationAction, append_invite_notifications, drop_joined_invite_notifications,
         hydrate_notifications, notification_eval_context, notification_overrides_realm_mute,
         raw_notifications_from_sources, read_cursor_targets, realm_is_muted,
         realm_title_hints_from_values,
@@ -74,7 +74,7 @@ mod tests {
         assert_eq!(notifications[0].action_label.as_deref(), Some("Accept"));
         assert!(matches!(
             notifications[0].action.as_ref(),
-            Some(NotificationAction::AcceptInvite { .. })
+            Some(UiNotificationAction::AcceptInvite { .. })
         ));
 
         let joined_realms =
@@ -155,7 +155,7 @@ mod tests {
         );
         assert!(matches!(
             notifications[0].action.as_ref(),
-            Some(NotificationAction::AcceptInvite {
+            Some(UiNotificationAction::AcceptInvite {
                 realm_label: Some(label),
                 ..
             }) if label == "Partner Launch"

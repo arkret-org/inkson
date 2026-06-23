@@ -391,7 +391,10 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
     if first_kind != "ck.agent.interop_session.start" {
         return AuditChainVerifyOutcome::ChainBreak;
     }
-    let last_kind = match kind_of(events.last().unwrap()) {
+    let Some(last_event) = events.last() else {
+        return AuditChainVerifyOutcome::ChainBreak;
+    };
+    let last_kind = match kind_of(last_event) {
         Some(k) => k,
         None => return AuditChainVerifyOutcome::ChainBreak,
     };
@@ -409,12 +412,10 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
         }
     }
     // Result event audit_binding must verify.
-    let result_payload = events
-        .last()
-        .unwrap()
+    let result_payload = last_event
         .get("payload")
         .cloned()
-        .unwrap_or_else(|| events.last().unwrap().clone());
+        .unwrap_or_else(|| last_event.clone());
     match cokret_sdk::agent_binding::verify_audit_binding_by_kind(&result_payload) {
         cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => {
             AuditChainVerifyOutcome::Valid

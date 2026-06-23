@@ -702,17 +702,17 @@ pub(crate) fn sender_display_label(
         let account_display_name =
             clean_participant_display_name(account_display_name, Some(account_did)).filter(
                 |label| {
-                    did_handle_label.as_deref().map_or(true, |handle| {
-                        !display_name_is_handle_localpart(label, handle)
-                    })
+                    did_handle_label
+                        .as_deref()
+                        .is_none_or(|handle| !display_name_is_handle_localpart(label, handle))
                 },
             );
         let participant_display_name = own_participant
             .and_then(|participant| participant.display_name.clone())
             .filter(|label| {
-                did_handle_label.as_deref().map_or(true, |handle| {
-                    !display_name_is_handle_localpart(label, handle)
-                })
+                did_handle_label
+                    .as_deref()
+                    .is_none_or(|handle| !display_name_is_handle_localpart(label, handle))
             });
         return own_participant
             .and_then(|participant| participant.handle_label.clone())

@@ -105,7 +105,7 @@ pub fn DirectoryPanel(
     selected_realm_id: Signal<String>,
     status: Signal<String>,
     token: Signal<String>,
-    view: Signal<super::View>,
+    view: Signal<super::AppView>,
     // F-REMARK-FANOUT-1: needed so handle resolution can prefer the
     // actor-private ContactRemark.local_name over the raw DID.
     state_store: Signal<LocalStateStore>,
@@ -728,7 +728,7 @@ pub fn DirectoryPanel(
                                     let id = realm.id.clone();
                                     move |_| {
                                         selected_realm_id.set(id.clone());
-                                        view.set(super::View::Kanban);
+                                        view.set(super::AppView::Kanban);
                                     }
                                 },
                                 "Open Realm"

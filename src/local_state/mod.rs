@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
     fs,
@@ -10,12 +10,9 @@ use std::{
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use cokret_sdk::EncryptedPayload;
-use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use zeroize::Zeroize;
 
-use crate::hlc::Hlc;
 use crate::notification_rules::WatchLevel;
 
 #[cfg(target_arch = "wasm32")]
@@ -214,6 +211,24 @@ impl LocalStateStore {
 
     const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
 
+    fn lock_persist_health(&self) -> MutexGuard<'_, Option<String>> {
+        self.persist_health
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_mls_receive_overlay(&self) -> MutexGuard<'_, MlsReceiveOverlay> {
+        self.mls_receive_overlay
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_mls_decrypt_serial(&self) -> MutexGuard<'_, ()> {
+        self.mls_decrypt_serial
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn load(&self) -> ClientLocalState {
         // Once reconciled with persistence, `cached` is authoritative (single
         // process) — skip the full-state `!= default` compare and the repeated
@@ -226,7 +241,7 @@ impl LocalStateStore {
         // YOU-02-004: readers must observe receive-chain write-backs that the
         // decrypt paths recorded through the interior-mutable overlay.
         {
-            let overlay = self.mls_receive_overlay.lock().unwrap();
+            let overlay = self.lock_mls_receive_overlay();
             if !overlay.is_empty() {
                 overlay.apply_to(&mut state);
             }
@@ -238,7 +253,7 @@ impl LocalStateStore {
         // Wholesale replacement: the incoming state is authoritative, so any
         // pending receive-chain overlay entries derived from the OLD state
         // must not survive to shadow it.
-        *self.mls_receive_overlay.lock().unwrap() = MlsReceiveOverlay::default();
+        *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         self.cached = state;
         self.loaded.set(true);
         let _ = self.flush();
@@ -261,7 +276,7 @@ impl LocalStateStore {
     /// that a decrypt recorded via the overlay (a §5.6 violation: the next
     /// boot would replay the ratchet from the stale snapshot).
     fn effective_state_for_persist(&self) -> ClientLocalState {
-        let overlay = self.mls_receive_overlay.lock().unwrap();
+        let overlay = self.lock_mls_receive_overlay();
         let mut state = self.cached.clone();
         if !overlay.is_empty() {
             overlay.apply_to(&mut state);
@@ -277,7 +292,7 @@ impl LocalStateStore {
     /// flush persists the merged result).
     fn absorb_mls_receive_overlay(&mut self) {
         self.ensure_cached_loaded();
-        let mut overlay = self.mls_receive_overlay.lock().unwrap();
+        let mut overlay = self.lock_mls_receive_overlay();
         if overlay.is_empty() {
             return;
         }
@@ -292,12 +307,12 @@ impl LocalStateStore {
     fn record_persist_result(&self, result: &anyhow::Result<()>) {
         match result {
             Ok(()) => {
-                self.persist_health.lock().unwrap().take();
+                self.lock_persist_health().take();
             }
             Err(error) => {
                 let message = error.to_string();
                 tracing::error!(%error, "local state persist failed (latched for UI)");
-                *self.persist_health.lock().unwrap() = Some(message);
+                *self.lock_persist_health() = Some(message);
             }
         }
     }
@@ -307,7 +322,7 @@ impl LocalStateStore {
     /// backing store detected on load). `None` once a subsequent persist
     /// succeeds. UI surfaces this as a "changes are not being saved" banner.
     pub fn persist_error(&self) -> Option<String> {
-        self.persist_health.lock().unwrap().clone()
+        self.lock_persist_health().clone()
     }
 
     /// Perf: run `body` with flushing suspended, then persist at most once.
@@ -362,7 +377,7 @@ impl LocalStateStore {
                     corrupt_path.display()
                 );
                 tracing::error!(%error, "corrupt local state preserved, not silently reset");
-                *self.persist_health.lock().unwrap() = Some(message);
+                *self.lock_persist_health() = Some(message);
                 None
             }
         }
@@ -384,7 +399,7 @@ impl LocalStateStore {
                     "local state in localStorage was unreadable ({error}); preserved a copy and started from defaults"
                 );
                 tracing::error!(%error, "corrupt local state preserved, not silently reset");
-                *self.persist_health.lock().unwrap() = Some(message);
+                *self.lock_persist_health() = Some(message);
                 None
             }
         }

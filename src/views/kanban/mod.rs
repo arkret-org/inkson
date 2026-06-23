@@ -4248,7 +4248,7 @@ pub fn KanbanPanel(
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Details {
                                                         {
-                                                            let assigned_actor_ids = card_assigned_actor_ids(&card);
+                                                            let assigned_actor_ids = card_assigned_actor_ids(card);
                                                             let assigned_people = {
                                                                 let store = state_store.read();
                                                                 assigned_actor_ids
@@ -4270,7 +4270,7 @@ pub fn KanbanPanel(
                                                             } else {
                                                                 assigned_actor_ids.join(", ")
                                                             };
-                                                            let picker_rows = assignment_picker_roster(&realm_member_rows, &card);
+                                                            let picker_rows = assignment_picker_roster(&realm_member_rows, card);
                                                             let picker_filter = assignee_filter();
                                                             let selected_actor_ids = assignee_selected_actor_ids();
                                                             let picker_people = {
@@ -4298,7 +4298,7 @@ pub fn KanbanPanel(
                                                             let picker_open = assignee_picker_open();
                                                             let edit_status = assignee_edit_status();
                                                             let activity_items =
-                                                                card_activity_items(&card, &store.raw_operations);
+                                                                card_activity_items(card, &store.raw_operations);
                                                             rsx! {
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
@@ -5167,7 +5167,6 @@ use mls_encrypt::*;
 pub(crate) use mls_encrypt::{
     build_creator_mls_genesis_event, kanban_mls_commit_event_from_store,
     kanban_mls_commit_event_from_store_for_effective_scope,
-    kanban_mls_commit_event_from_store_for_effective_scope_with_proposal_refs,
     kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs,
 };
 use plaintext_guard::*;

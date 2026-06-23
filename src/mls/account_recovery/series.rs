@@ -102,9 +102,12 @@ pub(super) fn verify_series_chain(tail: &Value, all: &[Value]) -> Result<()> {
         if seq == 0 {
             continue;
         }
-        let prev = by_seq
-            .get(&(seq - 1))
-            .expect("predecessor presence checked by the 0..=tail_seq loop");
+        let Some(prev) = by_seq.get(&(seq - 1)) else {
+            return Err(anyhow!(
+                "series_chain_broken: missing predecessor series_seq {} in series {series_id}",
+                seq - 1
+            ));
+        };
         let prev_backup_id = prev
             .get("backup_id")
             .and_then(Value::as_str)

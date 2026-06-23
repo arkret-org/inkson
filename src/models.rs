@@ -203,6 +203,7 @@ pub use cokret_sdk::models::{
 /// `default_invite_receive_policy`: accept contacts (`consent_grant`),
 /// invite links (`locator_ref`) and same-group introductions
 /// (`shared_realm`); hold everything else for review.
+#[allow(clippy::expect_used)]
 pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
     InviteReceivePolicy {
         schema: INVITE_RECEIVE_POLICY_SCHEMA.to_owned(),

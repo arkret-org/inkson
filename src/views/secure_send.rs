@@ -197,11 +197,6 @@ pub(crate) struct SecureSendBuild {
     pub commit_event: Option<cokret_sdk::Event>,
     /// The encrypted `ck.message.create` event.
     pub message_event: cokret_sdk::Event,
-    /// The spec `ck.schema.encrypted_envelope.v1` JSON wrapped in the message
-    /// (`content.encrypted_content`). Callers attach it to the optimistic
-    /// chat event's `encrypted_payload` so reload/sync dedup sees the same
-    /// shape the synced event carries.
-    pub encrypted_content: serde_json::Value,
     /// Post-commit snapshot — persisted by the caller ONLY after the server
     /// accepts the commit (persist-on-accept).
     pub new_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -317,8 +312,6 @@ pub(crate) fn build_secure_send(
     .map_err(|err| format!("MLS encrypted envelope build failed: {err}"))?;
     let encrypted_payload_json = serde_json::to_value(&encrypted_envelope)
         .map_err(|err| format!("MLS encrypted envelope encode failed: {err}"))?;
-    let encrypted_content = encrypted_payload_json.clone();
-
     let typed_strand_id = cokret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|err| format!("Send Secure strand id invalid: {err:?}"))?;
     let mut message_payload = cokret_sdk::MessageCreatePayload::with_encrypted_content(
@@ -351,7 +344,6 @@ pub(crate) fn build_secure_send(
     Ok(SecureSendBuild {
         commit_event,
         message_event,
-        encrypted_content,
         new_mls_snapshot,
         member_dids: local_member_dids,
         seal_ref,
@@ -395,7 +387,6 @@ pub(crate) async fn submit_secure_send(
         message_event,
         new_mls_snapshot,
         seal_ref,
-        encrypted_content: _,
         member_dids: _,
     } = build;
     let commit_op_id = commit_event
