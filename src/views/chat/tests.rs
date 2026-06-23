@@ -593,6 +593,63 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
 }
 
 #[test]
+fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
+    let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let appellant = "did:web:appellant.example";
+    let events = vec![
+        json!({
+            "event_id": "ck:event:01904100-0000-7000-8000-000000000101",
+            "kind": "ck.moderation.decision",
+            "realm_id": realm_id,
+            "payload": {
+                "target_ref": "ck:message:01904100-0000-7000-8000-000000000201",
+                "decision": "quarantine"
+            }
+        }),
+        json!({
+            "kind": "ck.moderation.appeal.submit",
+            "realm_id": realm_id,
+            "payload": {
+                "appeal_id": "ck:appeal:01904100-0000-7000-8000-000000000301",
+                "decision_ref": "ck:event:01904100-0000-7000-8000-000000000101",
+                "target_ref": "ck:message:01904100-0000-7000-8000-000000000201",
+                "appellant": appellant
+            }
+        }),
+        json!({
+            "kind": "ck.moderation.appeal.decision",
+            "realm_id": realm_id,
+            "payload": {
+                "appeal_id": "ck:appeal:01904100-0000-7000-8000-000000000301",
+                "verdict": "uphold"
+            }
+        }),
+    ];
+
+    let prompts = moderation_appeal_prompts_from_events(realm_id, &events, appellant);
+
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(
+        prompts[0].decision_ref,
+        "ck:event:01904100-0000-7000-8000-000000000101"
+    );
+    assert_eq!(prompts[0].state, "decided");
+    assert_eq!(prompts[0].verdict.as_deref(), Some("uphold"));
+
+    let lifted = vec![
+        events[0].clone(),
+        json!({
+            "kind": "ck.moderation.decision.lift",
+            "realm_id": realm_id,
+            "payload": {
+                "decision_ref": "ck:event:01904100-0000-7000-8000-000000000101"
+            }
+        }),
+    ];
+    assert!(moderation_appeal_prompts_from_events(realm_id, &lifted, appellant).is_empty());
+}
+
+#[test]
 fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // X10.6 regression: an encrypted send persists a body-less
     // raw_operation stub (it MUST NOT store the plaintext in

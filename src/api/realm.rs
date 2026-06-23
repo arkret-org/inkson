@@ -5,7 +5,7 @@ impl CokretApi {
     /// (and its facet follow-ups) via `ck.self.events.command.submit`
     /// (`POST /_cokret/self/events`).
     ///
-    /// Per spec realm-and-space.md §2.6 the create event itself is the
+    /// Per spec realm-and-space.md §2.5 the create event itself is the
     /// genesis-member declaration for `created_by`. The
     /// server reducer bootstraps the member set atomically with the
     /// metadata, so the same actor's per-facet follow-ups
@@ -290,6 +290,28 @@ impl CokretApi {
         let event =
             crate::operation::ck_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)?
                 .build_sdk_event("yougen")?;
+        self.submit_built_event(&event).await
+    }
+
+    /// Update the Realm plaintext-visible service facet through the
+    /// dedicated `ck.realm.plaintext_visible_services` event. This is not a
+    /// `ck.realm.update` metadata patch: servers enforce plaintext access from
+    /// the typed facet projection.
+    pub async fn update_realm_plaintext_visible_services(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        services: Vec<String>,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let Some(mut event) =
+            build_plaintext_visible_services_event(realm_id, actor_id, &services)?
+        else {
+            anyhow::bail!("plaintext_visible_services update requires at least one service DID");
+        };
+        let seal_view = self.events_frontier_realm_seal_view(realm_id).await?;
+        event.seal_basis = Some(seal_view.seal_basis());
+        event.seal_ref = None;
+        event.auth_context = None;
         self.submit_built_event(&event).await
     }
 

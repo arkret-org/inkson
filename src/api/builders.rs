@@ -334,8 +334,8 @@ pub fn build_realm_create_event(
         object["plaintext_visible_services"] = Value::Array(plaintext_services);
     }
 
-    // ck.component.realm.create.v1 is a cas-register cell; the
-    // genesis write asserts head_eq null and sets the realm metadata.
+    // ck.component.realm.create.v1 is an ordered-log genesis singleton;
+    // the bootstrap write asserts head_eq null and sets the realm metadata.
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let effects = vec![set_effect(&cell, object.clone())?];
     // The Realm entity itself has no SDK `*CreateObject` strong type yet

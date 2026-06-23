@@ -25,12 +25,28 @@ use crate::views::helpers::{
     MentionNode, active_sync_token, authed_api_with_sync, parse_agent_selector_mention_tokens,
     parse_mention_nodes, short_protocol_id, with_authed_api_with_sync,
 };
+use crate::views::moderation_appeal::{AppealEntrypoint, AppealState};
 
 mod model;
 mod render;
 
 use model::*;
 use render::*;
+
+fn moderation_prompt_state(prompt: &ModerationAppealPrompt) -> AppealState {
+    match prompt.state.as_str() {
+        "submitted" => AppealState::Submitted,
+        "under_review" => AppealState::UnderReview,
+        "decided" => AppealState::Decided {
+            verdict: prompt
+                .verdict
+                .clone()
+                .unwrap_or_else(|| "unknown".to_owned()),
+        },
+        "closed" => AppealState::Closed,
+        _ => AppealState::None,
+    }
+}
 
 async fn resolve_agent_selector_mentions(
     base_url: &str,
@@ -155,6 +171,7 @@ pub fn ChatPanel(
         });
     }
     let mut messages = use_signal(Vec::<ChatMessage>::new);
+    let mut moderation_appeal_prompts = use_signal(Vec::<ModerationAppealPrompt>::new);
     let mut chat_draft = use_signal(String::new);
     // Perf (P0): replace the per-keystroke `ck.typing` POST with a leading-edge
     // throttle (≤ once / 3s) plus a trailing `typing=false` once the user stops.
@@ -373,6 +390,12 @@ pub fn ChatPanel(
                 && (selected_realm_id.trim().is_empty() || msg.realm_id == selected_realm_id)
         })
         .cloned()
+        .collect::<Vec<_>>();
+    let visible_moderation_appeal_prompts = moderation_appeal_prompts()
+        .into_iter()
+        .filter(|prompt| {
+            selected_realm_id.trim().is_empty() || prompt.realm_id == selected_realm_id
+        })
         .collect::<Vec<_>>();
     // CKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
@@ -597,6 +620,7 @@ pub fn ChatPanel(
             };
             let mut loaded_messages = Vec::new();
             let mut loaded_poll_cards = Vec::new();
+            let mut loaded_moderation_appeal_prompts = Vec::new();
             if let Ok(account) = api.account_me().await
                 && account.did == account_did_for_load
             {
@@ -630,6 +654,9 @@ pub fn ChatPanel(
                     decrypt_identity,
                 ));
                 loaded_poll_cards.extend(poll_cards_from_sync_realms(&sync.realms));
+                loaded_moderation_appeal_prompts.extend(
+                    moderation_appeal_prompts_from_sync_realms(&sync.realms, &account_did_for_load),
+                );
                 merge_channels(
                     &mut channels.write(),
                     channels_from_sync_realms(&sync.realms, &[selected_realm_for_load.clone()]),
@@ -650,6 +677,11 @@ pub fn ChatPanel(
                         decrypt_identity,
                     ));
                     loaded_poll_cards.extend(poll_cards_from_events(&backfill.events));
+                    loaded_moderation_appeal_prompts.extend(moderation_appeal_prompts_from_events(
+                        &selected_realm_for_load,
+                        &backfill.events,
+                        &account_did_for_load,
+                    ));
                 }
             }
 
@@ -667,6 +699,12 @@ pub fn ChatPanel(
             }
             if !loaded_poll_cards.is_empty() {
                 merge_poll_cards(&mut poll_cards.write(), loaded_poll_cards);
+            }
+            if !loaded_moderation_appeal_prompts.is_empty() {
+                merge_moderation_appeal_prompts(
+                    &mut moderation_appeal_prompts.write(),
+                    loaded_moderation_appeal_prompts,
+                );
             }
             initial_sync_finished_for_load.set(true);
         });
@@ -1356,6 +1394,24 @@ pub fn ChatPanel(
                 }
 
                 div { class: "discussion-chat-feed", "data-testid": "message-list",
+                    for prompt in visible_moderation_appeal_prompts {
+                        {
+                            let current_state = moderation_prompt_state(&prompt);
+                            let api_token = token();
+                            rsx! {
+                                AppealEntrypoint {
+                                    key: "{prompt.decision_ref}",
+                                    realm_id: prompt.realm_id.clone(),
+                                    appellant: account_did.clone(),
+                                    decision_event_id: prompt.decision_ref.clone(),
+                                    target_ref: prompt.target_ref.clone(),
+                                    base_url: base_url.clone(),
+                                    api_token,
+                                    current_state,
+                                }
+                            }
+                        }
+                    }
                     for msg in visible_messages {
                         {
                             let scope_circle = strand_scope_lookup.get(&msg.strand_id).cloned();

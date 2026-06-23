@@ -104,6 +104,15 @@ pub(crate) struct ChatMessage {
     pub(crate) crypto_state: MessageCryptoState,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ModerationAppealPrompt {
+    pub(crate) realm_id: String,
+    pub(crate) decision_ref: String,
+    pub(crate) target_ref: String,
+    pub(crate) state: String,
+    pub(crate) verdict: Option<String>,
+}
+
 impl ChatMessage {
     pub(crate) fn pin_saved_target_ref(&self) -> &str {
         self.protocol_message_id

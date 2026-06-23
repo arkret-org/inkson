@@ -684,6 +684,150 @@ pub(crate) fn chat_messages_from_sync_realms_with_sidecar(
     messages
 }
 
+fn moderation_kind_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a str> {
+    candidates
+        .iter()
+        .filter_map(|candidate| {
+            value_string_at(
+                candidate,
+                &["kind", "event_kind", "type", "op_type", "event_type"],
+            )
+        })
+        .find(|kind| kind.starts_with("ck.moderation."))
+}
+
+pub(crate) fn moderation_appeal_prompts_from_events(
+    realm_id: &str,
+    events: &[Value],
+    appellant: &str,
+) -> Vec<ModerationAppealPrompt> {
+    let mut decisions = std::collections::BTreeMap::<String, ModerationAppealPrompt>::new();
+    let mut appeal_decisions = std::collections::BTreeMap::<String, String>::new();
+
+    for event in events {
+        let candidates = message_candidates(event);
+        let Some(kind) = moderation_kind_from_candidates(&candidates) else {
+            continue;
+        };
+        let event_realm =
+            first_string_in_candidates(&candidates, &["realm_id"]).unwrap_or(realm_id);
+        if event_realm != realm_id {
+            continue;
+        }
+        match kind {
+            "ck.moderation.decision" => {
+                let Some(decision_ref) = first_string_in_candidates(
+                    &candidates,
+                    &["decision_id", "event_id", "id", "operation_id"],
+                ) else {
+                    continue;
+                };
+                let Some(target_ref) = first_string_in_candidates(&candidates, &["target_ref"])
+                else {
+                    continue;
+                };
+                decisions.insert(
+                    decision_ref.to_owned(),
+                    ModerationAppealPrompt {
+                        realm_id: realm_id.to_owned(),
+                        decision_ref: decision_ref.to_owned(),
+                        target_ref: target_ref.to_owned(),
+                        state: "none".to_owned(),
+                        verdict: None,
+                    },
+                );
+            }
+            "ck.moderation.decision.lift" => {
+                if let Some(decision_ref) =
+                    first_string_in_candidates(&candidates, &["decision_ref"])
+                {
+                    decisions.remove(decision_ref);
+                }
+            }
+            "ck.moderation.appeal.submit" => {
+                if first_string_in_candidates(&candidates, &["appellant"]) != Some(appellant) {
+                    continue;
+                }
+                let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
+                else {
+                    continue;
+                };
+                let Some(decision_ref) = first_string_in_candidates(&candidates, &["decision_ref"])
+                else {
+                    continue;
+                };
+                appeal_decisions.insert(appeal_id.to_owned(), decision_ref.to_owned());
+                if let Some(prompt) = decisions.get_mut(decision_ref) {
+                    prompt.state = "submitted".to_owned();
+                    prompt.verdict = None;
+                }
+            }
+            "ck.moderation.appeal.review" => {
+                let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
+                else {
+                    continue;
+                };
+                if let Some(decision_ref) = appeal_decisions.get(appeal_id)
+                    && let Some(prompt) = decisions.get_mut(decision_ref)
+                {
+                    prompt.state = "under_review".to_owned();
+                    prompt.verdict = None;
+                }
+            }
+            "ck.moderation.appeal.decision" => {
+                let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
+                else {
+                    continue;
+                };
+                if let Some(decision_ref) = appeal_decisions.get(appeal_id)
+                    && let Some(prompt) = decisions.get_mut(decision_ref)
+                {
+                    prompt.state = "decided".to_owned();
+                    prompt.verdict = first_string_in_candidates(&candidates, &["verdict"])
+                        .map(ToOwned::to_owned);
+                }
+            }
+            "ck.moderation.appeal.close" => {
+                let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
+                else {
+                    continue;
+                };
+                if let Some(decision_ref) = appeal_decisions.get(appeal_id)
+                    && let Some(prompt) = decisions.get_mut(decision_ref)
+                {
+                    prompt.state = "closed".to_owned();
+                    prompt.verdict = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    decisions.into_values().collect()
+}
+
+pub(crate) fn moderation_appeal_prompts_from_sync_realms(
+    realms: &std::collections::BTreeMap<String, Value>,
+    appellant: &str,
+) -> Vec<ModerationAppealPrompt> {
+    let mut prompts = Vec::new();
+    for (realm_id, body) in realms {
+        let Some(wire_events) = body
+            .get("timeline")
+            .and_then(|projection| projection.get("events"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        prompts.extend(moderation_appeal_prompts_from_events(
+            realm_id,
+            wire_events,
+            appellant,
+        ));
+    }
+    prompts
+}
+
 pub(crate) fn poll_cards_from_sync_realms(
     realms: &std::collections::BTreeMap<String, Value>,
 ) -> Vec<crate::messaging::polls::PollCard> {

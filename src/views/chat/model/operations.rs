@@ -428,16 +428,12 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
             if services.is_empty() {
                 return Err(error);
             }
-            api.update_realm_metadata(
-                realm_id,
-                actor_id,
-                json!({"plaintext_visible_services": services}),
-            )
-            .await
-            .map_err(|update_error| {
-                anyhow::anyhow!(
-                    "plaintext policy update failed: {update_error}; original send failed: {error}"
-                )
+            api.update_realm_plaintext_visible_services(realm_id, actor_id, services)
+                .await
+                .map_err(|update_error| {
+                    anyhow::anyhow!(
+                        "plaintext policy update failed: {update_error}; original send failed: {error}"
+                    )
             })?;
             api.submit_sdk_event(operation).await
         }

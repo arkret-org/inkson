@@ -241,6 +241,8 @@ impl CokretApi {
         event: &cokret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
         let mut signed = event.clone();
+        self.refresh_unsigned_sdk_event_actor_frontier(&mut signed)
+            .await?;
         if signed.seal_ref.is_none() && signed.seal_basis.is_none() && !signed.effects.is_empty() {
             let seal = self.current_seal_for(signed.realm_id.as_str()).await?;
             signed.seal_ref = Some(
@@ -264,6 +266,33 @@ impl CokretApi {
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
         self.post_signed_sdk_event(&signed, idempotency_key).await
+    }
+
+    async fn refresh_unsigned_sdk_event_actor_frontier(
+        &self,
+        event: &mut cokret_sdk::Event,
+    ) -> anyhow::Result<()> {
+        if !event.proofs.is_empty() {
+            return Ok(());
+        }
+        let actor_id = event.actor_id.as_str().to_owned();
+        match self.events_frontier_actor(&actor_id).await {
+            Ok(frontier) => apply_actor_frontier_to_sdk_event(event, &frontier),
+            Err(error) if is_actor_frontier_absent(&error) => {
+                event.actor_seq = 1;
+                event.prev_refs.clear();
+                tracing::debug!(
+                    actor_id = %actor_id,
+                    event_id = %event.event_id,
+                    "no actor frontier visible; submitting actor-chain genesis event"
+                );
+                Ok(())
+            }
+            Err(error) => Err(anyhow::anyhow!(
+                "refresh actor frontier for {} before submit: {error}",
+                actor_id
+            )),
+        }
     }
 
     /// `ck.self.events.command.submit` in batch form over typed envelopes. Spec binds
@@ -448,6 +477,30 @@ fn validate_signed_sdk_event_for_submit(event: &cokret_sdk::Event) -> anyhow::Re
     validate_outgoing_registered_event_payload(event.kind.as_str(), &event.content)
 }
 
+fn is_actor_frontier_absent(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<CokretApiError>()
+        .is_some_and(|api_error| api_error.status == StatusCode::NOT_FOUND)
+}
+
+fn apply_actor_frontier_to_sdk_event(
+    event: &mut cokret_sdk::Event,
+    frontier: &cokret_sdk::ActorFrontierView,
+) -> anyhow::Result<()> {
+    if frontier.actor_id.as_str() != event.actor_id.as_str() {
+        anyhow::bail!(
+            "actor frontier mismatch: event actor {} but frontier actor {}",
+            event.actor_id,
+            frontier.actor_id
+        );
+    }
+    event.actor_seq = frontier.actor_seq.checked_add(1).ok_or_else(|| {
+        anyhow::anyhow!("actor frontier sequence overflow for {}", event.actor_id)
+    })?;
+    event.prev_refs = vec![frontier.event_id.clone()];
+    Ok(())
+}
+
 fn event_proof_context_from_description(
     describe: &ServerDescription,
 ) -> crate::event_signer::EventProofContext {
@@ -464,6 +517,58 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn sdk_event_without_proof(actor_id: &str) -> cokret_sdk::Event {
+        serde_json::from_value(json!({
+            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "kind": "ck.presence",
+            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": actor_id,
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {
+                "actor_id": actor_id,
+                "state": "online"
+            },
+            "proofs": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn apply_actor_frontier_stamps_next_sequence_and_predecessor() {
+        let mut event = sdk_event_without_proof("did:web:alice.example");
+        let frontier = cokret_sdk::ActorFrontierView {
+            actor_id: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
+            actor_seq: 7,
+            event_id: cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000002")
+                .unwrap(),
+        };
+
+        apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
+
+        assert_eq!(event.actor_seq, 8);
+        assert_eq!(event.prev_refs, vec![frontier.event_id]);
+    }
+
+    #[test]
+    fn apply_actor_frontier_rejects_wrong_actor() {
+        let mut event = sdk_event_without_proof("did:web:alice.example");
+        let frontier = cokret_sdk::ActorFrontierView {
+            actor_id: cokret_sdk::Did::new("did:web:bob.example").unwrap(),
+            actor_seq: 7,
+            event_id: cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000002")
+                .unwrap(),
+        };
+
+        let error = apply_actor_frontier_to_sdk_event(&mut event, &frontier)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("actor frontier mismatch"));
+    }
 
     #[test]
     fn event_proof_context_binds_domain_and_audience_to_service_did() {
