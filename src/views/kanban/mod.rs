@@ -730,6 +730,7 @@ pub fn KanbanPanel(
     let selected_board_space_id_label = short_protocol_id(&selected_board_space_id_value);
     let board_view_id_value = board_view_id();
     let board_view_id_label = short_protocol_id(&board_view_id_value);
+    let board_status_text = board_status();
     let board_select_label = format!("{}:", crate::i18n::tr("kanban.board_header"));
     let selected_board_title = if selected_board_space_id_value.trim().is_empty() {
         "Select board".to_owned()
@@ -2215,6 +2216,12 @@ pub fn KanbanPanel(
                 }
             }
 
+            div {
+                class: "muted board-status",
+                "data-testid": "board-status",
+                "{board_status_text}"
+            }
+
             if manual_conflict_review_count > 0 {
                 div { class: "event board-conflict-alert", "data-testid": "board-conflict-alert",
                     div {
@@ -2346,7 +2353,15 @@ pub fn KanbanPanel(
                                 let actor = account_did.clone();
                                 move |event| {
                                     event.prevent_default();
-                                    let Some(dragged) = dragging_column() else {
+                                    let dragged = dragging_column().or_else(|| {
+                                        event
+                                            .data_transfer()
+                                            .get_data("application/x-cokret-column-id")
+                                            .or_else(|| event.data_transfer().get_data("text/plain"))
+                                            .filter(|id| id.starts_with("ck:space:"))
+                                            .map(|column_id| DraggedColumn { column_id })
+                                    });
+                                    let Some(dragged) = dragged else {
                                         return;
                                     };
                                     dragging_column.set(None);
@@ -2387,7 +2402,11 @@ pub fn KanbanPanel(
                                     "aria-label": "Drag column {column.title}",
                                     ondragstart: {
                                         let column_id = column_id.clone();
-                                        move |_| {
+                                        move |event| {
+                                            let _ = event
+                                                .data_transfer()
+                                                .set_data("application/x-cokret-column-id", &column_id);
+                                            let _ = event.data_transfer().set_data("text/plain", &column_id);
                                             dragging_column.set(Some(DraggedColumn {
                                                 column_id: column_id.clone(),
                                             }));

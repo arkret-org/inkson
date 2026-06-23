@@ -834,16 +834,11 @@ impl CokretApi {
     /// consistent control view.
     async fn sign_and_submit_moderation_batch(
         &self,
-        realm_id: &str,
+        _realm_id: &str,
         mut events: Vec<cokret_sdk::Event>,
     ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
-        let seal = self.current_seal_for(realm_id).await?;
-        let seal = cokret_sdk::SealId::new(seal)
-            .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?;
         for event in &mut events {
-            if event.seal_ref.is_none() && !event.effects.is_empty() {
-                event.seal_ref = Some(seal.clone());
-            }
+            self.stamp_cba_basis_for_sdk_event(event).await?;
         }
         let proof_context = self.event_proof_context().await?;
         for event in events.iter_mut() {

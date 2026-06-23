@@ -283,13 +283,7 @@ impl CokretApi {
         let mut signed = event.clone();
         self.refresh_unsigned_sdk_event_actor_frontier(&mut signed)
             .await?;
-        if signed.seal_ref.is_none() && signed.seal_basis.is_none() && !signed.effects.is_empty() {
-            let seal = self.current_seal_for(signed.realm_id.as_str()).await?;
-            signed.seal_ref = Some(
-                cokret_sdk::SealId::new(seal)
-                    .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
-            );
-        }
+        self.stamp_cba_basis_for_sdk_event(&mut signed).await?;
         if signed.proofs.is_empty() {
             let proof_context = self.event_proof_context().await?;
             crate::event_signer::sign_sdk_event_with_active_context(&mut signed, proof_context)
@@ -306,6 +300,31 @@ impl CokretApi {
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
         Ok((signed, idempotency_key))
+    }
+
+    pub(crate) async fn stamp_cba_basis_for_sdk_event(
+        &self,
+        event: &mut cokret_sdk::Event,
+    ) -> anyhow::Result<()> {
+        if event.seal_ref.is_some() || event.seal_basis.is_some() || event.effects.is_empty() {
+            return Ok(());
+        }
+        match cba_effect_plane_for_event(event)? {
+            CbaEffectPlane::Control => {
+                let seal_view = self
+                    .events_frontier_realm_seal_view(event.realm_id.as_str())
+                    .await?;
+                event.seal_basis = Some(seal_view.seal_basis());
+            }
+            CbaEffectPlane::Data => {
+                let seal = self.current_seal_for(event.realm_id.as_str()).await?;
+                event.seal_ref = Some(
+                    cokret_sdk::SealId::new(seal)
+                        .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
+                );
+            }
+        }
+        Ok(())
     }
 
     async fn refresh_unsigned_sdk_event_actor_frontier(
@@ -381,17 +400,12 @@ impl CokretApi {
 
     pub(crate) async fn submit_sdk_events_batch(
         &self,
-        realm_id: &str,
+        _realm_id: &str,
         mut events: Vec<cokret_sdk::Event>,
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
-        let seal = self.current_seal_for(realm_id).await?;
-        let seal = cokret_sdk::SealId::new(seal)
-            .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?;
         for event in &mut events {
-            if event.seal_ref.is_none() && event.seal_basis.is_none() && !event.effects.is_empty() {
-                event.seal_ref = Some(seal.clone());
-            }
+            self.stamp_cba_basis_for_sdk_event(event).await?;
         }
         let proof_context = self.event_proof_context().await?;
         for event in &mut events {
@@ -563,6 +577,53 @@ fn mls_genesis_event_id_from_events(
                 && event.kind.as_str() == cokret_sdk::events::kinds::MLS_GENESIS
         })
         .map(|event| event.event_id.clone())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CbaEffectPlane {
+    Data,
+    Control,
+}
+
+const DATA_PLANE_CELL_FAMILIES: &[&str] = &[
+    "ck.component.strand.discussion.timeline.v1",
+    "ck.component.message.reactions.v1",
+    "ck.component.pin.v1",
+];
+
+fn cba_effect_plane_for_event(event: &cokret_sdk::Event) -> anyhow::Result<CbaEffectPlane> {
+    let mut observed = None;
+    for effect in &event.effects {
+        let plane = if DATA_PLANE_CELL_FAMILIES.contains(&cba_cell_family(effect.cell.as_str())?) {
+            CbaEffectPlane::Data
+        } else {
+            CbaEffectPlane::Control
+        };
+        match observed {
+            Some(existing) if existing != plane => {
+                anyhow::bail!(
+                    "event {} mixes data-plane and control-plane effects",
+                    event.event_id
+                );
+            }
+            Some(_) => {}
+            None => observed = Some(plane),
+        }
+    }
+    observed.ok_or_else(|| anyhow::anyhow!("event {} has no effects", event.event_id))
+}
+
+fn cba_cell_family(cell: &str) -> anyhow::Result<&str> {
+    let rest = cell
+        .strip_prefix("ck:cell:")
+        .ok_or_else(|| anyhow::anyhow!("effects[].cell must use ck:cell: prefix"))?;
+    let (family, subject) = rest
+        .split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("effects[].cell must include family and subject"))?;
+    if family.trim().is_empty() || subject.trim().is_empty() {
+        anyhow::bail!("effects[].cell must include non-empty family and subject");
+    }
+    Ok(family)
 }
 
 fn event_proof_context_from_description(

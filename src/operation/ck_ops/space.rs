@@ -3,8 +3,8 @@
 use serde_json::json;
 
 use super::{
-    OperationBuilder, did_id, object_create_payload_value, object_patch_payload_value,
-    patch_from_value, realm_id_value, space_id_value, trim_realm_id,
+    OperationBuilder, did_id, object_create_payload_value, patch_from_value, realm_id_value,
+    space_id_value, trim_realm_id,
 };
 
 /// Build a `ck.space.create` operation for Board/List container Spaces.
@@ -75,5 +75,8 @@ pub fn space_update_patch(
         cokret_sdk::events::kinds::EventKind::SpaceUpdate,
     )
     .target_ref(space_id)
-    .body(object_patch_payload_value(space_id, patch)?))
+    .body(json!({
+        "space_id": space_id,
+        "patch": patch,
+    })))
 }

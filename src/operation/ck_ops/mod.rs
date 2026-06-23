@@ -134,7 +134,7 @@ pub(super) fn strand_tracks_update_payload_value(
     strand_id: &str,
     patch: cokret_sdk::Patch,
 ) -> anyhow::Result<Value> {
-    cokret_sdk::StrandPatchPayload::for_strand(strand_id_value(strand_id)?, patch)
+    cokret_sdk::StrandTracksUpdatePayload::with_patch(strand_id_value(strand_id)?, patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| {
             anyhow::anyhow!("invalid ck.strand.tracks.update payload for {strand_id}: {err}")

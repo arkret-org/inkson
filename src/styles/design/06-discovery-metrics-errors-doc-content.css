@@ -695,18 +695,19 @@
 }
 .column-drag-handle:active { cursor: grabbing; }
 .column-drop-target-before {
-    display: none;
-    height: 0;
-    margin: 0;
+    display: block;
+    height: 8px;
+    margin: -2px 0 6px;
     overflow: hidden;
     border-radius: 4px;
     outline: 1px dashed transparent;
     outline-offset: -1px;
+    opacity: 0;
+    background-color: transparent;
+    transition: opacity 120ms ease, background-color 120ms ease, outline-color 120ms ease;
 }
 .board-grid.is-column-dragging .column-drop-target-before {
-    display: block;
-    height: 8px;
-    margin: -2px 0 6px;
+    opacity: 1;
     outline-color: var(--accent, #7c83ff);
     background-color: color-mix(in srgb, var(--accent, #7c83ff) 10%, transparent);
 }

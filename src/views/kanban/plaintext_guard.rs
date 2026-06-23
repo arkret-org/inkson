@@ -99,15 +99,17 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &cokret_sdk:
 /// Event kinds that carry ONLY non-secret structural metadata (container
 /// title / kind / parent / rank) and therefore MUST submit to the server as
 /// plaintext even inside an encrypted Realm. Container creation (`ck.space.create`
-/// for Board and List) is the canonical example: a second device needs the
-/// plaintext title to render the Board/List name instead of falling back to
-/// `generated_board_fallback_title` (`ck:space:...`). Only Strand card private
-/// content fields (body / synthesis / discussion) are E2EE — never the
-/// container scaffold. Exempting these kinds here is a hard invariant: it
-/// guarantees the plaintext-block decision can never silently drop a container
-/// create, regardless of what `kanban_event_carries_plaintext_private_content`
-/// matches in the future. See _next.md X13.
-pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ck.space.create"];
+/// for Board and List) and structural updates (`ck.space.update`) are the
+/// canonical examples: a second device needs the plaintext title/rank to
+/// render the Board/List name and order instead of falling back to
+/// `generated_board_fallback_title` (`ck:space:...`) or stale rank order. Only
+/// Strand card private content fields (body / synthesis / discussion) are E2EE
+/// — never the container scaffold. Exempting these kinds here is a hard
+/// invariant: it guarantees the plaintext-block decision can never silently
+/// drop a container create/update, regardless of what
+/// `kanban_event_carries_plaintext_private_content` matches in the future. See
+/// _next.md X13.
+pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ck.space.create", "ck.space.update"];
 
 /// R4 fail-closed reason surfaced when the Realm security projection has not
 /// synced yet and we cannot prove the scope is plaintext. Mirrors the

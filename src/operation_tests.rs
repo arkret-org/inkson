@@ -586,6 +586,9 @@ fn object_patch_family_builders_match_registered_payload_schema() {
         if event.kind == "ck.strand.tracks.update" {
             assert_eq!(event.content["strand_id"], strand_id);
             assert!(event.content.get("target_ref").is_none(), "{}", event.kind);
+        } else if event.kind == "ck.space.update" {
+            assert_eq!(event.content["space_id"], space_id);
+            assert!(event.content.get("target_ref").is_none(), "{}", event.kind);
         } else {
             assert!(event.content.get("target_ref").is_some(), "{}", event.kind);
         }

@@ -576,14 +576,15 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     assert!(kanban_plaintext_block_reason(Some(true), &space).is_none());
 }
 
-/// X13 regression: in an encrypted scope, container creation
-/// (`ck.space.create` for BOTH board and list) MUST NOT be blocked — the
-/// title/kind/parent/rank are non-secret metadata that has to reach the
-/// server so a second device can render the real Board/List name. By
-/// contrast a `ck.strand.update` carrying plaintext private body MUST stay
-/// blocked (only E2EE may leave the client for that field).
+/// X13 regression: in an encrypted scope, container creation/update
+/// (`ck.space.create` for BOTH board and list, plus `ck.space.update` rank
+/// patches) MUST NOT be blocked — title/kind/parent/rank are non-secret
+/// metadata that has to reach the server so a second device can render the real
+/// Board/List name and order. By contrast a `ck.strand.update` carrying
+/// plaintext private body MUST stay blocked (only E2EE may leave the client for
+/// that field).
 #[test]
-fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_content() {
+fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_content() {
     let board = crate::operation::ck_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
@@ -618,6 +619,21 @@ fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_co
     assert!(
         kanban_plaintext_block_reason(Some(true), &list).is_none(),
         "encrypted scope must not block list container create"
+    );
+
+    let list_rank_update = crate::operation::ck_ops::space_update_patch(
+        TEST_REALM_ID,
+        "did:web:alice.example",
+        "ck:space:0196419b-0000-7000-8000-00000000aa02",
+        json!({ "rank": "r000" }),
+    )
+    .expect("builds")
+    .build("yougen");
+    let list_rank_update = sdk_event(list_rank_update);
+    assert_eq!(list_rank_update.kind.as_str(), "ck.space.update");
+    assert!(
+        kanban_plaintext_block_reason(Some(true), &list_rank_update).is_none(),
+        "encrypted scope must not block list rank update"
     );
 
     // Counter-case: plaintext private body in a strand update is still blocked.

@@ -23,16 +23,7 @@ impl CokretApi {
         let proof_context = self.event_proof_context().await?;
         for event in events {
             let mut signed = event.clone();
-            if signed.seal_ref.is_none()
-                && signed.seal_basis.is_none()
-                && !signed.effects.is_empty()
-            {
-                let seal = self.current_seal_for(signed.realm_id.as_str()).await?;
-                signed.seal_ref = Some(
-                    cokret_sdk::SealId::new(seal)
-                        .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
-                );
-            }
+            self.stamp_cba_basis_for_sdk_event(&mut signed).await?;
             if signed.proofs.is_empty() {
                 crate::event_signer::sign_sdk_event_with_active_context(
                     &mut signed,

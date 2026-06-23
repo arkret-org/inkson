@@ -85,7 +85,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
                         .get("verification_state")
                         .or_else(|| item.get("status"))
                         .and_then(Value::as_str)
-                        .unwrap_or("unknown")
+                        .unwrap_or("unverified")
                         .to_owned();
                     let created_at = item
                         .get("created_at")
@@ -459,16 +459,19 @@ fn render_device_list(
 
 /// Element-style verification shield for the device list. Maps the
 /// `verification_state` (`device-lifecycle.md` §6) to a colored pill:
-/// verified → green shield, unverified → amber, revoked → red, anything
-/// else → a dim badge carrying the raw state so no information is hidden.
+/// verified → green shield, unverified → amber, revoked → red. Unknown or
+/// missing values fail closed to unverified.
 fn device_verification_badge(state: &str) -> Element {
-    let normalized = state.trim().to_ascii_lowercase();
-    let (class, glyph, label) = match normalized.as_str() {
+    let raw = state.trim().to_ascii_lowercase();
+    let normalized = match raw.as_str() {
+        "verified" | "unverified" | "revoked" => raw.as_str(),
+        _ => "unverified",
+    };
+    let (class, glyph, label) = match normalized {
         "verified" => ("badge success", "🛡", "Verified".to_owned()),
         "unverified" => ("badge warning", "⚠", "Unverified".to_owned()),
         "revoked" => ("badge danger", "⊘", "Revoked".to_owned()),
-        "" => ("badge dim", "•", "Unknown".to_owned()),
-        _ => ("badge dim", "•", state.trim().to_owned()),
+        _ => unreachable!("verification state normalized"),
     };
     rsx! {
         span {
