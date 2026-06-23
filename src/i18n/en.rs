@@ -588,7 +588,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.button.reply", "Reply");
     dict.set("chat.button.react", "React");
     dict.set("chat.button.redact", "Redact");
-    dict.set("chat.you_badge", "You");
+    dict.set("chat.you_badge", "ME");
     // Member visual indicators surfaced wherever a principal DID is
     // rendered (realm-admin member list, @mention picker, chat sender
     // attribution).

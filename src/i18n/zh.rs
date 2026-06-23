@@ -631,7 +631,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.button.reply", "回复");
     dict.set("chat.button.react", "回应");
     dict.set("chat.button.redact", "撤回");
-    dict.set("chat.you_badge", "我");
+    dict.set("chat.you_badge", "ME");
     // Member visual identity (member.badge.*)
     dict.set("member.badge.agent", "智能体");
     // Composer drag-and-drop attachments (A6.2)

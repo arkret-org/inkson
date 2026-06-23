@@ -9,6 +9,7 @@ use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
 use super::permissions::{RealmMemberPermissions, authz_json_allowed};
+use crate::components::SelfAttributionBadge;
 use crate::local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
 use crate::operation::ck_ops;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -2274,7 +2275,10 @@ pub fn RealmMembersPanel(
                                             div { class: "member-row-title",
                                                 span { class: "member-row-primary", title: "{member}", "{member_label}" }
                                                 if is_self {
-                                                    span { class: "badge member-you-badge", "You" }
+                                                    SelfAttributionBadge {
+                                                        class: Some("member-you-badge".to_owned()),
+                                                        test_id: Some("member-self-badge".to_owned()),
+                                                    }
                                                     button {
                                                         class: "badge member-agent-settings-toggle",
                                                         "data-testid": "member-agent-settings-toggle",

@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use super::model::*;
-use crate::components::UiIcon;
+use crate::components::{SelfAttributionBadge, UiIcon};
 use crate::views::helpers::{MentionNode, short_protocol_id};
 
 pub(super) fn push_unique_mention_node(mentions: &mut Vec<MentionNode>, mention: MentionNode) {
@@ -159,7 +159,10 @@ pub(super) fn DiscussionParticipantRow(
                 }
                 div { class: "participant-badges",
                     if participant.is_self {
-                        span { class: "badge participant-badge self", {crate::i18n::tr("chat.you_badge")} }
+                        SelfAttributionBadge {
+                            class: Some("participant-badge self".to_owned()),
+                            test_id: Some("participant-self-badge".to_owned()),
+                        }
                     }
                     if participant.is_agent {
                         span {
