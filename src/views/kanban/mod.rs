@@ -3248,7 +3248,7 @@ pub fn KanbanPanel(
                                             }
                                             if card_detail_actions_open() {
                                                 div { class: "{action_menu_class}", "data-testid": "card-detail-actions-menu",
-                                                    if editing_card_detail() {
+                                                    if editing_card_detail() && card_edit_scope() == CardEditScope::Summary {
                                                         div { class: "card-detail-action-menu-field",
                                                             Label { html_for: "card-detail-labels-input-input", "Labels" }
                                                             Input {

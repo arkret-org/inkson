@@ -125,7 +125,10 @@ pub fn DocumentPanel(
             }
             hydrated_document_id.set(morph_id.clone());
             sync_state.set(SyncState::Pending);
-            save_status.set(format!("Loading document {}", short_protocol_id(&morph_id)));
+            let preserve_save_status = should_preserve_save_status_during_hydrate(&save_status());
+            if !preserve_save_status {
+                save_status.set(format!("Loading document {}", short_protocol_id(&morph_id)));
+            }
             let base = base.clone();
             let token_val = token();
             let actor_key = actor_key.clone();
@@ -179,8 +182,10 @@ pub fn DocumentPanel(
                             document_realm_id.set(realm_id.to_owned());
                         }
                         sync_state.set(SyncState::Synced);
-                        save_status
-                            .set(format!("Loaded document {}", short_protocol_id(&morph_id)));
+                        if !preserve_save_status {
+                            save_status
+                                .set(format!("Loaded document {}", short_protocol_id(&morph_id)));
+                        }
                     }
                     Err(err) => {
                         sync_state.set(SyncState::Failed);
@@ -1099,5 +1104,34 @@ pub fn DocumentPanel(
                 }
             }
         }
+    }
+}
+
+fn should_preserve_save_status_during_hydrate(status: &str) -> bool {
+    status
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("saved")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_preserve_save_status_during_hydrate;
+
+    #[test]
+    fn hydrate_preserves_save_result_status() {
+        assert!(should_preserve_save_status_during_hydrate(
+            "Saved and synced document ck:morph:abc (event ck:event:abc)"
+        ));
+        assert!(should_preserve_save_status_during_hydrate(
+            "Saved locally; sync: unavailable"
+        ));
+        assert!(!should_preserve_save_status_during_hydrate(""));
+        assert!(!should_preserve_save_status_during_hydrate(
+            "Loading document ck:morph:abc"
+        ));
+        assert!(!should_preserve_save_status_during_hydrate(
+            "Loaded document ck:morph:abc"
+        ));
     }
 }

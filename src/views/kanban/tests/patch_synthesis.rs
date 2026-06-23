@@ -319,6 +319,49 @@ fn card_detail_update_patch_unsets_empty_optional_fields() {
 }
 
 #[test]
+fn description_edit_scope_preserves_metadata_fields() {
+    let mut current = test_card("ck:strand:f1", "U");
+    current.title = "Keep".to_owned();
+    current.description = "old summary".to_owned();
+    current.body = "old long-form body".to_owned();
+    current.synthesis = "old synthesis".to_owned();
+    current.labels = vec!["feature".to_owned()];
+    current.due = "2026-05-19".to_owned();
+
+    let (draft, synthesis_revision) = card_detail_draft_for_edit_scope(
+        &current,
+        CardEditScope::Description,
+        &[],
+        None,
+        "",
+        "",
+        "new long-form body",
+        "",
+        "",
+        "",
+        "",
+    );
+
+    assert!(synthesis_revision.is_none());
+    assert_eq!(draft.title, current.title);
+    assert_eq!(draft.description, current.description);
+    assert_eq!(draft.synthesis, current.synthesis);
+    assert_eq!(draft.labels, current.labels);
+    assert_eq!(draft.due, "2026-05-19");
+    let patch = card_detail_update_patch(&current, &draft).unwrap();
+    let object = patch.as_object().unwrap();
+    assert_eq!(object.len(), 1);
+    assert_eq!(patch["body"]["$op"], "set");
+    assert_eq!(patch["body"]["value"], "new long-form body");
+    assert!(patch.get("metadata.fields.labels").is_none());
+    assert!(patch.get("metadata.fields.due_at").is_none());
+    assert_eq!(
+        card_detail_activity_summary(&current, &draft),
+        "Card details updated"
+    );
+}
+
+#[test]
 fn apply_card_detail_draft_marks_card_queued() {
     let mut card = test_card("ck:strand:f1", "U");
     let draft = CardDetailDraft {

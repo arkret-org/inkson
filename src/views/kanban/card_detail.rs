@@ -226,28 +226,19 @@ pub(super) fn save_card_detail_edit(
     card_detail_edit_status.set("Saving...".to_owned());
     let edit_scope = card_edit_scope();
     let synthesis_target_id = card_edit_synthesis_target_id();
-    let synthesis_revision_body = card_edit_synthesis().trim().to_owned();
-    let synthesis_for_save = if edit_scope == CardEditScope::Synthesis {
-        synthesis_body_after_entry_edit(
-            &synthesis_entries,
-            synthesis_target_id.as_deref(),
-            &synthesis_revision_body,
-        )
-    } else {
-        synthesis_revision_body.clone()
-    };
-    let draft = CardDetailDraft {
-        title: card_edit_title().trim().to_owned(),
-        description: card_edit_description().trim().to_owned(),
-        body: card_edit_body().trim().to_owned(),
-        synthesis: synthesis_for_save,
-        labels: parse_card_labels(&card_edit_labels()),
-        assignee: card_edit_assignee().trim().to_owned(),
-        due: card_edit_due().trim().to_owned(),
-        calendar: current.calendar.clone(),
-    };
-    let synthesis_revision =
-        (edit_scope == CardEditScope::Synthesis).then_some(synthesis_revision_body);
+    let (draft, synthesis_revision) = card_detail_draft_for_edit_scope(
+        &current,
+        edit_scope,
+        &synthesis_entries,
+        synthesis_target_id.as_deref(),
+        &card_edit_title(),
+        &card_edit_description(),
+        &card_edit_body(),
+        &card_edit_synthesis(),
+        &card_edit_labels(),
+        &card_edit_assignee(),
+        &card_edit_due(),
+    );
     if dispatch_card_detail_update(
         base_url,
         token,
@@ -274,6 +265,46 @@ pub(super) fn save_card_detail_edit(
         } else {
             status
         });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn card_detail_draft_for_edit_scope(
+    current: &KanbanCard,
+    edit_scope: CardEditScope,
+    synthesis_entries: &[CardSynthesisTrackEntry],
+    synthesis_target_id: Option<&str>,
+    title: &str,
+    description: &str,
+    body: &str,
+    synthesis: &str,
+    labels: &str,
+    _assignee: &str,
+    due: &str,
+) -> (CardDetailDraft, Option<String>) {
+    let mut draft = card_detail_draft_from_card(current);
+    match edit_scope {
+        CardEditScope::Summary => {
+            draft.title = title.trim().to_owned();
+            draft.description = description.trim().to_owned();
+            draft.labels = parse_card_labels(labels);
+            draft.due = due.trim().to_owned();
+            (draft, None)
+        }
+        CardEditScope::Description => {
+            draft.body = body.trim().to_owned();
+            (draft, None)
+        }
+        CardEditScope::Synthesis => {
+            let revision_body = synthesis.trim().to_owned();
+            draft.synthesis = synthesis_body_after_entry_edit(
+                synthesis_entries,
+                synthesis_target_id,
+                &revision_body,
+            );
+            (draft, Some(revision_body))
+        }
+        CardEditScope::Calendar => (draft, None),
     }
 }
 
