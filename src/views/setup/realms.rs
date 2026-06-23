@@ -888,6 +888,26 @@ pub(super) fn RealmsSection(
                                                             }
                                                         }
 
+                                                        let mut seeded_mls_ok = 0_usize;
+                                                        let mut seeded_mls_err = String::new();
+                                                        if crate::security_state::encryption_profile_is_encrypted(
+                                                            &encryption_profile,
+                                                        ) && !invitees.is_empty() {
+                                                            match crate::views::realm_admin::submit_mls_admission_for_invitees(
+                                                                &api,
+                                                                state_store,
+                                                                realm_id.clone(),
+                                                                actor.clone(),
+                                                                device.clone(),
+                                                                invitees.clone(),
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(count) => seeded_mls_ok = count,
+                                                                Err(err) => seeded_mls_err = err.to_string(),
+                                                            }
+                                                        }
+
                                                         let mut steps = vec![format!("created {}", realm_id)];
                                                         if invitees.is_empty() {
                                                             steps.push("seeded owner only".to_owned());
@@ -915,6 +935,15 @@ pub(super) fn RealmsSection(
                                                             &encryption_profile,
                                                         ) {
                                                             steps.push("MLS ready locally".to_owned());
+                                                        }
+                                                        if !seeded_mls_err.is_empty() {
+                                                            steps.push(format!(
+                                                                "MLS admission failed: {seeded_mls_err}"
+                                                            ));
+                                                        } else if seeded_mls_ok > 0 {
+                                                            steps.push(format!(
+                                                                "MLS Welcome queued for {seeded_mls_ok}"
+                                                            ));
                                                         }
                                                         if crate::api::encryption_profile_uses_recommended_floor(
                                                             &encryption_profile,

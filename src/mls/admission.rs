@@ -19,6 +19,12 @@ pub(crate) struct RealmMlsAdmissionEvents {
     pub(crate) snapshot: MlsSnapshotEnvelope,
 }
 
+pub(crate) struct RealmMlsBatchAdmissionEvents {
+    pub(crate) commit: cokret_sdk::Event,
+    pub(crate) welcomes: Vec<cokret_sdk::Event>,
+    pub(crate) snapshot: MlsSnapshotEnvelope,
+}
+
 pub(crate) fn build_realm_mls_admission_events_from_claim(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -60,7 +66,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         device_id,
         claim,
         &member_key_package.keypackage_id,
-        &add,
+        &add.welcome,
         &commit,
         governance_binding,
         claim_nonce,
@@ -82,6 +88,84 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     })
 }
 
+pub(crate) fn build_realm_mls_admission_events_from_claims(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    claims: &[(cokret_sdk::KeypackageClaimRecord, String)],
+) -> Result<RealmMlsBatchAdmissionEvents, String> {
+    if claims.is_empty() {
+        return Err("MLS admission batch requires at least one claim".to_owned());
+    }
+    let member_key_packages = claims
+        .iter()
+        .map(|(claim, _)| {
+            crate::api::keypackage_claim_record_to_mls_record(claim)
+                .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (add, snapshot) = crate::mls::runtime::build_add_members_commit_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+        &member_key_packages,
+    )
+    .map_err(|err| err.user_message())?;
+    let commit = crate::views::kanban::kanban_mls_commit_event_from_store_for_effective_scope(
+        state_store,
+        realm_id,
+        None,
+        actor_id,
+        &add.commit,
+    )?;
+    let governance_binding = commit
+        .content
+        .get("governance_binding")
+        .cloned()
+        .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
+    if add.welcomes.len() != claims.len() {
+        return Err("MLS batch add returned a mismatched Welcome count".to_owned());
+    }
+    let mut welcomes = Vec::with_capacity(claims.len());
+    for ((claim, claim_nonce), (member_key_package, welcome_envelope)) in claims
+        .iter()
+        .zip(member_key_packages.iter().zip(add.welcomes.iter()))
+    {
+        let welcome_payload = build_mls_welcome_payload_value(
+            state_store,
+            secure_store,
+            realm_id,
+            actor_id,
+            device_id,
+            claim,
+            &member_key_package.keypackage_id,
+            welcome_envelope,
+            &commit,
+            governance_binding.clone(),
+            claim_nonce,
+        )?;
+        let welcome = crate::operation::ck_ops::mls_welcome_with_governance(
+            realm_id,
+            actor_id,
+            &welcome_envelope.group_id,
+            &welcome_payload,
+        )
+        .build_sdk_event("yougen")
+        .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
+        welcomes.push(welcome);
+    }
+    Ok(RealmMlsBatchAdmissionEvents {
+        commit,
+        welcomes,
+        snapshot,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_mls_welcome_payload_value(
     state_store: &LocalStateStore,
@@ -91,7 +175,7 @@ pub(crate) fn build_mls_welcome_payload_value(
     sender_device_id: &str,
     claim: &cokret_sdk::KeypackageClaimRecord,
     _key_package_id: &str,
-    add: &cokret_sdk::MlsAddMemberResult,
+    welcome: &cokret_sdk::MlsWelcomeEnvelope,
     commit_event: &cokret_sdk::Event,
     governance_binding: Value,
     claim_nonce: &str,
@@ -109,7 +193,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         ssk_generation: None,
         requester_device_id: None,
         nonce: claim_nonce.trim().to_owned(),
-        welcome_digest: add.welcome.welcome_hash.clone(),
+        welcome_digest: welcome.welcome_hash.clone(),
         created_at: crate::clock::now_utc(),
         signature: cokret_sdk::Signature2 {
             kid: String::new(),
@@ -134,8 +218,8 @@ pub(crate) fn build_mls_welcome_payload_value(
     };
     let commit_ref = commit_event.event_id.as_str().to_owned();
     Ok(json!({
-        "mls_group_id": add.welcome.group_id,
-        "epoch": add.welcome.epoch,
+        "mls_group_id": welcome.group_id,
+        "epoch": welcome.epoch,
         "recipient_principal_id": claim.principal_id,
         "recipient_device_id": claim.device_id,
         "sender_device_id": sender_device_id,
@@ -144,7 +228,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         "claim_id": claim.claim_id,
         "claim_ref": claim_ref,
         "claim_envelope": envelope,
-        "ciphertext": add.welcome.welcome,
+        "ciphertext": welcome.welcome,
         "commit_ref": commit_ref,
         "governance_binding": governance_binding,
         "expires_at": claim.expires_at,

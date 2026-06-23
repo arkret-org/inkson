@@ -334,6 +334,34 @@ pub(crate) fn chat_message_create_operation(
     )
 }
 
+fn public_update_policy_error(body: &str) -> Option<&'static str> {
+    let lower = body.to_ascii_lowercase();
+    if !lower.contains("public update") {
+        return None;
+    }
+    let sensitive = [
+        "root cause",
+        "leaked",
+        "token",
+        "secret",
+        "credential",
+        "password",
+        "private key",
+        "api key",
+    ];
+    sensitive
+        .iter()
+        .any(|term| lower.contains(term))
+        .then_some("public_update_blocked: remove internal root-cause or credential details")
+}
+
+pub(crate) fn chat_content_block_for_body(body: &str) -> anyhow::Result<cokret_sdk::ContentBlock> {
+    if let Some(error) = public_update_policy_error(body) {
+        anyhow::bail!(error);
+    }
+    Ok(cokret_sdk::ContentBlock::text(body))
+}
+
 pub(crate) fn chat_message_create_operation_with_expiry(
     realm_id: &str,
     actor: &str,
@@ -353,7 +381,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
         .iter()
         .filter_map(|mention| mention.as_audience_mention().cloned())
         .collect::<Vec<_>>();
-    let mut content = cokret_sdk::ContentBlock::text(body);
+    let mut content = chat_content_block_for_body(body)?;
     if !actor_mentions.is_empty() {
         content = content
             .with_mentions(actor_mentions)
@@ -372,7 +400,10 @@ pub(crate) fn chat_message_create_operation_with_expiry(
         sdk_payload_value(content.to_value(), "chat message content serialize")?,
     )
     .with_message_id(message_id);
-    if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
+    if let Some(reply_to) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
+        if !is_schema_message_id(reply_to) {
+            anyhow::bail!("reply_to must be a ck:message id");
+        }
         payload = payload.with_reply_to(reply_to);
     }
     if let Some(expiry) = expiry {

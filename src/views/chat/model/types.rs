@@ -121,6 +121,17 @@ impl ChatMessage {
             .filter(|value| !value.is_empty())
             .unwrap_or(self.id.as_str())
     }
+
+    pub(crate) fn reply_target_ref(&self) -> Option<&str> {
+        self.protocol_message_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| is_schema_message_id(value))
+            .or_else(|| {
+                let id = self.id.trim();
+                is_schema_message_id(id).then_some(id)
+            })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

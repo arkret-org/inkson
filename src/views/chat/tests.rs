@@ -243,6 +243,49 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
 }
 
 #[test]
+fn chat_message_create_operation_blocks_sensitive_public_update() {
+    let err = chat_message_create_operation(
+        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "discussion",
+        "ck:message:01904100-0000-7000-8000-000000000001",
+        "Public update: root cause leaked token",
+        &[],
+        None,
+    )
+    .expect_err("sensitive public updates must be blocked before send");
+
+    assert!(err.to_string().contains("public_update_blocked"));
+}
+
+#[test]
+fn chat_message_create_operation_keeps_public_update_notification_projection_out_of_content() {
+    let op = chat_message_create_operation(
+        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "discussion",
+        "ck:message:01904100-0000-7000-8000-000000000001",
+        "SEV-1 public update: checkout latency is recovering",
+        &[],
+        None,
+    )
+    .expect("builds");
+
+    assert!(op.content.get("priority").is_none());
+    assert!(op.content["content"].get("priority").is_none());
+    assert!(op.content["content"].get("notification").is_none());
+    assert_eq!(
+        op.content["content"]["body"].as_str(),
+        Some("SEV-1 public update: checkout latency is recovering")
+    );
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .validate_payload(op.kind.as_str(), &op.content)
+        .unwrap();
+}
+
+#[test]
 fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level() {
     let expiry = cokret_sdk::DisappearingMessageExpiry::new(
         60_000,
@@ -371,6 +414,52 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     cokret_sdk::schema::event_payload_validator_catalog()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
+}
+
+#[test]
+fn chat_message_create_operation_rejects_event_id_reply_target() {
+    let err = chat_message_create_operation(
+        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "discussion",
+        "ck:message:01904100-0000-7000-8000-000000000003",
+        "reply body",
+        &[],
+        Some("ck:event:01904100-0000-7000-8000-000000000004"),
+    )
+    .expect_err("event ids are not valid message reply targets");
+
+    assert!(err.to_string().contains("reply_to must be a ck:message id"));
+}
+
+#[test]
+fn chat_message_reply_target_prefers_protocol_message_id() {
+    let message = ChatMessage {
+        realm_id: "ck:realm:demo".to_owned(),
+        id: "ck:event:01964137-0000-7000-8000-000000000001".to_owned(),
+        protocol_message_id: Some("ck:message:01964137-0000-7000-8000-000000000002".to_owned()),
+        sender: "did:web:example.com:users:bob".to_owned(),
+        executed_by: None,
+        body: "hello".to_owned(),
+        timestamp: "10:00".to_owned(),
+        strand_id: "ck:strand:demo".to_owned(),
+        reply_to: None,
+        reactions: Vec::new(),
+        redacted: false,
+        edited: false,
+        revisions: Vec::new(),
+        pending: false,
+        failed: false,
+        error: None,
+        mentions: Vec::new(),
+        crypto_state: MessageCryptoState::Plaintext,
+    };
+
+    assert_eq!(
+        message.reply_target_ref(),
+        Some("ck:message:01964137-0000-7000-8000-000000000002")
+    );
 }
 
 #[test]

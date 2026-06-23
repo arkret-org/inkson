@@ -1284,7 +1284,7 @@ fn PendingInviteRow(profile: MemberProfile) -> Element {
     }
 }
 
-async fn submit_mls_admission_for_invitee(
+pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::api::CokretApi,
     mut state_store: Signal<LocalStateStore>,
     realm_id: String,
@@ -1360,6 +1360,92 @@ async fn submit_mls_admission_for_invitee(
         .write()
         .save_mls_snapshot(realm_id, admission.snapshot);
     Ok(Some(next_epoch))
+}
+
+pub(crate) async fn submit_mls_admission_for_invitees(
+    api: &crate::api::CokretApi,
+    mut state_store: Signal<LocalStateStore>,
+    realm_id: String,
+    actor_id: String,
+    device_id: String,
+    invitees: Vec<String>,
+) -> anyhow::Result<usize> {
+    if invitees.is_empty() {
+        return Ok(0);
+    }
+    let needs_mls_admission = {
+        let store = state_store.read();
+        store.mls_snapshot_for(&realm_id).is_some()
+            || store.realm_projection_is_mls_encrypted(&realm_id)
+    };
+    if !needs_mls_admission {
+        return Ok(0);
+    }
+    let group_id = {
+        let store = state_store.read();
+        store
+            .mls_snapshot_for(&realm_id)
+            .map(|snapshot| snapshot.group_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "local MLS state is not ready; create or restore this device's MLS state before inviting into an encrypted Realm"
+                )
+            })?
+    };
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    ensure_mls_genesis_frontier_for_invite(
+        api,
+        state_store,
+        secure_store.as_ref(),
+        &realm_id,
+        &actor_id,
+        &device_id,
+    )
+    .await?;
+
+    let mut claims = Vec::<(cokret_sdk::KeypackageClaimRecord, String)>::new();
+    for invitee_did in invitees {
+        let claim_nonce = crate::api::generate_mls_claim_nonce()?;
+        let claim_outcome = api
+            .claim_mls_key_package(
+                &invitee_did,
+                &realm_id,
+                &actor_id,
+                &claim_nonce,
+                None,
+                Some(&group_id),
+            )
+            .await?;
+        let failures = claim_outcome.failures;
+        let claim = claim_outcome.claims.into_iter().next().ok_or_else(|| {
+            let reason = failures
+                .first()
+                .map(|failure| format!("{failure:?}"))
+                .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
+            anyhow::anyhow!("{reason}")
+        })?;
+        claims.push((claim, claim_nonce));
+    }
+    let admission = {
+        let store = state_store.read();
+        crate::mls::admission::build_realm_mls_admission_events_from_claims(
+            &store,
+            secure_store.as_ref(),
+            &realm_id,
+            &actor_id,
+            &device_id,
+            &claims,
+        )
+        .map_err(|err| anyhow::anyhow!(err))?
+    };
+    let mut events = Vec::with_capacity(admission.welcomes.len() + 1);
+    events.push(admission.commit);
+    events.extend(admission.welcomes);
+    api.submit_sdk_events_batch(&realm_id, events, None).await?;
+    state_store
+        .write()
+        .save_mls_snapshot(realm_id, admission.snapshot);
+    Ok(claims.len())
 }
 
 fn mls_group_state_event_ref_ready(store: &LocalStateStore, realm_id: &str) -> bool {

@@ -2120,9 +2120,14 @@ pub fn ChatPanel(
                                             variant: ButtonVariant::Secondary,
                                             class: "chat-message-action",
                                             "data-testid": "chat-reply-button",
+                                            disabled: msg.reply_target_ref().is_none(),
                                             onclick: {
-                                                let msg_id = msg.id.clone();
-                                                move |_| reply_to_message.set(Some(msg_id.clone()))
+                                                let msg_id = msg.reply_target_ref().map(ToOwned::to_owned);
+                                                move |_| {
+                                                    if let Some(msg_id) = msg_id.clone() {
+                                                        reply_to_message.set(Some(msg_id));
+                                                    }
+                                                }
                                             },
                                             {crate::i18n::tr("chat.button.reply")}
                                         }
@@ -3849,6 +3854,10 @@ pub fn ChatPanel(
                                 if body.is_empty() {
                                     return;
                                 }
+                                if let Err(error) = chat_content_block_for_body(&body) {
+                                    status_msg.set(format!("Message send failed: {error:#}"));
+                                    return;
+                                }
                                 let mut mentions = parse_mention_nodes(&body);
                                 // G3.Y2 — merge mention picker chips
                                 // into the structured mentions list so
@@ -4136,6 +4145,43 @@ pub fn ChatPanel(
                                     status_msg.set("Type a message before secure send".to_owned());
                                     return;
                                 }
+                                // P1: encrypt the canonical Content Block JSON
+                                // (`ck.content.text`), NOT the bare body bytes, so
+                                // strict receivers can parse the decrypted payload
+                                // as `application/vnd.cokret.message+json` and the
+                                // decrypt-on-read path round-trips it back to text.
+                                let secure_content_block = match chat_content_block_for_body(&body)
+                                {
+                                    Ok(content) => content,
+                                    Err(err) => {
+                                        status_msg.set(format!(
+                                            "Send Secure rejected message content: {err:#}"
+                                        ));
+                                        return;
+                                    }
+                                };
+                                let secure_content_value = match sdk_payload_value(
+                                    secure_content_block.to_value(),
+                                    "chat encrypted content block serialize",
+                                ) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        status_msg.set(format!(
+                                            "Send Secure could not encode message content: {err:#}"
+                                        ));
+                                        return;
+                                    }
+                                };
+                                let secure_content_bytes =
+                                    match serde_json::to_vec(&secure_content_value) {
+                                        Ok(bytes) => bytes,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "Send Secure could not encode message content: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                 let realm = realm.clone();
                                 let actor = actor.clone();
                                 let strand_id = if selected_strand.trim().is_empty() {
@@ -4182,48 +4228,6 @@ pub fn ChatPanel(
                                 let token_for_backup_trigger = api_token.clone();
                                 let actor_for_backup_trigger = actor.clone();
                                 spawn(async move {
-                                // P1: encrypt the canonical Content Block JSON
-                                // (`ck.content.text`), NOT the bare body bytes, so
-                                // strict receivers can parse the decrypted payload
-                                // as `application/vnd.cokret.message+json` and the
-                                // decrypt-on-read path round-trips it back to text.
-                                let secure_content_value = match sdk_payload_value(
-                                    cokret_sdk::ContentBlock::text(&body).to_value(),
-                                    "chat encrypted content block serialize",
-                                ) {
-                                    Ok(value) => value,
-                                    Err(err) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            format!(
-                                                "Send Secure could not encode message content: {err:#}"
-                                            ),
-                                        );
-                                        return;
-                                    }
-                                };
-                                let secure_content_bytes = match serde_json::to_vec(
-                                    &secure_content_value,
-                                ) {
-                                    Ok(bytes) => bytes,
-                                    Err(err) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            format!(
-                                                "Send Secure could not encode message content: {err}"
-                                            ),
-                                        );
-                                        return;
-                                    }
-                                };
                                 let _hlc = Hlc::now("yougen").to_string();
                                 let seal_view = state_store.read().seal_view_for_realm(&realm);
                                 // Shared MLS core: encrypt → forced ck.mls.commit
