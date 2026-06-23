@@ -8,6 +8,15 @@ impl CokretApi {
         Ok(outcome.into())
     }
 
+    pub(crate) async fn find_mls_genesis_event_id(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<Option<cokret_sdk::EventId>> {
+        let outcome: cokret_sdk::EventsQueryOutcome =
+            self.get_json(&events_query_path(realm_id)).await?;
+        Ok(mls_genesis_event_id_from_events(&outcome, realm_id))
+    }
+
     /// Stream the canonical `/_cokret/self/events/subscribe` NDJSON response and
     /// invoke `on_frame` once per parsed frame.
     ///
@@ -542,6 +551,20 @@ fn apply_actor_frontier_to_sdk_event(
     Ok(())
 }
 
+fn mls_genesis_event_id_from_events(
+    outcome: &cokret_sdk::EventsQueryOutcome,
+    realm_id: &str,
+) -> Option<cokret_sdk::EventId> {
+    outcome
+        .events
+        .iter()
+        .find(|event| {
+            event.realm_id.as_str() == realm_id
+                && event.kind.as_str() == cokret_sdk::events::kinds::MLS_GENESIS
+        })
+        .map(|event| event.event_id.clone())
+}
+
 fn event_proof_context_from_description(
     describe: &ServerDescription,
 ) -> crate::event_signer::EventProofContext {
@@ -573,6 +596,27 @@ mod tests {
                 "actor_id": actor_id,
                 "state": "online"
             },
+            "proofs": []
+        }))
+        .unwrap()
+    }
+
+    fn sdk_event_with_kind(
+        event_id: &str,
+        realm_id: &str,
+        kind: &str,
+        actor_id: &str,
+    ) -> cokret_sdk::Event {
+        serde_json::from_value(json!({
+            "event_id": event_id,
+            "kind": kind,
+            "realm_id": realm_id,
+            "actor_id": actor_id,
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {},
             "proofs": []
         }))
         .unwrap()
@@ -629,6 +673,53 @@ mod tests {
         }
         .into();
         assert!(!is_actor_seq_cas_conflict(&different_conflict));
+    }
+
+    #[test]
+    fn mls_genesis_event_lookup_filters_kind_and_realm() {
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let other_realm = "ck:realm:01904100-0000-7000-8000-000000000099";
+        let expected =
+            cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000003").unwrap();
+        let outcome = cokret_sdk::EventsQueryOutcome {
+            events: vec![
+                sdk_event_with_kind(
+                    "ck:event:01904100-0000-7000-8000-000000000001",
+                    realm,
+                    "ck.message.create",
+                    "did:web:alice.example",
+                ),
+                sdk_event_with_kind(
+                    "ck:event:01904100-0000-7000-8000-000000000002",
+                    other_realm,
+                    "ck.mls.genesis",
+                    "did:web:alice.example",
+                ),
+                sdk_event_with_kind(
+                    expected.as_str(),
+                    realm,
+                    "ck.mls.genesis",
+                    "did:web:alice.example",
+                ),
+            ],
+            snapshot_bootstrap: None,
+            next_cursor: None,
+            prev_cursor: None,
+            has_more: false,
+            range_completeness: Value::Null,
+        };
+
+        assert_eq!(
+            mls_genesis_event_id_from_events(&outcome, realm),
+            Some(expected)
+        );
+        assert_eq!(
+            mls_genesis_event_id_from_events(
+                &outcome,
+                "ck:realm:01904100-0000-7000-8000-000000000123"
+            ),
+            None
+        );
     }
 
     #[test]

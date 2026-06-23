@@ -1,5 +1,5 @@
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::Signer;
 use serde_json::{Value, json};
 
@@ -174,7 +174,7 @@ fn sign_welcome_claim_envelope(
         .map_err(|err| format!("load self-signing key: {err}"))?
         .ok_or_else(|| "self-signing key is not available on this device".to_owned())?;
         let signature = signing_key.sign(&signing_bytes);
-        envelope.signature.sig = STANDARD_NO_PAD.encode(signature.to_bytes());
+        envelope.signature.sig = URL_SAFE_NO_PAD.encode(signature.to_bytes());
         return Ok(());
     }
     let sender_device_id = sender_device_id.trim();
@@ -183,8 +183,11 @@ fn sign_welcome_claim_envelope(
     }
     envelope.ssk_generation = None;
     envelope.requester_device_id = Some(sender_device_id.to_owned());
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| "MLS Welcome device signature requires an active event signer".to_owned())?;
+    let signer = match crate::event_signer::active_signer() {
+        Some(signer) => signer,
+        None => crate::event_signer::bootstrap_default_signer("yougen")
+            .map_err(|err| format!("MLS Welcome device signer bootstrap: {err}"))?,
+    };
     envelope.signature.kid = signer.verification_method().to_owned();
     let signing_bytes = envelope
         .canonical_signing_bytes()
@@ -192,7 +195,7 @@ fn sign_welcome_claim_envelope(
     let signature = signer
         .sign_raw(&signing_bytes)
         .map_err(|err| format!("MLS Welcome device signature: {err}"))?;
-    envelope.signature.sig = STANDARD_NO_PAD.encode(signature);
+    envelope.signature.sig = URL_SAFE_NO_PAD.encode(signature);
     Ok(())
 }
 
@@ -268,6 +271,61 @@ mod tests {
             revocation_status: None,
             last_resort: None,
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn welcome_device_signature_uses_active_device_signer() {
+        let state = isolated_store_for_tests("welcome-device-signer-secure-store");
+        let secure = MemorySecureKeyStore::new();
+        let active_signer = std::sync::Arc::new(crate::event_signer::build_ed25519_signer(
+            [7u8; 32],
+            "did:key:zActiveSigner",
+        ));
+        let expected_kid = active_signer.verification_method().to_owned();
+        let previous = crate::event_signer::replace_active_signer(Some(active_signer));
+        let actor = "did:web:alice.example";
+        let device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+        let mut envelope = cokret_sdk::MlsWelcomeClaimEnvelope {
+            keypackage_ref:
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            keypackage_digest: cokret_sdk::Hash::new(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            intended_realm_id: cokret_sdk::RealmId::new(
+                "ck:realm:01904100-0000-7000-8000-0000000000d1",
+            )
+            .unwrap(),
+            claim_id: "ck:mls:kp:test:nonce".to_owned(),
+            requester_did: cokret_sdk::Did::new(actor.to_owned()).unwrap(),
+            ssk_generation: None,
+            requester_device_id: None,
+            nonce: "nonce".to_owned(),
+            welcome_digest: cokret_sdk::Hash::new(
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            )
+            .unwrap(),
+            created_at: crate::clock::now_utc(),
+            signature: cokret_sdk::Signature2 {
+                kid: String::new(),
+                alg: Some("EdDSA".to_owned()),
+                sig: String::new(),
+            },
+        };
+
+        sign_welcome_claim_envelope(&state, &secure, actor, device, &mut envelope).unwrap();
+
+        assert_eq!(envelope.requester_device_id.as_deref(), Some(device));
+        assert_eq!(envelope.signature.kid, expected_kid);
+        assert!(!envelope.signature.sig.is_empty());
+        assert!(!envelope.signature.sig.contains(['+', '/', '=']));
+        assert!(
+            URL_SAFE_NO_PAD
+                .decode(envelope.signature.sig.as_bytes())
+                .is_ok()
+        );
+        let _ = crate::event_signer::replace_active_signer(previous);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

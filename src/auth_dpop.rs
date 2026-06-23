@@ -315,24 +315,33 @@ pub fn ensure_device_key_with_secure_store(
         .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?
     {
         let handle = decode_record(&record)?;
+        #[cfg(not(test))]
+        crate::event_signer::activate_device_signer_from_seed_b64url(
+            &record.seed_b64,
+            Some(secure_store),
+        )
+        .map_err(|err| AuthDpopError::SecureStore(format!("activate event signer: {err}")))?;
         store
             .set_dpop_device_key_with_secure_store(Some(record), secure_store)
             .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
         return Ok(handle);
     }
 
-    let mut seed = [0u8; 32];
-    getrandom::fill(&mut seed).map_err(|err| AuthDpopError::Rng(err.to_string()))?;
-    let signing_key = SigningKey::from_bytes(&seed);
+    let material = crate::secure_key_store::ensure_signing_seed(secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(format!("ensure device signing seed: {err}")))?;
+    let signing_key = SigningKey::from_bytes(&material.seed);
     let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key());
     let record = DpopDeviceKeyRecord {
-        seed_b64: URL_SAFE_NO_PAD.encode(seed),
+        seed_b64: URL_SAFE_NO_PAD.encode(material.seed),
         jkt: jkt.clone(),
         created_at: Utc::now(),
     };
     store
         .set_dpop_device_key_with_secure_store(Some(record), secure_store)
         .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+    #[cfg(not(test))]
+    crate::event_signer::activate_device_signer_from_seed(material.seed, Some(secure_store))
+        .map_err(|err| AuthDpopError::SecureStore(format!("activate event signer: {err}")))?;
     Ok(DpopHandle { signing_key, jkt })
 }
 

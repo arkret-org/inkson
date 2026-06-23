@@ -262,10 +262,14 @@ async fn enroll_current_session_device(
         .session_grant()
         .ok_or_else(|| anyhow::anyhow!("device enrollment requires an active session grant"))?;
 
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    let material = crate::secure_key_store::ensure_signing_seed(secure_store.as_ref())
-        .map_err(|error| anyhow::anyhow!("ensure device signing seed: {error}"))?;
-    let device_public_key = crate::device_enrollment::device_public_key_multibase(&material);
+    let signer = match crate::event_signer::active_signer() {
+        Some(signer) => signer,
+        None => crate::event_signer::bootstrap_default_signer("yougen")
+            .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
+    };
+    let device_public_key = signer.public_key_multibase().ok_or_else(|| {
+        anyhow::anyhow!("device enrollment requires a local Ed25519 active signer")
+    })?;
 
     let gate_account_base = crate::coauth::resolve_principal_gate_account_base(base)
         .await

@@ -1949,7 +1949,7 @@ pub fn ChatPanel(
                                         {crate::i18n::tr("message.show_anyway")}
                                     }
                                 } else {
-                                    div { class: "msg-content",
+                                    div { class: "msg-content", "data-testid": "event-body",
                                         {render_message_body(&msg.body, &msg.mentions, &base_url)}
                                     }
                                 }
