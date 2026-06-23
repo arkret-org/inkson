@@ -291,7 +291,7 @@ async fn rotate_session_grant(
     Ok(PersistedSessionGrant {
         grant_jwt: outcome.grant_jwt,
         session_private_key_pem,
-        grant_id: outcome.grant_id,
+        grant_id: outcome.grant_id.to_string(),
         audience: outcome.audience,
         principal_id: grant.principal_id.clone(),
         device_id: grant.device_id.clone(),

@@ -148,7 +148,7 @@ function sessionInjectionRecord(
 ) {
   return {
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
-    grant_id: "ck:grant:e2e",
+    grant_id: "ck:grant:0196419b-0000-7000-8000-00000000e2e1",
     audience: DEFAULT_SERVER_URL,
     dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,
     ...overrides,

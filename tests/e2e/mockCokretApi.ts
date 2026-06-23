@@ -1580,7 +1580,7 @@ export async function mockCokretApi(
       return json(route, {
         allowed: true,
         reason_code: "frontier_current",
-        grants: ["ck:grant:e2e"],
+        grants: ["ck:grant:0196419b-0000-7000-8000-00000000e2e1"],
         obligations: [{ type: "audit", reason_required: false }],
       });
     }
@@ -1592,7 +1592,7 @@ export async function mockCokretApi(
       return json(route, {
         grants: [
           {
-            grant_id: "ck:grant:e2e",
+            grant_id: "ck:grant:0196419b-0000-7000-8000-00000000e2e1",
             issuer: "did:web:admin.example",
             subject: url.searchParams.get("subject"),
             actions: ["space.read", "message.create"],
@@ -1607,10 +1607,14 @@ export async function mockCokretApi(
                 },
               },
             ],
-            delegation_chain: ["ck:grant:root", "ck:grant:e2e"],
+            delegation_chain: [
+              "ck:grant:0196419b-0000-7000-8000-00000000e2e0",
+              "ck:grant:0196419b-0000-7000-8000-00000000e2e1",
+            ],
           },
         ],
-        state_digest: "ck:statehash:e2e",
+        state_digest:
+          "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         evaluated_at: "2026-04-28T12:00:00Z",
       });
     }

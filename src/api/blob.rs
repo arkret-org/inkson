@@ -33,7 +33,8 @@ impl CokretApi {
             })
             .transpose()?;
         let body = cokret_sdk::models::BlobPresignRequestBody {
-            blob_ref: canonical_blob_ref(blob_ref).to_owned(),
+            blob_ref: cokret_sdk::BlobRef::new(canonical_blob_ref(blob_ref).to_owned())
+                .map_err(|err| anyhow::anyhow!("invalid blob_ref for /blob/presign: {err}"))?,
             realm_id: realm,
             max_age_seconds: None,
             purpose: purpose
