@@ -50,6 +50,8 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
 use cokret_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
 use ed25519_dalek::{Signer as _, SigningKey};
@@ -384,6 +386,87 @@ pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> Yo
     build_ed25519_signer_with_verification_method(seed, signer_did, verification_method)
 }
 
+/// Install the active device signer from the exact signing material used for
+/// this session device. Callers that just enrolled or rehydrated the device
+/// identity should use this instead of hand-building a signer so enrollment,
+/// KeyPackage uploads, Welcome claim envelopes, and event proofs stay bound to
+/// the same Ed25519 key.
+pub fn install_device_signer_from_material(
+    material: &crate::secure_key_store::SigningSeedMaterial,
+) -> Arc<YougenEventSigner> {
+    let signer = Arc::new(build_ed25519_signer(
+        material.seed,
+        material.local_signing_did.clone(),
+    ));
+    let installed = install_active_signer(signer.clone());
+    crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
+    if installed {
+        signer
+    } else {
+        active_signer().unwrap_or(signer)
+    }
+}
+
+/// Make `seed` the active session-device signer, replacing any stale signer.
+///
+/// Cokret's default session profile uses one Ed25519 device key for DPoP,
+/// RFC 9421/session proofs, device authorization, KeyPackage claims, and MLS
+/// Welcome claim envelopes. This entry point is used when the DPoP path is the
+/// authoritative source of the device seed, such as grant injection or a
+/// rehydrated `cnf.jkt` holder key.
+pub fn activate_device_signer_from_seed(
+    seed: [u8; 32],
+    persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
+) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+    let material = match persist_store {
+        Some(store) => crate::secure_key_store::store_signing_seed(store, &seed)
+            .map_err(|err| anyhow::anyhow!("persist device signing seed failed: {err}"))?,
+        None => {
+            let verifying = SigningKey::from_bytes(&seed).verifying_key();
+            crate::secure_key_store::SigningSeedMaterial {
+                seed,
+                local_signing_did: crate::did_key::did_key_from_verifying_key(&verifying),
+            }
+        }
+    };
+    let signer = Arc::new(build_ed25519_signer(
+        material.seed,
+        material.local_signing_did.clone(),
+    ));
+    let expected_public_key = signer.public_key_multibase();
+    let active_matches = active_signer()
+        .and_then(|active| active.public_key_multibase())
+        .is_some_and(|active_public_key| Some(active_public_key) == expected_public_key);
+    let active = if active_matches {
+        active_signer().unwrap_or_else(|| signer.clone())
+    } else {
+        let _ = replace_active_signer(Some(signer.clone()));
+        signer
+    };
+    crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
+    Ok(active)
+}
+
+/// Decode a base64url-no-pad Ed25519 seed, then install it as the active
+/// session-device signer.
+pub fn activate_device_signer_from_seed_b64url(
+    seed_b64url: &str,
+    persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
+) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(seed_b64url.as_bytes())
+        .map_err(|err| anyhow::anyhow!("device signing seed base64url decode: {err}"))?;
+    if bytes.len() != 32 {
+        return Err(anyhow::anyhow!(
+            "device signing seed length {}, expected 32",
+            bytes.len()
+        ));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&bytes);
+    activate_device_signer_from_seed(seed, persist_store)
+}
+
 /// Build an Ed25519 signer with an explicit verification-method id.
 ///
 /// This is used by control-plane proofs whose verification method is scoped
@@ -426,15 +509,18 @@ fn active_slot() -> &'static std::sync::RwLock<Option<Arc<YougenEventSigner>>> {
 }
 
 /// Install `signer` as the process-wide active signer. Returns `true`
-/// on first install. Subsequent calls overwrite — see
-/// [`replace_active_signer`] for the semantic mirror.
+/// on first install. Subsequent calls leave the current signer in place;
+/// callers that intentionally rotate the device signer must use
+/// [`replace_active_signer`].
 pub fn install_active_signer(signer: Arc<YougenEventSigner>) -> bool {
     let mut guard = match active_slot().write() {
         Ok(g) => g,
         Err(poison) => poison.into_inner(),
     };
     let first = guard.is_none();
-    *guard = Some(signer);
+    if first {
+        *guard = Some(signer);
+    }
     first
 }
 
@@ -559,13 +645,7 @@ pub fn bootstrap_default_signer(
     let store = crate::secure_key_store::default_secure_key_store(service_name);
     let material = crate::secure_key_store::ensure_signing_seed(&*store)
         .map_err(|err| anyhow::anyhow!("ensure_signing_seed failed: {err}"))?;
-    let signer = Arc::new(build_ed25519_signer(
-        material.seed,
-        material.local_signing_did,
-    ));
-    install_active_signer(signer.clone());
-    crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
-    Ok(signer)
+    Ok(install_device_signer_from_material(&material))
 }
 
 #[cfg(test)]
@@ -895,6 +975,14 @@ mod tests {
 
         let signer = Arc::new(build_ed25519_signer([1u8; 32], "did:web:x"));
         assert!(install_active_signer(signer.clone()));
+        let replacement = Arc::new(build_ed25519_signer([8u8; 32], "did:web:y"));
+        assert!(!install_active_signer(replacement));
+        assert_eq!(
+            active_signer()
+                .expect("active signer")
+                .verification_method(),
+            signer.verification_method()
+        );
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
@@ -904,6 +992,58 @@ mod tests {
         let prev = replace_active_signer(None);
         assert!(prev.is_some());
         assert!(active_signer().is_none());
+    }
+
+    #[test]
+    fn install_device_signer_from_material_uses_material_did_key() {
+        let _g = reset();
+        let seed = [11u8; 32];
+        let verifying = SigningKey::from_bytes(&seed).verifying_key();
+        let did = crate::did_key::did_key_from_verifying_key(&verifying);
+        let material = crate::secure_key_store::SigningSeedMaterial {
+            seed,
+            local_signing_did: did.clone(),
+        };
+
+        let signer = install_device_signer_from_material(&material);
+
+        assert_eq!(signer.signer_did(), did);
+        assert_eq!(signer.verification_method(), format!("{did}#device"));
+        assert_eq!(
+            active_signer()
+                .expect("active signer")
+                .verification_method(),
+            format!("{did}#device")
+        );
+        assert!(should_auto_sign());
+    }
+
+    #[test]
+    fn activate_device_signer_from_seed_b64url_persists_and_replaces_stale_signer() {
+        let _g = reset();
+        let stale = Arc::new(build_ed25519_signer([8u8; 32], "did:web:stale.example"));
+        assert!(install_active_signer(stale));
+
+        let seed = [12u8; 32];
+        let seed_b64url = URL_SAFE_NO_PAD.encode(seed);
+        let verifying = SigningKey::from_bytes(&seed).verifying_key();
+        let did = crate::did_key::did_key_from_verifying_key(&verifying);
+        let store = crate::secure_key_store::MemorySecureKeyStore::new();
+
+        let signer = activate_device_signer_from_seed_b64url(&seed_b64url, Some(&store)).unwrap();
+
+        assert_eq!(signer.signer_did(), did);
+        assert_eq!(
+            active_signer()
+                .expect("active signer")
+                .verification_method(),
+            format!("{did}#device")
+        );
+        let persisted = crate::secure_key_store::load_signing_seed(&store)
+            .unwrap()
+            .expect("persisted seed");
+        assert_eq!(persisted.seed, seed);
+        assert!(should_auto_sign());
     }
 
     #[test]

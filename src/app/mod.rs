@@ -315,6 +315,17 @@ pub fn RouterView() -> Element {
                     };
                     match dpop_record {
                         Ok(Some(record)) => {
+                            if let Err(error) =
+                                crate::event_signer::activate_device_signer_from_seed_b64url(
+                                    &record.seed_b64,
+                                    Some(secure_store.as_ref()),
+                                )
+                            {
+                                tracing::warn!(
+                                    ?error,
+                                    "IndexedDB DPoP-bound signer bootstrap failed",
+                                );
+                            }
                             if let Err(error) = state_store_for_secure_upgrade
                                 .write()
                                 .set_dpop_device_key_with_secure_store(
@@ -833,7 +844,10 @@ pub fn RouterView() -> Element {
             let store = state_store.read();
             has_bootstrap_refresh_material(&store, &base, &account_did())
         };
-        if !base.trim().is_empty() && (!session.trim().is_empty() || can_restore_session) {
+        if !base.trim().is_empty()
+            && secure_store_ready
+            && (!session.trim().is_empty() || can_restore_session)
+        {
             bootstrap_pending.set(false);
             sync_bootstrap_complete.set(false);
             session_boot_state.set(session_boot_state_from_bootstrap_material(

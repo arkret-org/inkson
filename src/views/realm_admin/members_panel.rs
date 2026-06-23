@@ -1383,6 +1383,15 @@ async fn ensure_mls_genesis_frontier_for_invite(
         if mls_group_state_event_ref_ready(&store, realm_id) {
             return Ok(());
         }
+    }
+    if let Some(event_id) = api.find_mls_genesis_event_id(realm_id).await? {
+        state_store
+            .write()
+            .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id);
+        return Ok(());
+    }
+    {
+        let store = state_store.read();
         if store.mls_genesis_emitted_for(realm_id) {
             anyhow::bail!(
                 "local MLS genesis event id is not available yet; sync this Realm before inviting into its encrypted group"
@@ -1431,6 +1440,12 @@ async fn ensure_mls_genesis_frontier_for_invite(
         Err(err) => {
             let text = err.to_string();
             if text.contains("mls_genesis_already_exists") {
+                if let Some(event_id) = api.find_mls_genesis_event_id(realm_id).await? {
+                    state_store
+                        .write()
+                        .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id);
+                    return Ok(());
+                }
                 anyhow::bail!(
                     "MLS genesis already exists server-side but the local event id is unavailable; sync this Realm before inviting"
                 );
