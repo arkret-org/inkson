@@ -59,4 +59,54 @@ impl CokretApi {
         self.send_json_retryable(self.prepare_request(request), Method::POST)
             .await
     }
+
+    pub(crate) async fn archive_circle(
+        &self,
+        circle_id: &str,
+        reason_code: Option<String>,
+    ) -> anyhow::Result<cokret_sdk::CircleView> {
+        self.submit_circle_lifecycle(circle_id, "archive", reason_code)
+            .await
+    }
+
+    pub(crate) async fn restore_circle(
+        &self,
+        circle_id: &str,
+        reason_code: Option<String>,
+    ) -> anyhow::Result<cokret_sdk::CircleView> {
+        self.submit_circle_lifecycle(circle_id, "restore", reason_code)
+            .await
+    }
+
+    pub(crate) async fn tombstone_circle(
+        &self,
+        circle_id: &str,
+        reason_code: Option<String>,
+    ) -> anyhow::Result<cokret_sdk::CircleView> {
+        self.submit_circle_lifecycle(circle_id, "tombstone", reason_code)
+            .await
+    }
+
+    async fn submit_circle_lifecycle(
+        &self,
+        circle_id: &str,
+        action: &str,
+        reason_code: Option<String>,
+    ) -> anyhow::Result<cokret_sdk::CircleView> {
+        let circle_id = circle_id.trim();
+        if circle_id.is_empty() {
+            anyhow::bail!("circle_id is required for Circle lifecycle operations");
+        }
+        let body = cokret_sdk::CircleLifecycleRequestBody { reason_code };
+        let idem = uuid_v7();
+        let bytes = serde_json::to_vec(&body)?;
+        let request = self
+            .http
+            .post(self.endpoint(&format!("_cokret/self/circles/{circle_id}/{action}"))?)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(bytes);
+        let request = self.with_write_request_headers(request, &idem);
+        self.send_json_retryable(self.prepare_request(request), Method::POST)
+            .await
+    }
 }

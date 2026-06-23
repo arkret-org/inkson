@@ -27,6 +27,10 @@ pub struct CirclePanelProps {
     /// Hides the Archive button when `false`.
     #[props(default)]
     pub viewer_can_archive: bool,
+    #[props(default)]
+    pub viewer_can_restore: bool,
+    #[props(default)]
+    pub viewer_can_tombstone: bool,
     /// `true` when the viewer has the audited `scope_rebind` profile
     /// permission. Hides the Scope-Rotate button when `false`.
     #[props(default)]
@@ -38,6 +42,10 @@ pub struct CirclePanelProps {
     pub on_leave: Option<EventHandler<()>>,
     #[props(default)]
     pub on_archive: Option<EventHandler<()>>,
+    #[props(default)]
+    pub on_restore: Option<EventHandler<()>>,
+    #[props(default)]
+    pub on_tombstone: Option<EventHandler<()>>,
     #[props(default)]
     pub on_scope_rotate: Option<EventHandler<()>>,
 }
@@ -57,9 +65,13 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
         summary,
         visible_members,
         viewer_can_archive,
+        viewer_can_restore,
+        viewer_can_tombstone,
         viewer_can_scope_rotate,
         on_leave,
         on_archive,
+        on_restore,
+        on_tombstone,
         on_scope_rotate,
     } = props;
 
@@ -70,6 +82,14 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
     let color = summary.color_token.clone();
     let symbol = summary.symbol.clone();
     let member_count = summary.member_count;
+    let is_active = summary.state == cokret_sdk::CircleState::Active;
+    let is_archived = summary.state == cokret_sdk::CircleState::Archived;
+    let is_tombstoned = summary.state == cokret_sdk::CircleState::Tombstoned;
+    let state_label = match summary.state {
+        cokret_sdk::CircleState::Active => crate::i18n::tr("circle.status.active"),
+        cokret_sdk::CircleState::Archived => crate::i18n::tr("circle.status.archived"),
+        cokret_sdk::CircleState::Tombstoned => crate::i18n::tr("circle.status.tombstoned"),
+    };
 
     rsx! {
         section {
@@ -79,22 +99,40 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
             header { class: "panel-head",
                 span { class: "circle-chip color-{color}", "{symbol} {short_name}" }
                 h1 { "{title}" }
-                p { class: "muted", "Parent Realm · {realm_id} · {member_count} members visible" }
+                p { class: "muted", "Parent Realm · {realm_id} · {member_count} members visible · {state_label}" }
             }
 
             div { class: "panel-actions",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "circle-leave-button",
-                    onclick: move |_| if let Some(handler) = on_leave.as_ref() { handler.call(()); },
-                    "Leave Circle"
+                if !is_tombstoned {
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "circle-leave-button",
+                        onclick: move |_| if let Some(handler) = on_leave.as_ref() { handler.call(()); },
+                        {crate::i18n::tr("circle.action.leave")}
+                    }
                 }
-                if viewer_can_archive {
+                if viewer_can_archive && is_active {
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "circle-archive-button",
                         onclick: move |_| if let Some(handler) = on_archive.as_ref() { handler.call(()); },
-                        "Archive Circle"
+                        {crate::i18n::tr("circle.action.archive")}
+                    }
+                }
+                if viewer_can_restore && is_archived {
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "circle-restore-button",
+                        onclick: move |_| if let Some(handler) = on_restore.as_ref() { handler.call(()); },
+                        {crate::i18n::tr("circle.action.restore")}
+                    }
+                }
+                if viewer_can_tombstone && !is_tombstoned {
+                    Button {
+                        variant: ButtonVariant::Destructive,
+                        "data-testid": "circle-tombstone-button",
+                        onclick: move |_| if let Some(handler) = on_tombstone.as_ref() { handler.call(()); },
+                        {crate::i18n::tr("circle.action.tombstone")}
                     }
                 }
                 if viewer_can_scope_rotate {
@@ -102,7 +140,7 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
                         variant: ButtonVariant::Destructive,
                         "data-testid": "circle-scope-rotate-button",
                         onclick: move |_| if let Some(handler) = on_scope_rotate.as_ref() { handler.call(()); },
-                        "Rotate scope (audited)"
+                        {crate::i18n::tr("circle.action.scope_rotate")}
                     }
                 }
             }
@@ -240,6 +278,7 @@ mod tests {
             color_token: "indigo".to_owned(),
             symbol: "shield".to_owned(),
             member_count: 4,
+            state: cokret_sdk::CircleState::Active,
             viewer_is_member: true,
         }
     }

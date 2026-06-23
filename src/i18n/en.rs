@@ -1308,6 +1308,10 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "The Circle is archived or tombstoned and can no longer receive messages.",
     );
     dict.set(
+        "error.circle.not_archived",
+        "Only archived Circles can be restored.",
+    );
+    dict.set(
         "error.circle.member_not_in_realm",
         "Cannot add this user to the Circle — they are not an active member of the parent Realm.",
     );
@@ -1331,6 +1335,14 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "error.circle.delivery_binding_handed_over",
         "The Circle's delivery binding moved to a newer set of devices — please retry the request.",
     );
+    dict.set("circle.action.leave", "Leave Circle");
+    dict.set("circle.action.archive", "Archive Circle");
+    dict.set("circle.action.restore", "Restore Circle");
+    dict.set("circle.action.tombstone", "Tombstone Circle");
+    dict.set("circle.action.scope_rotate", "Rotate scope");
+    dict.set("circle.status.active", "Active");
+    dict.set("circle.status.archived", "Archived");
+    dict.set("circle.status.tombstoned", "Tombstoned");
 
     // R3.3 (CKP-0011) — shareable object links (Chinese-first).
     dict.set("object_link.share", "分享链接");

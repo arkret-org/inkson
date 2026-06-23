@@ -853,6 +853,7 @@ pub fn AppletsPanel(
                                                             effective_scope,
                                                             reason_code: "admin_uninstall".to_owned(),
                                                             revoke_mode: AppletRevokeMode::RevokeAll,
+                                                            proof: None,
                                                         };
                                                         let result = with_authed_api(&base, api_token, |api| async move {
                                                             api.applet_revoke(&aid, &body).await

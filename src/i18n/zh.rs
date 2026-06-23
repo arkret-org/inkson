@@ -380,6 +380,47 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.signer.freshness.never", "尚未签名");
     dict.set("kanban.archive_action", "归档");
     dict.set("kanban.restore_action", "恢复");
+    dict.set("error.circle.realm_mismatch", "Circle 不属于该 Realm。");
+    dict.set(
+        "error.circle.not_active",
+        "Circle 已归档或已终止，不能继续写入。",
+    );
+    dict.set(
+        "error.circle.not_archived",
+        "只有已归档的 Circle 可以恢复。",
+    );
+    dict.set(
+        "error.circle.member_not_in_realm",
+        "该用户不是父 Realm 的成员，不能加入 Circle。",
+    );
+    dict.set(
+        "error.circle.scope_rebind_forbidden",
+        "改变已有对象的 Circle scope 需要审计管理操作。",
+    );
+    dict.set(
+        "error.circle.metadata_floor",
+        "这次写入会低于 Realm 或 Circle 的元数据加密下限。",
+    );
+    dict.set(
+        "error.circle.encryption_below_realm_floor",
+        "该 Realm 要求 E2EE，Circle 必须保持 MLS 加密。",
+    );
+    dict.set(
+        "error.circle.encryption_profile_locked",
+        "Circle 的 encryption_profile 在创建时已锁定，请创建新 Circle。",
+    );
+    dict.set(
+        "error.circle.delivery_binding_handed_over",
+        "Circle 的投递绑定已切换到新设备集，请重试。",
+    );
+    dict.set("circle.action.leave", "退出 Circle");
+    dict.set("circle.action.archive", "归档 Circle");
+    dict.set("circle.action.restore", "恢复 Circle");
+    dict.set("circle.action.tombstone", "终止 Circle");
+    dict.set("circle.action.scope_rotate", "轮换 scope");
+    dict.set("circle.status.active", "活跃");
+    dict.set("circle.status.archived", "已归档");
+    dict.set("circle.status.tombstoned", "已终止");
     dict.set("kanban.archived_lists_header", "已归档列表");
     dict.set("kanban.archived_lists_empty", "暂无已归档列表。");
     dict.set("kanban.archived_cards_header", "已归档卡片");

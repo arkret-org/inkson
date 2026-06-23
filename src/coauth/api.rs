@@ -271,6 +271,7 @@ impl CoauthApi {
             requested_scope,
             agent_key_authorization_ref: None,
             agent_scope_request: Value::Null,
+            applet_delegation: None,
             proof,
         };
         self.post_json_with_dpop(

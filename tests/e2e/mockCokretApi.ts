@@ -9,6 +9,7 @@ const CHILD_REALM = "ck:realm:01launchchild0000000000000";
 const GRANDCHILD_REALM = "ck:realm:01launchdeep00000000000000";
 const DIRECT_BOB_REALM = "ck:realm:01directbob000000000000000";
 const DIRECT_BOB_STRAND = "ck:strand:01directbob0000000000000000";
+const DEMO_CIRCLE = "ck:circle:0196419b-0000-7000-8000-00000000c1c1";
 const DEMO_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0a0";
 const DEMO_SECOND_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0b0";
 const DEMO_TODO_LIST = "ck:space:01list-todo000000000000000000";
@@ -72,6 +73,8 @@ type MockAccountDevice = {
   revoked_at?: string | null;
   verification_state?: string;
 };
+
+type MockCircleState = "active" | "archived" | "tombstoned";
 
 function canonicalJson(value: unknown): string {
   if (value === null) {
@@ -167,6 +170,29 @@ export async function mockCokretApi(
     encryption_profile: string;
   }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
+  const circleStates = new Map<string, MockCircleState>([
+    [DEMO_CIRCLE, "active"],
+  ]);
+  const circleView = (circleId = DEMO_CIRCLE) => ({
+    circle_id: circleId,
+    realm_id: DEMO_REALM,
+    title: "Demo Circle",
+    summary: "Mock Circle for lifecycle operations",
+    directory_visibility: "realm_members",
+    join_rule: "invite",
+    history_visibility: "joined",
+    content_encryption_floor: "mls_rfc9420",
+    metadata_encryption_floor: "mls_rfc9420",
+    encryption_profile: "mls_rfc9420",
+    mls_group_ref: "mls:demo-circle",
+    pending_mls_removals: [],
+    state: circleStates.get(circleId) ?? "active",
+    members: [accountPrincipalId],
+    created_by: accountPrincipalId,
+    created_at: "2026-06-23T00:00:00Z",
+    updated_by: accountPrincipalId,
+    updated_at: "2026-06-23T00:00:00Z",
+  });
   let recoveryPolicy: Record<string, unknown> | null = null;
   const keyBackups = new Map<string, Record<string, unknown>>();
   const eventRealmId = (event: Record<string, unknown>) =>
@@ -521,6 +547,15 @@ export async function mockCokretApi(
           "ck.self.invite_receive_policy.resource.get",
           "ck.self.invite_receive_policy.resource.replace",
           "ck.self.direct_conversation.command.resolve",
+          "ck.self.circle.command.create",
+          "ck.self.circle.query.list",
+          "ck.self.circle.resource.get",
+          "ck.self.circle.member.command.add",
+          "ck.self.circle.member.resource.delete",
+          "ck.self.circle.command.rotate_scope",
+          "ck.self.circle.command.archive",
+          "ck.self.circle.command.restore",
+          "ck.self.circle.command.tombstone",
           "ck.self.keys.upload.create",
           "ck.self.keys.query.lookup",
           "ck.self.keys.command.claim",
@@ -611,6 +646,45 @@ export async function mockCokretApi(
         total: boardStrandProjections.length,
         strands: boardStrandProjections,
       });
+    }
+
+    if (
+      url.pathname === "/_cokret/self/circles" &&
+      route.request().method() === "GET"
+    ) {
+      const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
+      return json(route, {
+        realm_id: realmId,
+        circles: realmId === DEMO_REALM ? [circleView()] : [],
+      });
+    }
+
+    const circleLifecycle = url.pathname.match(
+      /^\/_cokret\/self\/circles\/([^/]+)\/(archive|restore|tombstone)$/,
+    );
+    if (circleLifecycle && route.request().method() === "POST") {
+      const [, circleId, action] = circleLifecycle;
+      const state = circleStates.get(circleId);
+      if (!state) {
+        return json(route, { error: { code: "not_found" } }, 404);
+      }
+      if (action === "archive" && state !== "active") {
+        return json(route, { error: { code: "circle_not_active" } }, 412);
+      }
+      if (action === "restore" && state !== "archived") {
+        return json(route, { error: { code: "circle_not_archived" } }, 412);
+      }
+      if (action === "tombstone" && state === "tombstoned") {
+        return json(route, { error: { code: "circle_already_terminal" } }, 412);
+      }
+      const next =
+        action === "archive"
+          ? "archived"
+          : action === "restore"
+            ? "active"
+            : "tombstoned";
+      circleStates.set(circleId, next);
+      return json(route, circleView(circleId));
     }
 
     if (

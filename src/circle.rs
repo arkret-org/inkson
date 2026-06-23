@@ -91,6 +91,7 @@ pub struct CircleSummary {
     pub color_token: String,
     pub symbol: String,
     pub member_count: u32,
+    pub state: cokret_sdk::CircleState,
     /// `true` if the active account is a member of this Circle (used to
     /// hide non-member Circles from the sidebar projection).
     pub viewer_is_member: bool,
@@ -125,6 +126,8 @@ pub enum CircleErrorKind {
     /// `circle_not_active` — `scope_circle_id` points at an archived
     /// or tombstoned Circle.
     NotActive,
+    /// `circle_not_archived` - restore requires an archived Circle.
+    NotArchived,
     /// `circle_member_must_be_realm_member` — attempted to add a
     /// non-Realm member to the Circle (strict-subset invariant).
     MemberNotInRealm,
@@ -153,6 +156,7 @@ impl CircleErrorKind {
         match reason {
             "circle_realm_mismatch" => Some(Self::RealmMismatch),
             "circle_not_active" => Some(Self::NotActive),
+            "circle_not_archived" => Some(Self::NotArchived),
             "circle_member_must_be_realm_member" => Some(Self::MemberNotInRealm),
             "scope_rebind_forbidden" => Some(Self::ScopeRebindForbidden),
             "metadata_encryption_floor_violation" => Some(Self::MetadataFloorViolated),
@@ -180,6 +184,7 @@ impl CircleErrorKind {
         match self {
             Self::RealmMismatch => "error.circle.realm_mismatch",
             Self::NotActive => "error.circle.not_active",
+            Self::NotArchived => "error.circle.not_archived",
             Self::MemberNotInRealm => "error.circle.member_not_in_realm",
             Self::ScopeRebindForbidden => "error.circle.scope_rebind_forbidden",
             Self::MetadataFloorViolated => "error.circle.metadata_floor",
@@ -200,6 +205,7 @@ impl CircleErrorKind {
             Self::NotActive => {
                 "The Circle is archived or tombstoned and can no longer receive messages."
             }
+            Self::NotArchived => "Only archived Circles can be restored.",
             Self::MemberNotInRealm => {
                 "Cannot add this user to the Circle — they are not an active member of the parent Realm."
             }
@@ -301,6 +307,10 @@ mod tests {
             Some(CircleErrorKind::NotActive)
         );
         assert_eq!(
+            CircleErrorKind::from_reason_code("circle_not_archived"),
+            Some(CircleErrorKind::NotArchived)
+        );
+        assert_eq!(
             CircleErrorKind::from_reason_code("circle_member_must_be_realm_member"),
             Some(CircleErrorKind::MemberNotInRealm)
         );
@@ -350,6 +360,7 @@ mod tests {
             color_token: "indigo".to_owned(),
             symbol: "shield".to_owned(),
             member_count: 7,
+            state: cokret_sdk::CircleState::Active,
             viewer_is_member: true,
         };
         let scope = summary.into_scope();
@@ -362,6 +373,7 @@ mod tests {
         let keys = [
             CircleErrorKind::RealmMismatch.i18n_key(),
             CircleErrorKind::NotActive.i18n_key(),
+            CircleErrorKind::NotArchived.i18n_key(),
             CircleErrorKind::MemberNotInRealm.i18n_key(),
             CircleErrorKind::ScopeRebindForbidden.i18n_key(),
             CircleErrorKind::MetadataFloorViolated.i18n_key(),
