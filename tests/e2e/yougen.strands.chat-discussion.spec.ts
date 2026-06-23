@@ -50,6 +50,30 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   await expect(page.getByTestId("chat-message").last()).toHaveClass(/is-own/);
 });
 
+test("chat composer sends with Ctrl+Enter", async ({ page }) => {
+  await refreshServer(page);
+  await gotoAndDismissRecovery(page, `/chat/${DEMO_REALM}`);
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+
+  await page.evaluate(() => {
+    (window as Window & { __yougenSendClicks?: number }).__yougenSendClicks = 0;
+    document
+      .querySelector('[data-testid="send-chat-button"]')
+      ?.addEventListener("click", () => {
+        (window as Window & { __yougenSendClicks?: number }).__yougenSendClicks =
+          ((window as Window & { __yougenSendClicks?: number }).__yougenSendClicks ?? 0) + 1;
+      });
+  });
+  await page.getByTestId("chat-input").fill("sent from ctrl enter");
+  await page.keyboard.press("Control+Enter");
+
+  await expect
+    .poll(() => page.evaluate(() => (window as Window & { __yougenSendClicks?: number }).__yougenSendClicks ?? 0))
+    .toBe(1);
+  await expect(page.getByTestId("chat-message").last()).toContainText("sent from ctrl enter");
+  await expect(page.getByTestId("chat-status")).toContainText(/Message sent|Send Secure/);
+});
+
 test("chat send failures mark the message and keep actions quiet until hover", async ({ page }) => {
   await refreshServer(page);
   await openDiscussion(page);

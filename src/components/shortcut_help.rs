@@ -42,6 +42,14 @@ pub fn default_shortcuts() -> Vec<ShortcutEntry> {
             description_key: "shortcuts.list.palette_mac",
         },
         ShortcutEntry {
+            keys: &["Ctrl", "F"],
+            description_key: "shortcuts.list.search",
+        },
+        ShortcutEntry {
+            keys: &["Cmd", "F"],
+            description_key: "shortcuts.list.search",
+        },
+        ShortcutEntry {
             keys: &["Ctrl", "Enter"],
             description_key: "shortcuts.list.send",
         },
@@ -161,6 +169,9 @@ mod tests {
         assert!(bindings.iter().any(|e| e.keys == ["Esc"]));
         assert!(bindings.iter().any(
             |e| e.keys.contains(&"K") && (e.keys.contains(&"Ctrl") || e.keys.contains(&"Cmd"))
+        ));
+        assert!(bindings.iter().any(
+            |e| e.keys.contains(&"F") && (e.keys.contains(&"Ctrl") || e.keys.contains(&"Cmd"))
         ));
     }
 }

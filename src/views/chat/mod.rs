@@ -3311,6 +3311,25 @@ pub fn ChatPanel(
                         "data-testid": "chat-input",
                         value: "{chat_draft}",
                         placeholder: "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card.",
+                        onkeydown: move |event: KeyboardEvent| {
+                            let key = event.key().to_string();
+                            let modifiers = event.modifiers();
+                            if (modifiers.ctrl() || modifiers.meta()) && key == "Enter" {
+                                event.prevent_default();
+                                event.stop_propagation();
+                                let _ = dioxus::document::eval(
+                                    r#"
+                                    (() => {
+                                      const target = document.activeElement;
+                                      const composer =
+                                        target instanceof HTMLElement ? target.closest('[data-testid="chat-composer"]') : null;
+                                      const button = composer && composer.querySelector('[data-testid="send-chat-button"]');
+                                      if (button instanceof HTMLElement) button.click();
+                                    })();
+                                    "#,
+                                );
+                            }
+                        },
                         oninput: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();

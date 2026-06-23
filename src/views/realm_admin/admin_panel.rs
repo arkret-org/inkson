@@ -48,6 +48,10 @@ pub fn RealmAdminPanel(
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
     let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
+    let mut archive_confirm_open = use_signal(|| false);
+    let mut destroy_confirm_open = use_signal(|| false);
+    let mut danger_confirm_text = use_signal(String::new);
+    let mut destroy_reason = use_signal(|| "operator_request".to_owned());
     // Realm-admin grant inputs (see realm-admin-grant-card). The subject is
     // the DID being made / removed as admin; the grant id is minted
     // client-side on grant and re-entered on revoke (the soland reducer
@@ -136,6 +140,37 @@ pub fn RealmAdminPanel(
     let realm_pending_mls_binding = state_store
         .read()
         .realm_has_pending_mls_binding(&selected_realm_id);
+    let (security_health_label, security_health_badge, security_next_step) = if realm_paused {
+        (
+            "Writes paused",
+            "badge red",
+            "Rotate or recover the notary before asking members to retry writes.",
+        )
+    } else if covered_seals_alert {
+        (
+            "Needs attention",
+            "badge amber",
+            "Review covered_seals lag and wait for governance frontier catch-up.",
+        )
+    } else if realm_pending_mls_binding {
+        (
+            "Binding pending",
+            "badge amber",
+            "Wait for the MLS commit Move to bind the latest encrypted message.",
+        )
+    } else if !bottom_cells.is_empty() {
+        (
+            "Repair needed",
+            "badge red",
+            "Open Repair & Danger to inspect unresolved concurrent candidates.",
+        )
+    } else {
+        (
+            "No active alerts",
+            "badge green",
+            "No administrator action is required from the current local view.",
+        )
+    };
     let active_section = RealmAdminSection::from_slug(active_section.as_deref());
     let metadata_subject = metadata_subject_for(&state_store.read(), &selected_realm_id);
     if metadata_loaded_for() != selected_realm_id {
@@ -420,6 +455,30 @@ pub fn RealmAdminPanel(
                 }
             }
             if active_section == RealmAdminSection::Security {
+                div { class: "event admin-health-summary", "data-testid": "realm-security-summary",
+                    div { class: "event-head",
+                        span { "Security health" }
+                        span { class: security_health_badge, "{security_health_label}" }
+                    }
+                    div { class: "metric-grid",
+                        div { class: "metric",
+                            strong { "Writes" }
+                            span { if realm_paused { "Paused by notary state" } else { "Accepting local submissions" } }
+                        }
+                        div { class: "metric",
+                            strong { "MLS binding" }
+                            span { if realm_pending_mls_binding { "Pending governance acknowledgement" } else { "No pending binding alert" } }
+                        }
+                        div { class: "metric",
+                            strong { "Covered seals" }
+                            span { "lag {covered_seals_lag_label} / threshold {covered_seals_lag_threshold}" }
+                        }
+                        div { class: "metric",
+                            strong { "Next step" }
+                            span { "{security_next_step}" }
+                        }
+                    }
+                }
                 // Covered_frontier_lag alert banner. Mirrors sodmin's admin
                 // page banner but stays client-side - it reads the lag from
                 // the LocalSealView populated on /sync, compares to a
@@ -1477,89 +1536,181 @@ pub fn RealmAdminPanel(
                 div { class: "event-head", span { "Danger Zone" } span { "destructive actions" } }
                 div { class: "actions",
                     Button {
-                        variant: ButtonVariant::Secondary,
+                        variant: ButtonVariant::Destructive,
                         "data-testid": "archive-realm-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            let realm = selected_realm_id.clone();
-                            let actor_account_did = account_did.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let realm = realm.clone();
-                                let api_token = token();
-                                // Lifecycle events are authored by the account/principal DID, not
-                                // the device DID, or the server returns `actor_session_mismatch`.
-                                let actor_id = actor_account_did.trim().to_owned();
-                                if actor_id.is_empty() {
-                                    status_msg.set("archive failed: account is not connected".to_owned());
-                                    return;
-                                }
-                                let realm_for_msg = realm.clone();
-                                spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move {
-                                            api.archive_realm(&realm, &actor_id).await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(_) => status_msg.set(format!(
-                                            "archive event submitted ({realm_for_msg})"
-                                        )),
-                                        Err(err) => status_msg.set(format!(
-                                            "archive failed: {}", err.display()
-                                        )),
-                                    }
-                                });
-                            }
+                        onclick: move |_| {
+                            danger_confirm_text.set(String::new());
+                            destroy_confirm_open.set(false);
+                            archive_confirm_open.set(true);
                         },
                         {crate::i18n::tr("realm_admin.archive_realm")}
                     }
                     Button {
-                        variant: ButtonVariant::Secondary,
+                        variant: ButtonVariant::Destructive,
                         "data-testid": "destroy-realm-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            let realm = selected_realm_id.clone();
-                            let actor_account_did = account_did.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let realm = realm.clone();
-                                let api_token = token();
-                                // Lifecycle events are authored by the account/principal DID, not
-                                // the device DID, or the server returns `actor_session_mismatch`.
-                                let actor_id = actor_account_did.trim().to_owned();
-                                if actor_id.is_empty() {
-                                    status_msg.set("destroy failed: account is not connected".to_owned());
-                                    return;
-                                }
-                                spawn(async move {
-                                    let realm_for_msg = realm.clone();
-                                    match crate::views::helpers::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move {
-                                            api.destroy_realm(&realm, &actor_id, "operator_request").await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(_) => status_msg.set(format!(
-                                            "destroyed {}",
-                                            short_protocol_id(&realm_for_msg)
-                                        )),
-                                        Err(err) => status_msg.set(format!("delete failed: {}", err.display())),
-                                    }
-                                });
-                            }
+                        onclick: move |_| {
+                            danger_confirm_text.set(String::new());
+                            archive_confirm_open.set(false);
+                            destroy_confirm_open.set(true);
                         },
                         {crate::i18n::tr("realm_admin.destroy_realm")}
                     }
                 }
             }
 
+            }
+
+            if active_section == RealmAdminSection::Repair
+                && (archive_confirm_open() || destroy_confirm_open())
+            {
+                {
+                    let is_destroy = destroy_confirm_open();
+                    let title = if is_destroy { "Destroy Realm" } else { "Archive Realm" };
+                    let confirm_label = if is_destroy { "Destroy Realm" } else { "Archive Realm" };
+                    let body = if is_destroy {
+                        "Destroying a Realm is destructive and may make its workspace, members, policy, and encrypted history unavailable. This should only be used when the operator has verified the recovery and audit path."
+                    } else {
+                        "Archiving removes the Realm from active collaboration flows. Members may lose the normal working entry point until an operator restores or migrates it."
+                    };
+                    let confirm_matches = danger_confirm_text().trim() == selected_realm_id.trim();
+                    rsx! {
+                        crate::components::DismissiblePopup {
+                            overlay_class: "modal-backdrop",
+                            surface_class: "modal danger-confirm-modal",
+                            overlay_test_id: Some("realm-danger-confirm-modal".to_owned()),
+                            surface_test_id: Some("realm-danger-confirm-dialog".to_owned()),
+                            aria_label: title.to_owned(),
+                            on_dismiss: move |_| {
+                                archive_confirm_open.set(false);
+                                destroy_confirm_open.set(false);
+                                danger_confirm_text.set(String::new());
+                            },
+                            div { class: "modal-head",
+                                h3 { "{title}" }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    class: "icon-button close",
+                                    "aria-label": "Close",
+                                    "data-testid": "realm-danger-confirm-close",
+                                    onclick: move |_| {
+                                        archive_confirm_open.set(false);
+                                        destroy_confirm_open.set(false);
+                                        danger_confirm_text.set(String::new());
+                                    },
+                                    "\u{2715}"
+                                }
+                            }
+                            div { class: "modal-body workflow-form",
+                                div { class: "callout danger", "data-testid": "realm-danger-impact",
+                                    strong { "Confirm operator intent" }
+                                    p { "{body}" }
+                                }
+                                div { class: "metric",
+                                    strong { "Target Realm ID" }
+                                    span { class: "mono", "data-testid": "realm-danger-target-id", "{selected_realm_id}" }
+                                }
+                                Label {
+                                    html_for: "realm-danger-confirm-input",
+                                    "Type the full Realm ID to continue"
+                                }
+                                Input {
+                                    id: "realm-danger-confirm-input",
+                                    "data-testid": "realm-danger-confirm-input",
+                                    value: "{danger_confirm_text}",
+                                    oninput: move |event: FormEvent| danger_confirm_text.set(event.value()),
+                                }
+                                if is_destroy {
+                                    Label {
+                                        html_for: "realm-destroy-reason-input",
+                                        "Audit reason"
+                                    }
+                                    Input {
+                                        id: "realm-destroy-reason-input",
+                                        "data-testid": "realm-destroy-reason-input",
+                                        value: "{destroy_reason}",
+                                        oninput: move |event: FormEvent| destroy_reason.set(event.value()),
+                                    }
+                                }
+                            }
+                            div { class: "modal-foot",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "realm-danger-confirm-cancel",
+                                    onclick: move |_| {
+                                        archive_confirm_open.set(false);
+                                        destroy_confirm_open.set(false);
+                                        danger_confirm_text.set(String::new());
+                                    },
+                                    "Cancel"
+                                }
+                                Button {
+                                    variant: ButtonVariant::Destructive,
+                                    "data-testid": "realm-danger-confirm-submit",
+                                    disabled: !confirm_matches,
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let realm = selected_realm_id.clone();
+                                        let actor_account_did = account_did.clone();
+                                        move |_| {
+                                            if danger_confirm_text().trim() != realm.trim() {
+                                                status_msg.set("confirmation did not match the Realm ID".to_owned());
+                                                return;
+                                            }
+                                            let base = base.clone();
+                                            let realm = realm.clone();
+                                            let api_token = token();
+                                            let actor_id = actor_account_did.trim().to_owned();
+                                            if actor_id.is_empty() {
+                                                status_msg.set(format!("{} failed: account is not connected", if is_destroy { "destroy" } else { "archive" }));
+                                                return;
+                                            }
+                                            archive_confirm_open.set(false);
+                                            destroy_confirm_open.set(false);
+                                            danger_confirm_text.set(String::new());
+                                            let reason = destroy_reason().trim().to_owned();
+                                            spawn(async move {
+                                                let realm_for_msg = realm.clone();
+                                                let result = crate::views::helpers::with_authed_api(
+                                                    &base,
+                                                    api_token,
+                                                    |api| async move {
+                                                        if is_destroy {
+                                                            let reason = if reason.is_empty() {
+                                                                "operator_request".to_owned()
+                                                            } else {
+                                                                reason
+                                                            };
+                                                            api.destroy_realm(&realm, &actor_id, &reason).await
+                                                        } else {
+                                                            api.archive_realm(&realm, &actor_id).await
+                                                        }
+                                                    },
+                                                )
+                                                .await;
+                                                match result {
+                                                    Ok(_) if is_destroy => status_msg.set(format!(
+                                                        "destroyed {}",
+                                                        short_protocol_id(&realm_for_msg)
+                                                    )),
+                                                    Ok(_) => status_msg.set(format!(
+                                                        "archive event submitted ({realm_for_msg})"
+                                                    )),
+                                                    Err(err) if is_destroy => status_msg.set(format!(
+                                                        "destroy failed: {}", err.display()
+                                                    )),
+                                                    Err(err) => status_msg.set(format!(
+                                                        "archive failed: {}", err.display()
+                                                    )),
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "{confirm_label}"
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if !status_msg().is_empty() {

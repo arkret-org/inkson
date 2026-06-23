@@ -4,6 +4,7 @@ import {
   DEMO_REALM,
   refreshServer,
   openSettings,
+  dismissBlockingRecoveryModal,
 } from "./strandsHarness";
 
 registerStrandsBeforeEach();
@@ -203,4 +204,30 @@ test("command palette closes with Escape and outside click", async ({
 
   await expect(page.getByTestId("command-palette")).toBeHidden();
   await expect(page.getByTestId("topbar-search-button")).toBeVisible();
+});
+
+test("shortcut help opens from the topbar and the ? key", async ({ page }) => {
+  await dismissBlockingRecoveryModal(page);
+  await page.getByTestId("topbar-shortcuts-button").click();
+  await expect(page.getByTestId("shortcut-help-overlay")).toBeVisible();
+  await expect(page.getByTestId("shortcut-help-card")).toContainText("Ctrl");
+  await expect(page.getByTestId("shortcut-help-card")).toContainText("F");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("shortcut-help-overlay")).toHaveCount(0);
+
+  await page.keyboard.press("Shift+/");
+  await expect(page.getByTestId("shortcut-help-overlay")).toBeVisible();
+});
+
+test("global keyboard shortcuts trigger their target surfaces", async ({ page }) => {
+  await dismissBlockingRecoveryModal(page);
+
+  await page.keyboard.press("Control+K");
+  await expect(page.getByTestId("command-palette")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("command-palette")).toHaveCount(0);
+
+  await page.keyboard.press("Control+F");
+  await expect(page).toHaveURL(/\/search$/);
+  await expect(page.getByTestId("global-search-panel")).toBeVisible();
 });

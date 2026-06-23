@@ -215,6 +215,9 @@ pub fn UiIcon(name: String) -> Element {
         }
         "inbox" => "M22 12h-6l-2 3h-4l-2-3H2m20 0v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7l3-8h14Z",
         "key" => "M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-2.8-2.8L20 2h2v2l-8.4 8.4ZM7 17h.01",
+        "keyboard" => {
+            "M10 8h.01M14 8h.01M18 8h.01M6 8h.01M8 12h.01M12 12h.01M16 12h.01M20 12h.01M7 16h10M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"
+        }
         "lock" => "M6 10V8a6 6 0 0 1 12 0v2M5 10h14v10H5V10Zm7 4v2",
         "menu" => "M4 6h16M4 12h16M4 18h16",
         "maximize" => "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",

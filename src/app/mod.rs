@@ -450,6 +450,65 @@ pub fn RouterView() -> Element {
     let mut sync_bootstrap_complete = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
+    use_effect(move || {
+        let _ = dioxus::document::eval(
+            r#"
+            (() => {
+              if (window.__yougenShortcutHelpBridgeInstalled) return;
+              window.__yougenShortcutHelpBridgeInstalled = true;
+              window.addEventListener('keydown', (event) => {
+                const target = event.target;
+                const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+                const editable =
+                  target && (target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select');
+                const chord = event.ctrlKey || event.metaKey;
+                const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+                if (chord && key === 'k') {
+                  const button = document.querySelector('[data-testid="topbar-search-button"]');
+                  if (button instanceof HTMLElement) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    button.click();
+                  }
+                  return;
+                }
+                if (chord && key === 'f') {
+                  const button = document.querySelector('[data-testid="global-search-shortcut-target"]');
+                  if (button instanceof HTMLElement) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    button.click();
+                  }
+                  return;
+                }
+                if (chord && key === 'enter') {
+                  const composer =
+                    target instanceof HTMLElement ? target.closest('[data-testid="chat-composer"]') : null;
+                  const button = composer && composer.querySelector('[data-testid="send-chat-button"]');
+                  if (button instanceof HTMLElement) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    button.click();
+                  }
+                  return;
+                }
+                if (editable) return;
+                const wantsHelp =
+                  event.key === '?' ||
+                  (event.shiftKey && (event.key === '/' || event.code === 'Slash'));
+                if (!wantsHelp) return;
+                const button = document.querySelector(
+                  '[data-testid="topbar-shortcuts-button"], [data-testid="mobile-shortcuts-button"]'
+                );
+                if (!(button instanceof HTMLElement)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                button.click();
+              }, true);
+            })();
+            "#,
+        );
+    });
     let mut realm_sidebar_tab = use_signal(|| "collaboration".to_owned());
     let mut collaboration_sidebar_query = use_signal(String::new);
     let mut direct_sidebar_query = use_signal(String::new);
@@ -2374,6 +2433,21 @@ pub fn RouterView() -> Element {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
                     r#type: "button",
+                    class: "btn icon",
+                    "data-testid": "mobile-shortcuts-button",
+                    title: crate::i18n::tr("shortcuts.title"),
+                    "aria-label": crate::i18n::tr("shortcuts.title"),
+                    onclick: move |event: dioxus::events::MouseEvent| {
+                        event.stop_propagation();
+                        mobile_nav_open.set(false);
+                        shortcut_help_open.set(true);
+                    },
+                    UiIcon { name: "keyboard" }
+                }
+                Button {
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    r#type: "button",
                     class: if notifications_drawer_open() { "btn icon topbar-notifications-link is-active" } else { "btn icon topbar-notifications-link" },
                     "data-testid": "mobile-topbar-notifications-button",
                     title: "Notifications",
@@ -3533,6 +3607,31 @@ pub fn RouterView() -> Element {
                                 );
                             },
                             UiIcon { name: theme_toggle_icon }
+                        }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            r#type: "button",
+                            class: "btn icon",
+                            "data-testid": "topbar-shortcuts-button",
+                            title: crate::i18n::tr("shortcuts.title"),
+                            "aria-label": crate::i18n::tr("shortcuts.title"),
+                            onclick: move |event: dioxus::events::MouseEvent| {
+                                event.stop_propagation();
+                                shortcut_help_open.set(true);
+                            },
+                            UiIcon { name: "keyboard" }
+                        }
+                        button {
+                            class: "sr-only",
+                            r#type: "button",
+                            tabindex: "-1",
+                            "aria-hidden": "true",
+                            "data-testid": "global-search-shortcut-target",
+                            onclick: move |_| {
+                                let _ = navigator.push(Route::Search);
+                            },
+                            "Open global search"
                         }
                         div {
                             class: if topbar_search_is_open {

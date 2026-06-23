@@ -245,6 +245,13 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 
   await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/repair");
   await page.getByTestId("archive-realm-button").click();
+  await expect(page.getByTestId("realm-danger-confirm-modal")).toBeVisible();
+  await expect(page.getByTestId("realm-danger-confirm-submit")).toBeDisabled();
+  await page
+    .getByTestId("realm-danger-confirm-input")
+    .fill("ck:realm:0196419b-0000-7000-8000-000000000000");
+  await expect(page.getByTestId("realm-danger-confirm-submit")).toBeEnabled();
+  await page.getByTestId("realm-danger-confirm-submit").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("archive event submitted");
 });
 
