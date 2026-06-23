@@ -84,9 +84,10 @@ impl CokretApi {
         realm_id: &str,
         actor: &str,
         device_id: Option<&str>,
+        strand_id: &str,
         typing: bool,
     ) -> anyhow::Result<TypingResult> {
-        let envelope = build_typing_envelope(realm_id, actor, device_id, typing)?;
+        let envelope = build_typing_envelope(realm_id, actor, device_id, strand_id, typing)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(TypingResult {
             ok: response.accepted,

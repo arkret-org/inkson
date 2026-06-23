@@ -70,6 +70,7 @@ fn typing_envelope_uses_spec_ephemeral_shape() {
         "ck:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
         Some("ck:device:01904100-0000-7000-8000-a11ce0000001"),
+        "ck:strand:01964200-0000-7000-8000-000000000001",
         true,
     )
     .unwrap();
@@ -80,9 +81,10 @@ fn typing_envelope_uses_spec_ephemeral_shape() {
         "ck:realm:0196419b-0000-7000-8000-000000000000"
     );
     assert_eq!(
-        envelope.payload["scope_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000000"
+        envelope.payload["strand_id"],
+        "ck:strand:01964200-0000-7000-8000-000000000001"
     );
+    assert!(envelope.payload.get("scope_id").is_none());
     assert_eq!(
         envelope.payload["realm_id"],
         "ck:realm:0196419b-0000-7000-8000-000000000000"

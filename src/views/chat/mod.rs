@@ -363,6 +363,9 @@ pub fn ChatPanel(
         .as_ref()
         .and_then(|channel| channel.security_encrypted)
         .unwrap_or(selected_realm_security_encrypted);
+    let selected_realm_pending_mls_binding = state_store
+        .read()
+        .realm_has_pending_mls_binding(&selected_realm_id);
     // In an encrypted channel the default Send must MLS-encrypt, never ship
     // plaintext. We hide the plaintext send button and promote the MLS send
     // button to the primary action carrying the `send-chat-button` testid;
@@ -508,6 +511,11 @@ pub fn ChatPanel(
     {
         let realm = selected_realm_id.clone();
         let actor = account_did.clone();
+        let strand = if selected_channel_value.trim().is_empty() {
+            default_discussion_strand_id(&realm)
+        } else {
+            selected_channel_value.clone()
+        };
         let participants_for_sync = participant_dids_for_presence.clone();
         let mut typing_actors_for_sync = typing_actors;
         let mut presence_states_for_sync = presence_states;
@@ -528,8 +536,12 @@ pub fn ChatPanel(
             presence_sync_key_seen.set(next_sync_key);
 
             let snapshot = state_store.read().load();
-            let active_typers =
-                typing_actors_from_sync_realms(&snapshot.realm_tree_projections, &realm, &actor);
+            let active_typers = typing_actors_from_sync_realms(
+                &snapshot.realm_tree_projections,
+                &realm,
+                &strand,
+                &actor,
+            );
             if *typing_actors_for_sync.peek() != active_typers {
                 typing_actors_for_sync.set(active_typers);
             }
@@ -1351,6 +1363,15 @@ pub fn ChatPanel(
                                 }
                             }
                         }
+                    }
+                }
+
+                if selected_realm_pending_mls_binding && selected_channel_security_encrypted {
+                    div {
+                        class: "event warning-banner",
+                        "data-testid": "epoch-update-required-banner",
+                        role: "alert",
+                        "epoch_update_required: membership frontier changed; MLS Remove commit required"
                     }
                 }
 
@@ -3340,6 +3361,7 @@ pub fn ChatPanel(
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
+                            let selected_strand = selected_channel_value.clone();
                             move |event: FormEvent| {
                                 let value = event.value();
                                 chat_draft.set(value.clone());
@@ -3361,17 +3383,30 @@ pub fn ChatPanel(
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let actor = actor.clone();
+                                let strand_id = if selected_strand.trim().is_empty() {
+                                    default_discussion_strand_id(&realm)
+                                } else {
+                                    selected_strand.clone()
+                                };
                                 typing_throttle.on_keystroke(move |is_typing| {
                                     let base = base.clone();
                                     let realm = realm.clone();
                                     let actor = actor.clone();
+                                    let strand_id = strand_id.clone();
                                     let api_token = token();
                                     spawn(async move {
                                         let _ = crate::views::helpers::with_authed_api(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.send_typing(&realm, &actor, None, is_typing).await
+                                                api.send_typing(
+                                                    &realm,
+                                                    &actor,
+                                                    None,
+                                                    &strand_id,
+                                                    is_typing,
+                                                )
+                                                .await
                                             },
                                         ).await;
                                     });
@@ -4135,12 +4170,21 @@ pub fn ChatPanel(
                     Button {
                         variant: send_secure_variant,
                         "data-testid": send_secure_testid,
+                        disabled: selected_realm_pending_mls_binding,
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             let selected_strand = selected_channel_value.clone();
+                            let pending_mls_binding = selected_realm_pending_mls_binding;
                             move |_| {
+                                if pending_mls_binding {
+                                    status_msg.set(
+                                        "epoch_update_required: membership frontier changed; MLS Remove commit required"
+                                            .to_owned(),
+                                    );
+                                    return;
+                                }
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
                                     status_msg.set("Type a message before secure send".to_owned());

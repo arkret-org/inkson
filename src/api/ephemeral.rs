@@ -95,6 +95,7 @@ pub fn build_typing_envelope(
     realm_id: &str,
     actor_id: &str,
     device_id: Option<&str>,
+    strand_id: &str,
     typing: bool,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
@@ -104,6 +105,8 @@ pub fn build_typing_envelope(
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.typing: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_id)
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.typing: {err}"))?;
+    let strand = cokret_sdk::StrandId::new(strand_id.trim().to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid strand_id for ck.typing: {err}"))?;
     let device = device_id
         .filter(|s| !s.trim().is_empty())
         .map(|s| {
@@ -121,7 +124,7 @@ pub fn build_typing_envelope(
         json!({
             "actor_id": actor_id,
             "realm_id": realm_id_wire,
-            "scope_id": realm_id,
+            "strand_id": strand.as_str(),
             "typing": typing,
             "ttl_ms": TYPING_EPHEMERAL_TTL_SECS * 1000
         }),

@@ -884,6 +884,7 @@ pub(crate) fn sync_realm_ids_match(left: &str, right: &str) -> bool {
 pub(crate) fn typing_actors_from_sync_realms(
     realms: &std::collections::BTreeMap<String, Value>,
     realm_id: &str,
+    strand_id: &str,
     account_did: &str,
 ) -> Vec<String> {
     let mut actors = std::collections::BTreeSet::<String>::new();
@@ -897,6 +898,9 @@ pub(crate) fn typing_actors_from_sync_realms(
         for item in ephemeral {
             let kind = value_string_at(item, &["type", "kind"]).unwrap_or_default();
             if kind != "ck.typing" {
+                continue;
+            }
+            if value_string_at(item, &["strand_id"]).unwrap_or_default() != strand_id {
                 continue;
             }
             let Some(entries) = item.get("actors").and_then(Value::as_array) else {
