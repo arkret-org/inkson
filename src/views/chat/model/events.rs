@@ -273,15 +273,19 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
         .get("actor_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    if actor.is_empty() {
+        return ChatProofVerdict::Rejected;
+    }
+    if !persistent_proof_controllers_match_actor(envelope, actor) {
+        return ChatProofVerdict::Rejected;
+    }
     let device = envelope
         .get("device_id")
         .or_else(|| envelope.get("sender_device_id"))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if actor.is_empty() || device.is_empty() {
-        // A proof-bearing envelope with no resolvable (actor, device) cannot be
-        // verified → fail-closed reject.
-        return ChatProofVerdict::Rejected;
+    if device.is_empty() {
+        return ChatProofVerdict::Unresolved;
     }
     match crate::device_directory::cached_device_signing_key(actor, device) {
         crate::device_directory::CacheLookup::Hit(key) => {
@@ -294,6 +298,30 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
         crate::device_directory::CacheLookup::NegativeHit => ChatProofVerdict::Rejected,
         crate::device_directory::CacheLookup::Miss => ChatProofVerdict::Unresolved,
     }
+}
+
+fn verification_method_controller(verification_method: &str) -> &str {
+    let no_query = verification_method
+        .split_once('?')
+        .map(|(head, _)| head)
+        .unwrap_or(verification_method);
+    no_query
+        .split_once('#')
+        .map(|(head, _)| head)
+        .unwrap_or(no_query)
+}
+
+fn persistent_proof_controllers_match_actor(envelope: &Value, actor: &str) -> bool {
+    let Some(proofs) = envelope.get("proofs").and_then(Value::as_array) else {
+        return false;
+    };
+    if proofs.is_empty() {
+        return false;
+    }
+    proofs
+        .iter()
+        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
+        .any(|verification_method| verification_method_controller(verification_method) == actor)
 }
 
 /// X9 — build a `ChatMessage` from a synced/projected event, preferring the

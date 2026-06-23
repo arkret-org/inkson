@@ -1,5 +1,5 @@
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::Signer;
 use serde_json::{Value, json};
 
@@ -174,7 +174,7 @@ fn sign_welcome_claim_envelope(
         .map_err(|err| format!("load self-signing key: {err}"))?
         .ok_or_else(|| "self-signing key is not available on this device".to_owned())?;
         let signature = signing_key.sign(&signing_bytes);
-        envelope.signature.sig = STANDARD_NO_PAD.encode(signature.to_bytes());
+        envelope.signature.sig = URL_SAFE_NO_PAD.encode(signature.to_bytes());
         return Ok(());
     }
     let sender_device_id = sender_device_id.trim();
@@ -195,7 +195,7 @@ fn sign_welcome_claim_envelope(
     let signature = signer
         .sign_raw(&signing_bytes)
         .map_err(|err| format!("MLS Welcome device signature: {err}"))?;
-    envelope.signature.sig = STANDARD_NO_PAD.encode(signature);
+    envelope.signature.sig = URL_SAFE_NO_PAD.encode(signature);
     Ok(())
 }
 
@@ -319,6 +319,12 @@ mod tests {
         assert_eq!(envelope.requester_device_id.as_deref(), Some(device));
         assert_eq!(envelope.signature.kid, expected_kid);
         assert!(!envelope.signature.sig.is_empty());
+        assert!(!envelope.signature.sig.contains(['+', '/', '=']));
+        assert!(
+            URL_SAFE_NO_PAD
+                .decode(envelope.signature.sig.as_bytes())
+                .is_ok()
+        );
         let _ = crate::event_signer::replace_active_signer(previous);
     }
 

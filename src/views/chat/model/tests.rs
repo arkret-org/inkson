@@ -140,6 +140,24 @@ mod device_identity_proof_tests {
     }
 
     #[test]
+    fn standard_event_without_device_id_stays_visible_as_unresolved() {
+        let actor = "did:web:chat-fran.example";
+        let device = "ck:device:chat-f1";
+        let signer = crate::event_signer::build_ed25519_signer([56u8; 32], actor);
+        let mut envelope = signed_message_envelope(&signer, actor, device);
+        envelope.as_object_mut().unwrap().remove("device_id");
+        crate::device_directory::invalidate(actor, device);
+
+        assert_eq!(
+            verify_chat_envelope_proof(&envelope),
+            ChatProofVerdict::Unresolved
+        );
+        let message = chat_message_from_event("ck:realm:r", &envelope)
+            .expect("standard Event envelope without device_id stays visible");
+        assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
+    }
+
+    #[test]
     fn proofless_projection_is_not_applicable() {
         let envelope = json!({
             "kind": "ck.message.create",
