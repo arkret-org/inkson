@@ -12,12 +12,10 @@ const KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keypackage-upload-v1\n";
 /// Sign the MLS KeyPackage upload batch with the local event-signer (device
 /// identity Ed25519 `did:key`), binding `device_id` + the published
 /// `key_packages`. Fail-closed (`bail!`) when no signer is installed.
-fn sign_keypackage_upload_batch(device_id: &str, key_packages: &[Value]) -> anyhow::Result<Value> {
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!(
-            "keypackages/upload device_signature requires an active event-signer (fail-closed)"
-        )
-    })?;
+pub(crate) fn keypackage_upload_signing_input(
+    device_id: &str,
+    key_packages: &[Value],
+) -> anyhow::Result<Vec<u8>> {
     let body = json!({
         "device_id": device_id,
         "key_packages": key_packages,
@@ -26,14 +24,25 @@ fn sign_keypackage_upload_batch(device_id: &str, key_packages: &[Value]) -> anyh
     let mut input = Vec::with_capacity(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.len() + canonical.len());
     input.extend_from_slice(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.as_bytes());
     input.extend_from_slice(&canonical);
-    let jws = signer
-        .detached_jws_over(&input)
-        .map_err(|err| anyhow::anyhow!("keypackages/upload device_signature sign failed: {err}"))?;
-    Ok(json!({
-        "alg": signer.algorithm(),
-        "kid": signer.verification_method(),
-        "jws": jws,
-    }))
+    Ok(input)
+}
+
+pub(crate) fn sign_keypackage_upload_batch_with_signer(
+    signer: &crate::event_signer::YougenEventSigner,
+    device_id: &str,
+    key_packages: &[Value],
+) -> anyhow::Result<Value> {
+    let input = keypackage_upload_signing_input(device_id, key_packages)?;
+    super::keys::device_signature_tuple_for_input(signer, &input, "keypackages/upload")
+}
+
+fn sign_keypackage_upload_batch(device_id: &str, key_packages: &[Value]) -> anyhow::Result<Value> {
+    let signer = crate::event_signer::active_signer().ok_or_else(|| {
+        anyhow::anyhow!(
+            "keypackages/upload device_signature requires an active event-signer (fail-closed)"
+        )
+    })?;
+    sign_keypackage_upload_batch_with_signer(&signer, device_id, key_packages)
 }
 
 pub(crate) fn mls_key_package_record_upload_value(
@@ -75,11 +84,54 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
     })
 }
 
+pub(crate) fn mls_keypackage_claim_required_capabilities() -> Vec<String> {
+    cokret_sdk::COKRET_MLS_KEY_PACKAGE_CAPABILITIES
+        .iter()
+        .map(|capability| (*capability).to_owned())
+        .collect()
+}
+
+pub(crate) fn build_mls_keypackage_claim_request(
+    target_principal_id: &str,
+    intended_realm_id: &str,
+    requester: &str,
+    claim_nonce: &str,
+    target_device_id: Option<&str>,
+    mls_group_id: Option<&str>,
+) -> anyhow::Result<cokret_sdk::KeyPackagesClaimRequestBody> {
+    let target_device_ids = target_device_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| cokret_sdk::DeviceId::new(value.to_owned()))
+        .transpose()?
+        .into_iter()
+        .collect::<Vec<_>>();
+    Ok(cokret_sdk::KeyPackagesClaimRequestBody {
+        target_principal_id: cokret_sdk::Did::new(target_principal_id.trim().to_owned())?,
+        intended_realm_id: cokret_sdk::RealmId::new(crate::operation::trim_realm_id(
+            intended_realm_id,
+        ))?,
+        requester: cokret_sdk::Did::new(requester.trim().to_owned())?,
+        required_capabilities: mls_keypackage_claim_required_capabilities(),
+        claim_nonce: claim_nonce.trim().to_owned(),
+        expires_at: crate::clock::now_utc() + chrono::Duration::minutes(10),
+        target_device_ids,
+        minimal_metadata_allowed: Some(true),
+        timeout_ms: Some(30_000),
+        strand_id: None,
+        mls_group_id: mls_group_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        proofs: Vec::new(),
+    })
+}
+
 impl CokretApi {
     /// Publish an MLS `MlsKeyPackageRecord` to
     /// soland's `/_cokret/self/keys/keypackages/upload` endpoint so peers can
     /// fetch it via `query_keys` and `add_member()` against it. The
-    /// `device_signature` is a real EdDSA detached-JWS produced by the local
+    /// `device_signature` is a real EdDSA signature produced by the local
     /// event-signer over the published KeyPackage batch (no placeholder).
     pub async fn publish_mls_key_package(
         &self,
@@ -148,32 +200,14 @@ impl CokretApi {
         target_device_id: Option<&str>,
         mls_group_id: Option<&str>,
     ) -> anyhow::Result<cokret_sdk::KeyPackagesClaimOutcome> {
-        let target_device_ids = target_device_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| cokret_sdk::DeviceId::new(value.to_owned()))
-            .transpose()?
-            .into_iter()
-            .collect::<Vec<_>>();
-        let body = cokret_sdk::KeyPackagesClaimRequestBody {
-            target_principal_id: cokret_sdk::Did::new(target_principal_id.trim().to_owned())?,
-            intended_realm_id: cokret_sdk::RealmId::new(crate::operation::trim_realm_id(
-                intended_realm_id,
-            ))?,
-            requester: cokret_sdk::Did::new(requester.trim().to_owned())?,
-            required_capabilities: Vec::new(),
-            claim_nonce: claim_nonce.trim().to_owned(),
-            expires_at: crate::clock::now_utc() + chrono::Duration::minutes(10),
-            target_device_ids,
-            minimal_metadata_allowed: Some(true),
-            timeout_ms: Some(30_000),
-            strand_id: None,
-            mls_group_id: mls_group_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned),
-            proofs: Vec::new(),
-        };
+        let body = build_mls_keypackage_claim_request(
+            target_principal_id,
+            intended_realm_id,
+            requester,
+            claim_nonce,
+            target_device_id,
+            mls_group_id,
+        )?;
         self.post_json("_cokret/self/keys/keypackages/claim", &body)
             .await
     }

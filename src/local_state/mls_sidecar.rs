@@ -247,6 +247,22 @@ impl LocalStateStore {
         self.mark_mls_genesis_emitted_for_effective_scope(realm_id, None);
     }
 
+    /// Record a successfully accepted `ck.mls.genesis` event and seed the
+    /// local MLS group-state frontier with that accepted Event id. This lets an
+    /// immediately-following self-update or AddMember commit cite a real
+    /// `ck:event:*` base group-state ref before the next sync response arrives.
+    pub fn mark_mls_genesis_emitted_with_event(
+        &mut self,
+        realm_id: impl Into<String>,
+        genesis_event_id: &cokret_sdk::EventId,
+    ) {
+        self.mark_mls_genesis_emitted_for_effective_scope_with_event(
+            realm_id,
+            None,
+            genesis_event_id,
+        );
+    }
+
     pub fn mark_mls_genesis_emitted_for_effective_scope(
         &mut self,
         realm_id: impl Into<String>,
@@ -256,6 +272,35 @@ impl LocalStateStore {
         let realm_id = realm_id.into();
         let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
         if self.cached.mls_genesis_emitted.insert(key) {
+            let _ = self.flush();
+        }
+    }
+
+    pub fn mark_mls_genesis_emitted_for_effective_scope_with_event(
+        &mut self,
+        realm_id: impl Into<String>,
+        circle_id: Option<&str>,
+        genesis_event_id: &cokret_sdk::EventId,
+    ) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        let mut changed = self.cached.mls_genesis_emitted.insert(key);
+        if circle_id.is_none() {
+            let event_ref = genesis_event_id.as_str().to_owned();
+            let view = self.cached.seal_views.entry(realm_id).or_default();
+            if !view.frontier.iter().any(|value| value == &event_ref) {
+                view.frontier.push(event_ref);
+                view.frontier.sort();
+                view.frontier.dedup();
+                changed = true;
+            }
+            if view.mls_epoch != Some(0) {
+                view.mls_epoch = Some(0);
+                changed = true;
+            }
+        }
+        if changed {
             let _ = self.flush();
         }
     }

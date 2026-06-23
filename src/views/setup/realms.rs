@@ -840,7 +840,10 @@ pub(super) fn RealmsSection(
                                                             if let Some(genesis_event) = genesis_event {
                                                                 match api.submit_sdk_event(&genesis_event).await {
                                                                     Ok(_) => {
-                                                                        state_store.write().mark_mls_genesis_emitted(realm_id.clone());
+                                                                        state_store.write().mark_mls_genesis_emitted_with_event(
+                                                                            realm_id.clone(),
+                                                                            &genesis_event.event_id,
+                                                                        );
                                                                     }
                                                                     Err(err) => {
                                                                         let text = err.to_string();

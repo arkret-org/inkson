@@ -22,7 +22,7 @@
 use anyhow::Context;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
-use chrono::Utc;
+use chrono::{Timelike, Utc};
 use cokret_sdk::{
     CrossSigningBinding, CrossSigningKeyRecord, CrossSigningPublishContent, Did,
     SignedCrossSigningKey, TypedTrustDomainId,
@@ -539,7 +539,7 @@ impl CrossSigningExecutor {
             // `InitialSetup` and `Some(prev)` for `Reset`.
             expected_previous_generation: self.plan.previous_generation.unwrap_or(0),
             generation: self.plan.new_generation,
-            issued_at: Utc::now(),
+            issued_at: canonical_utc_now(),
         };
         let ssk_input = draft
             .self_signing_binding_input()
@@ -594,6 +594,12 @@ fn generate_ed25519_signing_key() -> anyhow::Result<SigningKey> {
     let mut seed = [0u8; SECRET_KEY_LENGTH];
     getrandom::fill(&mut seed).map_err(|err| anyhow::anyhow!("rng fill: {err}"))?;
     Ok(SigningKey::from_bytes(&seed))
+}
+
+fn canonical_utc_now() -> chrono::DateTime<Utc> {
+    Utc::now()
+        .with_nanosecond(0)
+        .expect("zero nanosecond is always valid")
 }
 
 #[cfg(test)]
@@ -683,6 +689,22 @@ mod tests {
         psk_verifying
             .verify(&usk_input, &usk_sig)
             .expect("usk binding signature must verify against PSK");
+    }
+
+    #[test]
+    fn executor_serializes_issued_at_as_canonical_utc_seconds() {
+        let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "ck:device:01a");
+        let executor = CrossSigningExecutor::new(plan, principal, test_trust_domain());
+        let out = executor.run().expect("local steps must succeed");
+
+        assert_eq!(out.publish_content.issued_at.nanosecond(), 0);
+        let serialized = serde_json::to_value(&out.publish_content).unwrap();
+        let issued_at = serialized["issued_at"]
+            .as_str()
+            .expect("issued_at serializes as a string");
+        assert!(issued_at.ends_with('Z'));
+        assert!(!issued_at.contains('.'));
     }
 
     #[test]

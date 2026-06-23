@@ -92,6 +92,29 @@ fn build_mls_genesis_payload_has_required_fields() {
 }
 
 #[test]
+fn existing_epoch_zero_snapshot_restores_genesis_summary() {
+    let mut state = temp_state_store("genesis-summary-restore");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let device = "ck:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+
+    let fresh = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
+        .unwrap()
+        .expect("creator snapshot should be created");
+    let restored =
+        initial_mls_snapshot_summary_from_existing(&state, &secure, realm, actor, device)
+            .unwrap()
+            .expect("epoch-0 snapshot restores summary");
+
+    assert_eq!(restored.realm_id, fresh.realm_id);
+    assert_eq!(restored.group_id, fresh.group_id);
+    assert_eq!(restored.epoch, 0);
+    assert_eq!(restored.schedule_hash, fresh.schedule_hash);
+    assert_eq!(restored.ratchet_tree, fresh.ratchet_tree);
+}
+
+#[test]
 fn mls_genesis_emitted_flag_is_idempotent() {
     let mut state = temp_state_store("genesis-idempotent");
     let realm = "ck:realm:01904100-0000-7000-8000-000000000001";

@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::{MlsRuntimeError, load_or_create_device_snapshot_secret};
+use super::{MlsRuntimeError, load_device_snapshot_secret, load_or_create_device_snapshot_secret};
 use crate::secure_key_store::SecureKeyStore;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +108,63 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
     };
     state_store.save_mls_snapshot_for_effective_scope(realm.to_owned(), circle, snapshot);
     Ok(Some(summary))
+}
+
+pub fn initial_mls_snapshot_summary_from_existing(
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+    initial_mls_snapshot_summary_from_existing_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+    )
+}
+
+pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+    let realm = realm_id.trim();
+    if realm.is_empty() {
+        return Err(MlsRuntimeError::Genesis(
+            "realm_id is required for MLS genesis summary restore".to_owned(),
+        ));
+    }
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
+    let Some(snapshot) = state_store.mls_snapshot_for_effective_scope(realm, circle) else {
+        return Ok(None);
+    };
+    if snapshot.epoch != 0 {
+        return Ok(None);
+    }
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|err| MlsRuntimeError::Genesis(format!("restore epoch-0 snapshot: {err}")))?;
+    let ratchet_tree = group
+        .ratchet_tree()
+        .map_err(|err| MlsRuntimeError::Genesis(format!("export ratchet tree: {err}")))?;
+    Ok(Some(InitialMlsSnapshotSummary {
+        realm_id: realm.to_owned(),
+        group_id: group.group_id(),
+        epoch: group.epoch(),
+        ratchet_tree,
+        schedule_hash: group.schedule_hash().to_string(),
+        cipher_suite: format!("{:?}", cokret_sdk::COKRET_MLS_CIPHERSUITE),
+    }))
 }
 
 /// Build the canonical `ck.mls.genesis` payload for a freshly-created creator

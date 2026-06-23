@@ -795,6 +795,7 @@ pub(super) fn dispatch_card_detail_update(
         // group at epoch 0 before the commit bumps it to 1. A duplicate
         // genesis (`mls_genesis_already_exists`) is treated as success.
         if let Some(genesis_op) = mls_genesis_op {
+            let genesis_event_id = genesis_op.event_id.clone();
             let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
                 api.submit_sdk_event(&genesis_op).await
             })
@@ -803,7 +804,7 @@ pub(super) fn dispatch_card_detail_update(
                 Ok(_) => {
                     state_store
                         .write()
-                        .mark_mls_genesis_emitted(realm_id.clone());
+                        .mark_mls_genesis_emitted_with_event(realm_id.clone(), &genesis_event_id);
                 }
                 Err(err) => {
                     let err_text = err.display().to_string();

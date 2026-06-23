@@ -134,8 +134,11 @@ impl CokretApi {
         &self,
         realm_id: &str,
     ) -> anyhow::Result<cokret_sdk::RealmSealFrontierView> {
+        let realm_id_query = query_component(realm_id);
         let body: Value = self
-            .get_json(&format!("_cokret/self/events/frontier?realm_id={realm_id}"))
+            .get_json(&format!(
+                "_cokret/self/events/frontier?realm_id={realm_id_query}"
+            ))
             .await?;
         let state: cokret_sdk::EventsFrontierAccountClientState = serde_json::from_value(body)
             .map_err(|err| {
@@ -163,8 +166,11 @@ impl CokretApi {
         &self,
         actor_id: &str,
     ) -> anyhow::Result<cokret_sdk::ActorFrontierView> {
+        let actor_id_query = query_component(actor_id);
         let body: Value = self
-            .get_json(&format!("_cokret/self/events/frontier?actor_id={actor_id}"))
+            .get_json(&format!(
+                "_cokret/self/events/frontier?actor_id={actor_id_query}"
+            ))
             .await?;
         let state: cokret_sdk::EventsFrontierAccountClientState = serde_json::from_value(body)
             .map_err(|err| {
@@ -240,6 +246,31 @@ impl CokretApi {
         &self,
         event: &cokret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
+        let retry_actor_seq_cas = event.proofs.is_empty();
+        let (signed, idempotency_key) = self.prepare_sdk_event_for_submit(event).await?;
+        match self
+            .post_signed_sdk_event(&signed, idempotency_key.clone())
+            .await
+        {
+            Ok(result) => Ok(result),
+            Err(error) if retry_actor_seq_cas && is_actor_seq_cas_conflict(&error) => {
+                tracing::warn!(
+                    event_id = %event.event_id,
+                    actor_id = %event.actor_id,
+                    kind = %event.kind,
+                    "actor frontier advanced during SDK Event submit; refreshing and retrying once"
+                );
+                let (signed, idempotency_key) = self.prepare_sdk_event_for_submit(event).await?;
+                self.post_signed_sdk_event(&signed, idempotency_key).await
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn prepare_sdk_event_for_submit(
+        &self,
+        event: &cokret_sdk::Event,
+    ) -> anyhow::Result<(cokret_sdk::Event, String)> {
         let mut signed = event.clone();
         self.refresh_unsigned_sdk_event_actor_frontier(&mut signed)
             .await?;
@@ -265,7 +296,7 @@ impl CokretApi {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
-        self.post_signed_sdk_event(&signed, idempotency_key).await
+        Ok((signed, idempotency_key))
     }
 
     async fn refresh_unsigned_sdk_event_actor_frontier(
@@ -483,6 +514,16 @@ fn is_actor_frontier_absent(error: &anyhow::Error) -> bool {
         .is_some_and(|api_error| api_error.status == StatusCode::NOT_FOUND)
 }
 
+fn is_actor_seq_cas_conflict(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<CokretApiError>()
+        .is_some_and(|api_error| {
+            api_error.status == StatusCode::CONFLICT
+                && api_error.error.code() == "cas_conflict"
+                && api_error.error.message().contains("actor_seq")
+        })
+}
+
 fn apply_actor_frontier_to_sdk_event(
     event: &mut cokret_sdk::Event,
     frontier: &cokret_sdk::ActorFrontierView,
@@ -568,6 +609,26 @@ mod tests {
             .to_string();
 
         assert!(error.contains("actor frontier mismatch"));
+    }
+
+    #[test]
+    fn actor_seq_cas_conflict_classifier_is_narrow() {
+        let cas: anyhow::Error = CokretApiError {
+            status: StatusCode::CONFLICT,
+            error: ErrorEnvelope::new(
+                "cas_conflict",
+                "actor_seq is older than the accepted actor frontier",
+            ),
+        }
+        .into();
+        assert!(is_actor_seq_cas_conflict(&cas));
+
+        let different_conflict: anyhow::Error = CokretApiError {
+            status: StatusCode::CONFLICT,
+            error: ErrorEnvelope::new("cas_conflict", "expected head mismatch"),
+        }
+        .into();
+        assert!(!is_actor_seq_cas_conflict(&different_conflict));
     }
 
     #[test]

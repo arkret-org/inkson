@@ -106,7 +106,8 @@ pub(crate) fn build_mls_welcome_payload_value(
         intended_realm_id,
         claim_id: claim.claim_id.clone(),
         requester_did,
-        ssk_generation: claim.ssk_generation,
+        ssk_generation: None,
+        requester_device_id: None,
         nonce: claim_nonce.trim().to_owned(),
         welcome_digest: add.welcome.welcome_hash.clone(),
         created_at: crate::clock::now_utc(),
@@ -116,13 +117,20 @@ pub(crate) fn build_mls_welcome_payload_value(
             sig: String::new(),
         },
     };
-    sign_welcome_claim_envelope(state_store, secure_store, actor_id, &mut envelope)?;
+    sign_welcome_claim_envelope(
+        state_store,
+        secure_store,
+        actor_id,
+        sender_device_id,
+        &mut envelope,
+    )?;
     let claim_ref = cokret_sdk::MlsWelcomePayloadClaimRef {
         claim_id: claim.claim_id.clone(),
         keypackage_ref: claim.keypackage_ref.clone(),
         keypackage_digest: claim.keypackage_digest.clone(),
         capabilities_digest: claim.capabilities_digest.clone(),
         ssk_generation: claim.ssk_generation,
+        device_authorize_event_id: claim.device_authorize_event_id.clone(),
     };
     let commit_ref = commit_event.event_id.as_str().to_owned();
     Ok(json!({
@@ -147,41 +155,58 @@ fn sign_welcome_claim_envelope(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     actor_id: &str,
+    sender_device_id: &str,
     envelope: &mut cokret_sdk::MlsWelcomeClaimEnvelope,
 ) -> Result<(), String> {
-    let publish = load_latest_cross_signing_publish(state_store, actor_id)?;
-    if publish.generation != envelope.ssk_generation {
-        return Err(format!(
-            "MLS Welcome claim SSK generation {} does not match local cross-signing generation {}",
-            envelope.ssk_generation, publish.generation
-        ));
+    if let Some(publish) = load_latest_cross_signing_publish(state_store, actor_id)? {
+        envelope.ssk_generation = Some(publish.generation);
+        envelope.requester_device_id = None;
+        envelope.signature.kid = publish.self_signing_key.key.kid.clone();
+        let signing_bytes = envelope
+            .canonical_signing_bytes()
+            .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
+        let signing_key = load_signing_key(
+            secure_store,
+            actor_id,
+            publish.generation,
+            CrossSigningKeyRole::SelfSigning,
+        )
+        .map_err(|err| format!("load self-signing key: {err}"))?
+        .ok_or_else(|| "self-signing key is not available on this device".to_owned())?;
+        let signature = signing_key.sign(&signing_bytes);
+        envelope.signature.sig = STANDARD_NO_PAD.encode(signature.to_bytes());
+        return Ok(());
     }
-    let signing_key = load_signing_key(
-        secure_store,
-        actor_id,
-        publish.generation,
-        CrossSigningKeyRole::SelfSigning,
-    )
-    .map_err(|err| format!("load self-signing key: {err}"))?
-    .ok_or_else(|| "self-signing key is not available on this device".to_owned())?;
-    envelope.signature.kid = publish.self_signing_key.key.kid.clone();
+    let sender_device_id = sender_device_id.trim();
+    if sender_device_id.is_empty() {
+        return Err("MLS Welcome device signature requires sender_device_id".to_owned());
+    }
+    envelope.ssk_generation = None;
+    envelope.requester_device_id = Some(sender_device_id.to_owned());
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| "MLS Welcome device signature requires an active event signer".to_owned())?;
+    envelope.signature.kid = signer.verification_method().to_owned();
     let signing_bytes = envelope
         .canonical_signing_bytes()
         .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
-    let signature = signing_key.sign(&signing_bytes);
-    envelope.signature.sig = STANDARD_NO_PAD.encode(signature.to_bytes());
+    let signature = signer
+        .sign_raw(&signing_bytes)
+        .map_err(|err| format!("MLS Welcome device signature: {err}"))?;
+    envelope.signature.sig = STANDARD_NO_PAD.encode(signature);
     Ok(())
 }
 
 fn load_latest_cross_signing_publish(
     state_store: &LocalStateStore,
     actor_id: &str,
-) -> Result<cokret_sdk::CrossSigningPublishContent, String> {
+) -> Result<Option<cokret_sdk::CrossSigningPublishContent>, String> {
     let Some(raw) = state_store.load_private_data(actor_id, CROSS_SIGNING_PUBLISH_LATEST_KEY)
     else {
-        return Err("cross-signing publish state is not available on this device".to_owned());
+        return Ok(None);
     };
-    serde_json::from_str(&raw).map_err(|err| format!("cross-signing publish state decode: {err}"))
+    serde_json::from_str(&raw)
+        .map(Some)
+        .map_err(|err| format!("cross-signing publish state decode: {err}"))
 }
 
 #[cfg(test)]
@@ -232,7 +257,8 @@ mod tests {
             key_package: record.key_package.clone(),
             capabilities: record.capabilities.clone(),
             capabilities_digest: record.keypackage_ref.clone(),
-            ssk_generation,
+            ssk_generation: Some(ssk_generation),
+            device_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
             device_signature: cokret_sdk::Signature2 {
                 kid: format!("{}#device", record.principal_id.as_str()),
@@ -257,9 +283,20 @@ mod tests {
         let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b1";
 
         let publish = install_cross_signing(&mut alice_state, &secure, alice, alice_device);
-        ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
-            .unwrap()
-            .expect("creator snapshot");
+        let genesis_summary =
+            ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
+                .unwrap()
+                .expect("creator snapshot");
+        let genesis_event = crate::views::kanban::build_creator_mls_genesis_event(
+            &alice_state,
+            realm,
+            alice,
+            alice_device,
+            Some(&genesis_summary),
+        )
+        .unwrap()
+        .expect("creator genesis event");
+        alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
 
         let bob_identity = cokret_sdk::CokretMlsIdentity::new_basic(
             cokret_sdk::Did::new(bob.to_owned()).unwrap(),
@@ -290,6 +327,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(admission.commit.kind.as_str(), "ck.mls.commit");
+        assert_eq!(
+            admission.commit.content["base_epoch_ref"],
+            json!(genesis_event.event_id.as_str())
+        );
         assert_eq!(admission.welcome.kind.as_str(), "ck.mls.welcome");
         assert_eq!(
             admission.welcome.content["ciphertext"],

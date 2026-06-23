@@ -1,3 +1,6 @@
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
 use super::*;
 
 /// Canonical signing-input prefix for the `keys/upload` `device_signature`
@@ -32,10 +35,35 @@ fn keys_upload_signing_input(
     Ok(input)
 }
 
-/// Produce the real `device_signature` value for a `keys/upload` batch by
+/// Produce the real raw-signature `device_signature` tuple for a `keys/upload` batch by
 /// signing the §8.1 canonical input with the local event-signer (the device
 /// identity Ed25519 `did:key`). Fail-closed (`bail!`) when no signer is
 /// installed — never emit a placeholder.
+pub(crate) fn device_signature_tuple_for_input(
+    signer: &crate::event_signer::YougenEventSigner,
+    signing_input: &[u8],
+    context: &str,
+) -> anyhow::Result<Value> {
+    let sig = signer
+        .sign_raw(signing_input)
+        .map_err(|err| anyhow::anyhow!("{context} device_signature sign failed: {err}"))?;
+    Ok(json!({
+        "alg": signer.algorithm(),
+        "kid": signer.verification_method(),
+        "sig": URL_SAFE_NO_PAD.encode(sig),
+    }))
+}
+
+pub(crate) fn sign_keys_upload_batch_with_signer(
+    signer: &crate::event_signer::YougenEventSigner,
+    device_id: &str,
+    one_time_keys: &BTreeMap<String, Value>,
+    fallback_keys: &BTreeMap<String, Value>,
+) -> anyhow::Result<Value> {
+    let input = keys_upload_signing_input(device_id, one_time_keys, fallback_keys)?;
+    device_signature_tuple_for_input(signer, &input, "keys/upload")
+}
+
 pub(crate) fn sign_keys_upload_batch(
     device_id: &str,
     one_time_keys: &BTreeMap<String, Value>,
@@ -46,15 +74,7 @@ pub(crate) fn sign_keys_upload_batch(
             "keys/upload device_signature requires an active event-signer (fail-closed)"
         )
     })?;
-    let input = keys_upload_signing_input(device_id, one_time_keys, fallback_keys)?;
-    let jws = signer
-        .detached_jws_over(&input)
-        .map_err(|err| anyhow::anyhow!("keys/upload device_signature sign failed: {err}"))?;
-    Ok(json!({
-        "alg": signer.algorithm(),
-        "kid": signer.verification_method(),
-        "jws": jws,
-    }))
+    sign_keys_upload_batch_with_signer(&signer, device_id, one_time_keys, fallback_keys)
 }
 
 impl CokretApi {

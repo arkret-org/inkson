@@ -100,6 +100,28 @@ fn event_paths_use_v1_query_parameters() {
 }
 
 #[test]
+fn event_frontier_selectors_preserve_did_percent_escapes() {
+    let actor = "did:webvh:zQmExampleScid:127.0.0.1%3A22375:webvh:01kvsk95qeev5t63b5njft1xzk";
+    let actor_selector = format!(
+        "_cokret/self/events/frontier?actor_id={}",
+        query_component(actor)
+    );
+    assert_eq!(
+        actor_selector,
+        "_cokret/self/events/frontier?actor_id=did%3Awebvh%3AzQmExampleScid%3A127.0.0.1%253A22375%3Awebvh%3A01kvsk95qeev5t63b5njft1xzk"
+    );
+
+    let realm_selector = format!(
+        "_cokret/self/events/frontier?realm_id={}",
+        query_component("ck:realm:0196419b-0000-7000-8000-000000000000")
+    );
+    assert_eq!(
+        realm_selector,
+        "_cokret/self/events/frontier?realm_id=ck%3Arealm%3A0196419b-0000-7000-8000-000000000000"
+    );
+}
+
+#[test]
 fn insecure_remote_http_is_rejected() {
     let error = CokretApi::new("http://cokret.example").unwrap_err();
     assert!(

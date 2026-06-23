@@ -1310,6 +1310,16 @@ async fn submit_mls_admission_for_invitee(
                 )
             })?
     };
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    ensure_mls_genesis_frontier_for_invite(
+        api,
+        state_store,
+        secure_store.as_ref(),
+        &realm_id,
+        &actor_id,
+        &device_id,
+    )
+    .await?;
     let claim_nonce = crate::api::generate_mls_claim_nonce()?;
     let claim_outcome = api
         .claim_mls_key_package(
@@ -1329,7 +1339,6 @@ async fn submit_mls_admission_for_invitee(
             .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
         anyhow::anyhow!("{reason}")
     })?;
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claim(
@@ -1350,6 +1359,85 @@ async fn submit_mls_admission_for_invitee(
         .write()
         .save_mls_snapshot(realm_id, admission.snapshot);
     Ok(Some(next_epoch))
+}
+
+fn mls_group_state_event_ref_ready(store: &LocalStateStore, realm_id: &str) -> bool {
+    let seal_view = store.seal_view_for_realm(realm_id);
+    seal_view
+        .frontier
+        .iter()
+        .chain(seal_view.leaves.iter())
+        .any(|value| cokret_sdk::EventId::new(value.clone()).is_ok())
+}
+
+async fn ensure_mls_genesis_frontier_for_invite(
+    api: &crate::api::CokretApi,
+    mut state_store: Signal<LocalStateStore>,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> anyhow::Result<()> {
+    {
+        let store = state_store.read();
+        if mls_group_state_event_ref_ready(&store, realm_id) {
+            return Ok(());
+        }
+        if store.mls_genesis_emitted_for(realm_id) {
+            anyhow::bail!(
+                "local MLS genesis event id is not available yet; sync this Realm before inviting into its encrypted group"
+            );
+        }
+    }
+    let summary = {
+        let store = state_store.read();
+        crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
+            &store,
+            secure_store,
+            realm_id,
+            actor_id,
+            device_id,
+        )
+        .map_err(|err| anyhow::anyhow!(err.user_message()))?
+    }
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "local epoch-0 MLS snapshot is not available; create or restore this device's MLS state before inviting into an encrypted Realm"
+        )
+    })?;
+    let genesis_event = {
+        let store = state_store.read();
+        crate::views::kanban::build_creator_mls_genesis_event(
+            &store,
+            realm_id,
+            actor_id,
+            device_id,
+            Some(&summary),
+        )
+        .map_err(|err| anyhow::anyhow!(err))?
+    }
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "local MLS genesis event is already marked emitted but no group-state event id is available; sync this Realm before inviting"
+        )
+    })?;
+    match api.submit_sdk_event(&genesis_event).await {
+        Ok(_) => {
+            state_store
+                .write()
+                .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &genesis_event.event_id);
+            Ok(())
+        }
+        Err(err) => {
+            let text = err.to_string();
+            if text.contains("mls_genesis_already_exists") {
+                anyhow::bail!(
+                    "MLS genesis already exists server-side but the local event id is unavailable; sync this Realm before inviting"
+                );
+            }
+            Err(err)
+        }
+    }
 }
 
 #[component]
