@@ -88,7 +88,10 @@ fn blob_upload_filename_header_is_ascii_safe() {
 #[test]
 fn event_paths_use_v1_query_parameters() {
     let backfill = events_query_path("ck:realm:demo");
-    assert_eq!(backfill, "_cokret/self/events?realms=ck%3Arealm%3Ademo");
+    assert_eq!(
+        backfill,
+        "_cokret/self/events?realms=ck%3Arealm%3Ademo&limit=100"
+    );
     assert!(!backfill.contains("direction="));
 
     let subscribe = events_subscribe_path("ck:realm:demo", Some("ck:cursor:demo"), Some(true));

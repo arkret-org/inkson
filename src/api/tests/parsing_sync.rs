@@ -169,6 +169,32 @@ fn parses_server_and_sync_payloads() {
 }
 
 #[test]
+fn account_subscribe_parse_accepts_json_sync_outcome() {
+    let account_json = parse_account_subscribe_snapshot(
+        br#"{"cursor":"ck:cursor:json-1","realms":{"ck:realm:json":{"summary":{"title":"JSON"}}},"to_device":[],"device_lists":{"changed":[],"left":[]},"account_data":[],"presence":[],"notifications":null,"partial":false}"#,
+    )
+    .unwrap();
+    assert_eq!(account_json.cursor, "ck:cursor:json-1");
+    assert!(account_json.realms.contains_key("ck:realm:json"));
+
+    let reconnect = parse_account_subscribe_snapshot_outcome(
+        br#"{"kind":"dropped","cursor":"ck:cursor:resume","reason":"broadcast_lagged","reconnect_after_ms":10000}"#,
+    )
+    .unwrap();
+    match reconnect {
+        AccountSubscribeSnapshotResult::ReconnectAfter {
+            reconnect_after_ms,
+            reset_cursor,
+            ..
+        } => {
+            assert_eq!(reconnect_after_ms, 10_000);
+            assert!(!reset_cursor);
+        }
+        other => panic!("expected dropped control outcome, got {other:?}"),
+    }
+}
+
+#[test]
 fn account_subscribe_fold_consumes_every_catchup_frame() {
     // YOU-01-010 — multi-frame catchup: both deltas must be folded
     // (timeline events appended) and the cursor must advance to the

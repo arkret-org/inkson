@@ -346,7 +346,10 @@ pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
 }
 
 pub(crate) fn events_query_path(realm_id: &str) -> String {
-    format!("_cokret/self/events?realms={}", query_component(realm_id))
+    format!(
+        "_cokret/self/events?realms={}&limit=100",
+        query_component(realm_id)
+    )
 }
 
 // Consumed only by the native (`not(wasm32)`) `events_subscribe_ndjson`
