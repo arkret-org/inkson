@@ -131,9 +131,10 @@ pub(crate) fn resolve_realm_surface(
         | Route::KanbanBoard { .. }
         | Route::KanbanBoardTask { .. }
         | Route::KanbanTask { .. } => Some(RealmSurface::Board),
-        Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => {
-            Some(RealmSurface::Document)
-        }
+        Route::Document
+        | Route::DocumentNew
+        | Route::DocumentRealm { .. }
+        | Route::DocumentMorph { .. } => Some(RealmSurface::Document),
         Route::RealmMembers { .. } | Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
             None
         }
@@ -155,6 +156,7 @@ pub(crate) fn route_uses_realm_context(route: &Route) -> bool {
             | Route::Document
             | Route::DocumentNew
             | Route::DocumentRealm { .. }
+            | Route::DocumentMorph { .. }
             | Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
             | Route::RealmAdminSection { .. }

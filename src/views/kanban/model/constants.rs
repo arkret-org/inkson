@@ -75,12 +75,12 @@ pub(crate) const KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE: &str =
     "application/vnd.cokret.strand.patch-value+json";
 
 /// X10.2 — shown for an encrypted private field (body/synthesis) that this
-/// device cannot read yet: no local plaintext sidecar AND the author can't
-/// decrypt their own ciphertext (OpenMLS) / a fresh browser before MLS
-/// unlock+restore. Distinguishes "encrypted, unlock to view" from genuinely
-/// empty content so users don't read it as data loss.
+/// device cannot read yet: no local plaintext sidecar, no suitable MLS
+/// Welcome/history material, or a fresh browser before restore. Distinguishes
+/// "encrypted, waiting for key material" from genuinely empty content so users
+/// don't read it as data loss.
 pub(crate) const MLS_LOCKED_FIELD_PLACEHOLDER: &str =
-    "🔒 Encrypted — unlock MLS (enter your 24-word Recovery Key) to view";
+    "🔒 Encrypted — waiting for MLS Welcome or shared history key";
 
 /// Browser-`localStorage` keys for the card-detail panel display
 /// preference. Dock mode + width are device-/browser-level UI state
@@ -145,6 +145,14 @@ mod tests {
             "did:web:auth.local.host:users:bob",
             "did:web:auth.local.host:users:alice"
         ));
+    }
+
+    #[test]
+    fn mls_locked_placeholder_does_not_blame_recovery_key() {
+        assert!(!MLS_LOCKED_FIELD_PLACEHOLDER.contains("24-word"));
+        assert!(!MLS_LOCKED_FIELD_PLACEHOLDER.contains("Recovery Key"));
+        assert!(MLS_LOCKED_FIELD_PLACEHOLDER.contains("MLS Welcome"));
+        assert!(MLS_LOCKED_FIELD_PLACEHOLDER.contains("history key"));
     }
 }
 

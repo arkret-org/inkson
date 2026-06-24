@@ -1086,24 +1086,6 @@ pub fn KanbanPanel(
         spawn(async move {
             if !view.trim().is_empty() {
                 let view_for_call = view.clone();
-                let events_res = if lifecycle_realm_id.trim().is_empty() {
-                    None
-                } else {
-                    let realm_id = lifecycle_realm_id.clone();
-                    match with_authed_api(&base, api_token.clone(), |api| async move {
-                        api.backfill(&realm_id).await
-                    })
-                    .await
-                    {
-                        Ok(response) => Some(response),
-                        Err(err) if err.is_auth_expired() => return,
-                        Err(_) => None,
-                    }
-                };
-                let remote_update_operations = events_res
-                    .as_ref()
-                    .map(|resp| strand_update_operations_from_events(&resp.events))
-                    .unwrap_or_default();
                 if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
                     api.collection_projection(&view_for_call).await
                 })
@@ -1121,7 +1103,7 @@ pub fn KanbanPanel(
                             &projection,
                             &decrypt_store,
                             &selected_board_space_id(),
-                            &remote_update_operations,
+                            &[],
                             Some(&decrypt_ctx),
                         )
                     };
@@ -1162,36 +1144,12 @@ pub fn KanbanPanel(
                 {
                     return;
                 }
-                let events_res = {
-                    let realm_id = lifecycle_realm_id.clone();
-                    with_authed_api(&base, api_token, |api| async move {
-                        api.backfill(&realm_id).await
-                    })
-                    .await
-                };
-                if events_res
-                    .as_ref()
-                    .err()
-                    .is_some_and(|err| err.is_auth_expired())
-                {
-                    return;
-                }
                 if containers_res.is_ok() || strands_res.is_ok() {
                     let container_items = containers_res
                         .ok()
                         .map(|resp| resp.items)
                         .unwrap_or_default();
                     let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
-                    let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                    let remote_update_operations =
-                        strand_update_operations_from_events(&event_items);
-                    let remote_space_create_operations =
-                        space_create_operations_from_events(&event_items);
-                    let container_items = containers_with_local_space_creates(
-                        &container_items,
-                        &remote_space_create_operations,
-                        &lifecycle_local_realm_id,
-                    );
                     lifecycle_container_projection.set(container_items.clone());
                     lifecycle_strand_projection.set(strand_items.clone());
                     let current_board = selected_board_space_id();
@@ -1223,7 +1181,7 @@ pub fn KanbanPanel(
                             projected_columns,
                             &decrypt_store,
                             &board_id,
-                            &remote_update_operations,
+                            &[],
                             Some(&decrypt_ctx),
                         );
                         drop(decrypt_store);

@@ -134,6 +134,9 @@ pub enum Route {
     #[route("/document/new", RoutePage)]
     DocumentNew,
 
+    #[route("/document/:realm_id/morph/:morph_id", DocumentMorphPage)]
+    DocumentMorph { realm_id: String, morph_id: String },
+
     #[route("/document/:realm_id", DocumentRealmPage)]
     DocumentRealm { realm_id: String },
 
@@ -259,6 +262,12 @@ fn DocumentRealmPage(realm_id: String) -> Element {
 }
 
 #[component]
+fn DocumentMorphPage(realm_id: String, morph_id: String) -> Element {
+    let _ = (realm_id, morph_id);
+    rsx! {}
+}
+
+#[component]
 fn NotificationsSettingsPage() -> Element {
     rsx! {}
 }
@@ -309,7 +318,10 @@ impl Route {
             | Route::KanbanBoardTask { .. }
             | Route::KanbanTask { .. } => AppView::Kanban,
             Route::Notifications => AppView::Notifications,
-            Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => AppView::Document,
+            Route::Document
+            | Route::DocumentNew
+            | Route::DocumentRealm { .. }
+            | Route::DocumentMorph { .. } => AppView::Document,
             Route::Onboarding => AppView::Onboarding,
             Route::Quarantine => AppView::Quarantine,
             Route::Agents => AppView::Agents,
@@ -329,10 +341,9 @@ impl Route {
             | Route::KanbanTask { realm_id, .. }
             | Route::RealmMembers { realm_id }
             | Route::RealmAdmin { realm_id }
-            | Route::RealmAdminSection { realm_id, .. } => Some(realm_id.as_str()),
-            Route::DocumentRealm { realm_id } if !realm_id.starts_with("ck:morph:") => {
-                Some(realm_id.as_str())
-            }
+            | Route::RealmAdminSection { realm_id, .. }
+            | Route::DocumentRealm { realm_id }
+            | Route::DocumentMorph { realm_id, .. } => Some(realm_id.as_str()),
             _ => None,
         }
     }
@@ -442,6 +453,10 @@ mod tests {
             Route::Notifications,
             Route::Document,
             Route::DocumentNew,
+            Route::DocumentMorph {
+                realm_id: "ck:realm:roundtrip".to_owned(),
+                morph_id: "ck:morph:roundtrip".to_owned(),
+            },
             Route::Recovery,
             Route::Onboarding,
             Route::Quarantine,

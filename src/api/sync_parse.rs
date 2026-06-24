@@ -64,12 +64,24 @@ impl AccountSubscribeFolder {
                 });
                 return true;
             }
-            cokret_sdk::AccountSubscribeFrameKind::Dropped
-            | cokret_sdk::AccountSubscribeFrameKind::CatchupComplete => {
-                // Both close this snapshot scope: whatever was folded is
-                // valid up to `latest_cursor` (the dropped frame's cursor
-                // is the documented resume point; catchup_complete marks
-                // the baseline as complete).
+            cokret_sdk::AccountSubscribeFrameKind::Dropped => {
+                if self.merged.is_none() {
+                    self.done = Some(AccountSubscribeSnapshotResult::ReconnectAfter {
+                        reconnect_after_ms: frame
+                            .reconnect_after_ms()
+                            .unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS),
+                        reason: frame.reason,
+                        reset_cursor: false,
+                    });
+                }
+                // A dropped frame closes this snapshot scope. If we already
+                // folded a delta, finish() returns that delta with the dropped
+                // cursor as resume point; otherwise it surfaces ReconnectAfter.
+                return true;
+            }
+            cokret_sdk::AccountSubscribeFrameKind::CatchupComplete => {
+                // catchup_complete marks the baseline as complete; whatever
+                // was folded is valid up to `latest_cursor`.
                 return true;
             }
             _ => {}
@@ -109,6 +121,17 @@ impl AccountSubscribeFolder {
 pub(crate) fn parse_account_subscribe_snapshot_outcome(
     bytes: &[u8],
 ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
+    let trimmed_body = trim_ascii(bytes);
+    let is_single_frame = serde_json::from_slice::<Value>(trimmed_body)
+        .ok()
+        .and_then(|value| value.get("kind").cloned())
+        .is_some();
+    if !is_single_frame
+        && let Ok(response) = serde_json::from_slice::<ClientSyncOutcome>(trimmed_body)
+    {
+        return Ok(AccountSubscribeSnapshotResult::Delta(Box::new(response)));
+    }
+
     let mut folder = AccountSubscribeFolder::default();
     for line in bytes.split(|byte| *byte == b'\n') {
         let trimmed = trim_ascii(line);

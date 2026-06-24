@@ -487,6 +487,10 @@ async fn finish_oidc_callback(
     let session_grants_url = gate_account
         .endpoint_url("session-grants")
         .map_err(|error| format!("session-grants URL preparation failed: {error}"))?;
+    #[cfg(target_arch = "wasm32")]
+    crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen")
+        .await
+        .map_err(|error| format!("DPoP key store not ready: {error}"))?;
     let (issue_dpop, dpop_handle) = {
         let mut store = state_store.write();
         let handle = crate::auth_dpop::ensure_device_key(&mut store)

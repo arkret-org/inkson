@@ -682,7 +682,10 @@ impl CokretApi {
                 query.append_pair("after", cursor);
             }
         }
-        let request = self.http.get(url).header(ACCEPT, "application/x-ndjson");
+        let request = self
+            .http
+            .get(url)
+            .header(ACCEPT, "application/json, application/x-ndjson");
         let response = self
             .send_with_retry(self.prepare_request(request), Method::GET, true)
             .await?;
@@ -695,16 +698,30 @@ impl CokretApi {
             }
             .into());
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        let is_ndjson = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .contains("application/x-ndjson");
         // YOU-01-010 — native reads the NDJSON stream frame by frame and
         // returns at `catchup_complete` / control frames, so a
         // spec-compliant server that keeps the stream open for realtime
         // push does not stall the client until timeout. wasm32 stays on
         // the buffered read (reqwest's browser-fetch backend exposes no
         // chunk reader; a web-sys ReadableStream frame reader is the
-        // remaining gap).
+        // remaining gap). JSON long-poll responses are bounded and can be
+        // buffered on every target.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            super::drain_account_subscribe_response(response).await
+            if is_ndjson {
+                super::drain_account_subscribe_response(response).await
+            } else {
+                let bytes = response.bytes().await?;
+                parse_account_subscribe_snapshot_outcome(&bytes)
+            }
         }
         #[cfg(target_arch = "wasm32")]
         {
