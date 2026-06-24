@@ -98,9 +98,6 @@ pub fn strand_projection_security_state(value: &Value) -> Option<bool> {
         &["scope_circle"],
         &["metadata"],
         &["content"],
-        &["tracks"],
-        &["tracks", "discussion"],
-        &["tracks", "synthesis"],
     ];
     paths
         .iter()
@@ -233,6 +230,16 @@ mod tests {
             strand_projection_security_state(&json!({"object": {"encryption_profile": "none"}})),
             Some(false)
         );
+        assert_eq!(
+            strand_projection_security_state(
+                &json!({"tracks": {"discussion": {"encryption_profile": "none"}}})
+            ),
+            None
+        );
+        assert!(strand_projection_is_encrypted(
+            &json!({"tracks": {"discussion": {"encryption_profile": "none"}}}),
+            true
+        ));
         assert!(strand_projection_is_encrypted(&json!({}), true));
         assert!(!strand_projection_is_encrypted(&json!({}), false));
     }
