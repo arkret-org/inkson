@@ -10,7 +10,7 @@ mod tests {
         raw_notifications_from_sources, read_cursor_targets, realm_is_muted,
         realm_title_hints_from_values,
     };
-    use crate::local_state::ClientLocalState;
+    use crate::local_state::{ClientLocalState, NotificationClientState};
     use crate::notification_rules::WatchLevel;
 
     #[test]
@@ -82,6 +82,34 @@ mod tests {
         append_invite_notifications(&mut raw, vec![invite], &joined_realms);
         drop_joined_invite_notifications(&mut raw, &joined_realms);
         assert!(raw.is_empty(), "joined Realm invites should be hidden");
+    }
+
+    #[test]
+    fn hydrate_notifications_uses_local_read_overlay_over_projection() {
+        let mut local_state = ClientLocalState::default();
+        local_state.notification_client_state.insert(
+            "n1".to_owned(),
+            NotificationClientState {
+                read: true,
+                archived: false,
+            },
+        );
+        let notifications = hydrate_notifications(
+            vec![json!({
+                "notification_id": "n1",
+                "schema": "ck.schema.notification.v1",
+                "notification_type": "mention",
+                "realm_id": "ck:realm:quiet",
+                "body": "hello",
+                "read": false
+            })],
+            &local_state,
+            None,
+            None,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].read);
     }
 
     #[test]

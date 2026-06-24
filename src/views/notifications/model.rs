@@ -358,11 +358,7 @@ fn notification_from_value(
         &["strand_id", "target_strand_id", "space_id"],
         "ck:strand:",
     );
-    let client_state = local_state
-        .notification_client_state
-        .get(&id)
-        .cloned()
-        .unwrap_or_default();
+    let client_state = local_state.notification_client_state.get(&id).cloned();
     let kind = value_string(
         &value,
         &["notification_type", "notification_kind", "type", "kind"],
@@ -402,8 +398,14 @@ fn notification_from_value(
         strand_id,
         realm_label,
         kind: kind.clone(),
-        read: value_bool(&value, "read").unwrap_or(client_state.read),
-        archived: value_bool(&value, "archived").unwrap_or(client_state.archived),
+        read: client_state
+            .as_ref()
+            .map(|state| state.read)
+            .unwrap_or_else(|| value_bool(&value, "read").unwrap_or(false)),
+        archived: client_state
+            .as_ref()
+            .map(|state| state.archived)
+            .unwrap_or_else(|| value_bool(&value, "archived").unwrap_or(false)),
         timestamp,
         action_label: action
             .as_ref()

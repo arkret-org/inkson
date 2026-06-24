@@ -90,10 +90,12 @@ fn unread_notification_count_ignores_read_and_archived_items() {
                 "read": true
             }),
             serde_json::json!({
-                "notification_id": "client-read"
+                "notification_id": "client-read",
+                "read": false
             }),
             serde_json::json!({
-                "notification_id": "client-archived"
+                "notification_id": "client-archived",
+                "archived": false
             }),
             serde_json::json!({
                 "notification_id": "server-archived",

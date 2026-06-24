@@ -29,11 +29,12 @@ pub(super) fn unread_notification_count(snapshot: &ClientLocalState) -> usize {
             let id = notification_projection_string(value, &["notification_id", "id"])
                 .unwrap_or_else(|| format!("notification-{index}"));
             let client_state = snapshot.notification_client_state.get(&id);
-            let client_read = client_state.map(|state| state.read).unwrap_or(false);
-            let client_archived = client_state.map(|state| state.archived).unwrap_or(false);
-            let archived =
-                notification_projection_bool(value, "archived").unwrap_or(client_archived);
-            let read = notification_projection_bool(value, "read").unwrap_or(client_read);
+            let archived = client_state.map(|state| state.archived).unwrap_or_else(|| {
+                notification_projection_bool(value, "archived").unwrap_or(false)
+            });
+            let read = client_state
+                .map(|state| state.read)
+                .unwrap_or_else(|| notification_projection_bool(value, "read").unwrap_or(false));
             !archived && !read
         })
         .count()
