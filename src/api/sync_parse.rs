@@ -187,9 +187,9 @@ pub(crate) async fn drain_account_subscribe_response(
 }
 
 /// Merge a later catchup `delta` into the accumulated snapshot. Realm
-/// entries deep-merge their `timeline.events` (append) so multi-frame
-/// catchup does not drop earlier batches; list-shaped account channels
-/// append; scalar channels take the newest value.
+/// entries deep-merge their event arrays so multi-frame catchup does not
+/// drop earlier batches; list-shaped account channels append; scalar
+/// channels take the newest value.
 fn merge_account_subscribe_delta(acc: &mut ClientSyncOutcome, next: ClientSyncOutcome) {
     for (realm_id, incoming) in next.realms {
         match acc.realms.entry(realm_id) {
@@ -225,8 +225,8 @@ fn merge_account_subscribe_delta(acc: &mut ClientSyncOutcome, next: ClientSyncOu
     acc.partial = next.partial;
 }
 
-/// Best-effort deep merge of one realm's delta body: `timeline.events`
-/// arrays append, every other key takes the incoming value.
+/// Best-effort deep merge of one realm's delta body: `timeline.events` and
+/// `state.events` arrays append, every other key takes the incoming value.
 fn merge_realm_delta_value(current: &mut Value, incoming: Value) {
     let Value::Object(incoming) = incoming else {
         *current = incoming;
@@ -237,18 +237,18 @@ fn merge_realm_delta_value(current: &mut Value, incoming: Value) {
         return;
     };
     for (key, value) in incoming {
-        if key == "timeline"
-            && let Some(Value::Object(existing_timeline)) = current_map.get_mut("timeline")
-            && let Value::Object(mut incoming_timeline) = value
+        if (key == "timeline" || key == "state")
+            && let Some(Value::Object(existing_section)) = current_map.get_mut(&key)
+            && let Value::Object(mut incoming_section) = value
         {
             if let (Some(Value::Array(existing_events)), Some(Value::Array(new_events))) = (
-                existing_timeline.get_mut("events"),
-                incoming_timeline.remove("events"),
+                existing_section.get_mut("events"),
+                incoming_section.remove("events"),
             ) {
                 existing_events.extend(new_events);
             }
-            for (timeline_key, timeline_value) in incoming_timeline {
-                existing_timeline.insert(timeline_key, timeline_value);
+            for (section_key, section_value) in incoming_section {
+                existing_section.insert(section_key, section_value);
             }
             continue;
         }

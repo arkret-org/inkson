@@ -512,49 +512,95 @@ pub(super) fn projection_synthesis_revision(
     }
 }
 
-pub(super) fn synthesis_revision_from_raw_operation(
-    record: &RawOperationRecord,
-    state_store: &LocalStateStore,
-    author_context: Option<CardAuthorDisplayContext<'_>>,
-) -> Option<(String, String, CardSynthesisRevision)> {
-    let update = local_card_update_from_raw_operation(record, None)?;
+fn raw_operation_synthesis_timestamp(record: &RawOperationRecord) -> String {
     let payload = &record.payload;
-    let body = json_path_string(Some(payload), &["synthesis_revision_body"])
-        .or(match update.synthesis {
-            Some(PrivateFieldOverlay::Set(value)) => Some(value),
-            _ => None,
-        })
-        .unwrap_or_default();
-    if body.trim().is_empty() {
-        return None;
-    }
-    let actor_id = json_path_string(Some(payload), &["actor_id"])
-        .or_else(|| json_path_string(Some(payload), &["body", "actor_id"]))
-        .or_else(|| json_path_string(Some(payload), &["payload", "actor_id"]))
-        .unwrap_or_default();
-    let timestamp = json_path_string(Some(payload), &["created_at"])
+    json_path_string(Some(payload), &["created_at"])
         .or_else(|| json_path_string(Some(payload), &["body", "created_at"]))
         .or_else(|| json_path_string(Some(payload), &["payload", "created_at"]))
         .unwrap_or_else(|| {
             record
                 .received_at
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        });
+        })
+}
+
+fn raw_operation_synthesis_actor_id(record: &RawOperationRecord) -> String {
+    let payload = &record.payload;
+    json_path_string(Some(payload), &["actor_id"])
+        .or_else(|| json_path_string(Some(payload), &["sender_actor_id"]))
+        .or_else(|| json_path_string(Some(payload), &["body", "actor_id"]))
+        .or_else(|| json_path_string(Some(payload), &["body", "sender_actor_id"]))
+        .or_else(|| json_path_string(Some(payload), &["payload", "actor_id"]))
+        .or_else(|| json_path_string(Some(payload), &["payload", "sender_actor_id"]))
+        .unwrap_or_default()
+}
+
+fn synthesis_revision_for_raw_body(
+    record: &RawOperationRecord,
+    body: String,
+    state_store: &LocalStateStore,
+    author_context: Option<CardAuthorDisplayContext<'_>>,
+) -> CardSynthesisRevision {
+    let actor_id = raw_operation_synthesis_actor_id(record);
+    let timestamp = raw_operation_synthesis_timestamp(record);
     let author_label = card_author_display_label(state_store, author_context, &actor_id);
-    let entry_id = json_path_string(Some(payload), &["synthesis_entry_id"])
-        .unwrap_or_else(|| format!("{}:synthesis", update.strand_id));
-    Some((
-        update.strand_id,
-        entry_id,
-        CardSynthesisRevision {
-            id: record.operation_id.clone(),
-            body,
-            actor_id,
-            author_label,
-            timestamp_label: compact_timestamp_label(&timestamp),
-            sort_key: timestamp,
-        },
-    ))
+    CardSynthesisRevision {
+        id: record.operation_id.clone(),
+        body,
+        actor_id,
+        author_label,
+        timestamp_label: compact_timestamp_label(&timestamp),
+        sort_key: timestamp,
+    }
+}
+
+fn apply_synthesis_full_value_to_history(
+    card_id: &str,
+    record: &RawOperationRecord,
+    next_value: &str,
+    explicit_entry_id: Option<&str>,
+    grouped: &mut std::collections::BTreeMap<String, Vec<CardSynthesisRevision>>,
+    replay_bodies: &mut Vec<String>,
+    replay_entry_ids: &mut Vec<String>,
+    state_store: &LocalStateStore,
+    author_context: Option<CardAuthorDisplayContext<'_>>,
+    add_revisions: bool,
+) {
+    let next_bodies = split_synthesis_entry_bodies(next_value);
+    if next_bodies.is_empty() {
+        replay_bodies.clear();
+        replay_entry_ids.clear();
+        return;
+    }
+
+    let mut next_entry_ids = Vec::with_capacity(next_bodies.len());
+    for (index, next_body) in next_bodies.iter().enumerate() {
+        let entry_id = replay_entry_ids
+            .get(index)
+            .cloned()
+            .or_else(|| {
+                explicit_entry_id
+                    .filter(|_| index + 1 == next_bodies.len())
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| format!("{card_id}:synthesis:{index}"));
+        let changed = replay_bodies.get(index) != Some(next_body);
+        if add_revisions && changed {
+            grouped
+                .entry(entry_id.clone())
+                .or_default()
+                .push(synthesis_revision_for_raw_body(
+                    record,
+                    next_body.clone(),
+                    state_store,
+                    author_context,
+                ));
+        }
+        next_entry_ids.push(entry_id);
+    }
+
+    *replay_bodies = next_bodies;
+    *replay_entry_ids = next_entry_ids;
 }
 
 pub(super) fn synthesis_entry_from_revisions(
@@ -589,21 +635,100 @@ pub(super) fn card_synthesis_track_entries(
     card_synthesis_track_entries_with_author_context(card, raw_operations, state_store, None)
 }
 
+#[cfg(test)]
 pub(super) fn card_synthesis_track_entries_with_author_context(
     card: &KanbanCard,
     raw_operations: &[RawOperationRecord],
     state_store: &LocalStateStore,
     author_context: Option<CardAuthorDisplayContext<'_>>,
 ) -> Vec<CardSynthesisTrackEntry> {
+    card_synthesis_track_entries_with_author_context_and_decrypt(
+        card,
+        raw_operations,
+        state_store,
+        author_context,
+        None,
+    )
+}
+
+pub(super) fn card_synthesis_track_entries_with_author_context_and_decrypt(
+    card: &KanbanCard,
+    raw_operations: &[RawOperationRecord],
+    state_store: &LocalStateStore,
+    author_context: Option<CardAuthorDisplayContext<'_>>,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> Vec<CardSynthesisTrackEntry> {
     let mut grouped = std::collections::BTreeMap::<String, Vec<CardSynthesisRevision>>::new();
-    for (_, entry_id, revision) in raw_operations
+    let mut ordered = raw_operations
         .iter()
         .filter_map(|record| {
-            synthesis_revision_from_raw_operation(record, state_store, author_context)
+            let update = local_card_update_from_raw_operation(record, decrypt_ctx)?;
+            (update.strand_id == card.id).then_some((record, update))
         })
-        .filter(|(strand_id, ..)| strand_id == &card.id)
-    {
-        grouped.entry(entry_id).or_default().push(revision);
+        .collect::<Vec<_>>();
+    ordered.sort_by(|(left_record, _), (right_record, _)| {
+        raw_operation_synthesis_timestamp(left_record)
+            .cmp(&raw_operation_synthesis_timestamp(right_record))
+            .then(left_record.operation_id.cmp(&right_record.operation_id))
+    });
+
+    let mut replay_bodies = Vec::<String>::new();
+    let mut replay_entry_ids = Vec::<String>::new();
+    for (record, update) in ordered {
+        let explicit_body = json_path_string(Some(&record.payload), &["synthesis_revision_body"])
+            .map(|body| body.trim().to_owned())
+            .filter(|body| !body.is_empty());
+        let explicit_entry_id = json_path_string(Some(&record.payload), &["synthesis_entry_id"]);
+        if let Some(body) = explicit_body {
+            let entry_id = explicit_entry_id
+                .clone()
+                .unwrap_or_else(|| format!("{}:synthesis", update.strand_id));
+            grouped
+                .entry(entry_id.clone())
+                .or_default()
+                .push(synthesis_revision_for_raw_body(
+                    record,
+                    body,
+                    state_store,
+                    author_context,
+                ));
+            if let Some(PrivateFieldOverlay::Set(full_value)) = update.synthesis {
+                apply_synthesis_full_value_to_history(
+                    &card.id,
+                    record,
+                    &full_value,
+                    Some(&entry_id),
+                    &mut grouped,
+                    &mut replay_bodies,
+                    &mut replay_entry_ids,
+                    state_store,
+                    author_context,
+                    false,
+                );
+            }
+            continue;
+        }
+        match update.synthesis {
+            Some(PrivateFieldOverlay::Set(full_value)) => {
+                apply_synthesis_full_value_to_history(
+                    &card.id,
+                    record,
+                    &full_value,
+                    explicit_entry_id.as_deref(),
+                    &mut grouped,
+                    &mut replay_bodies,
+                    &mut replay_entry_ids,
+                    state_store,
+                    author_context,
+                    true,
+                );
+            }
+            Some(PrivateFieldOverlay::Unset) => {
+                replay_bodies.clear();
+                replay_entry_ids.clear();
+            }
+            _ => {}
+        }
     }
     let mut raw_entries = grouped
         .into_iter()

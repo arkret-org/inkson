@@ -442,19 +442,28 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // author sidecar. Parse the canonical envelope, decrypt with this device's
     // MLS snapshot secret, and extract the Content Block text. Soft-fails to
     // `None` (→ Decrypting/KeyMissing) when the snapshot/secret is unavailable.
-    let decrypted_body = if !is_redaction_tombstone
+    let decrypt_context = if !is_redaction_tombstone
         && !is_expiry_stub
         && !body_from_sidecar
         && late_recovery_transition.allows_plaintext()
-        && let (Some((actor_id, device_id)), Some(store), Some(encrypted)) = (
+    {
+        match (
             decrypt_identity,
             state_store,
             encrypted_content_value.as_ref(),
         ) {
-        decrypt_chat_encrypted_content(store, message_realm, actor_id, device_id, encrypted)
+            (Some((actor_id, device_id)), Some(store), Some(encrypted)) => {
+                Some((store, actor_id, device_id, encrypted))
+            }
+            _ => None,
+        }
     } else {
         None
     };
+    let decrypt_was_attempted = decrypt_context.is_some();
+    let decrypted_body = decrypt_context.and_then(|(store, actor_id, device_id, encrypted)| {
+        decrypt_chat_encrypted_content(store, message_realm, actor_id, device_id, encrypted)
+    });
     let body_was_decrypted = decrypted_body.is_some();
     let body = if is_redaction_tombstone {
         String::new()
@@ -556,7 +565,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         // `Decrypting`.
         MessageCryptoState::Plaintext
     } else if has_encrypted_payload {
-        MessageCryptoState::Decrypting
+        if decrypt_was_attempted {
+            MessageCryptoState::KeyMissing
+        } else {
+            MessageCryptoState::Decrypting
+        }
     } else {
         MessageCryptoState::Plaintext
     };

@@ -32,6 +32,7 @@ mod model;
 use dnd::*;
 use due_calendar::*;
 use model::*;
+pub(crate) use model::{space_create_operations_from_events, strand_update_operations_from_events};
 
 #[component]
 fn CardMarkdownEditor(
@@ -3317,11 +3318,18 @@ pub fn KanbanPanel(
                             realm_id: &realm_context,
                             member_rows: &member_rows,
                         };
-                        card_synthesis_track_entries_with_author_context(
+                        let decrypt_ctx = MlsDecryptCtx {
+                            state_store: &store,
+                            realm_id: &selected_realm_id,
+                            actor_id: &account_did,
+                            device_id: &device_id,
+                        };
+                        card_synthesis_track_entries_with_author_context_and_decrypt(
                             card,
                             &snapshot.raw_operations,
                             &store,
                             Some(author_context),
+                            Some(&decrypt_ctx),
                         )
                     };
                     let overlay_navigator = navigator;

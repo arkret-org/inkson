@@ -1901,6 +1901,46 @@ fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
 }
 
 #[test]
+fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
+    let temp = std::env::temp_dir().join(format!(
+        "yougen-chat-key-missing-{}.json",
+        crate::operation::uuid_v7()
+    ));
+    let store = LocalStateStore::with_path(temp);
+    let event = json!({
+        "event_id": "evt:key-missing",
+        "content": {
+            "type": "ck.message.create",
+            "strand_id": "ck:strand:1",
+            "message_id": "ck:message:1",
+            "encrypted_content": {
+                "scheme": "mls-rfc9420",
+                "version": "1.0",
+                "group_id": "ck:mls:test",
+                "epoch": 1,
+                "content_type": "application/vnd.cokret.message+json",
+                "ciphertext": "AAAA",
+                "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            },
+        }
+    });
+
+    let msg = chat_message_from_event_with_sidecar(
+        "ck:realm:none",
+        &event,
+        Some(&store),
+        Some((
+            "did:web:bob.example",
+            "ck:device:01964137-0000-7000-8000-000000000001",
+        )),
+    )
+    .expect("message");
+
+    assert_eq!(msg.body, "");
+    assert_eq!(msg.crypto_state, MessageCryptoState::KeyMissing);
+}
+
+#[test]
 fn chat_message_revise_operation_uses_schema_target_ref() {
     let op = chat_message_revise_operation(
         "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",

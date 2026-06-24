@@ -11,7 +11,7 @@ fn parses_server_and_sync_payloads() {
         "supported_features": ["account.subscribe"],
         "supported_operations": ["ck.self.account.stream.subscribe"],
         "supported_bindings": [{"kind": "http_json"}],
-        "auth_metadata": {},
+        "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory"},
         "plaintext_visibility": {"default": "encrypted"},
         "implemented_features": [],
@@ -77,6 +77,20 @@ fn parses_server_and_sync_payloads() {
             .contains_key("ck:realm:019e4cdc-b435-7e52-9ada-39d5ec134729")
     );
     assert!(account_frame.left_realms.is_empty());
+
+    let account_frame = parse_account_subscribe_snapshot(
+        br#"{"kind":"delta","cursor":"ck:cursor:state-1","realms":{"ck:realm:state":{"state":{"events":[{"event_id":"ck:event:1","event_kind":"ck.strand.update"}]}}},"to_device":{"messages":[]},"device_lists":{"changed":[],"left":[]},"account_data":{"events":[]},"presence":{"events":[]},"notifications":null,"partial":true}
+{"kind":"delta","cursor":"ck:cursor:state-2","realms":{"ck:realm:state":{"state":{"events":[{"event_id":"ck:event:2","event_kind":"ck.strand.update"}]}}},"to_device":{"messages":[]},"device_lists":{"changed":[],"left":[]},"account_data":{"events":[]},"presence":{"events":[]},"notifications":null,"partial":false}
+{"kind":"catchup_complete","cursor":"ck:cursor:state-2"}
+"#,
+    )
+    .unwrap();
+    let state_events = account_frame.realms["ck:realm:state"]["state"]["events"]
+        .as_array()
+        .expect("state events array");
+    assert_eq!(state_events.len(), 2);
+    assert_eq!(state_events[0]["event_id"], "ck:event:1");
+    assert_eq!(state_events[1]["event_id"], "ck:event:2");
 
     let reconnect = parse_account_subscribe_snapshot_outcome(
         br#"{"kind":"resync_required","reason":"compaction","reconnect_after_ms":10000}

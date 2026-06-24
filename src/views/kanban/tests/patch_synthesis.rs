@@ -144,6 +144,73 @@ fn card_synthesis_track_entries_preserve_append_history() {
 }
 
 #[test]
+fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_history() {
+    let mut card = test_card("ck:strand:edit-me", "U");
+    card.synthesis = join_synthesis_entry_bodies(vec![
+        "alice synthesis".to_owned(),
+        "bob synthesis".to_owned(),
+    ]);
+    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.updated_by = "did:web:acme.example:users:bob".to_owned();
+    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+    let received_at = |value: &str| {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    };
+    let raw_operations = vec![
+        RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ck:realm:r1".to_owned()),
+            received_at: received_at("2026-05-22T10:00:00Z"),
+            payload: json!({
+                "kind": "ck.strand.update",
+                "operation_id": "op-1",
+                "actor_id": "did:web:acme.example:users:alice",
+                "created_at": "2026-05-22T10:00:00Z",
+                "write_state": "synced",
+                "body": {
+                    "strand_id": "ck:strand:edit-me",
+                    "patch": {
+                        "synthesis": { "$op": "set", "value": "alice synthesis" }
+                    }
+                }
+            }),
+        },
+        RawOperationRecord {
+            operation_id: "op-2".to_owned(),
+            realm_id: Some("ck:realm:r1".to_owned()),
+            received_at: received_at("2026-05-22T11:00:00Z"),
+            payload: json!({
+                "kind": "ck.strand.update",
+                "operation_id": "op-2",
+                "actor_id": "did:web:acme.example:users:bob",
+                "created_at": "2026-05-22T11:00:00Z",
+                "write_state": "synced",
+                "body": {
+                    "strand_id": "ck:strand:edit-me",
+                    "patch": {
+                        "synthesis": {
+                            "$op": "set",
+                            "value": "alice synthesis\n\n---\n\nbob synthesis"
+                        }
+                    }
+                }
+            }),
+        },
+    ];
+
+    let entries = card_synthesis_track_entries(&card, &raw_operations, &LocalStateStore::default());
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].body, "alice synthesis");
+    assert_eq!(entries[0].author_label, "alice:acme.example");
+    assert_eq!(entries[1].body, "bob synthesis");
+    assert_eq!(entries[1].author_label, "bob:acme.example");
+}
+
+#[test]
 fn projection_synthesis_revision_prefers_updated_by_over_creator() {
     let mut card = test_card("ck:strand:edit-me", "U");
     card.synthesis = "bob synthesis".to_owned();

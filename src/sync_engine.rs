@@ -1118,6 +1118,7 @@ pub fn apply_response(
                 let view = LocalSealView::from_sync_body(body);
                 store.set_realm_seal_view(id.clone(), view);
                 store.ingest_move_event_states(id, body);
+                ingest_kanban_state_events_from_projection(store, id, body);
                 // R3.1 MID-2 — harvest inlined `ck.member.identity.update`
                 // event envelopes off the `members[]` roster entries. The
                 // SDK's effective-set filter is applied lazily when a UI
@@ -1299,6 +1300,48 @@ fn to_device_batch_allows_cursor_advance(messages: &[Value], limited: bool) -> b
     !limited && to_device_batch_all_ack_safe(messages)
 }
 
+fn sync_realm_state_events(body: &Value) -> Vec<Value> {
+    let mut events = Vec::new();
+    if let Some(items) = body.get("state").and_then(Value::as_array) {
+        events.extend(items.iter().cloned());
+    }
+    if let Some(items) = body
+        .get("state")
+        .and_then(|state| state.get("events"))
+        .and_then(Value::as_array)
+    {
+        events.extend(items.iter().cloned());
+    }
+    if let Some(items) = body.get("events").and_then(Value::as_array) {
+        events.extend(items.iter().cloned());
+    }
+    events
+}
+
+fn ingest_kanban_state_events_from_projection(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    body: &Value,
+) -> usize {
+    let events = sync_realm_state_events(body);
+    if events.is_empty() {
+        return 0;
+    }
+    let mut records = crate::views::kanban::strand_update_operations_from_events(&events);
+    records.extend(crate::views::kanban::space_create_operations_from_events(
+        &events,
+    ));
+    let mut changed = 0;
+    for record in records {
+        let operation_id = record.operation_id;
+        let record_realm_id = record.realm_id.or_else(|| Some(realm_id.to_owned()));
+        if store.upsert_raw_operation(operation_id, record_realm_id, record.payload) {
+            changed += 1;
+        }
+    }
+    changed
+}
+
 fn ingest_member_identity_events_from_projection(
     store: &mut LocalStateStore,
     realm_id: &str,
@@ -1307,36 +1350,25 @@ fn ingest_member_identity_events_from_projection(
     // Build a quick lookup over any `state.events[]` array on the
     // projection so that referenced identity_event_ids can be resolved
     // without a separate query.
-    let state_events: BTreeSet<String> = body
-        .get("state")
-        .and_then(|state| state.get("events"))
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|event| {
-                    event
-                        .get("event_id")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                })
-                .collect()
+    let state_log_events = sync_realm_state_events(body);
+    let state_events: BTreeSet<String> = state_log_events
+        .iter()
+        .filter_map(|event| {
+            event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
         })
-        .unwrap_or_default();
-    let state_event_by_id: std::collections::BTreeMap<String, Value> = body
-        .get("state")
-        .and_then(|state| state.get("events"))
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|event| {
-                    event
-                        .get("event_id")
-                        .and_then(Value::as_str)
-                        .map(|id| (id.to_owned(), event.clone()))
-                })
-                .collect()
+        .collect();
+    let state_event_by_id: std::collections::BTreeMap<String, Value> = state_log_events
+        .iter()
+        .filter_map(|event| {
+            event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_owned(), event.clone()))
         })
-        .unwrap_or_default();
+        .collect();
 
     for source in [
         body.get("members"),
@@ -1443,18 +1475,10 @@ fn invalidate_cache_for_revocation_events(
         }
     }
 
-    // Scan both top-level event log shapes: `state.events[]` and `events[]`.
-    for events in [
-        body.get("state").and_then(|s| s.get("events")),
-        body.get("events"),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if let Some(arr) = events.as_array() {
-            invalidate_from_events(cache, arr, None);
-        }
-    }
+    // Scan top-level event log shapes: legacy `state[]`, `state.events[]`,
+    // and fallback `events[]`.
+    let state_events = sync_realm_state_events(body);
+    invalidate_from_events(cache, &state_events, None);
 
     // Inline `identity_events[]` on each member roster entry.
     for source in [
@@ -1676,6 +1700,52 @@ mod tests {
         assert!(!to_device_batch_all_ack_safe(&[to_device_message(
             "ck.future.secret.material"
         )]));
+    }
+
+    #[test]
+    fn sync_state_events_ingest_kanban_strand_updates_as_synced_raw_operations() {
+        let temp = std::env::temp_dir().join(format!(
+            "yougen-sync-state-events-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut store = LocalStateStore::with_path(temp);
+        let body = json!({
+            "state": {
+                "events": [{
+                    "event_id": "ck:event:01904100-0000-7000-8000-0000000000a1",
+                    "operation_id": "ck:operation:01904100-0000-7000-8000-0000000000a1",
+                    "event_kind": "ck.strand.update",
+                    "actor_id": "did:web:bob.example",
+                    "created_at": "2026-06-24T10:00:00Z",
+                    "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+                    "payload": {
+                        "strand_id": "ck:strand:01904100-0000-7000-8000-000000000002",
+                        "patch": {
+                            "synthesis": {"$op": "set", "value": "bob synthesis"}
+                        }
+                    }
+                }]
+            }
+        });
+
+        let changed = ingest_kanban_state_events_from_projection(
+            &mut store,
+            "ck:realm:01904100-0000-7000-8000-000000000001",
+            &body,
+        );
+
+        assert_eq!(changed, 1);
+        let state = store.load();
+        assert_eq!(state.raw_operations.len(), 1);
+        assert_eq!(
+            state.raw_operations[0].payload["actor_id"],
+            "did:web:bob.example"
+        );
+        assert_eq!(state.raw_operations[0].payload["write_state"], "synced");
+        assert_eq!(
+            state.raw_operations[0].payload["body"]["patch"]["synthesis"]["value"],
+            "bob synthesis"
+        );
     }
 
     #[test]

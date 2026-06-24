@@ -878,10 +878,10 @@ pub fn ChatPanel(
         });
     }
 
-    // T7.4: refresh per-message crypto state when local group state is
-    // missing. Messages flagged `Decrypting` transition to `KeyMissing`
-    // when no MLS snapshot is saved for the Space so the user sees a clear
-    // "waiting for Welcome" indicator instead of a spinner forever.
+    // T7.4: safety-net crypto state refresh for rows built without the
+    // decrypt-on-read context. The model layer marks attempted decrypt
+    // failures as `KeyMissing`; this covers legacy/no-snapshot rows so the
+    // user sees a clear missing-key state instead of a spinner forever.
     {
         let realm_for_crypto = selected_realm_id.clone();
         let mut messages_sig = messages;

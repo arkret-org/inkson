@@ -378,9 +378,23 @@ pub(crate) fn collect_state_participants(
     account_did: &str,
     participants: &mut Vec<SpaceParticipant>,
 ) {
-    let Some(state) = projection.get("state").and_then(Value::as_array) else {
+    let state_events = projection
+        .get("state")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(
+            projection
+                .get("state")
+                .and_then(|state| state.get("events"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        );
+    let state: Vec<&Value> = state_events.collect();
+    if state.is_empty() {
         return;
-    };
+    }
 
     for item in state {
         let kind = item

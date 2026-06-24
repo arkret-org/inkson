@@ -218,6 +218,20 @@ pub(crate) fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
         .find_map(|key| non_empty_string(value.get(*key)))
 }
 
+fn state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
+    body.get("state")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(
+            body.get("state")
+                .and_then(|state| state.get("events"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        )
+}
+
 fn nested_string_field(value: &Value, parent: &str, keys: &[&str]) -> Option<String> {
     value
         .get(parent)
@@ -355,19 +369,13 @@ pub(crate) fn realm_projection_is_encrypted(body: &Value) -> bool {
         }
     }
 
-    for event in body
-        .get("state")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .chain(
-            body.get("state_after")
-                .and_then(|state| state.get("events"))
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten(),
-        )
-    {
+    for event in state_event_values(body).chain(
+        body.get("state_after")
+            .and_then(|state| state.get("events"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten(),
+    ) {
         let kind = event
             .get("kind")
             .or_else(|| event.get("type"))
@@ -423,34 +431,30 @@ pub(crate) fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<St
         }
     }
 
-    body.get("state")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find_map(|event| {
-            let kind = event
-                .get("kind")
-                .or_else(|| event.get("type"))
-                .and_then(Value::as_str)?;
-            if kind != "ck.space.parent" {
-                return None;
+    state_event_values(body).find_map(|event| {
+        let kind = event
+            .get("kind")
+            .or_else(|| event.get("type"))
+            .and_then(Value::as_str)?;
+        if kind != "ck.space.parent" {
+            return None;
+        }
+        for container in [
+            event.get("payload").unwrap_or(&Value::Null),
+            event.get("content").unwrap_or(&Value::Null),
+            event,
+        ] {
+            if let Some(parent) = string_field(
+                container,
+                &["parent_space_id", "parent_id", "parent", "target_parent_id"],
+            )
+            .filter(|parent| parent != space_id && parent.starts_with("ck:space:"))
+            {
+                return Some(parent);
             }
-            for container in [
-                event.get("payload").unwrap_or(&Value::Null),
-                event.get("content").unwrap_or(&Value::Null),
-                event,
-            ] {
-                if let Some(parent) = string_field(
-                    container,
-                    &["parent_space_id", "parent_id", "parent", "target_parent_id"],
-                )
-                .filter(|parent| parent != space_id && parent.starts_with("ck:space:"))
-                {
-                    return Some(parent);
-                }
-            }
-            None
-        })
+        }
+        None
+    })
 }
 
 pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<String> {
@@ -473,12 +477,7 @@ pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<Strin
         ));
     }
 
-    for event in body
-        .get("state")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
+    for event in state_event_values(body) {
         let kind = event
             .get("kind")
             .or_else(|| event.get("type"))

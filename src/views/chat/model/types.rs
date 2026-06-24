@@ -57,8 +57,9 @@ pub(crate) enum MessageCryptoState {
     /// We see an `encrypted_content` envelope and the MLS group exists, but a
     /// decrypt round-trip hasn't completed for this event yet.
     Decrypting,
-    /// `encrypted_content` present but no local MLS group / no key
-    /// package received yet — Welcome is pending.
+    /// `encrypted_content` present, but the local device cannot decrypt it:
+    /// Welcome may be pending, the epoch may be outside the current snapshot,
+    /// or the shared-history key share has not arrived.
     KeyMissing,
     /// Sender device hasn't been verified (cross-signing missing or
     /// fingerprint mismatch). The body still decrypted, but we flag it.
