@@ -351,6 +351,155 @@ impl HandoffState {
     }
 }
 
+/// G3.Y4 (Phase B) — interop capability-approval modal state. Drives
+/// `agent-interop-publish-modal`'s `data-state`. The modal authors a
+/// `ck.capability.grant` carrying `actions=[ck.agent.interop_session.start]`
+/// plus the §7 constraint, gated behind an explicit human-approval
+/// acknowledgement (spec §4 / §8 "sensitive Realms default require human
+/// approval").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InteropApprovalState {
+    /// Modal closed.
+    Closed,
+    /// Modal open; controller is filling in the endpoint / constraints
+    /// but has not acknowledged the human-approval gate yet.
+    Drafting,
+    /// Human-approval gate acknowledged; confirm is now enabled.
+    Acknowledged,
+    /// The capability grant is being submitted.
+    Submitting,
+    /// Terminal: grant accepted.
+    Granted,
+    /// Terminal: grant submission failed.
+    Failed,
+}
+
+impl InteropApprovalState {
+    pub fn as_data_state(self) -> &'static str {
+        match self {
+            Self::Closed => "closed",
+            Self::Drafting => "drafting",
+            Self::Acknowledged => "acknowledged",
+            Self::Submitting => "submitting",
+            Self::Granted => "granted",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// Confirm is allowed only once the human-approval gate is
+    /// acknowledged (spec §4 explicit + authorizable handoff).
+    pub fn can_confirm(self) -> bool {
+        matches!(self, Self::Acknowledged)
+    }
+
+    /// Whether the modal surface should render at all.
+    pub fn is_open(self) -> bool {
+        !matches!(self, Self::Closed)
+    }
+}
+
+/// G3.Y4 (Phase D) — publish-to-source modal state. Drives the
+/// `publish-modal-*` surface that lands a Strand carrying the executing
+/// agent's attribution (spec §5.4 / §6 step 8-9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublishModalState {
+    Closed,
+    /// Modal open; controller reviews the result artifact + chooses the
+    /// signer (self-with-attribution).
+    Reviewing,
+    Submitting,
+    Published,
+    Failed,
+}
+
+impl PublishModalState {
+    pub fn as_data_state(self) -> &'static str {
+        match self {
+            Self::Closed => "closed",
+            Self::Reviewing => "reviewing",
+            Self::Submitting => "submitting",
+            Self::Published => "published",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn is_open(self) -> bool {
+        !matches!(self, Self::Closed)
+    }
+}
+
+/// G3.Y4 (Phase C) — one row of the live interop-session transcript
+/// rebuilt from the soland events surface. `status` reflects the latest
+/// `ck.agent.interop_session.status` (or `start`/`result`) observed for
+/// the session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveSessionRow {
+    pub session_id: String,
+    pub status: String,
+    pub status_count: usize,
+}
+
+/// Reduce a set of fetched soland events (each a JSON object with
+/// `event_kind` + `payload`) into a per-session live transcript row.
+///
+/// The displayed `status` reflects the latest streaming
+/// `ck.agent.interop_session.status` (or the seeding `start`), NOT the
+/// terminal `result`: the result lands in the dedicated audit-bound
+/// results panel, while this row tracks the §5.3 streaming lifecycle
+/// (negotiating → accepted → working → ...). `start` seeds the row as
+/// `negotiating` (the first standard §5.3 state). Events are assumed to
+/// be in causal order (the events API returns them ordered). This is the
+/// pure core behind the `agent-session-row` live render so it is
+/// unit-testable without a `use_future`.
+pub fn live_session_rows(events: &[Value]) -> Vec<LiveSessionRow> {
+    use std::collections::BTreeMap;
+    // Preserve first-seen order while folding the latest status.
+    let mut order: Vec<String> = Vec::new();
+    let mut rows: BTreeMap<String, LiveSessionRow> = BTreeMap::new();
+    for event in events {
+        let kind = event
+            .get("event_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !kind.starts_with("ck.agent.interop_session.") {
+            continue;
+        }
+        let payload = event.get("payload").cloned().unwrap_or(Value::Null);
+        let Some(session_id) = payload.get("session_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let session_id = session_id.to_owned();
+        // Seed the row from `start`; a terminal `result` does not overwrite
+        // the streaming status (that lives in the results panel).
+        let entry = rows.entry(session_id.clone()).or_insert_with(|| {
+            order.push(session_id.clone());
+            LiveSessionRow {
+                session_id: session_id.clone(),
+                status: "negotiating".to_owned(),
+                status_count: 0,
+            }
+        });
+        match kind {
+            "ck.agent.interop_session.start" => {
+                // Seed only; keep `negotiating` as the initial state.
+            }
+            "ck.agent.interop_session.status" => {
+                if let Some(status) = payload.get("status").and_then(Value::as_str) {
+                    entry.status = status.to_owned();
+                }
+                entry.status_count += 1;
+            }
+            _ => {
+                // `result` and other kinds do not move the streaming status.
+            }
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|session_id| rows.remove(&session_id))
+        .collect()
+}
+
 /// Audit verification outcome for the full
 /// start → status* → result chain. Carries the value the panel
 /// stamps onto `agent-protocol-audit-verify-result`'s `data-state`.

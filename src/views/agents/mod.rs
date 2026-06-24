@@ -49,11 +49,12 @@ pub use components::{
 };
 pub use model::{
     ActionApproveDialogState, ActionRequestNonceStatus, AgentPermissionPreset,
-    AuditChainVerifyOutcome, HandoffState, actor_kind_badge_class, actor_kind_label,
-    agent_pair_url, agent_state_badge_class, agent_state_is_terminal, agent_state_label,
-    agents_enabled, build_act_on_behalf_message_operation, build_action_approve_payload,
+    AuditChainVerifyOutcome, HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState,
+    actor_kind_badge_class, actor_kind_label, agent_pair_url, agent_state_badge_class,
+    agent_state_is_terminal, agent_state_label, agents_enabled,
+    build_act_on_behalf_message_operation, build_action_approve_payload,
     build_action_reject_payload, expand_preset_grant, is_action_request_expired,
-    is_pairing_request_expired, participation_ceiling_reason, requested_scope_for_presets,
-    verify_audit_chain,
+    is_pairing_request_expired, live_session_rows, participation_ceiling_reason,
+    requested_scope_for_presets, verify_audit_chain,
 };
 pub use panel::AgentsPanel;

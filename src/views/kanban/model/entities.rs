@@ -317,6 +317,14 @@ impl CardState {
         }
     }
 
+    /// A card is "settled" once the server has accepted its create event
+    /// (Synced or Accepted). Draft / in-flight / failed states are not
+    /// settled: the archive-then-recreate promote pattern and the archive
+    /// guard both wait for a card to settle before acting on it.
+    pub(crate) fn is_settled(self) -> bool {
+        matches!(self, CardState::Synced | CardState::Accepted)
+    }
+
     pub(crate) fn status_title(self) -> &'static str {
         match self {
             CardState::Synced => "Server projection is current",

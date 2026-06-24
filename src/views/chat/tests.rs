@@ -94,6 +94,35 @@ fn parses_message_event_with_nested_envelope_payload_shape() {
 }
 
 #[test]
+fn folds_received_redaction_tombstone_onto_message() {
+    // soland surfaces a redacted ck.message.create as a per-message tombstone:
+    // event_id preserved, body stripped, redacted/state markers added. The
+    // receive path MUST render the tombstone (redacted=true, empty body) even
+    // though this is the only copy of the message the reader ever sees.
+    let event = json!({
+        "kind": "ck.message.create",
+        "event_id": "ck:event:tombstone",
+        "message_id": "ck:message:tombstone",
+        "realm_id": "ck:realm:demo",
+        "strand_id": "ck:strand:support",
+        "sender": "did:web:bob.example",
+        "actor_id": "did:web:bob.example",
+        "created_at": "2026-05-14T01:23:45Z",
+        "redacted": true,
+        "state": "redacted",
+        "redacted_at": "2026-05-14T02:00:00Z",
+        "redaction_ref": "ck:event:redact-1",
+        "content": {"kind": "ck.content.text", "body": "[redacted]"}
+    });
+
+    let message = chat_message_from_event("ck:realm:demo", &event).unwrap();
+
+    assert_eq!(message.id, "ck:event:tombstone");
+    assert!(message.redacted);
+    assert_eq!(message.body, "");
+}
+
+#[test]
 fn chat_visible_read_receipt_send_respects_preferences() {
     let temp = std::env::temp_dir().join(format!("yougen-chat-rr-pref-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);

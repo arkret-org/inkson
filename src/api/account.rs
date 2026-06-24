@@ -350,6 +350,104 @@ impl CokretApi {
         .await
     }
 
+    /// List the holder-private consent cells visible to the authenticated
+    /// actor (cells where the actor is either holder or peer). Spec
+    /// `identity/consent-model.md` §3 / OpenAPI `ck.self.consent.query.list`.
+    pub async fn consent_cells(&self) -> anyhow::Result<cokret_sdk::ConsentCellList> {
+        self.get_json(cokret_sdk::http::PATH_SELF_CONSENT_CELLS)
+            .await
+    }
+
+    /// Read one holder-private consent cell for `(holder, peer, scope)`.
+    /// Spec OpenAPI `ck.self.consent.resource.get`. Returns `None` on 404 so
+    /// callers can treat a missing cell as `no-consent` rather than an error.
+    pub async fn consent_cell(
+        &self,
+        holder: &str,
+        peer: &str,
+        scope: &str,
+    ) -> anyhow::Result<Option<cokret_sdk::ConsentCellView>> {
+        let path = format!(
+            "{}/{}?peer={}&consent_scope={}",
+            cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
+            path_component(holder.trim()),
+            query_component(peer.trim()),
+            query_component(scope.trim()),
+        );
+        match self.get_json::<cokret_sdk::ConsentCellView>(&path).await {
+            Ok(view) => Ok(Some(view)),
+            Err(err) => {
+                if err.to_string().contains("404") {
+                    Ok(None)
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    /// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
+    /// optional RFC 3339 time window upper bound. Spec OpenAPI
+    /// `ck.self.consent.command.grant`.
+    pub async fn grant_consent(
+        &self,
+        holder: &str,
+        peer: &str,
+        scope: &str,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<cokret_sdk::ConsentCellView> {
+        let body = cokret_sdk::ConsentUpdateRequestBody {
+            peer_did: did_for_request_field("peer", peer)?,
+            consent_scope: Some(scope.trim().to_owned()),
+            expires_at,
+        };
+        let path = format!(
+            "{}/{}/grant",
+            cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
+            path_component(holder.trim()),
+        );
+        self.post_json(&path, &body).await
+    }
+
+    /// Revoke scoped consent from `peer`. Spec OpenAPI
+    /// `ck.self.consent.command.revoke`.
+    pub async fn revoke_consent(
+        &self,
+        holder: &str,
+        peer: &str,
+        scope: &str,
+    ) -> anyhow::Result<cokret_sdk::ConsentCellView> {
+        let body = cokret_sdk::ConsentUpdateRequestBody {
+            peer_did: did_for_request_field("peer", peer)?,
+            consent_scope: Some(scope.trim().to_owned()),
+            expires_at: None,
+        };
+        let path = format!(
+            "{}/{}/revoke",
+            cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
+            path_component(holder.trim()),
+        );
+        self.post_json(&path, &body).await
+    }
+
+    /// Open an outbound consent request: ask `holder` to grant the
+    /// authenticated actor (`peer`) the given scope. Produces a holder-side
+    /// pending cell. Spec OpenAPI `ck.self.consent.command.request`.
+    pub async fn request_consent(
+        &self,
+        holder: &str,
+        peer: &str,
+        scope: &str,
+    ) -> anyhow::Result<cokret_sdk::ConsentCellView> {
+        let body = cokret_sdk::ConsentRequestRequestBody {
+            holder_did: did_for_request_field("holder", holder)?,
+            peer_did: Some(did_for_request_field("peer", peer)?),
+            consent_scope: Some(scope.trim().to_owned()),
+        };
+        self.post_json(cokret_sdk::http::PATH_SELF_CONSENT_REQUEST, &body)
+            .await
+    }
+
     /// Single hard logout (account-lifecycle §4.1): the client presents the
     /// current session grant + DPoP proof to `/_cokret/gate/account/logout`.
     /// The Account Authority/Principal Server path terminates the Auth-side

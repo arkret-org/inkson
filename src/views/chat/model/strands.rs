@@ -381,8 +381,22 @@ pub(crate) fn merge_channels(target: &mut Vec<ChannelEntity>, incoming: Vec<Chan
 }
 
 pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<ChatMessage>) {
-    for message in incoming {
+    for mut message in incoming {
         if let Some(existing) = target.iter_mut().find(|existing| existing.id == message.id) {
+            // Carry forward locally-tracked edit metadata. The sync
+            // projection rebuilds a message from its events but does not
+            // surface the per-message revision count, so a re-projection
+            // would otherwise wipe the write-status counter the moment a
+            // sync tick lands between two edits. Preserve the existing
+            // `edited` flag and revision history (the body still updates to
+            // the incoming/revised content) so the numeric counter is
+            // stable across re-projections.
+            if !message.edited && existing.edited {
+                message.edited = true;
+            }
+            if message.revisions.is_empty() && !existing.revisions.is_empty() {
+                message.revisions = std::mem::take(&mut existing.revisions);
+            }
             *existing = message;
         } else {
             target.push(message);

@@ -624,12 +624,14 @@ pub(crate) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
         if let Some(due) = fields
             .get("due_at")
             .or_else(|| fields.get("due"))
+            .or_else(|| fields.get("due_date"))
             .and_then(Value::as_str)
         {
             card.due = display_optional_card_field(due);
         } else if update.fields_replaces_all
             || fields.contains_key("due_at")
             || fields.contains_key("due")
+            || fields.contains_key("due_date")
         {
             card.due = display_optional_card_field("");
         }

@@ -835,6 +835,14 @@ body {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.board-card-due-overdue {
+  color: var(--danger);
+  font-weight: 600;
+}
+.board-card-overdue-badge {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .board-card-footer {
   display: flex;
   align-items: center;

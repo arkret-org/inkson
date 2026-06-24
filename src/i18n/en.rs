@@ -319,6 +319,15 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.register_push", "Register Push");
     dict.set("settings.unregister_push", "Unregister Push");
     dict.set("kanban.archive_action", "Archive");
+    dict.set("kanban.card.draft", "draft");
+    dict.set("kanban.card.draft_hint", "Queued locally; waiting for the server to confirm this card.");
+    dict.set(
+        "kanban.archive_draft_blocked",
+        "This card is still a local draft; wait for it to sync before archiving.",
+    );
+    dict.set("kanban.archive_board_action", "Archive board");
+    dict.set("kanban.archive_board_pending", "Archiving board and all its cards...");
+    dict.set("kanban.archive_board_done", "Board archived; cards cascaded to archived.");
     dict.set("kanban.restore_action", "Restore");
     dict.set("kanban.archived_lists_header", "Archived lists");
     dict.set("kanban.archived_lists_empty", "No archived lists.");
@@ -600,6 +609,14 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("compose.upload_progress", "Uploading…");
     dict.set("compose.upload_error", "Upload failed");
+    // Message write-status revision counter (edit history).
+    dict.set("chat.message.revised", "revised");
+    dict.set("chat.message.write_status", "This message has been edited");
+    // Offline send outbox.
+    dict.set("chat.outbox.queued_offline", "Offline - queued, will send when you reconnect.");
+    dict.set("chat.outbox.offline_banner", "You're offline. Messages are queued and will send on reconnect.");
+    dict.set("chat.outbox.flushing", "Back online - sending queued messages...");
+    dict.set("chat.outbox.flushed", "Queued message sent.");
     // Message shared pin and holder-private saved item actions.
     dict.set("message.pin", "Pin");
     dict.set("message.unpin", "Unpin");

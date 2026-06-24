@@ -132,6 +132,18 @@ pub(crate) fn message_kind_is_create(value: &Value) -> bool {
     value_string_at(value, &["kind", "type", "op_type", "event_type"]) == Some("ck.message.create")
 }
 
+/// Detect the per-message redaction tombstone surfaced by soland on the sync
+/// timeline (spec strand-and-message.md §9). The server folds a redacted
+/// `ck.message.create` into a tombstone form carrying `redacted: true` /
+/// `state: "redacted"`, so a receiver rebuilding the timeline renders the
+/// tombstone instead of either dropping the row or leaking the cleartext.
+pub(crate) fn message_is_redaction_tombstone(candidates: &[&Value]) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.get("redacted").and_then(Value::as_bool) == Some(true)
+            || value_string_at(candidate, &["state"]) == Some("redacted")
+    })
+}
+
 pub(crate) fn text_from_blocks(value: &Value) -> Option<&str> {
     value
         .get("blocks")
@@ -394,6 +406,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         })
     });
     let has_encrypted_payload = encrypted_content_value.is_some();
+    // Receive-side redaction fold: a redacted message arrives as a tombstone
+    // form (same event_id, body stripped). Render the tombstone marker rather
+    // than the original body, even on a fresh reload where this is the only
+    // copy of the message the receiver ever sees.
+    let is_redaction_tombstone = message_is_redaction_tombstone(&candidates);
     let expiry_stub_candidate = candidates
         .iter()
         .copied()
@@ -408,7 +425,10 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // encrypted send, keyed by `message:{message_id}` under the discussion
     // strand. Falls back to the decoded payload body (another member's message
     // we CAN decrypt, or a plaintext message).
-    let sidecar_body = if is_expiry_stub || !late_recovery_transition.allows_plaintext() {
+    let sidecar_body = if is_redaction_tombstone
+        || is_expiry_stub
+        || !late_recovery_transition.allows_plaintext()
+    {
         None
     } else {
         state_store.and_then(|store| {
@@ -422,7 +442,8 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // author sidecar. Parse the canonical envelope, decrypt with this device's
     // MLS snapshot secret, and extract the Content Block text. Soft-fails to
     // `None` (→ Decrypting/KeyMissing) when the snapshot/secret is unavailable.
-    let decrypted_body = if !is_expiry_stub
+    let decrypted_body = if !is_redaction_tombstone
+        && !is_expiry_stub
         && !body_from_sidecar
         && late_recovery_transition.allows_plaintext()
         && let (Some((actor_id, device_id)), Some(store), Some(encrypted)) = (
@@ -435,7 +456,9 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         None
     };
     let body_was_decrypted = decrypted_body.is_some();
-    let body = if let Some(stub) = expiry_stub_candidate {
+    let body = if is_redaction_tombstone {
+        String::new()
+    } else if let Some(stub) = expiry_stub_candidate {
         crate::disappearing::message_expiry_stub_body(stub)
     } else if late_recovery_rejection.is_some() {
         String::new()
@@ -559,7 +582,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         reply_to: first_string_in_candidates(&candidates, &["reply_to", "thread_id"])
             .map(ToOwned::to_owned),
         reactions: Vec::new(),
-        redacted: false,
+        redacted: is_redaction_tombstone,
         edited: false,
         revisions: Vec::new(),
         pending: false,

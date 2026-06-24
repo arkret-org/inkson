@@ -89,6 +89,31 @@
   background: var(--danger);
   color: var(--text-on-accent);
 }
+.message-status-icon.is-queued-offline {
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-ink, #1e293b);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.chat-outbox-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-size: 12px;
+}
+.chat-outbox-banner .chat-outbox-count {
+  margin-left: auto;
+  font-weight: 800;
+}
 @keyframes message-send-spin {
   to {
     transform: rotate(360deg);

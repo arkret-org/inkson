@@ -836,6 +836,101 @@ pub(super) fn dispatch_strand_lifecycle(
     });
 }
 
+/// Archive an entire board at end-of-week: cascade-archive every active
+/// card and list, then archive the board container Space itself. v1 has
+/// no server-side Space->Strand archive cascade (Strand lifecycle is
+/// independent of its enclosing Space per `strand-and-message.md` §3), so
+/// the client drives the cascade explicitly: each `ck.strand.archive`
+/// and `ck.space.archive` is its own durable event. The board Space is
+/// archived last so that, if any child archive is rejected, the board is
+/// not left archived while cards remain active.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn dispatch_board_archive_cascade(
+    base_url: String,
+    token: Signal<String>,
+    realm_id: String,
+    actor_id: String,
+    board_space_id: String,
+    mut columns: Signal<Vec<KanbanColumn>>,
+    mut board_status: Signal<String>,
+) {
+    if board_space_id.trim().is_empty() {
+        board_status.set("select a Board Space before archiving the board".to_owned());
+        return;
+    }
+
+    // Snapshot active children and optimistically flip them so the board
+    // empties immediately; capture the prior snapshot for rollback.
+    let snapshot = columns.read().clone();
+    let mut active_card_ids: Vec<String> = Vec::new();
+    let mut active_list_ids: Vec<String> = Vec::new();
+    {
+        let mut cols = columns.write();
+        for col in cols.iter_mut() {
+            for card in col.cards.iter_mut() {
+                if card.lifecycle == StrandLifecycleState::Active {
+                    active_card_ids.push(card.id.clone());
+                    card.lifecycle = StrandLifecycleState::Archived;
+                }
+            }
+            if col.state == SpaceContainerLifecycleState::Active {
+                active_list_ids.push(col.id.clone());
+                col.state = SpaceContainerLifecycleState::Archived;
+            }
+        }
+    }
+
+    board_status.set(crate::i18n::tr("kanban.archive_board_pending"));
+
+    let base = base_url.clone();
+    let api_token = token();
+    spawn(async move {
+        let outcome = with_authed_api(&base, api_token, |api| async move {
+            // 1) cascade child cards
+            for strand_id in &active_card_ids {
+                let event = crate::operation::ck_ops::strand_archive(
+                    &realm_id, &actor_id, strand_id,
+                )?
+                .build_sdk_event("yougen")?;
+                api.submit_sdk_event(&event).await?;
+            }
+            // 2) cascade child lists
+            for list_id in &active_list_ids {
+                let event =
+                    crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
+                        .build_sdk_event("yougen")?;
+                api.submit_sdk_event(&event).await?;
+            }
+            // 3) archive the board container last
+            let board_event = crate::operation::ck_ops::realm_archive(
+                &realm_id,
+                &actor_id,
+                &board_space_id,
+            )
+            .build_sdk_event("yougen")?;
+            api.submit_sdk_event(&board_event).await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+
+        match outcome {
+            Ok(()) => {
+                board_status.set(crate::i18n::tr("kanban.archive_board_done"));
+            }
+            Err(err) => {
+                // Roll the whole board back to its pre-archive snapshot so a
+                // partial cascade does not leave a half-archived board.
+                columns.set(snapshot);
+                board_status.set(format!(
+                    "{} {}",
+                    crate::i18n::tr("kanban.archive_board_action"),
+                    err.display()
+                ));
+            }
+        }
+    });
+}
+
 /// Locate `card_id` in `from_column`, remove it, re-insert into
 /// `target_column` such that the resulting column is sorted by `rank`
 /// (we keep it lexicographically sorted on the assumption every card

@@ -2032,6 +2032,36 @@ pub fn KanbanPanel(
                                 }
                             }
                         }
+                        if board_selected {
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::Sm,
+                                class: "btn board-archive-board",
+                                "data-testid": "archive-board-button",
+                                title: crate::i18n::tr("kanban.archive_board_action"),
+                                onclick: {
+                                    // End-of-week bulk archive: cascade-archive
+                                    // every active card + list, then the board
+                                    // Space itself (client-driven cascade; v1 has
+                                    // no server Space->Strand cascade).
+                                    let base = base_url.clone();
+                                    let realm = selected_realm_id.clone();
+                                    let actor = account_did.clone();
+                                    move |_| {
+                                        dispatch_board_archive_cascade(
+                                            base.clone(),
+                                            token,
+                                            realm.clone(),
+                                            actor.clone(),
+                                            selected_board_space_id(),
+                                            columns,
+                                            board_status,
+                                        );
+                                    }
+                                },
+                                {crate::i18n::tr("kanban.archive_board_action")}
+                            }
+                        }
                         div {
                             class: if board_popover() == BoardToolbarPopover::CreateBoard { "board-popover-host is-open" } else { "board-popover-host" },
                             Button {
@@ -2586,9 +2616,21 @@ pub fn KanbanPanel(
                                     {
                                         classes.push_str(" dragging-source");
                                     }
+                                    if !displayed_card_state(card, &projected_strand_ids)
+                                        .is_settled()
+                                    {
+                                        classes.push_str(" is-draft");
+                                    }
                                     classes
                                 },
                                 "data-testid": "kanban-card",
+                                // Surface the per-card write state on the tile so
+                                // a locally-queued (not-yet-acked) card is
+                                // distinguishable from a server-synced one. The
+                                // archive-then-recreate promote pattern waits on
+                                // this leaving the draft state.
+                                "data-card-state": displayed_card_state(card, &projected_strand_ids).data_state(),
+                                "data-card-draft": if displayed_card_state(card, &projected_strand_ids).is_settled() { "false" } else { "true" },
                                 draggable: "true",
                                 // Card-level drop target: drop on this card
                                 // means "insert above this card". The
@@ -2699,6 +2741,14 @@ pub fn KanbanPanel(
                                 },
                                 div { class: "event-head board-card-title-row",
                                     span { class: "entity-title board-card-title", "{card.title}" }
+                                    if !displayed_card_state(card, &projected_strand_ids).is_settled() {
+                                        span {
+                                            class: "badge blue board-card-draft-badge",
+                                            "data-testid": "kanban-card-draft-badge",
+                                            title: crate::i18n::tr("kanban.card.draft_hint"),
+                                            {crate::i18n::tr("kanban.card.draft")}
+                                        }
+                                    }
                                 }
                                 if !card.labels.is_empty() {
                                     div { class: "actions board-card-labels",
@@ -2718,14 +2768,35 @@ pub fn KanbanPanel(
                                     let show_due = !due_text.is_empty()
                                         && due_text != "\u{2014}"
                                         && !due_text.eq_ignore_ascii_case("unscheduled");
+                                    let overdue = due_value_is_overdue(due_text);
                                     rsx! {
                                         if show_assignee || show_due {
                                             div { class: "card-meta board-card-meta",
                                                 if show_assignee {
-                                                    span { class: "board-card-meta-item", "assignees {assignee_text}" }
+                                                    span {
+                                                        class: "board-card-meta-item",
+                                                        "data-testid": "kanban-card-assignee",
+                                                        "assignees {assignee_text}"
+                                                    }
                                                 }
                                                 if show_due {
-                                                    span { class: "board-card-meta-item", "due {due_text}" }
+                                                    span {
+                                                        class: if overdue {
+                                                            "board-card-meta-item board-card-due-overdue"
+                                                        } else {
+                                                            "board-card-meta-item"
+                                                        },
+                                                        "data-testid": "kanban-card-due",
+                                                        "data-overdue": if overdue { "true" } else { "false" },
+                                                        "due {due_text}"
+                                                    }
+                                                }
+                                                if overdue {
+                                                    span {
+                                                        class: "badge danger board-card-overdue-badge",
+                                                        "data-testid": "kanban-card-overdue-badge",
+                                                        "overdue"
+                                                    }
                                                 }
                                             }
                                         }
@@ -2740,12 +2811,30 @@ pub fn KanbanPanel(
                                             &card.id,
                                             "ck.strand.archive",
                                         );
-                                        let title_text = if gate.enabled {
+                                        // Block archive until the card's create
+                                        // event is server-acked. The SDK reducer
+                                        // enforces `state == active` for
+                                        // `ck.strand.archive`, so archiving a still-
+                                        // draft card would just round-trip to a
+                                        // rejection; we fail closed locally and tell
+                                        // the user to wait for the draft to settle.
+                                        let card_settled = displayed_card_state(card, &projected_strand_ids)
+                                            .is_settled();
+                                        let archive_enabled = gate.enabled && card_settled;
+                                        let title_text = if !card_settled {
+                                            crate::i18n::tr("kanban.archive_draft_blocked")
+                                        } else if gate.enabled {
                                             "Archive this card (ck.strand.archive)".to_owned()
                                         } else {
                                             format!("Archive gated: {}", gate.reason)
                                         };
-                                        let testid_state = if gate.enabled { "open" } else { "denied" };
+                                        let testid_state = if !card_settled {
+                                            "draft"
+                                        } else if gate.enabled {
+                                            "open"
+                                        } else {
+                                            "denied"
+                                        };
                                         rsx! {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
@@ -2753,7 +2842,7 @@ pub fn KanbanPanel(
                                                 "data-testid": "card-archive-button",
                                                 "data-strand-id": "{card.id}",
                                                 "data-cap-gate": testid_state,
-                                                disabled: !gate.enabled,
+                                                disabled: !archive_enabled,
                                                 title: title_text,
                                                 onclick: {
                                                     let base = base_url.clone();
@@ -2762,6 +2851,12 @@ pub fn KanbanPanel(
                                                     let strand_id = card.id.clone();
                                                     move |evt: dioxus::events::MouseEvent| {
                                                         evt.stop_propagation();
+                                                        if !card_settled {
+                                                            board_status.set(crate::i18n::tr(
+                                                                "kanban.archive_draft_blocked",
+                                                            ));
+                                                            return;
+                                                        }
                                                         dispatch_strand_lifecycle(
                                                             base.clone(),
                                                             token,

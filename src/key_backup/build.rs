@@ -157,6 +157,27 @@ pub fn open_passphrase_kdf_backup_body(passphrase: &[u8], body: &Value) -> anyho
     let nonce_salt_b64 = str_at(&["encryption", "aead", "nonce_salt"])?;
     let key_commitment = str_at(&["encryption", "key_commitment"])?;
     let ciphertext_b64 = str_at(&["ciphertext"])?;
+    // key-management.md §7.2: `ciphertext_digest` covers the ciphertext bytes
+    // and is a local integrity check. When present, recompute SHA-256 over the
+    // decoded ciphertext and refuse to decrypt on mismatch — this catches a
+    // tampered / substituted ciphertext before any KDF/AEAD work, without
+    // contacting the server (no decryption oracle).
+    if let Some(expected_digest) = body
+        .get("ciphertext_digest")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let ciphertext_bytes = B64
+            .decode(ciphertext_b64.trim_end_matches('='))
+            .map_err(|err| anyhow::anyhow!("ciphertext base64: {err}"))?;
+        let actual_digest = crate::canonical::sha256_digest(&ciphertext_bytes);
+        if actual_digest != expected_digest {
+            anyhow::bail!(
+                "backup decrypt refused: ciphertext_digest mismatch (tampered ciphertext)"
+            );
+        }
+    }
     let aad_aad = body
         .get("domain_separation")
         .and_then(|d| d.get("aead_aad"))

@@ -8,6 +8,8 @@
 
 pub mod blocklist;
 pub mod capabilities;
+pub mod connections;
+pub mod consent;
 pub mod devices;
 /// U4 - "who can invite me" invite_receive_policy editor.
 pub mod invite_policy;
@@ -1234,6 +1236,14 @@ pub fn SettingsPanel(
                             device_id,
                             token,
                             state_store,
+                        }
+                    }
+
+                    if active_section == SettingsSection::Consent {
+                        crate::views::settings::consent::ConsentSettingsPanel {
+                            base_url,
+                            account_did,
+                            token,
                         }
                     }
 
@@ -2906,6 +2916,18 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Capabilities {
                         div { class: "settings-content-stack",
                             crate::views::settings::capabilities::CapabilitiesSettingsCard {
+                                base_url,
+                                account_did,
+                                token,
+                                state_store,
+                            }
+                        }
+                    }
+
+                    // ── TSP connections (interop extension profile) ──────
+                    if active_section == SettingsSection::Connections {
+                        div { class: "settings-content-stack",
+                            crate::views::settings::connections::ConnectionsSettingsCard {
                                 base_url,
                                 account_did,
                                 token,

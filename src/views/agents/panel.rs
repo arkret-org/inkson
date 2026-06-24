@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use super::admin::PersonalAgentAdminPanel;
 use super::model::{
-    AuditChainVerifyOutcome, HandoffState, verify_agent_audit_binding, verify_audit_chain,
+    AuditChainVerifyOutcome, HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState,
+    live_session_rows, verify_agent_audit_binding, verify_audit_chain,
 };
 use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
@@ -48,6 +49,28 @@ pub fn AgentsPanel(
     let mut incoming_results = use_signal(Vec::<(String, Value)>::new);
     let mut incoming_status = use_signal(String::new);
     let mut incoming_last_poll_at = use_signal(String::new);
+
+    // G3.Y4 (Phase C) — every `ck.agent.interop_session.*` event fetched
+    // from soland, in causal order, so the live session transcript can
+    // be folded by `live_session_rows`. Distinct from `incoming_results`
+    // (which is `.result`-only for the audit-binding badges).
+    let mut incoming_session_events = use_signal(Vec::<Value>::new);
+
+    // G3.Y4 (Phase B) — interop capability-approval modal state.
+    let mut interop_modal = use_signal(|| InteropApprovalState::Closed);
+    let mut interop_target_did = use_signal(String::new);
+    let mut interop_allowed_endpoint = use_signal(String::new);
+    let mut interop_status_text = use_signal(String::new);
+    let mut interop_last_grant_id = use_signal(String::new);
+
+    // G3.Y4 (Phase D) — publish-to-source modal state.
+    let mut publish_modal = use_signal(|| PublishModalState::Closed);
+    let mut publish_with_attribution = use_signal(|| true);
+    let mut publish_attribution_did = use_signal(String::new);
+    let mut publish_result_ref = use_signal(String::new);
+    let mut publish_artifact_ref = use_signal(String::new);
+    let mut publish_status_text = use_signal(String::new);
+    let mut publish_last_strand_id = use_signal(String::new);
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
@@ -89,11 +112,17 @@ pub fn AgentsPanel(
                         }
                     };
                     let mut collected: Vec<(String, Value)> = Vec::new();
+                    // Phase C — every interop-session event in causal
+                    // order so the live transcript can be folded.
+                    let mut session_events: Vec<Value> = Vec::new();
                     for event in resp.events.iter() {
                         let kind = event
                             .get("event_kind")
                             .and_then(Value::as_str)
                             .unwrap_or("");
+                        if kind.starts_with("ck.agent.interop_session.") {
+                            session_events.push(event.clone());
+                        }
                         if kind != "ck.agent.interop_session.result" {
                             continue;
                         }
@@ -105,6 +134,7 @@ pub fn AgentsPanel(
                         let payload = event.get("payload").cloned().unwrap_or(Value::Null);
                         collected.push((event_id, payload));
                     }
+                    incoming_session_events.set(session_events);
                     let new_count = collected.len();
                     // Diff against the previous snapshot so the UI
                     // status line shows "+2 new" when fresh
@@ -161,6 +191,13 @@ pub fn AgentsPanel(
     // P5 — cache the count before the iterator consumes the vec; the
     // aria-label below interpolates it alongside the badge text.
     let endpoints_count = endpoints.len();
+
+    // Phase C — live interop-session transcript folded from the soland
+    // events the poll loop fetched. This is the source the
+    // `agent-session-row` render below uses so the status text advances
+    // negotiating → accepted → working as soland (or an injected
+    // status) lands.
+    let live_rows: Vec<LiveSessionRow> = live_session_rows(&incoming_session_events.read());
 
     rsx! {
         div { class: "timeline", "data-testid": "agents-panel", role: "region", "aria-label": "Agent endpoints and protocol sessions",
@@ -319,38 +356,68 @@ pub fn AgentsPanel(
                 "aria-label": "Active protocol sessions",
                 div { class: "event-head",
                     span { "Active protocol sessions" }
-                    span { class: "badge", "{sessions.len()} session-event(s)" }
+                    span { class: "badge", "{live_rows.len()} live + {sessions.len()} local" }
                 }
-                if sessions.is_empty() {
+                if live_rows.is_empty() && sessions.is_empty() {
                     div { class: "muted", "data-testid": "agent-session-empty",
                         "No protocol sessions observed."
                     }
-                } else {
-                    for s in sessions {
-                        {
-                            let kind = s.payload.get("kind")
-                                .and_then(Value::as_str)
-                                .unwrap_or("?")
-                                .to_owned();
-                            let session_id = s.payload.get("body")
-                                .and_then(|b| b.get("session_id"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("?")
-                                .to_owned();
-                            let status_opt = s.payload.get("body")
-                                .and_then(|b| b.get("status"))
-                                .and_then(Value::as_str)
-                                .map(ToOwned::to_owned);
-                            let session_id_label = short_protocol_id(&session_id);
-                            rsx! {
-                                div { class: "event", "data-testid": "agent-session-row",
-                                    div { class: "event-head",
-                                        span { class: "mono", "{kind}" }
-                                        span { class: "mono", title: "{session_id}", "{session_id_label}" }
-                                    }
-                                    if let Some(status_str) = status_opt {
-                                        div { class: "muted", "status: {status_str}" }
-                                    }
+                }
+                // Phase C — live transcript rows folded from the soland
+                // events surface. `data-status` carries the latest
+                // standard §5.3 status so a poll can watch the row
+                // advance negotiating → accepted → working.
+                for row in live_rows.iter() {
+                    {
+                        let session_id = row.session_id.clone();
+                        let status = row.status.clone();
+                        let status_count = row.status_count;
+                        let session_id_label = short_protocol_id(&session_id);
+                        rsx! {
+                            div {
+                                class: "event",
+                                "data-testid": "agent-session-row",
+                                "data-session-id": "{session_id}",
+                                "data-status": "{status}",
+                                "data-status-count": "{status_count}",
+                                div { class: "event-head",
+                                    span { class: "mono", title: "{session_id}", "{session_id_label}" }
+                                    span { class: "badge blue", "{status}" }
+                                }
+                                div { class: "muted", "data-testid": "agent-session-status-text",
+                                    "status: {status} ({status_count} status update(s))"
+                                }
+                            }
+                        }
+                    }
+                }
+                // Local (state_store) session events, kept as a
+                // secondary surface so a fully-offline session draft is
+                // still legible.
+                for s in sessions {
+                    {
+                        let kind = s.payload.get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("?")
+                            .to_owned();
+                        let session_id = s.payload.get("body")
+                            .and_then(|b| b.get("session_id"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("?")
+                            .to_owned();
+                        let status_opt = s.payload.get("body")
+                            .and_then(|b| b.get("status"))
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned);
+                        let session_id_label = short_protocol_id(&session_id);
+                        rsx! {
+                            div { class: "event", "data-testid": "agent-session-local-row",
+                                div { class: "event-head",
+                                    span { class: "mono", "{kind}" }
+                                    span { class: "mono", title: "{session_id}", "{session_id_label}" }
+                                }
+                                if let Some(status_str) = status_opt {
+                                    div { class: "muted", "status: {status_str}" }
                                 }
                             }
                         }
@@ -666,6 +733,374 @@ pub fn AgentsPanel(
                                     span { class: "mono", "[{idx}] {kind}" }
                                 }
                                 div { class: "muted", "{summary}" }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────────────
+            // G3.Y4 (Phase B) — interop capability-approval surface.
+            // Authors a ck.capability.grant carrying
+            // actions=[ck.agent.interop_session.start] + the §7
+            // constraint, gated behind an explicit human-approval
+            // acknowledgement (spec §4 / §8).
+            // ─────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-interop-approval",
+                div { class: "event-head",
+                    span { "Authorize an external handoff" }
+                    span {
+                        class: "badge",
+                        "data-testid": "agent-interop-approval-state",
+                        "data-state": "{interop_modal().as_data_state()}",
+                        "{interop_modal().as_data_state()}"
+                    }
+                }
+                div { class: "muted",
+                    "Grant ck.agent.interop_session.start to a counterparty agent, pinned to a single allowed endpoint with a human-approval gate (agent-protocol-interop.md §4 / §7 / §8)."
+                }
+                div { class: "actions",
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        "data-testid": "agent-interop-approve-open-button",
+                        disabled: interop_modal().is_open(),
+                        onclick: move |_| {
+                            interop_modal.set(InteropApprovalState::Drafting);
+                            interop_status_text.set(String::new());
+                        },
+                        "Authorize handoff capability"
+                    }
+                }
+                if interop_modal().is_open() {
+                    div {
+                        class: "event",
+                        "data-testid": "agent-interop-publish-modal",
+                        "data-state": "{interop_modal().as_data_state()}",
+                        div { class: "event-head",
+                            span { "Capability approval" }
+                            span { class: "badge blue", "ck.agent.interop_session.start" }
+                        }
+                        div { class: "workflow-form",
+                            Input {
+                                "data-testid": "agent-interop-target-input",
+                                placeholder: "counterparty agent_id (did:web:...)",
+                                value: "{interop_target_did}",
+                                oninput: move |event: FormEvent| interop_target_did.set(event.value()),
+                            }
+                            Input {
+                                "data-testid": "agent-interop-allowed-endpoint-input",
+                                placeholder: "allowed_endpoints (single exact URL)",
+                                value: "{interop_allowed_endpoint}",
+                                oninput: move |event: FormEvent| interop_allowed_endpoint.set(event.value()),
+                            }
+                            // Human-approval gate (spec §4 explicit +
+                            // authorizable). Confirm stays disabled until
+                            // the controller acknowledges it.
+                            div {
+                                class: "event",
+                                "data-testid": "agent-interop-human-approval-gate",
+                                "data-acknowledged": "{interop_modal() != InteropApprovalState::Drafting}",
+                                div { class: "muted",
+                                    "This handoff sends data to an external agent network. Acknowledge that you, a human controller, authorize it before the capability grant is signed."
+                                }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "agent-interop-human-approval-ack-button",
+                                    disabled: interop_modal() != InteropApprovalState::Drafting,
+                                    onclick: move |_| {
+                                        interop_modal.set(InteropApprovalState::Acknowledged);
+                                    },
+                                    "I authorize this handoff"
+                                }
+                            }
+                            div { class: "actions",
+                                Button {
+                                    variant: ButtonVariant::Primary,
+                                    "data-testid": "agent-interop-publish-confirm-button",
+                                    disabled: !interop_modal().can_confirm(),
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let realm = selected_realm_id.clone();
+                                        let actor = account_did.clone();
+                                        move |_| {
+                                            let target = interop_target_did().trim().to_owned();
+                                            let endpoint = interop_allowed_endpoint().trim().to_owned();
+                                            if target.is_empty() || endpoint.is_empty() {
+                                                interop_status_text.set(
+                                                    "counterparty agent_id + allowed endpoint are required".to_owned(),
+                                                );
+                                                return;
+                                            }
+                                            let base = base.clone();
+                                            let realm = realm.clone();
+                                            let actor = actor.clone();
+                                            let api_token = token();
+                                            interop_modal.set(InteropApprovalState::Submitting);
+                                            interop_status_text.set("submitting capability grant".to_owned());
+                                            spawn(async move {
+                                                let grant_id = format!(
+                                                    "ck:grant:{}",
+                                                    crate::operation::uuid_v7()
+                                                );
+                                                let constraint = crate::operation::ck_ops::interop_capability_constraint(
+                                                    &endpoint,
+                                                    &["a2a"],
+                                                    true,
+                                                    3600,
+                                                    10_485_760,
+                                                    "metadata_only",
+                                                    "summary_and_artifacts",
+                                                );
+                                                let op = crate::operation::ck_ops::capability_grant_actions(
+                                                    &realm,
+                                                    &actor,
+                                                    &grant_id,
+                                                    &target,
+                                                    &["ck.agent.interop_session.start"],
+                                                    None,
+                                                    constraint,
+                                                )
+                                                .build_sdk_event("yougen");
+                                                let op = match op {
+                                                    Ok(op) => op,
+                                                    Err(err) => {
+                                                        interop_modal.set(InteropApprovalState::Failed);
+                                                        interop_status_text.set(format!(
+                                                            "grant build failed: {err}"
+                                                        ));
+                                                        return;
+                                                    }
+                                                };
+                                                match with_authed_api(&base, api_token, |api| async move {
+                                                    api.submit_sdk_event(&op).await
+                                                })
+                                                .await
+                                                {
+                                                    Ok(resp) => {
+                                                        interop_modal.set(InteropApprovalState::Granted);
+                                                        interop_last_grant_id.set(grant_id.clone());
+                                                        interop_status_text.set(format!(
+                                                            "capability granted; grant_id {grant_id}; event_id {}",
+                                                            resp.event_id
+                                                        ));
+                                                    }
+                                                    Err(err) => {
+                                                        interop_modal.set(InteropApprovalState::Failed);
+                                                        interop_status_text.set(format!(
+                                                            "grant submit failed: {}", err.display()
+                                                        ));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "Confirm and sign grant"
+                                }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "agent-interop-publish-cancel-button",
+                                    onclick: move |_| {
+                                        interop_modal.set(InteropApprovalState::Closed);
+                                    },
+                                    "Cancel"
+                                }
+                            }
+                            if !interop_status_text().is_empty() {
+                                div { class: "muted",
+                                    "data-testid": "agent-interop-approval-status",
+                                    "{interop_status_text}"
+                                }
+                            }
+                            if !interop_last_grant_id().is_empty() {
+                                div { class: "muted",
+                                    "data-testid": "agent-interop-grant-id",
+                                    "data-grant-id": "{interop_last_grant_id}",
+                                    "grant_id {interop_last_grant_id}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────────────
+            // G3.Y4 (Phase D) — publish-to-source surface. Lands a
+            // Strand whose actor_id is the controller but whose
+            // attribution preserves the executing agent (spec §5.4 /
+            // §6 step 8-9).
+            // ─────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-publish-to-source",
+                div { class: "event-head",
+                    span { "Publish agent result to source" }
+                    span {
+                        class: "badge",
+                        "data-testid": "agent-publish-state",
+                        "data-state": "{publish_modal().as_data_state()}",
+                        "{publish_modal().as_data_state()}"
+                    }
+                }
+                div { class: "muted",
+                    "Publish a synthesis Strand from an agent result. The controller signs it, but the executing agent's attribution is preserved on the published object."
+                }
+                div { class: "workflow-form",
+                    Input {
+                        "data-testid": "agent-publish-attribution-input",
+                        placeholder: "attribution agent_id (remote agent did:web:...)",
+                        value: "{publish_attribution_did}",
+                        oninput: move |event: FormEvent| publish_attribution_did.set(event.value()),
+                    }
+                    Input {
+                        "data-testid": "agent-publish-result-ref-input",
+                        placeholder: "result object_ref (ck:strand:... from the result)",
+                        value: "{publish_result_ref}",
+                        oninput: move |event: FormEvent| publish_result_ref.set(event.value()),
+                    }
+                    Input {
+                        "data-testid": "agent-publish-artifact-ref-input",
+                        placeholder: "artifact object_ref (ck:morph:...)",
+                        value: "{publish_artifact_ref}",
+                        oninput: move |event: FormEvent| publish_artifact_ref.set(event.value()),
+                    }
+                    div { class: "actions",
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "agent-publish-open-button",
+                            disabled: publish_modal().is_open(),
+                            onclick: move |_| {
+                                publish_modal.set(PublishModalState::Reviewing);
+                                publish_status_text.set(String::new());
+                            },
+                            "Review and publish"
+                        }
+                    }
+                }
+                if publish_modal().is_open() {
+                    div {
+                        class: "event",
+                        "data-testid": "publish-modal",
+                        "data-state": "{publish_modal().as_data_state()}",
+                        div { class: "event-head",
+                            span { "Publish to source space" }
+                            span { class: "badge blue", "ck.strand.create" }
+                        }
+                        // Signer toggle. The self-with-attribution
+                        // branch keeps actor_id = controller while
+                        // carrying attribution = remote agent.
+                        div {
+                            class: "event",
+                            "data-testid": "publish-modal-signer-self-with-attribution",
+                            "data-selected": "{publish_with_attribution()}",
+                            div { class: "muted",
+                                "Sign as yourself, preserve agent attribution. The published Strand records you as actor_id and the agent as attribution."
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "publish-modal-signer-toggle-button",
+                                onclick: move |_| {
+                                    let next = !publish_with_attribution();
+                                    publish_with_attribution.set(next);
+                                },
+                                if publish_with_attribution() {
+                                    "Attribution: preserved"
+                                } else {
+                                    "Attribution: dropped"
+                                }
+                            }
+                        }
+                        div { class: "actions",
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                "data-testid": "publish-modal-confirm",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let realm = selected_realm_id.clone();
+                                    let actor = account_did.clone();
+                                    move |_| {
+                                        let attribution = publish_attribution_did().trim().to_owned();
+                                        let result_ref = publish_result_ref().trim().to_owned();
+                                        let artifact_ref = publish_artifact_ref().trim().to_owned();
+                                        if attribution.is_empty() {
+                                            publish_status_text.set(
+                                                "attribution agent_id is required".to_owned(),
+                                            );
+                                            return;
+                                        }
+                                        let base = base.clone();
+                                        let realm = realm.clone();
+                                        let actor = actor.clone();
+                                        let api_token = token();
+                                        publish_modal.set(PublishModalState::Submitting);
+                                        publish_status_text.set("publishing synthesis Strand".to_owned());
+                                        spawn(async move {
+                                            let strand_id = format!(
+                                                "ck:strand:{}",
+                                                crate::operation::uuid_v7()
+                                            );
+                                            let op = crate::operation::ck_ops::agent_publish_attribution_strand(
+                                                &realm,
+                                                &actor,
+                                                &strand_id,
+                                                "Agent synthesis result",
+                                                &attribution,
+                                                &result_ref,
+                                                &artifact_ref,
+                                            )
+                                            .and_then(|builder| builder.build_sdk_event("yougen"));
+                                            let op = match op {
+                                                Ok(op) => op,
+                                                Err(err) => {
+                                                    publish_modal.set(PublishModalState::Failed);
+                                                    publish_status_text.set(format!(
+                                                        "publish build failed: {err}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
+                                            match with_authed_api(&base, api_token, |api| async move {
+                                                api.submit_sdk_event(&op).await
+                                            })
+                                            .await
+                                            {
+                                                Ok(resp) => {
+                                                    publish_modal.set(PublishModalState::Published);
+                                                    publish_last_strand_id.set(strand_id.clone());
+                                                    publish_status_text.set(format!(
+                                                        "published strand {strand_id}; event_id {}",
+                                                        resp.event_id
+                                                    ));
+                                                }
+                                                Err(err) => {
+                                                    publish_modal.set(PublishModalState::Failed);
+                                                    publish_status_text.set(format!(
+                                                        "publish failed: {}", err.display()
+                                                    ));
+                                                }
+                                            }
+                                        });
+                                    }
+                                },
+                                "Publish with attribution"
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "publish-modal-cancel",
+                                onclick: move |_| {
+                                    publish_modal.set(PublishModalState::Closed);
+                                },
+                                "Cancel"
+                            }
+                        }
+                        if !publish_status_text().is_empty() {
+                            div { class: "muted",
+                                "data-testid": "agent-publish-status",
+                                "{publish_status_text}"
+                            }
+                        }
+                        if !publish_last_strand_id().is_empty() {
+                            div { class: "muted",
+                                "data-testid": "agent-publish-strand-id",
+                                "data-strand-id": "{publish_last_strand_id}",
+                                "strand_id {publish_last_strand_id}"
                             }
                         }
                     }

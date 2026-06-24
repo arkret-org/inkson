@@ -402,7 +402,11 @@ pub(crate) fn card_from_projection_item(
         due: item
             .object
             .get("fields")
-            .and_then(|f| f.get("due_at").or_else(|| f.get("due")))
+            .and_then(|f| {
+                f.get("due_at")
+                    .or_else(|| f.get("due"))
+                    .or_else(|| f.get("due_date"))
+            })
             .and_then(|v| v.as_str())
             .unwrap_or("—")
             .to_owned(),

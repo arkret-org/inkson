@@ -14,10 +14,14 @@ pub(super) enum SettingsSection {
     Encryption,
     Recovery,
     Mimi,
+    /// TSP connections (`/settings/connections`) — interop extension profile.
+    Connections,
     Notifications,
     Privacy,
     /// U4 invite_receive_policy (`/settings/invite-policy`).
     InvitePolicy,
+    /// Holder-private consent surface (`/settings/consent`).
+    Consent,
     /// G3.Y3 — personal blocklist (`/settings/blocklist`).
     Blocklist,
     /// G3.Y3 — capability delegation viewer (`/settings/capabilities`).
@@ -36,9 +40,11 @@ impl SettingsSection {
             "encryption" => Self::Encryption,
             "security" | "key-backup" | "recovery" => Self::Recovery,
             "mimi" => Self::Mimi,
+            "connections" | "tsp" => Self::Connections,
             "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
             "invite-policy" | "invite_policy" => Self::InvitePolicy,
+            "consent" => Self::Consent,
             "blocklist" | "blocked-users" => Self::Blocklist,
             "capabilities" => Self::Capabilities,
             "audit" | "audit-log" | "developer" | "developer-tools" | "release" => Self::Release,
@@ -57,9 +63,11 @@ impl SettingsSection {
             Self::Encryption => "encryption",
             Self::Recovery => "recovery",
             Self::Mimi => "mimi",
+            Self::Connections => "connections",
             Self::Notifications => "notifications",
             Self::Privacy => "privacy",
             Self::InvitePolicy => "invite-policy",
+            Self::Consent => "consent",
             Self::Blocklist => "blocklist",
             Self::Capabilities => "capabilities",
             Self::Theme => "theme",
@@ -77,9 +85,11 @@ impl SettingsSection {
             Self::Encryption => "Security",
             Self::Recovery => "Recovery",
             Self::Mimi => "Integrations",
+            Self::Connections => "TSP connections",
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy & sharing",
             Self::InvitePolicy => "Who can invite me",
+            Self::Consent => "Consent",
             Self::Blocklist => "Blocked actors",
             Self::Capabilities => "Capabilities",
             Self::Theme => "Appearance & locale",
@@ -140,6 +150,9 @@ pub(super) const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     // U4 invite_receive_policy is an actor-private
     // disclosure control, so it sits with the other privacy surfaces.
     SettingsSection::InvitePolicy,
+    // Holder-private consent decisions (spec identity/consent-model.md §2)
+    // sit with the other actor-private disclosure controls.
+    SettingsSection::Consent,
     // G3.Y3 blocklist sits next to Privacy because it is an actor-private
     // disclosure control (spec governance/content-moderation.md §4).
     SettingsSection::Blocklist,
@@ -147,6 +160,7 @@ pub(super) const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
 pub(super) const SETTINGS_CLIENT_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
 pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
     SettingsSection::Capabilities,
+    SettingsSection::Connections,
     SettingsSection::Storage,
     SettingsSection::Release,
 ];

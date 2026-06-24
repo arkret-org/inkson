@@ -263,6 +263,38 @@ fn recovery_vault_round_trips_through_open() {
 }
 
 #[test]
+fn open_refuses_tampered_ciphertext_via_digest_mismatch() {
+    // key-management.md §7.2: `ciphertext_digest` covers the ciphertext bytes.
+    // A client opening a downloaded backup MUST refuse to decrypt when the
+    // recomputed digest does not match the envelope's `ciphertext_digest`,
+    // catching a substituted / tampered ciphertext locally (no server GET).
+    let root = test_root();
+    let mut body =
+        build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"secret payload")
+            .unwrap();
+    // Sanity: the untampered body opens with the correct passphrase.
+    assert_eq!(
+        open_passphrase_kdf_backup_body(b"correct horse battery staple", &body).unwrap(),
+        b"secret payload"
+    );
+
+    // Re-seal a DIFFERENT plaintext under a fresh context to get a valid but
+    // unrelated ciphertext, then splice it in WITHOUT updating the envelope's
+    // `ciphertext_digest`. This models an attacker substituting the ciphertext
+    // while leaving the signed/declared digest intact.
+    let other =
+        build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"attacker payload")
+            .unwrap();
+    body["ciphertext"] = other["ciphertext"].clone();
+    let err = open_passphrase_kdf_backup_body(b"correct horse battery staple", &body)
+        .expect_err("digest mismatch must refuse decryption");
+    assert!(
+        err.to_string().contains("ciphertext_digest mismatch"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn did_recovery_backup_uses_separate_domain_and_hpke() {
     let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
     let body = build_did_recovery_backup_body(

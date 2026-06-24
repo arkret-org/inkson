@@ -379,6 +379,15 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.signer.freshness.label", "上次签名时间");
     dict.set("settings.signer.freshness.never", "尚未签名");
     dict.set("kanban.archive_action", "归档");
+    dict.set("kanban.card.draft", "草稿");
+    dict.set("kanban.card.draft_hint", "已在本地排队;正在等待服务器确认该卡片。");
+    dict.set(
+        "kanban.archive_draft_blocked",
+        "该卡片仍是本地草稿;请等待同步完成后再归档。",
+    );
+    dict.set("kanban.archive_board_action", "归档看板");
+    dict.set("kanban.archive_board_pending", "正在归档看板及其全部卡片…");
+    dict.set("kanban.archive_board_done", "看板已归档;卡片已级联归档。");
     dict.set("kanban.restore_action", "恢复");
     dict.set("error.circle.realm_mismatch", "Circle 不属于该 Realm。");
     dict.set(
@@ -641,6 +650,14 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("compose.upload_progress", "上传中…");
     dict.set("compose.upload_error", "上传失败");
+    // Message write-status revision counter (edit history).
+    dict.set("chat.message.revised", "已修订");
+    dict.set("chat.message.write_status", "这条消息已被编辑");
+    // Offline send outbox.
+    dict.set("chat.outbox.queued_offline", "离线 - 已排队,重新联网后自动发送。");
+    dict.set("chat.outbox.offline_banner", "你已离线。消息已排队,重新联网后将自动发送。");
+    dict.set("chat.outbox.flushing", "已恢复联网 - 正在发送排队的消息…");
+    dict.set("chat.outbox.flushed", "排队的消息已发送。");
     // Message shared pin and holder-private saved item actions.
     dict.set("message.pin", "钉选");
     dict.set("message.unpin", "取消钉选");

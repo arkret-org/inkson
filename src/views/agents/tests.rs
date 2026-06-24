@@ -568,6 +568,170 @@ mod tests {
         );
     }
 
+    // ── G3.Y4 — Phase B/C/D model helpers ─────────────────────────
+
+    use super::super::{InteropApprovalState, LiveSessionRow, PublishModalState, live_session_rows};
+
+    #[test]
+    fn interop_approval_confirm_gated_on_human_acknowledgement() {
+        assert!(!InteropApprovalState::Drafting.can_confirm());
+        assert!(InteropApprovalState::Acknowledged.can_confirm());
+        assert!(!InteropApprovalState::Submitting.can_confirm());
+        assert!(!InteropApprovalState::Granted.can_confirm());
+        assert!(!InteropApprovalState::Closed.is_open());
+        assert!(InteropApprovalState::Drafting.is_open());
+        let states = [
+            InteropApprovalState::Closed.as_data_state(),
+            InteropApprovalState::Drafting.as_data_state(),
+            InteropApprovalState::Acknowledged.as_data_state(),
+            InteropApprovalState::Submitting.as_data_state(),
+            InteropApprovalState::Granted.as_data_state(),
+            InteropApprovalState::Failed.as_data_state(),
+        ];
+        let uniq: std::collections::BTreeSet<_> = states.iter().collect();
+        assert_eq!(uniq.len(), states.len());
+    }
+
+    #[test]
+    fn publish_modal_open_state_round_trips() {
+        assert!(!PublishModalState::Closed.is_open());
+        assert!(PublishModalState::Reviewing.is_open());
+        let states = [
+            PublishModalState::Closed.as_data_state(),
+            PublishModalState::Reviewing.as_data_state(),
+            PublishModalState::Submitting.as_data_state(),
+            PublishModalState::Published.as_data_state(),
+            PublishModalState::Failed.as_data_state(),
+        ];
+        let uniq: std::collections::BTreeSet<_> = states.iter().collect();
+        assert_eq!(uniq.len(), states.len());
+    }
+
+    #[test]
+    fn live_session_rows_fold_latest_status_in_order() {
+        let session = "ck:agent_interop_session:0197-aaa";
+        let events = vec![
+            json!({
+                "event_kind": "ck.agent.interop_session.start",
+                "payload": {"session_id": session},
+            }),
+            json!({
+                "event_kind": "ck.agent.interop_session.status",
+                "payload": {"session_id": session, "status": "negotiating"},
+            }),
+            json!({
+                "event_kind": "ck.agent.interop_session.status",
+                "payload": {"session_id": session, "status": "accepted"},
+            }),
+            json!({
+                "event_kind": "ck.agent.interop_session.status",
+                "payload": {"session_id": session, "status": "working"},
+            }),
+        ];
+        let rows = live_session_rows(&events);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0],
+            LiveSessionRow {
+                session_id: session.to_owned(),
+                status: "working".to_owned(),
+                status_count: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn live_session_rows_seed_start_as_negotiating_and_ignore_other_kinds() {
+        let session = "ck:agent_interop_session:0197-bbb";
+        let events = vec![
+            json!({"event_kind": "ck.message.create", "payload": {"body": "x"}}),
+            json!({
+                "event_kind": "ck.agent.interop_session.start",
+                "payload": {"session_id": session},
+            }),
+        ];
+        let rows = live_session_rows(&events);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "negotiating");
+        assert_eq!(rows[0].status_count, 0);
+    }
+
+    #[test]
+    fn live_session_rows_result_does_not_overwrite_streaming_status() {
+        // The terminal result lives in the results panel; the session row
+        // keeps the latest STREAMING status so a later completed result
+        // does not collapse a `working` transcript.
+        let session = "ck:agent_interop_session:0197-ccc";
+        let events = vec![
+            json!({
+                "event_kind": "ck.agent.interop_session.start",
+                "payload": {"session_id": session},
+            }),
+            json!({
+                "event_kind": "ck.agent.interop_session.status",
+                "payload": {"session_id": session, "status": "working"},
+            }),
+            json!({
+                "event_kind": "ck.agent.interop_session.result",
+                "payload": {"session_id": session, "status": "completed"},
+            }),
+        ];
+        let rows = live_session_rows(&events);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "working");
+        assert_eq!(rows[0].status_count, 1);
+    }
+
+    #[test]
+    fn interop_capability_constraint_pins_single_endpoint_and_action_intent() {
+        let constraint = crate::operation::ck_ops::interop_capability_constraint(
+            "https://runtime.example/v1/a2a/tasks",
+            &["a2a"],
+            true,
+            3600,
+            10_485_760,
+            "metadata_only",
+            "summary_and_artifacts",
+        );
+        assert_eq!(
+            constraint["allowed_endpoints"],
+            json!(["https://runtime.example/v1/a2a/tasks"])
+        );
+        assert_eq!(constraint["allowed_protocols"], json!(["a2a"]));
+        assert_eq!(constraint["requires_human_approval"], true);
+        assert_eq!(constraint["egress_policy"], "metadata_only");
+    }
+
+    #[test]
+    fn agent_publish_attribution_strand_preserves_agent_attribution() {
+        let op = crate::operation::ck_ops::agent_publish_attribution_strand(
+            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "ck:strand:01904100-0000-7000-8000-000000000004",
+            "Agent synthesis result",
+            "did:web:remote-agent.example",
+            "ck:strand:01904100-0000-7000-8000-00000000aaaa",
+            "ck:morph:01904100-0000-7000-8000-00000000bbbb",
+        )
+        .unwrap()
+        .build("yougen");
+        // actor_id is the controller; attribution preserves the agent.
+        assert_eq!(op.actor_id.as_str(), "did:web:alice.example");
+        assert_eq!(
+            op.content["object"]["attribution"],
+            "did:web:remote-agent.example"
+        );
+        assert_eq!(
+            op.content["object"]["metadata"]["fields"]["workflow_type"],
+            "synthesis"
+        );
+        assert!(
+            op.content["object"]["tracks"]
+                .get("synthesis")
+                .is_some()
+        );
+    }
+
     #[test]
     fn verify_audit_chain_valid_with_real_ed25519_binding() {
         // Build a real Ed25519 binding via the SDK helper that the

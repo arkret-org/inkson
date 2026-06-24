@@ -200,6 +200,19 @@ pub fn ChatPanel(
     let mut strand_watch_level = use_signal(|| WatchLevel::All);
     let mut watch_level_menu_open = use_signal(|| false);
     let mut status_msg = use_signal(String::new);
+    // Offline send outbox (sync/offline-conflict). `chat_outbox` holds the
+    // messages parked while `navigator.onLine` is false; it rehydrates from
+    // localStorage so a reload mid-outage keeps the unsent rows. `is_online`
+    // is polled from `navigator.onLine`; a transition false->true drains the
+    // outbox through the normal send path.
+    let mut chat_outbox = use_signal({
+        let account_did = account_did.clone();
+        move || load_outbox(&account_did)
+    });
+    let mut is_online = use_signal(navigator_online);
+    // Guards the reconnect drain so a re-render mid-flush doesn't double-submit
+    // the same queued message.
+    let mut outbox_flushing = use_signal(|| false);
     let mut reply_to_message = use_signal(|| Option::<String>::None);
     let mut editing_message = use_signal(|| Option::<String>::None);
     let mut edit_draft = use_signal(String::new);
@@ -305,6 +318,112 @@ pub fn ChatPanel(
             if *private_saved_account_data_for_sync.peek() != saved_entries {
                 private_saved_account_data_for_sync.set(saved_entries);
             }
+        });
+    }
+
+    // Connectivity poll: mirror `navigator.onLine` into `is_online` on a
+    // short cadence. We poll rather than bind window online/offline events so
+    // the signal is owned by the Dioxus runtime; Playwright's
+    // `context.setOffline()` flips `navigator.onLine`, which this picks up.
+    {
+        use_future(move || async move {
+            loop {
+                let online = navigator_online();
+                if *is_online.peek() != online {
+                    is_online.set(online);
+                }
+                crate::api::sleep_for(std::time::Duration::from_millis(750)).await;
+            }
+        });
+    }
+
+    // Reconnect drain: when connectivity returns and the outbox is non-empty,
+    // resubmit each parked message through the normal `ck.message.create`
+    // path, then clear it from the queue. Entries reuse their stable local
+    // id so the reducer collapses the replay with the optimistic row.
+    {
+        let base_for_flush = base_url.clone();
+        let service_for_flush = plaintext_service_did.clone();
+        let account_for_flush = account_did.clone();
+        use_effect(move || {
+            let online = is_online();
+            let pending = chat_outbox.read().clone();
+            if !online || pending.is_empty() || *outbox_flushing.peek() {
+                return;
+            }
+            outbox_flushing.set(true);
+            let base = base_for_flush.clone();
+            let service_did = service_for_flush.clone();
+            let account_did = account_for_flush.clone();
+            let api_token = token();
+            let wait_for = active_sync_token(sync_cursor());
+            spawn(async move {
+                for entry in pending {
+                    let projection = state_store
+                        .read()
+                        .load()
+                        .realm_tree_projections
+                        .get(&entry.realm_id)
+                        .cloned();
+                    let plaintext_services =
+                        plaintext_services_for_policy(projection.as_ref(), &service_did);
+                    let op = match chat_message_create_operation(
+                        &entry.realm_id,
+                        &account_did,
+                        &entry.strand_id,
+                        &entry.channel_kind,
+                        &entry.message_id,
+                        &entry.body,
+                        &[],
+                        entry.reply_to.as_deref(),
+                    ) {
+                        Ok(op) => op,
+                        Err(error) => {
+                            status_msg.set(format!("outbox flush failed: {error:#}"));
+                            continue;
+                        }
+                    };
+                    match submit_chat_operation_with_auth_refresh(
+                        &base,
+                        &account_did,
+                        &entry.realm_id,
+                        api_token.clone(),
+                        wait_for.clone(),
+                        &plaintext_services,
+                        &op,
+                    )
+                    .await
+                    {
+                        Ok(resp) => {
+                            if let Some(found) = messages
+                                .write()
+                                .iter_mut()
+                                .find(|candidate| candidate.id == entry.message_id)
+                            {
+                                found.id = resp.event_id.clone();
+                                found.pending = false;
+                                found.failed = false;
+                                found.error = None;
+                            }
+                            frontier_state.set(resp.event_id.clone());
+                            chat_outbox
+                                .write()
+                                .retain(|queued| queued.message_id != entry.message_id);
+                            let remaining = chat_outbox.read().clone();
+                            save_outbox(&account_did, &remaining);
+                            status_msg.set(crate::i18n::tr("chat.outbox.flushed"));
+                        }
+                        Err(error) => {
+                            // Leave the entry queued for the next reconnect
+                            // tick; surface the failure but don't drop the
+                            // message.
+                            status_msg
+                                .set(format!("outbox flush retry pending: {error:#}"));
+                        }
+                    }
+                }
+                outbox_flushing.set(false);
+            });
         });
     }
     let blocked_did_set: std::collections::BTreeSet<String> = state_store
@@ -1340,6 +1459,38 @@ pub fn ChatPanel(
                     }
                 }
 
+                // Offline outbox banner. Visible while the browser is offline
+                // or the queue is non-empty so the user knows sends are parked
+                // and will flush on reconnect (sync/offline-conflict).
+                {
+                    let queued_count = chat_outbox().len();
+                    let online = is_online();
+                    rsx! {
+                        if !online || queued_count > 0 {
+                            div {
+                                class: "chat-outbox-banner",
+                                "data-testid": "chat-outbox-banner",
+                                "data-online": if online { "true" } else { "false" },
+                                "data-queued-count": "{queued_count}",
+                                role: "status",
+                                span { class: "chat-outbox-icon", "\u{23f8}" }
+                                span {
+                                    if online {
+                                        {crate::i18n::tr("chat.outbox.flushing")}
+                                    } else {
+                                        {crate::i18n::tr("chat.outbox.offline_banner")}
+                                    }
+                                }
+                                span {
+                                    class: "chat-outbox-count",
+                                    "data-testid": "chat-outbox-count",
+                                    "{queued_count}"
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Shared pin bar. Source is the `ck.pin.*` shared event
                 // projection only; holder-private `ck.saved.v1:*`
                 // account-data is rendered on message rows instead.
@@ -1510,6 +1661,9 @@ pub fn ChatPanel(
                                 .any(|pin| pin.target_ref == message_target_ref || pin.target_ref == msg.id);
                             let message_is_saved_private =
                                 private_saved_targets().contains(&message_target_ref);
+                            let message_is_queued_offline = chat_outbox()
+                                .iter()
+                                .any(|queued| queued.message_id == msg.id);
                             let sender_is_own =
                                 is_own_message_sender(&msg.sender, &account_did);
                             rsx! {
@@ -1929,14 +2083,41 @@ pub fn ChatPanel(
                                             title: "Message send failed",
                                             "!"
                                         }
+                                    } else if msg.pending && message_is_queued_offline {
+                                        // Parked in the offline outbox: distinct
+                                        // from the in-flight "Sending" spinner so
+                                        // the user (and E2E) can tell a message is
+                                        // waiting for connectivity, not the server.
+                                        span {
+                                            class: "message-status-icon is-queued-offline",
+                                            "data-testid": "message-send-status",
+                                            "data-send-state": "queued_offline",
+                                            title: crate::i18n::tr("chat.outbox.queued_offline"),
+                                            "\u{23f8}"
+                                        }
                                     } else if msg.pending {
                                         span {
                                             class: "message-status-icon is-pending",
                                             "data-testid": "message-send-status",
+                                            "data-send-state": "sending",
                                             title: "Sending"
                                         }
                                     }
-                                    if msg.edited { span { class: "badge", "edited" } }
+                                    if msg.edited {
+                                        span {
+                                            class: "badge",
+                                            "data-testid": "message-write-status",
+                                            "data-revision-count": "{msg.revisions.len()}",
+                                            title: crate::i18n::tr("chat.message.write_status"),
+                                            {
+                                                format!(
+                                                    "{} ({})",
+                                                    crate::i18n::tr("chat.message.revised"),
+                                                    msg.revisions.len(),
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                                 // T7.4: per-message crypto status row.
                                 // Sits directly under the head so the
@@ -2247,6 +2428,149 @@ pub fn ChatPanel(
                                                 move |_| redact_confirm.set(Some(msg_id.clone()))
                                             },
                                             {crate::i18n::tr("chat.button.redact")}
+                                        }
+                                        // Shared-pin toggle exposed directly on the
+                                        // hover action row (mirrors the right-click
+                                        // context-menu pin), so E2E and keyboard
+                                        // users can pin without the native menu.
+                                        // Writes the same durable `ck.pin.*` events.
+                                        {
+                                            let realm_for_pin = msg.realm_id.clone();
+                                            let strand_for_pin = msg.strand_id.clone();
+                                            let actor_for_pin = account_did.clone();
+                                            let base_for_pin = base_url.clone();
+                                            let target_for_pin = message_target_ref.clone();
+                                            let msg_id_for_pin = msg.id.clone();
+                                            let is_pinned = message_is_pinned;
+                                            let existing_pin = shared_pins()
+                                                .into_iter()
+                                                .find(|pin| {
+                                                    pin.target_ref == target_for_pin
+                                                        || pin.target_ref == msg_id_for_pin
+                                                });
+                                            rsx! {
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    class: "chat-message-action",
+                                                    "data-testid": "chat-pin-button",
+                                                    "data-source": "shared-event",
+                                                    "data-pinned": if is_pinned { "true" } else { "false" },
+                                                    "data-permission": if is_pinned { "ck.pin.remove" } else { "ck.pin.add" },
+                                                    onclick: move |_| {
+                                                        let rank = existing_pin
+                                                            .as_ref()
+                                                            .map(|pin| pin.rank.clone())
+                                                            .unwrap_or_else(next_shared_pin_rank);
+                                                        let op = if is_pinned {
+                                                            shared_message_pin_remove_operation(
+                                                                &realm_for_pin,
+                                                                &actor_for_pin,
+                                                                &strand_for_pin,
+                                                                &target_for_pin,
+                                                            )
+                                                        } else {
+                                                            shared_message_pin_add_operation(
+                                                                &realm_for_pin,
+                                                                &actor_for_pin,
+                                                                &strand_for_pin,
+                                                                &target_for_pin,
+                                                                &rank,
+                                                            )
+                                                        };
+                                                        let op = match op {
+                                                            Ok(op) => op,
+                                                            Err(error) => {
+                                                                status_msg.set(format!("Shared pin failed: {error:#}"));
+                                                                return;
+                                                            }
+                                                        };
+                                                        if is_pinned {
+                                                            shared_pins.write().retain(|pin| {
+                                                                !(pin.pin_scope_id == strand_for_pin
+                                                                    && pin.target_ref == target_for_pin)
+                                                            });
+                                                        } else if !shared_pins().iter().any(|pin| {
+                                                            pin.pin_scope_id == strand_for_pin
+                                                                && pin.target_ref == target_for_pin
+                                                        }) {
+                                                            shared_pins.write().push(SharedMessagePin {
+                                                                pin_scope_id: strand_for_pin.clone(),
+                                                                target_ref: target_for_pin.clone(),
+                                                                rank: rank.clone(),
+                                                            });
+                                                        }
+                                                        status_msg.set(if is_pinned {
+                                                            crate::i18n::tr("message.shared_unpin_pending")
+                                                        } else {
+                                                            crate::i18n::tr("message.shared_pin_pending")
+                                                        });
+                                                        let base = base_for_pin.clone();
+                                                        let api_token = token();
+                                                        let wait_for = active_sync_token(sync_cursor());
+                                                        let realm_for_store = realm_for_pin.clone();
+                                                        let strand_for_store = strand_for_pin.clone();
+                                                        let target_for_store = target_for_pin.clone();
+                                                        let existing_for_rollback = existing_pin.clone();
+                                                        spawn(async move {
+                                                            match authed_api_with_sync(&base, api_token, wait_for) {
+                                                                Ok(api) => match api.submit_sdk_event(&op).await {
+                                                                    Ok(submitted) => {
+                                                                        {
+                                                                            let mut store = state_store.write();
+                                                                            store.append_raw_operation(
+                                                                                sdk_event_local_operation_id(&op).to_owned(),
+                                                                                Some(realm_for_store),
+                                                                                json!({
+                                                                                    "event_id": submitted.event_id.clone(),
+                                                                                    "kind": op.kind.as_str(),
+                                                                                    "payload": op.content.clone(),
+                                                                                }),
+                                                                            );
+                                                                        }
+                                                                        frontier_state.set(submitted.event_id);
+                                                                        status_msg.set(if is_pinned {
+                                                                            crate::i18n::tr("message.shared_unpinned")
+                                                                        } else {
+                                                                            crate::i18n::tr("message.shared_pinned")
+                                                                        });
+                                                                    }
+                                                                    Err(error) => {
+                                                                        if is_pinned {
+                                                                            if let Some(pin) = existing_for_rollback {
+                                                                                shared_pins.write().push(pin);
+                                                                            }
+                                                                        } else {
+                                                                            shared_pins.write().retain(|pin| {
+                                                                                !(pin.pin_scope_id == strand_for_store
+                                                                                    && pin.target_ref == target_for_store)
+                                                                            });
+                                                                        }
+                                                                        status_msg.set(format!("Shared pin failed: {error}"));
+                                                                    }
+                                                                },
+                                                                Err(error) => {
+                                                                    if is_pinned {
+                                                                        if let Some(pin) = existing_for_rollback {
+                                                                            shared_pins.write().push(pin);
+                                                                        }
+                                                                    } else {
+                                                                        shared_pins.write().retain(|pin| {
+                                                                            !(pin.pin_scope_id == strand_for_store
+                                                                                && pin.target_ref == target_for_store)
+                                                                        });
+                                                                    }
+                                                                    status_msg.set(format!("Shared pin failed: {error}"));
+                                                                }
+                                                            }
+                                                        });
+                                                    },
+                                                    if is_pinned {
+                                                        {crate::i18n::tr("message.shared_unpin")}
+                                                    } else {
+                                                        {crate::i18n::tr("message.shared_pin")}
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -3942,6 +4266,9 @@ pub fn ChatPanel(
                             let service_did = plaintext_service_did.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
+                            // Captured for the offline-outbox park branch (keyed
+                            // by account so the persisted queue is per-identity).
+                            let account_did = account_did.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -4033,6 +4360,38 @@ pub fn ChatPanel(
                                     // patch after `encrypt_payload`.
                                     crypto_state: MessageCryptoState::Plaintext,
                                 });
+
+                                // Offline park: when `navigator.onLine` is false
+                                // we keep the optimistic row (still `pending`) and
+                                // persist the send intent to the outbox instead of
+                                // firing the network call. The reconnect effect
+                                // drains it. The row renders a "queued" badge
+                                // because its id is in `chat_outbox`. Read the
+                                // navigator live (not just the polled signal) so a
+                                // send right after going offline never races the
+                                // poll tick into a failed network attempt.
+                                let offline_now = !is_online() || !navigator_online();
+                                if offline_now {
+                                    if *is_online.peek() {
+                                        is_online.set(false);
+                                    }
+                                    let entry = OutboxMessage {
+                                        realm_id: realm.clone(),
+                                        strand_id: channel.strand_id.clone(),
+                                        channel_kind: channel.kind.clone(),
+                                        message_id: local_id.clone(),
+                                        body: body.clone(),
+                                        reply_to: reply_to_message(),
+                                    };
+                                    chat_outbox.write().push(entry);
+                                    let parked = chat_outbox.read().clone();
+                                    save_outbox(&account_did, &parked);
+                                    mention_picker_state.write().clear();
+                                    chat_draft.set(String::new());
+                                    reply_to_message.set(None);
+                                    status_msg.set(crate::i18n::tr("chat.outbox.queued_offline"));
+                                    return;
+                                }
 
                                 let base = base.clone();
                                 let service_did = service_did.clone();
