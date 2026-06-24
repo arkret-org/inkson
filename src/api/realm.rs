@@ -903,10 +903,10 @@ impl CokretApi {
         &self,
         realm_id: &str,
     ) -> anyhow::Result<LifecycleProjectionView<SpaceContainerProjectionView>> {
-        // `ck:realm:<uuid>` is RFC-3986-safe in query string position
-        // (colon + hyphen + alpha-digit), so no percent-encoding needed.
+        // `ck:realm:<uuid>` is RFC-3986-safe in a path segment (colon, hyphen,
+        // and alpha-digit are all pchar), so no percent-encoding needed.
         let realm_id = trim_realm_id(realm_id);
-        let path = format!("_cokret/self/projection/spaces?realm_id={realm_id}");
+        let path = format!("_cokret/self/realms/{realm_id}/spaces");
         self.get_json(&path).await
     }
 
@@ -915,12 +915,17 @@ impl CokretApi {
         realm_id: &str,
     ) -> anyhow::Result<LifecycleProjectionView<StrandProjectionView>> {
         let realm_id = trim_realm_id(realm_id);
-        let path = format!("_cokret/self/projection/strands?realm_id={realm_id}");
+        let path = format!("_cokret/self/realms/{realm_id}/strands");
         self.get_json(&path).await
     }
 
-    pub async fn document_projection(&self, morph_id: &str) -> anyhow::Result<Value> {
-        self.get_json(&format!("_cokret/self/projection/documents/{morph_id}"))
+    pub async fn document_projection(
+        &self,
+        realm_id: &str,
+        morph_id: &str,
+    ) -> anyhow::Result<Value> {
+        let realm_id = trim_realm_id(realm_id);
+        self.get_json(&format!("_cokret/self/realms/{realm_id}/morphs/{morph_id}"))
             .await
     }
 

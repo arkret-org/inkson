@@ -1411,7 +1411,7 @@ pub fn KanbanPanel(
     }
 
     // Hydrate Space-container / Strand lifecycle state from the soland
-    // `/_cokret/self/projection/{spaces|strands}` endpoints so
+    // `/_cokret/self/realms/{realm_id}/{spaces|strands}` endpoints so
     // an Archive accepted on the server stays archived after a page
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
     // columns/cards in their `Active` default and the user is no worse

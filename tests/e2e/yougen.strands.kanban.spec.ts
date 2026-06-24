@@ -55,14 +55,14 @@ test("kanban card detail embeds discussion without boundary copy", async ({ page
 });
 
 test("kanban hides list creation until a board exists", async ({ page }) => {
-  await page.route("**/_cokret/self/projection/spaces**", async (route) => {
+  await page.route("**/_cokret/self/realms/*/spaces", async (route) => {
     return route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ items: [], total: 0, spaces: [] }),
     });
   });
-  await page.route("**/_cokret/self/projection/strands**", async (route) => {
+  await page.route("**/_cokret/self/realms/*/strands", async (route) => {
     return route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -156,8 +156,11 @@ test("kanban projections use home Realm for nested Spaces", async ({ page }) => 
   const projectionRealmIds: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === "/_cokret/self/projection/spaces" || url.pathname === "/_cokret/self/projection/strands") {
-      projectionRealmIds.push(url.searchParams.get("realm_id") ?? "");
+    const projectionMatch = url.pathname.match(
+      /^\/_cokret\/self\/realms\/([^/]+)\/(spaces|strands)$/,
+    );
+    if (projectionMatch) {
+      projectionRealmIds.push(projectionMatch[1]);
     }
   });
 

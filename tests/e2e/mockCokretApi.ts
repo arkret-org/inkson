@@ -536,8 +536,8 @@ export async function mockCokretApi(
           "ck.self.events.stream.subscribe",
           "ck.self.events.query.describe",
           "ck.self.events.command.submit",
-          "ck.self.projection.spaces.query.list",
-          "ck.self.projection.strands.query.list",
+          "ck.self.space.query.list",
+          "ck.self.strand.query.list",
           "ck.find.directory.query.search_realms",
           "ck.find.directory.query.resolve_realm",
           "ck.find.directory.query.describe",
@@ -642,10 +642,11 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/projection/spaces" &&
+      url.pathname.startsWith("/_cokret/self/realms/") &&
+      url.pathname.endsWith("/spaces") &&
       route.request().method() === "GET"
     ) {
-      const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
+      const realmId = url.pathname.split("/")[4] ?? DEMO_REALM;
       return json(route, {
         realm_id: realmId,
         total: boardSpaceContainers.length,
@@ -654,10 +655,11 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/projection/strands" &&
+      url.pathname.startsWith("/_cokret/self/realms/") &&
+      url.pathname.endsWith("/strands") &&
       route.request().method() === "GET"
     ) {
-      const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
+      const realmId = url.pathname.split("/")[4] ?? DEMO_REALM;
       return json(route, {
         realm_id: realmId,
         total: boardStrandProjections.length,

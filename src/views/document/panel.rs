@@ -132,10 +132,11 @@ pub fn DocumentPanel(
             let base = base.clone();
             let token_val = token();
             let actor_key = actor_key.clone();
+            let realm_for_request = document_realm_id();
             spawn(async move {
                 let morph_id_for_request = morph_id.clone();
                 match with_authed_api(&base, token_val, |api| async move {
-                    api.document_projection(&morph_id_for_request).await
+                    api.document_projection(&realm_for_request, &morph_id_for_request).await
                 })
                 .await
                 {

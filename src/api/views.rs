@@ -9,7 +9,7 @@ pub const RECOMMENDED_REALM_ENCRYPTION_PROFILE: &str = "mls_rfc9420";
 pub const RECOMMENDED_REALM_ENCRYPTION_FLOOR: &str = "e2ee_required";
 
 /// Generic wrapper for soland's
-/// `/_cokret/self/projection/{spaces|strands}` lifecycle endpoints. Keeps
+/// `/_cokret/self/realms/{realm_id}/{spaces|strands}` lifecycle endpoints. Keeps
 /// the query response shape symmetric across the two surfaces so the kanban
 /// hydrate path can pluck projection rows with the same code. The decoder
 /// normalizes spec `spaces` / `strands` / `morphs` collection keys into `items`.
@@ -30,7 +30,7 @@ pub struct LifecycleProjectionView<T> {
 /// Server-side Space-container projection row.
 ///
 /// Soland serves these rows from
-/// `GET /_cokret/self/projection/spaces`.
+/// `GET /_cokret/self/realms/{realm_id}/spaces`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct SpaceContainerProjectionView {
     pub space_id: String,
@@ -48,7 +48,7 @@ pub struct SpaceContainerProjectionView {
     pub parent_space_id: Option<String>,
 }
 
-/// Server-side Strand row from `GET /_cokret/self/projection/strands`.
+/// Server-side Strand row from `GET /_cokret/self/realms/{realm_id}/strands`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct StrandProjectionView {
     pub strand_id: String,
@@ -264,7 +264,7 @@ impl From<cokret_sdk::CollectionProjectionView> for CollectionProjectionView {
 }
 
 /// Server-side Morph row from
-/// `GET /_cokret/self/projection/morphs`. Same enum as Strand per spec §5.1.
+/// `GET /_cokret/self/realms/{realm_id}/morphs`. Same enum as Strand per spec §5.1.
 #[derive(Clone, Debug, Deserialize)]
 pub struct MorphProjectionView {
     pub morph_id: String,
