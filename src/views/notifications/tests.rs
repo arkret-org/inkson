@@ -10,7 +10,10 @@ mod tests {
         raw_notifications_from_sources, read_cursor_targets, realm_is_muted,
         realm_title_hints_from_values,
     };
-    use crate::local_state::{ClientLocalState, NotificationClientState};
+    use crate::local_state::{
+        ClientLocalState, NotificationClientState, ReadCursorPosition, ReadMarkerBody,
+        ReadMarkerRecord, read_scope_for_cursor,
+    };
     use crate::notification_rules::WatchLevel;
 
     #[test]
@@ -110,6 +113,66 @@ mod tests {
 
         assert_eq!(notifications.len(), 1);
         assert!(notifications[0].read);
+    }
+
+    #[test]
+    fn hydrate_notifications_applies_synced_read_cursor() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000002";
+        let strand_id = "ck:strand:01904100-0000-7000-8000-000000000003";
+        let old_event = "ck:event:01904100-0000-7000-8000-000000000004";
+        let cursor_event = "ck:event:01904100-0000-7000-8000-000000000005";
+        let read_scope = read_scope_for_cursor(realm_id, Some(strand_id));
+        let mut local_state = ClientLocalState::default();
+        local_state.read_cursors.insert(
+            "cursor".to_owned(),
+            ReadMarkerRecord {
+                marker_type: "ck.read_cursor.advance".to_owned(),
+                body: ReadMarkerBody {
+                    id: "ck:read_cursor:01904100-0000-7000-8000-000000000006".to_owned(),
+                    schema: "ck.schema.read_cursor.v1".to_owned(),
+                    realm_id: realm_id.to_owned(),
+                    read_scope,
+                    position: ReadCursorPosition {
+                        event_id: cursor_event.to_owned(),
+                        hlc: "019041000000-0001-device".to_owned(),
+                    },
+                },
+                actor: "did:web:bob.example".to_owned(),
+                device_id: "ck:device:01904100-0000-7000-8000-000000000007".to_owned(),
+                updated_at: chrono::Utc::now(),
+            },
+        );
+
+        let notifications = hydrate_notifications(
+            vec![
+                json!({
+                    "notification_id": "old",
+                    "notification_type": "mention",
+                    "realm_id": realm_id,
+                    "strand_id": strand_id,
+                    "source_event_id": old_event,
+                    "timestamp": "2026-05-29T00:00:00Z",
+                    "body": "old mention",
+                    "read": false
+                }),
+                json!({
+                    "notification_id": "cursor",
+                    "notification_type": "mention",
+                    "realm_id": realm_id,
+                    "strand_id": strand_id,
+                    "source_event_id": cursor_event,
+                    "timestamp": "2026-05-29T00:00:01Z",
+                    "body": "cursor mention",
+                    "read": false
+                }),
+            ],
+            &local_state,
+            None,
+            None,
+        );
+
+        assert_eq!(notifications.len(), 2);
+        assert!(notifications.iter().all(|notification| notification.read));
     }
 
     #[test]

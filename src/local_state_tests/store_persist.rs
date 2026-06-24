@@ -232,7 +232,7 @@ fn local_state_store_persists_private_read_cursors() {
                     "event_id": "ck:event:read-1",
                     "hlc": &marker.body.position.hlc
                 },
-                "updated_at": &marker.updated_at,
+                "updated_at": marker.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             },
         })
     );
@@ -245,6 +245,45 @@ fn local_state_store_persists_private_read_cursors() {
     assert_eq!(persisted.actor, "did:web:alice.example");
     assert_eq!(persisted.device_id, "device-1");
     assert_eq!(persisted.body.position.event_id, "ck:event:read-1");
+}
+
+#[test]
+fn local_state_store_ingests_read_cursor_update_to_device() {
+    let path = temp_state_path("read-cursor-update");
+    let mut store = LocalStateStore::with_path(path.clone());
+    store.ingest_to_device_messages(&[serde_json::json!({
+        "kind": "ck.read_cursor.update",
+        "sender_device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+        "content": {
+            "schema": "ck.schema.read_cursor.v1",
+            "actor_id": "did:web:alice.example",
+            "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000002",
+            "read_scope": {
+                "kind": "strand",
+                "ref": "ck:strand:01904100-0000-7000-8000-000000000003",
+                "track_name": "discussion"
+            },
+            "position": {
+                "event_id": "ck:event:01904100-0000-7000-8000-000000000004",
+                "hlc": "019041000000-0001-device"
+            },
+            "updated_at": "2026-06-24T00:00:00Z"
+        }
+    })]);
+
+    let reader = LocalStateStore::with_path(path);
+    let marker = reader
+        .read_cursor_for(
+            "ck:realm:01904100-0000-7000-8000-000000000002",
+            Some("ck:strand:01904100-0000-7000-8000-000000000003"),
+        )
+        .expect("read cursor update persisted");
+    assert_eq!(marker.actor, "did:web:alice.example");
+    assert_eq!(
+        marker.body.position.event_id,
+        "ck:event:01904100-0000-7000-8000-000000000004"
+    );
 }
 
 #[test]

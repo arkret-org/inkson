@@ -5,7 +5,10 @@
 
 use dioxus::prelude::*;
 
-use super::actions::{mark_all_notifications_read, refresh_notifications, run_notification_action};
+use super::actions::{
+    mark_all_notifications_read, mark_notification_read_state, refresh_notifications,
+    run_notification_action,
+};
 use super::model::{
     UiNotificationGroup, hydrate_notifications, notification_kind_enabled,
     notification_overrides_realm_mute, notification_scope_kind, realm_is_muted,
@@ -238,12 +241,22 @@ pub fn NotificationsPanel(
                                 title: "Mark read",
                                 "aria-label": "Mark read",
                                 onclick: {
-                                    let notification_id = notification.id.clone();
+                                    let base_url = base_url.clone();
+                                    let account_did = account_did.clone();
+                                    let device_id = device_id.clone();
+                                    let notification = notification.clone();
                                     move |_| {
-                                        if let Some(entry) = notifications.write().iter_mut().find(|candidate| candidate.id == notification_id) {
-                                            entry.read = true;
-                                        }
-                                        state_store.write().set_notification_read(notification_id.clone(), true);
+                                        mark_notification_read_state(
+                                            base_url.clone(),
+                                            token(),
+                                            account_did.clone(),
+                                            device_id.clone(),
+                                            notification.clone(),
+                                            true,
+                                            state_store,
+                                            notifications,
+                                            status_msg,
+                                        );
                                     }
                                 },
                                 UiIcon { name: "check" }
@@ -257,12 +270,22 @@ pub fn NotificationsPanel(
                                 title: "Mark unread",
                                 "aria-label": "Mark unread",
                                 onclick: {
-                                    let notification_id = notification.id.clone();
+                                    let base_url = base_url.clone();
+                                    let account_did = account_did.clone();
+                                    let device_id = device_id.clone();
+                                    let notification = notification.clone();
                                     move |_| {
-                                        if let Some(entry) = notifications.write().iter_mut().find(|candidate| candidate.id == notification_id) {
-                                            entry.read = false;
-                                        }
-                                        state_store.write().set_notification_read(notification_id.clone(), false);
+                                        mark_notification_read_state(
+                                            base_url.clone(),
+                                            token(),
+                                            account_did.clone(),
+                                            device_id.clone(),
+                                            notification.clone(),
+                                            false,
+                                            state_store,
+                                            notifications,
+                                            status_msg,
+                                        );
                                     }
                                 },
                                 UiIcon { name: "bell" }

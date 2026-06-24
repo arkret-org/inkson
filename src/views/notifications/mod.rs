@@ -19,6 +19,6 @@ mod tests;
 // `sync_engine.rs` via `crate::views::notifications::*`.
 pub(crate) use model::{
     is_notification_account_data, merge_invite_notifications, notification_items_from_value,
-    realm_title_hints_from_values,
+    notification_value_read_by_cursor, realm_title_hints_from_values,
 };
 pub use panel::NotificationsPanel;

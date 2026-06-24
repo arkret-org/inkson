@@ -34,7 +34,10 @@ pub(super) fn unread_notification_count(snapshot: &ClientLocalState) -> usize {
             });
             let read = client_state
                 .map(|state| state.read)
-                .unwrap_or_else(|| notification_projection_bool(value, "read").unwrap_or(false));
+                .unwrap_or_else(|| notification_projection_bool(value, "read").unwrap_or(false))
+                || crate::views::notifications::notification_value_read_by_cursor(
+                    *index, value, snapshot,
+                );
             !archived && !read
         })
         .count()

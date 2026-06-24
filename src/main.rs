@@ -27,5 +27,9 @@ fn init_tracing() {
 
 #[cfg(target_arch = "wasm32")]
 fn init_tracing() {
-    tracing_wasm::set_as_global_default();
+    let mut builder = tracing_wasm::WASMLayerConfigBuilder::new();
+    builder
+        .set_max_level(tracing::Level::WARN)
+        .set_report_logs_in_timings(false);
+    tracing_wasm::set_as_global_default_with_config(builder.build());
 }

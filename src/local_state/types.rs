@@ -121,7 +121,7 @@ impl ReadMarkerRecord {
             "realm_id": &self.body.realm_id,
             "read_scope": &self.body.read_scope,
             "position": &self.body.position,
-            "updated_at": self.updated_at,
+            "updated_at": self.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         })
     }
 

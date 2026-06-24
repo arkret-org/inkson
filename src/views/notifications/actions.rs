@@ -82,6 +82,7 @@ pub(crate) fn refresh_notifications(
                 );
                 let hydrated = {
                     let mut store = state_store.write();
+                    store.ingest_to_device_messages(&response.to_device);
                     store.save_notification_projection(raw_notifications.clone());
                     let local_state = store.load();
                     let effective_dnd = local_state
@@ -173,6 +174,75 @@ pub(crate) fn mark_all_notifications_read(
             )),
             Err(err) => status_msg.set(format!(
                 "All loaded notifications marked read locally; read cursor sync failed: {}",
+                err.display()
+            )),
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn mark_notification_read_state(
+    base_url: String,
+    session_credential: String,
+    actor_id: String,
+    device_id: String,
+    notification: UiNotification,
+    read: bool,
+    mut state_store: Signal<LocalStateStore>,
+    mut notifications: Signal<Vec<UiNotification>>,
+    mut status_msg: Signal<String>,
+) {
+    let notification_id = notification.id.clone();
+    notifications.with_mut(|items| {
+        if let Some(entry) = items
+            .iter_mut()
+            .find(|candidate| candidate.id == notification_id)
+        {
+            entry.read = read;
+        }
+    });
+    let marker = {
+        let mut store = state_store.write();
+        store.batch(|store| {
+            store.set_notification_read(notification_id.clone(), read);
+            if !read || actor_id.trim().is_empty() || device_id.trim().is_empty() {
+                return None;
+            }
+            let Some(event_id) = notification.source_event_id.clone() else {
+                return None;
+            };
+            if notification.realm_id.trim().is_empty() {
+                return None;
+            }
+            Some(store.save_read_cursor(
+                actor_id.clone(),
+                device_id.clone(),
+                notification.realm_id.clone(),
+                notification.strand_id.clone(),
+                event_id,
+            ))
+        })
+    };
+    if !read {
+        status_msg.set("Notification marked unread locally.".to_owned());
+        return;
+    }
+    let Some(marker) = marker else {
+        status_msg.set("Notification marked read locally.".to_owned());
+        return;
+    };
+
+    status_msg.set("Notification marked read; syncing read cursor...".to_owned());
+    spawn(async move {
+        match with_authed_api(&base_url, session_credential, |api| async move {
+            api.submit_read_cursor_advance(&marker).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        {
+            Ok(()) => status_msg.set("Notification marked read and synced.".to_owned()),
+            Err(err) => status_msg.set(format!(
+                "Notification marked read locally; read cursor sync failed: {}",
                 err.display()
             )),
         }

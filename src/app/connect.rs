@@ -962,6 +962,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 store.save_notification_projection(notification_projection);
                             }
                             store.save_presence_projection(sync.presence.clone());
+                            store.ingest_to_device_messages(&sync.to_device);
                             for entry in &sync.account_data {
                                 let Some(data_type) =
                                     entry.get("data_type").and_then(serde_json::Value::as_str)
@@ -1208,7 +1209,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             selected_realm_id.set(first_realm.unwrap_or_default());
                         }
                         projection_events.set(synced_projection_events);
-                        device_queue.set(sync.to_device.len());
+                        device_queue.set(state_store.read().load().to_device_inbox.len());
                         sync_cursor.set(sync.cursor);
                     }
                     Err(error) if is_terminal_session_grant_error(&error) => {

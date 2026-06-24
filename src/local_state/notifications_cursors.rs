@@ -108,6 +108,74 @@ impl LocalStateStore {
             .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
     }
 
+    pub(crate) fn ingest_read_cursor_update_message(&mut self, message: &Value) -> bool {
+        if message
+            .get("kind")
+            .or_else(|| message.get("type"))
+            .and_then(Value::as_str)
+            != Some("ck.read_cursor.update")
+        {
+            return false;
+        }
+        let content = message.get("content").unwrap_or(message);
+        let Some(actor_id) = content.get("actor_id").and_then(Value::as_str) else {
+            return false;
+        };
+        let Some(device_id) = content.get("device_id").and_then(Value::as_str) else {
+            return false;
+        };
+        let Some(realm_id) = content.get("realm_id").and_then(Value::as_str) else {
+            return false;
+        };
+        let Some(read_scope_value) = content.get("read_scope") else {
+            return false;
+        };
+        let Some(position_value) = content.get("position") else {
+            return false;
+        };
+        let Ok(read_scope) = serde_json::from_value::<ReadScope>(read_scope_value.clone()) else {
+            return false;
+        };
+        let Ok(position) = serde_json::from_value::<ReadCursorPosition>(position_value.clone())
+        else {
+            return false;
+        };
+        let updated_at = content
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+        let marker = ReadMarkerRecord {
+            marker_type: "ck.read_cursor.advance".to_owned(),
+            body: ReadMarkerBody {
+                id: content
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(new_read_cursor_id),
+                schema: "ck.schema.read_cursor.v1".to_owned(),
+                realm_id: realm_id.to_owned(),
+                read_scope: read_scope.clone(),
+                position,
+            },
+            actor: actor_id.to_owned(),
+            device_id: device_id.to_owned(),
+            updated_at,
+        };
+        let key = read_cursor_key(realm_id, &read_scope);
+        if self
+            .cached
+            .read_cursors
+            .get(&key)
+            .is_some_and(|existing| !incoming_read_marker_wins(existing, &marker))
+        {
+            return false;
+        }
+        self.cached.read_cursors.insert(key, marker);
+        true
+    }
+
     // ── Per-realm watch level (spec push-notifications.md §4.3.2) ──
     //
     // A realm with no stored entry resolves to the protocol default
@@ -468,4 +536,10 @@ impl LocalStateStore {
         self.cached.notification_dnd_settings = settings;
         let _ = self.flush();
     }
+}
+
+fn incoming_read_marker_wins(existing: &ReadMarkerRecord, incoming: &ReadMarkerRecord) -> bool {
+    existing.body.position.hlc < incoming.body.position.hlc
+        || existing.body.position.hlc == incoming.body.position.hlc
+            && existing.device_id <= incoming.device_id
 }

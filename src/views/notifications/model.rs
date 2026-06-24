@@ -91,6 +91,29 @@ pub(crate) fn read_cursor_targets(
     latest_by_realm.into_values().collect()
 }
 
+pub(crate) fn notification_value_read_by_cursor(
+    index: usize,
+    value: &Value,
+    local_state: &ClientLocalState,
+) -> bool {
+    let id = notification_id_from_value(index, value);
+    let Some(source_event_id) = notification_source_event_id_from_value(value, &id) else {
+        return false;
+    };
+    let realm_id = value_string(value, &["realm_id"]).unwrap_or_default();
+    let strand_id = value_string_with_prefix(
+        value,
+        &["strand_id", "target_strand_id", "space_id"],
+        "ck:strand:",
+    );
+    read_cursor_covers_notification(
+        local_state,
+        &realm_id,
+        strand_id.as_deref(),
+        &source_event_id,
+    )
+}
+
 pub(crate) fn is_notification_account_data(value: &Value) -> bool {
     value.get("schema").and_then(Value::as_str) == Some("ck.schema.notification.v1")
 }
@@ -284,7 +307,7 @@ pub(crate) fn hydrate_notifications(
         .cloned()
         .collect::<BTreeSet<_>>();
     let mut seen_invite_targets = BTreeSet::new();
-    raw_notifications
+    let mut notifications = raw_notifications
         .into_iter()
         .enumerate()
         .filter(|(_, value)| {
@@ -296,7 +319,9 @@ pub(crate) fn hydrate_notifications(
         .filter_map(|(index, value)| {
             notification_from_value(index, value, local_state, push_rules, dnd)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    apply_read_cursors_to_notifications(&mut notifications, local_state);
+    notifications
 }
 
 fn notification_from_value(
@@ -339,20 +364,8 @@ fn notification_from_value(
         return None;
     }
 
-    let id = value_string(&value, &["notification_id", "id"])
-        .unwrap_or_else(|| format!("notification-{index}"));
-    let source_event_id = value_string_with_prefix(
-        &value,
-        &[
-            "source_event_id",
-            "event_id",
-            "target_event_id",
-            "message_event_id",
-            "timeline_event_id",
-        ],
-        "ck:event:",
-    )
-    .or_else(|| id.strip_prefix("ck:event:").map(|_| id.clone()));
+    let id = notification_id_from_value(index, &value);
+    let source_event_id = notification_source_event_id_from_value(&value, &id);
     let strand_id = value_string_with_prefix(
         &value,
         &["strand_id", "target_strand_id", "space_id"],
@@ -413,6 +426,133 @@ fn notification_from_value(
         action,
         watch_hint,
     })
+}
+
+fn apply_read_cursors_to_notifications(
+    notifications: &mut [UiNotification],
+    local_state: &ClientLocalState,
+) {
+    let target_timestamp_by_event = notifications
+        .iter()
+        .filter_map(|notification| {
+            let event_id = notification.source_event_id.as_ref()?;
+            Some((event_id.clone(), notification.timestamp.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    for notification in notifications {
+        let Some(source_event_id) = notification.source_event_id.as_deref() else {
+            continue;
+        };
+        if read_cursor_covers_notification_at(
+            local_state,
+            &notification.realm_id,
+            notification.strand_id.as_deref(),
+            source_event_id,
+            &notification.timestamp,
+            &target_timestamp_by_event,
+        ) {
+            notification.read = true;
+        }
+    }
+}
+
+fn notification_id_from_value(index: usize, value: &Value) -> String {
+    value_string(value, &["notification_id", "id"])
+        .unwrap_or_else(|| format!("notification-{index}"))
+}
+
+fn notification_source_event_id_from_value(value: &Value, id: &str) -> Option<String> {
+    value_string_with_prefix(
+        value,
+        &[
+            "source_event_id",
+            "event_id",
+            "target_event_id",
+            "message_event_id",
+            "timeline_event_id",
+        ],
+        "ck:event:",
+    )
+    .or_else(|| id.strip_prefix("ck:event:").map(|_| id.to_owned()))
+}
+
+fn read_cursor_covers_notification(
+    local_state: &ClientLocalState,
+    realm_id: &str,
+    strand_id: Option<&str>,
+    source_event_id: &str,
+) -> bool {
+    read_cursor_covers_notification_at(
+        local_state,
+        realm_id,
+        strand_id,
+        source_event_id,
+        "",
+        &BTreeMap::new(),
+    )
+}
+
+fn read_cursor_covers_notification_at(
+    local_state: &ClientLocalState,
+    realm_id: &str,
+    strand_id: Option<&str>,
+    source_event_id: &str,
+    notification_timestamp: &str,
+    target_timestamp_by_event: &BTreeMap<String, String>,
+) -> bool {
+    if realm_id.trim().is_empty() || source_event_id.trim().is_empty() {
+        return false;
+    }
+    local_state.read_cursors.values().any(|marker| {
+        marker.body.realm_id == realm_id
+            && read_scope_covers_notification(
+                realm_id,
+                strand_id,
+                &marker.body.read_scope.kind,
+                marker.body.read_scope.object_ref.as_deref(),
+            )
+            && read_cursor_position_covers_event(
+                source_event_id,
+                notification_timestamp,
+                &marker.body.position.event_id,
+                target_timestamp_by_event,
+            )
+    })
+}
+
+fn read_scope_covers_notification(
+    realm_id: &str,
+    strand_id: Option<&str>,
+    scope_kind: &str,
+    scope_ref: Option<&str>,
+) -> bool {
+    match scope_kind {
+        "realm" => true,
+        "strand" => {
+            let notification_strand = strand_id
+                .map(ToOwned::to_owned)
+                .or_else(|| crate::local_state::read_scope_for_cursor(realm_id, None).object_ref);
+            scope_ref == notification_strand.as_deref()
+        }
+        _ => false,
+    }
+}
+
+fn read_cursor_position_covers_event(
+    source_event_id: &str,
+    notification_timestamp: &str,
+    cursor_event_id: &str,
+    target_timestamp_by_event: &BTreeMap<String, String>,
+) -> bool {
+    if source_event_id == cursor_event_id {
+        return true;
+    }
+    if let Some(target_timestamp) = target_timestamp_by_event.get(cursor_event_id)
+        && !notification_timestamp.is_empty()
+    {
+        return notification_timestamp <= target_timestamp.as_str();
+    }
+    source_event_id <= cursor_event_id
 }
 
 /// T4.4 — Resolve the wire-safe reason code for a watch-suppressed

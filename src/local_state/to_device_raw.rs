@@ -38,7 +38,9 @@ impl LocalStateStore {
             .map(to_device_message_dedup_key)
             .collect();
         let mut inserted = 0;
+        let mut read_cursor_updated = false;
         for message in messages {
+            read_cursor_updated |= self.ingest_read_cursor_update_message(message);
             if to_device_message_expired(message, now) {
                 continue;
             }
@@ -57,7 +59,7 @@ impl LocalStateStore {
         if overflow > 0 {
             self.cached.to_device_inbox.drain(0..overflow);
         }
-        if inserted > 0 || pruned_expired || overflow > 0 {
+        if inserted > 0 || pruned_expired || overflow > 0 || read_cursor_updated {
             let _ = self.flush();
         }
         inserted
