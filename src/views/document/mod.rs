@@ -13,9 +13,9 @@
 //! presence sidebar listing actors actively editing the document, a
 //! comment composer wired to range start/end inputs, version restore /
 //! diff buttons, and the supporting state machines for both. The data
-//! is sourced from soland's document Morph projection when a `ck:morph:*`
-//! route or persisted document id is available, with local draft fallback
-//! for offline creation.
+//! is sourced from soland's Realm-scoped document Morph projection when a
+//! document Morph route or persisted document id is available, with local
+//! draft fallback for offline creation.
 
 mod model;
 mod panel;

@@ -110,7 +110,10 @@ pub(super) fn route_label(route: &Route) -> &'static str {
         | Route::KanbanBoardTask { .. }
         | Route::KanbanTask { .. } => "Board View",
         Route::Notifications => "Notifications",
-        Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => "Document View",
+        Route::Document
+        | Route::DocumentNew
+        | Route::DocumentRealm { .. }
+        | Route::DocumentMorph { .. } => "Document View",
         Route::Call { .. } => "Call",
         Route::Recovery => "Recovery",
         Route::SettingsDevices => "Devices",

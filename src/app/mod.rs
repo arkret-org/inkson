@@ -1966,6 +1966,7 @@ pub fn RouterView() -> Element {
                 | Route::KanbanBoard { .. }
                 | Route::KanbanBoardTask { .. }
                 | Route::DocumentRealm { .. }
+                | Route::DocumentMorph { .. }
         )
     {
         let stored_surface =
@@ -4808,18 +4809,17 @@ pub fn RouterView() -> Element {
                             state_store,
                         }
                     },
-                    Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => {
+                    Route::Document
+                    | Route::DocumentNew
+                    | Route::DocumentRealm { .. }
+                    | Route::DocumentMorph { .. } => {
                         if let Some(sid) = route.realm_id()
                             && selected_realm_id() != sid
                         {
                             selected_realm_id.set(sid.to_owned());
                         }
                         let document_ref = match &route {
-                            Route::DocumentRealm { realm_id }
-                                if realm_id.starts_with("ck:morph:") =>
-                            {
-                                Some(realm_id.clone())
-                            }
+                            Route::DocumentMorph { morph_id, .. } => Some(morph_id.clone()),
                             _ => None,
                         };
                         rsx! {
