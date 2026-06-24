@@ -137,6 +137,7 @@ pub fn build_typing_envelope(
 pub fn build_receipt_read_envelope(
     realm_id: &str,
     actor_id: &str,
+    strand_id: &str,
     event_id: &str,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
@@ -146,6 +147,8 @@ pub fn build_receipt_read_envelope(
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.receipt.read: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_id)
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.receipt.read: {err}"))?;
+    let strand = cokret_sdk::StrandId::new(strand_id.trim().to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid strand_id for ck.receipt.read: {err}"))?;
     cokret_sdk::EphemeralEnvelope::new(
         "ck.receipt.read",
         realm,
@@ -158,6 +161,11 @@ pub fn build_receipt_read_envelope(
             "schema": "ck.schema.read_receipt.v1",
             "realm_id": realm_id_wire,
             "actor_id": actor_id,
+            "read_scope": {
+                "kind": "strand",
+                "ref": strand.as_str(),
+                "track_name": "discussion"
+            },
             "event_id": event_id,
             "created_at": now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         }),

@@ -134,6 +134,7 @@ pub fn ChatPanel(
     direct_mode: bool,
 ) -> Element {
     let navigator = use_navigator();
+    let did_cache = use_context::<Signal<crate::did_resolver::DidResolutionCache>>();
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
         .then(|| discussion_channel_for_strand(&selected_realm_id, &initial_strand_id));
     let initial_selected_channel = initial_default_channel
@@ -442,11 +443,16 @@ pub fn ChatPanel(
             let realm = selected_realm_id.clone();
             let event_id = top_event.clone();
             let actor = account_did.clone();
+            let strand_id = if selected_channel_value.trim().is_empty() {
+                default_discussion_strand_id(&realm)
+            } else {
+                selected_channel_value.clone()
+            };
             let api_token = token();
             spawn(async move {
                 let _ =
                     crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        api.send_receipt(&realm, &actor, &event_id, "ck.receipt.read")
+                        api.send_receipt(&realm, &actor, &strand_id, &event_id, "ck.receipt.read")
                             .await
                     })
                     .await;
@@ -681,6 +687,8 @@ pub fn ChatPanel(
                         &sync.realms,
                     );
                 }
+                crate::sync_engine::prefetch_persistent_event_sender_keys(&api, &sync, did_cache)
+                    .await;
                 loaded_messages.extend(chat_messages_from_sync_realms_with_sidecar(
                     &sync.realms,
                     Some(&state_store.read()),
@@ -703,6 +711,12 @@ pub fn ChatPanel(
             if !selected_realm_for_load.trim().is_empty()
                 && let Ok(backfill) = api.backfill(&selected_realm_for_load).await
             {
+                crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
+                    &api,
+                    &backfill.events,
+                    did_cache,
+                )
+                .await;
                 merge_channels(
                     &mut channels.write(),
                     channels_from_events(&selected_realm_for_load, &backfill.events),

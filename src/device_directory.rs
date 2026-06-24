@@ -28,12 +28,16 @@
 //! query error (network / decode) is NOT cached so a transient failure can be
 //! retried by the next prefetch.
 //!
-//! ## Tier-2: client-side cross-signing chain verification (§8.3)
+//! ## Accepted trust regimes
 //!
-//! Tier-1 trusts soland's assertion that `device_signing_key` is the device's
-//! authoritative verify key. Tier-2 ([`verify_tier2_chain`]) does **not**: before
-//! a key is cached / used for proof verification the client independently
-//! verifies the full cross-signing chain per `device-lifecycle.md` §5.2.1 / §8.3:
+//! Bare Tier-1 trusts soland's assertion that `device_signing_key` is the
+//! device's authoritative verify key. This module does not accept that for
+//! E2EE proof verification. A positive cache entry requires one of the two
+//! normative trust regimes:
+//!
+//! - **Cross-signing** ([`verify_tier2_chain`]): before a key is cached / used for proof
+//!   verification the client independently verifies the full cross-signing chain per
+//!   `device-lifecycle.md` §5.2.1 / §8.3:
 //!
 //!   1. **DID anchoring** (done here, not by the SDK): resolve the actor's DID document through
 //!      yougen's existing resolver chain ([`crate::did_resolver`]) and confirm
@@ -43,9 +47,13 @@
 //!      `cross_signing_binding`, and the directory key to the SDK primitive
 //!      [`cokret_sdk::verify_device_cross_signing_chain`].
 //!   3. **Accept only on `CrossSigned`**. Missing `cross_signing` / missing `cross_signing_binding`
-//!      (incl. inception bootstrap devices) / `Unverified` / `NeedsReverification` all map to a
-//!      **negative** cache entry — fail-closed, no Tier-1 fallback. The directory
-//!      `device_signing_key` is NEVER trusted on the server's word alone.
+//!      / `Unverified` / `NeedsReverification` all map to a negative cache entry for this regime.
+//! - **Service-attested enrollment** (`device-lifecycle.md` §5.4): managed-DID principals have no
+//!   SSK publish. For those records, `keys/query` must return the accepted
+//!   `enrollment_authority_binding` plus `device_authorize_event_id`; the current device-set
+//!   projection is the hot-path trust anchor. Missing or malformed anchors fail closed.
+//!
+//! If neither regime accepts the record, the directory key is never cached.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
@@ -229,12 +237,7 @@ fn directory_verdict(
     actor: &str,
     device: &str,
 ) -> Option<Option<PublicKeyMaterial>> {
-    let record = outcome
-        .device_keys
-        .iter()
-        .find(|(did, _)| did.as_str() == actor)
-        .and_then(|(_, devices)| devices.iter().find(|(dev, _)| dev.as_str() == device))
-        .map(|(_, record)| record)?;
+    let record = directory_record(outcome, actor, device)?;
 
     // Spec §8.2: a non-active status, or an omitted key, both mean unusable.
     let active = matches!(
@@ -249,6 +252,19 @@ fn directory_verdict(
         .as_deref()
         .and_then(public_key_from_directory_value);
     Some(key)
+}
+
+fn directory_record<'a>(
+    outcome: &'a cokret_sdk::models::KeysQueryOutcome,
+    actor: &str,
+    device: &str,
+) -> Option<&'a cokret_sdk::models::QueryDeviceRecord> {
+    outcome
+        .device_keys
+        .iter()
+        .find(|(did, _)| did.as_str() == actor)
+        .and_then(|(_, devices)| devices.iter().find(|(dev, _)| dev.as_str() == device))
+        .map(|(_, record)| record)
 }
 
 // ── Tier-2: client-side cross-signing chain verification (§8.3) ────────────
@@ -371,16 +387,7 @@ fn tier2_accepted_key(
         .cross_signing
         .iter()
         .find_map(|(did, publish)| (did.as_str() == actor.as_str()).then_some(publish))?;
-    let record = outcome
-        .device_keys
-        .iter()
-        .find(|(did, _)| did.as_str() == actor.as_str())
-        .and_then(|(_, devices)| {
-            devices
-                .iter()
-                .find(|(dev, _)| dev.as_str() == device.as_str())
-        })
-        .map(|(_, record)| record)?;
+    let record = directory_record(outcome, actor.as_str(), device.as_str())?;
     let binding = record.cross_signing_binding.as_ref()?;
 
     // §8.3 step 5: verify the chain over the SAME bare multibase key the
@@ -390,6 +397,31 @@ fn tier2_accepted_key(
         DeviceTrustState::CrossSigned => Some(directory_key),
         _ => None,
     }
+}
+
+/// Accept a managed-DID service-attested device record (§5.4) only when the
+/// active directory key is accompanied by the current device-set projection
+/// anchors: the accepted `ck.device.authorize` id and the enrollment authority
+/// binding that caused the projection.
+fn service_attested_accepted_key(
+    outcome: &cokret_sdk::models::KeysQueryOutcome,
+    actor: &Did,
+    device: &DeviceId,
+) -> Option<PublicKeyMaterial> {
+    let directory_key = directory_verdict(outcome, actor.as_str(), device.as_str())??;
+    let record = directory_record(outcome, actor.as_str(), device.as_str())?;
+    if record.cross_signing_binding.is_some() {
+        return None;
+    }
+    let binding = record.enrollment_authority_binding.as_ref()?;
+    if binding.kind != cokret_sdk::DeviceEnrollmentAuthorityBinding::KIND_SERVICE_ATTESTED {
+        return None;
+    }
+    if binding.authorization_ref.trim().is_empty() {
+        return None;
+    }
+    record.device_authorize_event_id.as_ref()?;
+    Some(directory_key)
 }
 
 /// Strip the optional `did:key:` prefix from a directory `device_signing_key`,
@@ -403,16 +435,15 @@ fn directory_signing_key_multibase(value: &str) -> Option<String> {
     multibase.starts_with('z').then(|| multibase.to_owned())
 }
 
-/// Async resolve: query soland for the `(actor, device)` directory record,
-/// DID-anchor + chain-verify the cross-signing chain (Tier-2, §8.3), update the
-/// cache (positive or negative), and return the resolved key.
+/// Async resolve: query soland for the `(actor, device)` directory record, run
+/// the accepted device trust regime (cross-signing §8.3, or service-attested
+/// device-set projection §5.4), update the cache (positive or negative), and
+/// return the resolved key.
 ///
-/// Returns `Ok(Some(key))` **only** for an active device whose full
-/// cross-signing chain verifies `CrossSigned` against the DID-anchored PSK;
-/// `Ok(None)` for revoked / absent / no-key / missing-Tier-2-material /
-/// chain-verification-failure (a negative cache entry is written, fail-closed);
-/// `Err` for a transport / decode failure (NOT cached, so a later prefetch
-/// retries).
+/// Returns `Ok(Some(key))` only for an active device accepted by one of those
+/// regimes; `Ok(None)` for revoked / absent / no-key / missing trust material /
+/// verification failure (a negative cache entry is written, fail-closed);
+/// `Err` for a transport / decode failure (not cached, so a later prefetch retries).
 pub async fn resolve_device_signing_key(
     api: &CokretApi,
     anchor: &dyn DidAnchor,
@@ -444,11 +475,12 @@ pub async fn resolve_device_signing_key(
     // fail-closes). `did:key` actors self-resolve and skip the fetch.
     let _ = anchor.ensure_actor_document(&api.http, &actor_did).await;
 
-    // An unresolvable actor → fail-closed (negative cache), per §8.2.
-    let key = match anchor.resolve_did_document(&actor_did) {
+    let cross_signed_key = match anchor.resolve_did_document(&actor_did) {
         Some(did_document) => tier2_accepted_key(&outcome, &did_document, &actor_did, &device_id),
         None => None,
     };
+    let key = cross_signed_key
+        .or_else(|| service_attested_accepted_key(&outcome, &actor_did, &device_id));
     store_entry(actor, device, key.clone());
     Ok(key)
 }
@@ -727,6 +759,66 @@ mod tests {
             }))
             .unwrap();
         assert!(directory_verdict(&outcome, "did:web:nobody", TEST_DEVICE_ID).is_none());
+    }
+
+    #[test]
+    fn service_attested_accepts_projected_device_anchor() {
+        let did = test_did_key(55);
+        let actor = Did::new("did:web:managed-alice.example".to_owned()).unwrap();
+        let device = DeviceId::new(TEST_DEVICE_ID.to_owned()).unwrap();
+        let outcome: cokret_sdk::models::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {
+                    actor.as_str(): {
+                        device.as_str(): {
+                            "algorithms": {},
+                            "device_signing_key": did.clone(),
+                            "device_status": "active",
+                            "enrollment_authority_binding": {
+                                "kind": "service_attested",
+                                "authority_did": "did:web:auth.example",
+                                "authorization_ref": "did:web:managed-alice.example#device-enrollment"
+                            },
+                            "device_authorize_event_id": "ck:event:01904100-0000-7000-8000-000000000011"
+                        }
+                    }
+                }
+            }))
+            .unwrap();
+        let key = service_attested_accepted_key(&outcome, &actor, &device)
+            .expect("service-attested projection anchors accept the device key");
+        assert_eq!(
+            key.ed25519_bytes().unwrap(),
+            public_key_from_directory_value(&did)
+                .unwrap()
+                .ed25519_bytes()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn service_attested_missing_authorize_event_id_fails_closed() {
+        let actor = Did::new("did:web:managed-bob.example".to_owned()).unwrap();
+        let device = DeviceId::new(TEST_DEVICE_ID.to_owned()).unwrap();
+        let outcome: cokret_sdk::models::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {
+                    actor.as_str(): {
+                        device.as_str(): {
+                            "algorithms": {},
+                            "device_signing_key": test_did_key(56),
+                            "device_status": "active",
+                            "enrollment_authority_binding": {
+                                "kind": "service_attested",
+                                "authority_did": "did:web:auth.example",
+                                "authorization_ref": "did:web:managed-bob.example#device-enrollment"
+                            }
+                        }
+                    }
+                }
+            }))
+            .unwrap();
+        assert!(service_attested_accepted_key(&outcome, &actor, &device).is_none());
     }
 
     // ── Tier-2 client cross-signing chain (§8.3) ───────────────────────────

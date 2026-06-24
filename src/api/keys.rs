@@ -257,6 +257,34 @@ impl CokretApi {
         backup_id: &str,
         payload: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
+        let (record, _) = self
+            .prepare_key_backup_put_payload(backup_id, payload)
+            .await?;
+        let body = cokret_sdk::KeysBackupsPutRequestBody(record);
+        self.put_json(&format!("_cokret/self/keys/backups/{backup_id}"), &body)
+            .await
+    }
+
+    pub async fn put_key_backup_returning_sent_body(
+        &self,
+        backup_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
+        let (record, sent_body) = self
+            .prepare_key_backup_put_payload(backup_id, payload)
+            .await?;
+        let body = cokret_sdk::KeysBackupsPutRequestBody(record);
+        let response = self
+            .put_json(&format!("_cokret/self/keys/backups/{backup_id}"), &body)
+            .await?;
+        Ok((response, sent_body))
+    }
+
+    async fn prepare_key_backup_put_payload(
+        &self,
+        backup_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<(cokret_sdk::KeyBackup, serde_json::Value)> {
         crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
             .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
         let record: cokret_sdk::KeyBackup = serde_json::from_value(payload)?;
@@ -266,9 +294,8 @@ impl CokretApi {
         crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
             .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
         let record: cokret_sdk::KeyBackup = serde_json::from_value(payload)?;
-        let body = cokret_sdk::KeysBackupsPutRequestBody(record);
-        self.put_json(&format!("_cokret/self/keys/backups/{backup_id}"), &body)
-            .await
+        let sent_body = serde_json::to_value(&record)?;
+        Ok((record, sent_body))
     }
 
     async fn attach_key_backup_current_device_trust_anchor(

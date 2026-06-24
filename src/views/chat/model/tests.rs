@@ -25,7 +25,7 @@ mod device_identity_proof_tests {
         });
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        let verification_method = format!("{actor_id}#device");
+        let verification_method = signer.verification_method().to_owned();
         let created_at = "2026-06-16T00:00:00Z";
         let binding = json!({
             "event_digest": event_digest,
@@ -140,21 +140,26 @@ mod device_identity_proof_tests {
     }
 
     #[test]
-    fn standard_event_without_device_id_stays_visible_as_unresolved() {
+    fn standard_event_without_device_id_uses_proof_fragment_device() {
         let actor = "did:web:chat-fran.example";
         let device = "ck:device:chat-f1";
-        let signer = crate::event_signer::build_ed25519_signer([56u8; 32], actor);
+        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+            [56u8; 32],
+            actor,
+            format!("{actor}#{device}"),
+        );
         let mut envelope = signed_message_envelope(&signer, actor, device);
         envelope.as_object_mut().unwrap().remove("device_id");
-        crate::device_directory::invalidate(actor, device);
+        crate::device_directory::seed_positive_for_test(actor, device, pubkey(56));
 
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::Unresolved
+            ChatProofVerdict::Verified
         );
         let message = chat_message_from_event("ck:realm:r", &envelope)
-            .expect("standard Event envelope without device_id stays visible");
-        assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
+            .expect("standard Event envelope without device_id uses proof fragment");
+        assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
+        crate::device_directory::invalidate(actor, device);
     }
 
     #[test]

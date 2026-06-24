@@ -116,6 +116,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor: &str,
+        strand_id: &str,
         event_id: &str,
         receipt_type: &str,
     ) -> anyhow::Result<ReceiptResult> {
@@ -125,7 +126,7 @@ impl CokretApi {
         if receipt_type != "ck.receipt.read" {
             anyhow::bail!("unsupported ephemeral receipt_type {receipt_type:?}");
         }
-        let envelope = build_receipt_read_envelope(realm_id, actor, event_id)?;
+        let envelope = build_receipt_read_envelope(realm_id, actor, strand_id, event_id)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(ReceiptResult {
             ok: response.accepted,

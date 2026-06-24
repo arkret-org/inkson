@@ -1152,6 +1152,12 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             }
                             *did_cache.write() = anchor.into_cache();
                         }
+                        crate::sync_engine::prefetch_persistent_event_sender_keys(
+                            &authed,
+                            &sync,
+                            ctx.did_cache,
+                        )
+                        .await;
                         let synced_projection_events = {
                             {
                                 let mut store = state_store.write();

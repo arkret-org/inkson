@@ -279,14 +279,9 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
     if !persistent_proof_controllers_match_actor(envelope, actor) {
         return ChatProofVerdict::Rejected;
     }
-    let device = envelope
-        .get("device_id")
-        .or_else(|| envelope.get("sender_device_id"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if device.is_empty() {
+    let Some(device) = persistent_proof_sender_device(envelope, actor) else {
         return ChatProofVerdict::Unresolved;
-    }
+    };
     match crate::device_directory::cached_device_signing_key(actor, device) {
         crate::device_directory::CacheLookup::Hit(key) => {
             if crate::device_directory::verify_persistent_envelope_proofs(envelope, &key) {
@@ -300,6 +295,27 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
     }
 }
 
+fn persistent_proof_sender_device<'a>(envelope: &'a Value, actor: &str) -> Option<&'a str> {
+    envelope
+        .get("device_id")
+        .or_else(|| envelope.get("sender_device_id"))
+        .and_then(Value::as_str)
+        .filter(|device| !device.trim().is_empty())
+        .or_else(|| {
+            envelope
+                .get("proofs")
+                .and_then(Value::as_array)
+                .and_then(|proofs| {
+                    proofs.iter().find_map(|proof| {
+                        proof
+                            .get("verification_method")
+                            .and_then(Value::as_str)
+                            .and_then(|method| verification_method_device_fragment(method, actor))
+                    })
+                })
+        })
+}
+
 fn verification_method_controller(verification_method: &str) -> &str {
     let no_query = verification_method
         .split_once('?')
@@ -309,6 +325,18 @@ fn verification_method_controller(verification_method: &str) -> &str {
         .split_once('#')
         .map(|(head, _)| head)
         .unwrap_or(no_query)
+}
+
+fn verification_method_device_fragment<'a>(
+    verification_method: &'a str,
+    actor: &str,
+) -> Option<&'a str> {
+    let no_query = verification_method
+        .split_once('?')
+        .map(|(head, _)| head)
+        .unwrap_or(verification_method);
+    let (controller, fragment) = no_query.split_once('#')?;
+    (controller == actor && fragment.starts_with("ck:device:")).then_some(fragment)
 }
 
 fn persistent_proof_controllers_match_actor(envelope: &Value, actor: &str) -> bool {

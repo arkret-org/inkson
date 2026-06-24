@@ -734,6 +734,9 @@ async fn run_iteration(
             // (fail-closed). Done here, not inside the synchronous
             // `apply_response`, because the directory query is async.
             route_inbound_call_signals(&api, &response, ctx).await;
+            if prefetch_persistent_event_sender_keys(&api, &response, ctx.did_cache).await {
+                refresh_projection_events_from_sync_response(&response, is_full_sync, ctx);
+            }
             if let Err(error) = process_to_device_delivery(&api, &response, ctx).await {
                 if is_auth_expired_error(&error) {
                     return IterationOutcome::AuthExpired;
@@ -872,6 +875,166 @@ async fn route_inbound_call_signals(
     }
 
     *did_cache.write() = anchor.into_cache();
+}
+
+/// Prime the same device-directory cache used by the synchronous chat proof
+/// verifier for proof-bearing persistent events in the current sync response.
+/// Chat projection cannot await `keys/query` inline, so `apply_response` first
+/// renders unresolved proofs conservatively; this pass resolves missing sender
+/// device keys and the caller then recomputes the projection.
+pub(crate) async fn prefetch_persistent_event_sender_keys(
+    api: &CokretApi,
+    response: &ClientSyncOutcome,
+    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+) -> bool {
+    let pairs = collect_persistent_proof_sender_devices(response);
+    prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache).await
+}
+
+pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
+    api: &CokretApi,
+    values: &[Value],
+    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+) -> bool {
+    let mut pairs = BTreeSet::<(String, String)>::new();
+    for value in values {
+        collect_proof_sender_devices_from_value(value, 0, &mut pairs);
+    }
+    prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), did_cache).await
+}
+
+async fn prefetch_persistent_event_sender_key_pairs(
+    api: &CokretApi,
+    pairs: Vec<(String, String)>,
+    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+) -> bool {
+    if pairs.is_empty() {
+        return false;
+    }
+    let missing: Vec<(String, String)> = pairs
+        .into_iter()
+        .filter(|(actor, device)| {
+            matches!(
+                crate::device_directory::cached_device_signing_key(actor, device),
+                crate::device_directory::CacheLookup::Miss
+            )
+        })
+        .collect();
+    if missing.is_empty() {
+        return false;
+    }
+
+    let mut did_cache = did_cache;
+    let anchor = crate::did_resolver::ResolverDidAnchor::from_profile(
+        crate::did_resolver::DeploymentProfile::PersonalNode,
+        did_cache.read().clone(),
+    );
+    crate::device_directory::prefetch_device_keys(api, &anchor, &missing).await;
+    *did_cache.write() = anchor.into_cache();
+    true
+}
+
+fn refresh_projection_events_from_sync_response(
+    response: &ClientSyncOutcome,
+    is_full_sync: bool,
+    ctx: &SyncEngineContext,
+) {
+    let state_store = ctx.state_store;
+    let mut projection_events = ctx.projection_events;
+    let account_did = ctx.account_did.read().clone();
+    let device_id = ctx.device_id.read().clone();
+    let synced_projection_events = {
+        let store_guard = state_store.read();
+        crate::views::account_projection::projection_events_from_sync_realms(
+            &response.realms,
+            Some(&store_guard),
+            Some((&account_did, &device_id)),
+        )
+    };
+    let next_projection_events = if is_full_sync {
+        synced_projection_events
+    } else {
+        crate::app::merge_projection_events(&projection_events.read(), synced_projection_events)
+    };
+    projection_events.set(next_projection_events);
+}
+
+fn collect_persistent_proof_sender_devices(response: &ClientSyncOutcome) -> Vec<(String, String)> {
+    let mut pairs = BTreeSet::<(String, String)>::new();
+    for body in response.realms.values() {
+        collect_proof_sender_devices_from_value(body, 0, &mut pairs);
+    }
+    pairs.into_iter().collect()
+}
+
+fn collect_proof_sender_devices_from_value(
+    value: &Value,
+    depth: usize,
+    pairs: &mut BTreeSet<(String, String)>,
+) {
+    if depth > 32 {
+        return;
+    }
+    match value {
+        Value::Object(object) => {
+            if let Some((actor, device)) = proof_bearing_sender_device(object) {
+                pairs.insert((actor, device));
+            }
+            for child in object.values() {
+                collect_proof_sender_devices_from_value(child, depth + 1, pairs);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_proof_sender_devices_from_value(child, depth + 1, pairs);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn proof_bearing_sender_device(
+    object: &serde_json::Map<String, Value>,
+) -> Option<(String, String)> {
+    object
+        .get("proofs")
+        .and_then(Value::as_array)
+        .filter(|proofs| !proofs.is_empty())?;
+    let actor = object
+        .get("actor_id")
+        .or_else(|| object.get("sender_actor_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|actor| !actor.is_empty())?;
+    let device = object
+        .get("device_id")
+        .or_else(|| object.get("sender_device_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|device| !device.is_empty())
+        .map(str::to_owned)
+        .or_else(|| proof_sender_device_from_verification_method(object, actor))?;
+    Some((actor.to_owned(), device))
+}
+
+fn proof_sender_device_from_verification_method(
+    object: &serde_json::Map<String, Value>,
+    actor: &str,
+) -> Option<String> {
+    object
+        .get("proofs")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
+        .find_map(|method| {
+            let no_query = method
+                .split_once('?')
+                .map(|(head, _)| head)
+                .unwrap_or(method);
+            let (controller, fragment) = no_query.split_once('#')?;
+            (controller == actor && fragment.starts_with("ck:device:"))
+                .then(|| fragment.to_owned())
+        })
 }
 
 /// Apply an account subscribe response: persist projections (server-authoritatively
@@ -1514,6 +1677,43 @@ mod tests {
         assert!(!to_device_batch_all_ack_safe(&[to_device_message(
             "ck.future.secret.material"
         )]));
+    }
+
+    #[test]
+    fn persistent_proof_sender_device_collection_dedupes_nested_events() {
+        let mut response = empty_response("cursor-1");
+        response.realms.insert(
+            "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            json!({
+                "timeline": {
+                    "events": [
+                        {
+                            "event": {
+                                "actor_id": "did:web:alice.example",
+                                "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+                                "proofs": [{"verification_method": "did:web:alice.example#ck:device:01904100-0000-7000-8000-000000000001"}]
+                            }
+                        },
+                        {
+                            "actor_id": "did:web:alice.example",
+                            "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+                            "proofs": [{"verification_method": "did:web:alice.example#ck:device:01904100-0000-7000-8000-000000000001"}]
+                        },
+                        {
+                            "actor_id": "did:web:bob.example",
+                            "proofs": [{"verification_method": "did:web:bob.example#device"}]
+                        }
+                    ]
+                }
+            }),
+        );
+        assert_eq!(
+            collect_persistent_proof_sender_devices(&response),
+            vec![(
+                "did:web:alice.example".to_owned(),
+                "ck:device:01904100-0000-7000-8000-000000000001".to_owned()
+            )]
+        );
     }
 
     #[test]

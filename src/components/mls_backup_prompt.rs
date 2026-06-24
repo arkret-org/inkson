@@ -16,7 +16,6 @@ use crate::views::helpers::with_authed_api;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
 const MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
-const MLS_PRIVATE_PLAINTEXT_BACKUP_MIN_INTERVAL: Duration = Duration::from_secs(300);
 static MLS_BACKUP_AFTER_WRITE_PROBES: LazyLock<Mutex<BTreeSet<String>>> =
     LazyLock::new(|| Mutex::new(BTreeSet::new()));
 static MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS: LazyLock<
@@ -153,7 +152,6 @@ struct MlsPrivatePlaintextBackupJob {
     latest_sidecar_json: Vec<u8>,
     latest_digest: String,
     last_uploaded_digest: Option<String>,
-    last_upload_at: Option<chrono::DateTime<chrono::Utc>>,
     cached_previous_body: Option<serde_json::Value>,
     scheduled: bool,
     in_flight: bool,
@@ -237,13 +235,7 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
         };
         if job_snapshot.last_uploaded_digest.as_deref() == Some(job_snapshot.latest_digest.as_str())
         {
-            finish_mls_private_plaintext_backup_job(
-                &key,
-                &job_snapshot.latest_digest,
-                None,
-                None,
-                None,
-            );
+            finish_mls_private_plaintext_backup_job(&key, &job_snapshot.latest_digest, None, None);
             return;
         }
         let upload_digest = job_snapshot.latest_digest.clone();
@@ -259,7 +251,6 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
                     &upload_digest,
                     Some(body),
                     Some(upload_digest.clone()),
-                    Some(chrono::Utc::now()),
                 )
             }
             Err(err) => {
@@ -267,7 +258,7 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
                     error = %err,
                     "MLS private plaintext sidecar backup after encrypted write failed"
                 );
-                finish_mls_private_plaintext_backup_job(&key, &upload_digest, None, None, None)
+                finish_mls_private_plaintext_backup_job(&key, &upload_digest, None, None)
             }
         };
         if !rerun {
@@ -278,21 +269,8 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
 
 fn next_mls_private_plaintext_backup_delay(key: &str) -> Option<Duration> {
     let jobs = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock().ok()?;
-    let job = jobs.get(key)?;
-    let Some(last_upload_at) = job.last_upload_at else {
-        return Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE);
-    };
-    let elapsed = chrono::Utc::now().signed_duration_since(last_upload_at);
-    let min_interval = chrono::Duration::from_std(MLS_PRIVATE_PLAINTEXT_BACKUP_MIN_INTERVAL)
-        .unwrap_or_else(|_| chrono::Duration::seconds(300));
-    if elapsed >= min_interval {
-        Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE)
-    } else {
-        let remaining = min_interval - elapsed;
-        Some(Duration::from_millis(
-            u64::try_from(remaining.num_milliseconds()).unwrap_or(0),
-        ))
-    }
+    jobs.get(key)?;
+    Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE)
 }
 
 fn take_mls_private_plaintext_backup_job_snapshot(
@@ -310,7 +288,6 @@ fn finish_mls_private_plaintext_backup_job(
     uploaded_digest: &str,
     cached_previous_body: Option<serde_json::Value>,
     last_uploaded_digest: Option<String>,
-    last_upload_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> bool {
     let Ok(mut jobs) = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() else {
         return false;
@@ -324,9 +301,6 @@ fn finish_mls_private_plaintext_backup_job(
     }
     if let Some(digest) = last_uploaded_digest {
         job.last_uploaded_digest = Some(digest);
-    }
-    if let Some(uploaded_at) = last_upload_at {
-        job.last_upload_at = Some(uploaded_at);
     }
     if job.latest_digest != uploaded_digest
         && job.last_uploaded_digest.as_deref() != Some(job.latest_digest.as_str())
@@ -1100,8 +1074,45 @@ pub fn MlsBackupPrompt(
 #[cfg(test)]
 mod tests {
     use super::{
-        recovery_key_filename, recovery_key_filename_from_handles, recovery_localpart_from_handles,
+        MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE, MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS,
+        MlsPrivatePlaintextBackupJob, finish_mls_private_plaintext_backup_job,
+        next_mls_private_plaintext_backup_delay, recovery_key_filename,
+        recovery_key_filename_from_handles, recovery_localpart_from_handles,
     };
+
+    #[test]
+    fn changed_private_plaintext_backup_reruns_after_debounce() {
+        let key = "test-private-plaintext-rerun-after-change".to_owned();
+        {
+            let mut jobs = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock().unwrap();
+            jobs.remove(&key);
+            jobs.insert(
+                key.clone(),
+                MlsPrivatePlaintextBackupJob {
+                    latest_digest: "new-sidecar".to_owned(),
+                    last_uploaded_digest: Some("old-sidecar".to_owned()),
+                    in_flight: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        assert!(finish_mls_private_plaintext_backup_job(
+            &key,
+            "old-sidecar",
+            None,
+            Some("old-sidecar".to_owned())
+        ));
+        assert_eq!(
+            next_mls_private_plaintext_backup_delay(&key),
+            Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE)
+        );
+
+        MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS
+            .lock()
+            .unwrap()
+            .remove(&key);
+    }
 
     #[test]
     fn localpart_comes_from_handle_not_did_ulid() {

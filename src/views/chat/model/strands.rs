@@ -382,7 +382,9 @@ pub(crate) fn merge_channels(target: &mut Vec<ChannelEntity>, incoming: Vec<Chan
 
 pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<ChatMessage>) {
     for message in incoming {
-        if !target.iter().any(|existing| existing.id == message.id) {
+        if let Some(existing) = target.iter_mut().find(|existing| existing.id == message.id) {
+            *existing = message;
+        } else {
             target.push(message);
         }
     }

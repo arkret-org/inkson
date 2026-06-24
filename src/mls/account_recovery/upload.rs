@@ -410,11 +410,12 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         sidecar_json,
     )?;
     apply_next_series(previous_backup, &mut body)?;
-    api.put_key_backup(&backup_id, body.clone())
+    let (_, sent_body) = api
+        .put_key_backup_returning_sent_body(&backup_id, body)
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
 
-    Ok((backup_id, body))
+    Ok((backup_id, sent_body))
 }
 
 /// Fetch the FULL body of the current `mls_history` series tail for `realm_id`
@@ -474,8 +475,9 @@ pub async fn upload_mls_history_backup_with_previous(
         crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)
             .map_err(|err| anyhow!("re-sign mls_history successor envelope: {err}"))?;
     }
-    api.put_key_backup(&backup_id, body.clone())
+    let (_, sent_body) = api
+        .put_key_backup_returning_sent_body(&backup_id, body)
         .await
         .map_err(|err| anyhow!("upload mls_history backup: {err}"))?;
-    Ok((backup_id, body))
+    Ok((backup_id, sent_body))
 }

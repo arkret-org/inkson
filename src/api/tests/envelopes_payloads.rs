@@ -103,8 +103,9 @@ fn typing_envelope_uses_spec_ephemeral_shape() {
 #[test]
 fn read_receipt_envelope_uses_actor_not_event_as_sender() {
     let envelope = build_receipt_read_envelope(
-        "ck:space:0196419b-0000-7000-8000-000000000000",
+        "ck:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
+        "ck:strand:01964200-0000-7000-8000-000000000001",
         "ck:event:01904100-0000-7000-8000-4a4116cba4e8",
     )
     .unwrap();
@@ -116,6 +117,14 @@ fn read_receipt_envelope_uses_actor_not_event_as_sender() {
         "ck:realm:0196419b-0000-7000-8000-000000000000"
     );
     assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
+    assert_eq!(
+        envelope.payload["read_scope"],
+        json!({
+            "kind": "strand",
+            "ref": "ck:strand:01964200-0000-7000-8000-000000000001",
+            "track_name": "discussion"
+        })
+    );
     assert_eq!(
         envelope.payload["event_id"],
         "ck:event:01904100-0000-7000-8000-4a4116cba4e8"
