@@ -1765,10 +1765,6 @@ pub fn KanbanPanel(
     // plaintext branch. Known-plaintext (`Some(false)`) stays `false`.
     let selected_scope_security_encrypted_or_secure =
         selected_scope_security_encrypted.unwrap_or(true);
-    let projected_space_container_ids = lifecycle_container_projection()
-        .into_iter()
-        .map(|view| view.space_id)
-        .collect::<BTreeSet<_>>();
     let projected_strand_ids = lifecycle_strand_projection()
         .into_iter()
         .map(|view| view.strand_id)
@@ -1939,19 +1935,6 @@ pub fn KanbanPanel(
                                                     },
                                                     UiIcon { name: "board" }
                                                     span { "{option_title}" }
-                                                    {
-                                                        let local_state = state_store.read().load();
-                                                        let board_write_state = local_space_create_state_for_target(
-                                                            &local_state.raw_operations,
-                                                            &projected_space_container_ids,
-                                                            &option_id,
-                                                        );
-                                                        rsx! {
-                                                            if let Some(state) = board_write_state {
-                                                                WriteStateBadge { state, icon_only: true }
-                                                            }
-                                                        }
-                                                    }
                                                 }
                                             }
                                         }
@@ -2585,19 +2568,6 @@ pub fn KanbanPanel(
                                     "data-testid": "kanban-column-title",
                                     "{column.title}"
                                 }
-                                {
-                                    let local_state = state_store.read().load();
-                                    let column_write_state = local_space_create_state_for_target(
-                                        &local_state.raw_operations,
-                                        &projected_space_container_ids,
-                                        &column.id,
-                                    );
-                                    rsx! {
-                                        if let Some(state) = column_write_state {
-                                            WriteStateBadge { state, icon_only: true }
-                                        }
-                                    }
-                                }
                             }
                         }
 
@@ -2727,24 +2697,40 @@ pub fn KanbanPanel(
                                         replace_card_detail_tab_query(CardDetailContentTab::Description);
                                     }
                                 },
-                                div { class: "event-head",
-                                    span { class: "entity-title strand-title-with-security",
-                                        SecurityStateBadge {
-                                            encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted_or_secure),
-                                            compact: true,
-                                            test_id: Some("strand-card-security-state".to_owned()),
-                                        }
-                                        span { class: "strand-title-text", "{card.title}" }
-                                    }
-                                    WriteStateBadge { state: displayed_card_state(card, &projected_strand_ids) }
+                                div { class: "event-head board-card-title-row",
+                                    span { class: "entity-title board-card-title", "{card.title}" }
                                 }
-                                div { class: "actions",
+                                if !card.labels.is_empty() {
+                                    div { class: "actions board-card-labels",
                                     for label in &card.labels {
                                         span { class: "badge", "{label}" }
                                     }
+                                    }
                                 }
-                                div { class: "muted", "{card.description}" }
-                                div { class: "card-meta", "assignees {card.assignee} / due {card.due}" }
+                                if !card.description.trim().is_empty() {
+                                    div { class: "muted board-card-description", "{card.description}" }
+                                }
+                                {
+                                    let assignee_text = card.assignee.trim();
+                                    let due_text = card.due.trim();
+                                    let show_assignee =
+                                        !assignee_text.is_empty() && assignee_text != "\u{2014}";
+                                    let show_due = !due_text.is_empty()
+                                        && due_text != "\u{2014}"
+                                        && !due_text.eq_ignore_ascii_case("unscheduled");
+                                    rsx! {
+                                        if show_assignee || show_due {
+                                            div { class: "card-meta board-card-meta",
+                                                if show_assignee {
+                                                    span { class: "board-card-meta-item", "assignees {assignee_text}" }
+                                                }
+                                                if show_due {
+                                                    span { class: "board-card-meta-item", "due {due_text}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 div { class: "board-card-footer",
                                     {
                                         let gate = capability_gate_for_strand(

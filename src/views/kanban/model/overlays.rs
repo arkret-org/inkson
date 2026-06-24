@@ -209,6 +209,7 @@ pub(crate) fn raw_operation_kind_matches(payload: &Value, expected: &str) -> boo
         == Some(expected)
 }
 
+#[cfg(test)]
 pub(crate) fn local_operation_state_for_target(
     raw_operations: &[RawOperationRecord],
     kind: &str,
@@ -232,6 +233,7 @@ pub(crate) fn local_operation_state_for_target(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn local_space_create_state_for_target(
     raw_operations: &[RawOperationRecord],
     projected_space_container_ids: &BTreeSet<String>,

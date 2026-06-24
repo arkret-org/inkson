@@ -146,7 +146,7 @@ pub fn StatusBadge(status: String, kind: Option<String>) -> Element {
 #[component]
 pub fn SecurityStateBadge(encrypted: bool, compact: bool, test_id: Option<String>) -> Element {
     let state_class = if encrypted { "encrypted" } else { "plaintext" };
-    let icon = if encrypted { "lock" } else { "alert" };
+    let icon = if encrypted { "shield-check" } else { "alert" };
     let label = if encrypted {
         "Encrypted"
     } else {
@@ -255,6 +255,9 @@ pub fn UiIcon(name: String) -> Element {
         "share" => "M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M12 16V4m0 0 5 5m-5-5-5 5",
         "settings" => {
             "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.25.6.82 1 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z"
+        }
+        "shield-check" => {
+            "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.68 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1v7ZM9 12l2 2 4-4"
         }
         "monitor" => "M3 4h18v12H3V4Zm7 16h4m-7 0h10",
         "sun" => {

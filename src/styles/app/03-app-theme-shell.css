@@ -805,6 +805,36 @@ body {
 .board-card .event-head {
   align-items: flex-start;
 }
+.board-card .event-head.board-card-title-row {
+  display: block;
+}
+.board-card-title {
+  display: block;
+  min-width: 0;
+  color: var(--text, var(--ck-ink));
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.board-card-description {
+  overflow-wrap: anywhere;
+}
+.board-card-labels,
+.board-card-meta {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.board-card-meta {
+  gap: 4px 8px;
+}
+.board-card-meta-item {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .board-card-footer {
   display: flex;
   align-items: center;
