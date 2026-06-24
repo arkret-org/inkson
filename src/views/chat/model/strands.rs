@@ -390,6 +390,77 @@ pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<C
     }
 }
 
+fn pending_message_private_plaintext_sidecar_body(
+    message: &ChatMessage,
+    store: &LocalStateStore,
+    default_realm_id: &str,
+) -> Option<String> {
+    if !message.crypto_state.is_pending() || message.redacted {
+        return None;
+    }
+    let message_id = message
+        .protocol_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let id = message.id.trim();
+            (!id.is_empty()).then_some(id)
+        })?;
+    let strand_id = message.strand_id.trim();
+    if strand_id.is_empty() {
+        return None;
+    }
+    let default_realm_id = default_realm_id.trim();
+    let message_realm_id = message.realm_id.trim();
+    if !default_realm_id.is_empty()
+        && !message_realm_id.is_empty()
+        && message_realm_id != default_realm_id
+    {
+        return None;
+    }
+    let lookup_realm_id = if message_realm_id.is_empty() {
+        default_realm_id
+    } else {
+        message_realm_id
+    };
+    if lookup_realm_id.is_empty() {
+        return None;
+    }
+    store.private_plaintext_for(lookup_realm_id, strand_id, &format!("message:{message_id}"))
+}
+
+pub(crate) fn pending_messages_have_private_plaintext_sidecar(
+    messages: &[ChatMessage],
+    store: &LocalStateStore,
+    default_realm_id: &str,
+) -> bool {
+    messages.iter().any(|message| {
+        pending_message_private_plaintext_sidecar_body(message, store, default_realm_id).is_some()
+    })
+}
+
+pub(crate) fn restore_pending_messages_from_private_plaintext_sidecar(
+    messages: &mut [ChatMessage],
+    store: &LocalStateStore,
+    default_realm_id: &str,
+) -> bool {
+    let mut changed = false;
+    for message in messages.iter_mut() {
+        let Some(body) =
+            pending_message_private_plaintext_sidecar_body(message, store, default_realm_id)
+        else {
+            continue;
+        };
+        if message.body != body || message.crypto_state != MessageCryptoState::Plaintext {
+            message.body = body;
+            message.crypto_state = MessageCryptoState::Plaintext;
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub(crate) fn merge_moderation_appeal_prompts(
     target: &mut Vec<ModerationAppealPrompt>,
     incoming: Vec<ModerationAppealPrompt>,

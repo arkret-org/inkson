@@ -1107,16 +1107,32 @@ pub fn RouterView() -> Element {
             let seen_detection_key_for_result = seen_detection_key;
 
             spawn(async move {
+                let actor_for_sidecar_restore = actor.clone();
+                let device_for_sidecar_restore = device.clone();
                 match crate::views::helpers::with_authed_api(
                     &base,
                     session.clone(),
                     |api| async move {
-                        crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
+                        let payload =
+                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
+                        let sidecar_body_for_local_restore = if has_local_account_secret {
+                            crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
+                                &api,
+                                &actor_for_sidecar_restore,
+                                &device_for_sidecar_restore,
+                            )
+                            .await
+                            .ok()
+                            .flatten()
+                        } else {
+                            None
+                        };
+                        Ok((payload, sidecar_body_for_local_restore))
                     },
                 )
                 .await
                 {
-                    Ok(payload) => {
+                    Ok((payload, sidecar_body_for_local_restore)) => {
                         if seen_detection_key_for_result().as_deref()
                             != Some(detection_key.as_str())
                         {
@@ -1141,14 +1157,24 @@ pub fn RouterView() -> Element {
                                     &mut store, &actor, backup_id,
                                 );
                             }
-                            let _ =
-                                crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                    &payload,
+                            let _ = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                &payload,
+                                &mut store,
+                                secure_store.as_ref(),
+                                &actor,
+                                &device,
+                            );
+                            if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
+                                let sidecar_payload =
+                                    serde_json::json!({ "backups": [sidecar_body.clone()] });
+                                let _ = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                    &sidecar_payload,
                                     &mut store,
                                     secure_store.as_ref(),
                                     &actor,
                                     &device,
                                 );
+                            }
                         }
                         let should_unlock = {
                             let store = state_store_for_detection.read();
@@ -1164,7 +1190,7 @@ pub fn RouterView() -> Element {
                         // wins. Only evaluate the backup prompt when restore is
                         // not required.
                         if should_unlock {
-                            restore_payload_cache.set(Some(payload));
+                            restore_payload_cache.set(Some(payload.clone()));
                             needs_mls_unlock.set(true);
                             needs_mls_backup.set(false);
                             needs_mls_recovery_setup.set(false);
@@ -1780,16 +1806,38 @@ pub fn RouterView() -> Element {
                 // server holds recovery material, flag the unlock prompt.
                 // Detection errors must NOT block or fail boot — log and
                 // leave the flag false.
+                let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
+                    crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
+                    &detect_actor,
+                )
+                .map(|secret| secret.is_some())
+                .unwrap_or(false);
+                let actor_for_sidecar_restore = detect_actor.clone();
+                let device_for_sidecar_restore = detect_device.clone();
                 match crate::views::helpers::with_authed_api(
                     &detect_base,
                     detect_session.clone(),
                     |api| async move {
-                        crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
+                        let payload =
+                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
+                        let sidecar_body_for_local_restore = if has_local_account_secret {
+                            crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
+                                &api,
+                                &actor_for_sidecar_restore,
+                                &device_for_sidecar_restore,
+                            )
+                            .await
+                            .ok()
+                            .flatten()
+                        } else {
+                            None
+                        };
+                        Ok((payload, sidecar_body_for_local_restore))
                     },
                 )
                 .await
                 {
-                    Ok(payload) => {
+                    Ok((payload, sidecar_body_for_local_restore)) => {
                         if seen_bootstrap_key_for_probe().as_deref() != Some(bootstrap_key.as_str())
                         {
                             return;
@@ -1815,14 +1863,24 @@ pub fn RouterView() -> Element {
                                     backup_id,
                                 );
                             }
-                            let _ =
-                                crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                    &payload,
+                            let _ = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                &payload,
+                                &mut store,
+                                secure_store.as_ref(),
+                                &detect_actor,
+                                &detect_device,
+                            );
+                            if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
+                                let sidecar_payload =
+                                    serde_json::json!({ "backups": [sidecar_body.clone()] });
+                                let _ = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                    &sidecar_payload,
                                     &mut store,
                                     secure_store.as_ref(),
                                     &detect_actor,
                                     &detect_device,
                                 );
+                            }
                         }
                         let should_unlock = {
                             let store = state_store_for_probe.read();
@@ -1839,7 +1897,7 @@ pub fn RouterView() -> Element {
                         // realm (local secret now exists) but has no server
                         // backup, flag the one-time backup prompt instead.
                         if should_unlock {
-                            restore_payload_cache_for_bootstrap.set(Some(payload));
+                            restore_payload_cache_for_bootstrap.set(Some(payload.clone()));
                             needs_mls_unlock_for_bootstrap.set(true);
                             needs_mls_backup_for_bootstrap.set(false);
                             needs_mls_recovery_setup_for_bootstrap.set(false);

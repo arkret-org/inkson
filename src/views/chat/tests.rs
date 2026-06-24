@@ -804,6 +804,67 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
 }
 
 #[test]
+fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
+    let temp = std::env::temp_dir().join(format!("yougen-pending-sidecar-refresh-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    let realm = "ck:realm:local";
+    let strand = "ck:strand:announce";
+    let message_id = "ck:message:restored";
+    let mut messages = vec![ChatMessage {
+        realm_id: realm.to_owned(),
+        id: "ck:event:restored".to_owned(),
+        protocol_message_id: Some(message_id.to_owned()),
+        sender: "did:web:alice.example".to_owned(),
+        executed_by: None,
+        body: String::new(),
+        timestamp: "10:00".to_owned(),
+        strand_id: strand.to_owned(),
+        reply_to: None,
+        reactions: Vec::new(),
+        redacted: false,
+        edited: false,
+        revisions: Vec::new(),
+        pending: false,
+        failed: false,
+        error: None,
+        mentions: Vec::new(),
+        crypto_state: MessageCryptoState::KeyMissing,
+    }];
+
+    assert!(!pending_messages_have_private_plaintext_sidecar(
+        &messages, &store, realm
+    ));
+    assert!(!restore_pending_messages_from_private_plaintext_sidecar(
+        messages.as_mut_slice(),
+        &store,
+        realm
+    ));
+
+    store.save_private_plaintext(
+        realm,
+        strand,
+        &format!("message:{message_id}"),
+        "restored after sidecar sync",
+    );
+
+    assert!(pending_messages_have_private_plaintext_sidecar(
+        &messages, &store, realm
+    ));
+    assert!(restore_pending_messages_from_private_plaintext_sidecar(
+        messages.as_mut_slice(),
+        &store,
+        realm
+    ));
+    assert_eq!(messages[0].body, "restored after sidecar sync");
+    assert_eq!(messages[0].crypto_state, MessageCryptoState::Plaintext);
+    assert!(!restore_pending_messages_from_private_plaintext_sidecar(
+        messages.as_mut_slice(),
+        &store,
+        realm
+    ));
+}
+
+#[test]
 fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
     let temp = std::env::temp_dir().join(format!("yougen-expiry-stub-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);

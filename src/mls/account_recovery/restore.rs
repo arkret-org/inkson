@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::backup_body::{
     decrypt_mls_account_secret_backup, decrypt_mls_private_plaintext_backup,
-    open_mls_account_secret_recovery_public_key_backup,
+    is_mls_private_plaintext_backup, open_mls_account_secret_recovery_public_key_backup,
 };
 use super::selection::{
     all_mls_account_secret_backups, is_mls_history_backup, mls_account_secret_backup_version,
@@ -133,6 +133,12 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
     // both to avoid useless restores and to keep the per-principal 24h
     // full-ciphertext download quota (default 64) from being burned on links.
     let mls_history_tails = mls_history_series_tail_ids(&payload);
+    let private_plaintext_tail_id =
+        select_mls_private_plaintext_backup(&payload).and_then(|body| {
+            body.get("backup_id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        });
     let mut full_backups = Vec::new();
     for entry in payload
         .get("backups")
@@ -140,14 +146,20 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
         .cloned()
         .unwrap_or_default()
     {
+        let backup_id = entry
+            .get("backup_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         if is_mls_history_backup(&entry) {
-            let backup_id = entry
-                .get("backup_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if !mls_history_tails.contains(backup_id) {
+            if !mls_history_tails.contains(backup_id.as_str()) {
                 continue;
             }
+        }
+        if is_mls_private_plaintext_backup(&entry)
+            && private_plaintext_tail_id.as_deref() != Some(backup_id.as_str())
+        {
+            continue;
         }
         if entry.get("ciphertext").and_then(Value::as_str).is_some() {
             full_backups.push(entry);
@@ -164,10 +176,11 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
             full_backups.push(entry);
             continue;
         }
-        let backup_id = entry
-            .get("backup_id")
-            .and_then(Value::as_str)
-            .unwrap_or("(unknown)");
+        let backup_id = if backup_id.is_empty() {
+            "(unknown)"
+        } else {
+            backup_id.as_str()
+        };
         let full = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
             api, &entry, actor_id, device_id,
         )

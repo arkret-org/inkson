@@ -41,6 +41,7 @@ pub fn MlsUnlockPrompt(
     needs_mls_unlock: Signal<bool>,
     restore_payload_cache: Signal<Option<serde_json::Value>>,
 ) -> Element {
+    let _ = restore_payload_cache;
     let mut passphrase = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -97,7 +98,6 @@ pub fn MlsUnlockPrompt(
         let device = device_id();
         let mut state_store = state_store;
         let needs_mls_unlock = needs_mls_unlock;
-        let restore_payload_cache = restore_payload_cache;
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
@@ -114,7 +114,6 @@ pub fn MlsUnlockPrompt(
             .await;
             let result = match payload_result {
                 Ok(payload) => {
-                    try_set_signal(restore_payload_cache, Some(payload.clone()));
                     let history_count =
                         crate::mls::account_recovery::select_mls_history_backups(&payload).len();
                     try_set_status(
@@ -176,7 +175,6 @@ pub fn MlsUnlockPrompt(
                             crate::i18n::tr("mls_unlock.status.restored_suffix")
                         );
                         try_set_signal(passphrase, String::new());
-                        try_set_signal(restore_payload_cache, None);
                         try_set_status(status, restored_status);
                         crate::api::sleep_for(std::time::Duration::from_millis(750)).await;
                         try_set_signal(needs_mls_unlock, false);

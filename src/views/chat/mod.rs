@@ -796,6 +796,27 @@ pub fn ChatPanel(
     }
 
     {
+        let realm_for_sidecar = selected_realm_id.clone();
+        let mut messages_sig = messages;
+        use_effect(move || {
+            let store = state_store.read();
+            if !pending_messages_have_private_plaintext_sidecar(
+                messages_sig.peek().as_slice(),
+                &store,
+                &realm_for_sidecar,
+            ) {
+                return;
+            }
+            let mut current = messages_sig.write();
+            restore_pending_messages_from_private_plaintext_sidecar(
+                current.as_mut_slice(),
+                &store,
+                &realm_for_sidecar,
+            );
+        });
+    }
+
+    {
         let messages_for_scroll = messages;
         let selected_channel_for_scroll = selected_channel;
         // Only scroll to the latest message when the visible count or the
