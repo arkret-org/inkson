@@ -4,6 +4,7 @@ use serde_json::Value;
 pub(crate) struct RealmMemberPermissions {
     pub(crate) loaded: bool,
     pub(crate) can_invite: bool,
+    pub(crate) can_cancel_invite: bool,
     pub(crate) can_remove: bool,
 }
 

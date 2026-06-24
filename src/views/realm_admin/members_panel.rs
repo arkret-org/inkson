@@ -58,6 +58,36 @@ impl AgentMentionPolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MemberRosterSection {
+    Members,
+    Owners,
+    Admins,
+    PendingInvites,
+}
+
+impl MemberRosterSection {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Members => "Members",
+            Self::Owners => "Owners",
+            Self::Admins => "Admins",
+            Self::PendingInvites => "Pending invites",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Members => "Active Realm members without owner or admin authority.",
+            Self::Owners => "Realm owners with top-level governance authority.",
+            Self::Admins => "Realm admins with management authority.",
+            Self::PendingInvites => {
+                "Invitations sent for this Realm that have not been accepted yet."
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct MemberAgentRow {
     agent_principal_id: String,
@@ -73,6 +103,7 @@ struct MemberAgentRow {
 struct MemberProfile {
     actor_id: String,
     subject_id: Option<String>,
+    invite_id: Option<String>,
     display_name: Option<String>,
     avatar_blob_ref: Option<String>,
     avatar_url: Option<String>,
@@ -90,6 +121,7 @@ impl MemberProfile {
         Self {
             actor_id: actor_id.into(),
             subject_id: None,
+            invite_id: None,
             display_name: None,
             avatar_blob_ref: None,
             avatar_url: None,
@@ -473,6 +505,7 @@ fn profile_from_projected_member_object(
     );
     let mut profile = MemberProfile::bare(actor_id);
     profile.subject_id = subject_id;
+    profile.invite_id = trimmed_string(map.get("invite_id").or_else(|| map.get("id")));
     profile.display_name = projection_path_string(
         map,
         &[
@@ -517,6 +550,9 @@ fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
     if target.subject_id.is_none() {
         target.subject_id = incoming.subject_id;
     }
+    if target.invite_id.is_none() {
+        target.invite_id = incoming.invite_id;
+    }
     if target.display_name.is_none() {
         target.display_name = incoming.display_name;
     }
@@ -529,7 +565,10 @@ fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
     for handle in incoming.handles {
         push_unique(&mut target.handles, handle);
     }
-    if target.membership.is_none() {
+    if should_replace_member_membership(
+        target.membership.as_deref(),
+        incoming.membership.as_deref(),
+    ) {
         target.membership = incoming.membership;
     }
     if target.member_display_state_digest.is_none() {
@@ -537,6 +576,29 @@ fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
     }
     target.is_owner |= incoming.is_owner;
     target.is_admin |= incoming.is_admin;
+}
+
+fn should_replace_member_membership(current: Option<&str>, incoming: Option<&str>) -> bool {
+    let Some(incoming) = normalize_membership_value(incoming) else {
+        return false;
+    };
+    let current = normalize_membership_value(current);
+    current.is_none() || membership_precedence(Some(incoming)) > membership_precedence(current)
+}
+
+fn normalize_membership_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn membership_precedence(value: Option<&str>) -> u8 {
+    match normalize_membership_value(value) {
+        Some("ban" | "leave") => 5,
+        Some("join") => 4,
+        Some("invite" | "pending" | "pending_invite") => 2,
+        Some("knock") => 1,
+        Some(_) => 3,
+        None => 0,
+    }
 }
 
 fn upsert_member_profile(out: &mut BTreeMap<String, MemberProfile>, profile: MemberProfile) {
@@ -705,8 +767,17 @@ fn projected_member_profiles_for_realm(
             }
         }
     }
+    let locally_terminal_invites =
+        local_terminal_invite_ids_for_realm(&state.raw_operations, realm_id);
     for record in &state.raw_operations {
         if let Some(profile) = local_pending_invite_profile_from_raw_operation(record, realm_id) {
+            if profile
+                .invite_id
+                .as_deref()
+                .is_some_and(|invite_id| locally_terminal_invites.contains(invite_id))
+            {
+                continue;
+            }
             upsert_member_profile(&mut rows, profile);
         }
     }
@@ -715,6 +786,25 @@ fn projected_member_profiles_for_realm(
         enrich_member_profile_from_store(store, realm_id, profile);
     }
     out
+}
+
+fn local_terminal_invite_ids_for_realm(
+    records: &[RawOperationRecord],
+    realm_id: &str,
+) -> BTreeSet<String> {
+    records
+        .iter()
+        .filter(|record| record.realm_id.as_deref().map(str::trim) == Some(realm_id.trim()))
+        .filter_map(|record| {
+            let payload = &record.payload;
+            match trimmed_string(payload.get("kind")).as_deref() {
+                Some("ck.invite.cancel" | "ck.invite.revoke") => {
+                    trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")))
+                }
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 fn group_members_with_owned_agents(
@@ -801,6 +891,7 @@ fn upsert_pending_invite_profile(
     rows: &mut Vec<MemberProfile>,
     actor_id: &str,
     label: Option<&str>,
+    invite_id: Option<&str>,
 ) {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
@@ -830,11 +921,21 @@ fn upsert_pending_invite_profile(
         if existing.normalized_membership() != Some("join") {
             existing.membership = Some("invite".to_owned());
         }
+        if existing.invite_id.is_none() {
+            existing.invite_id = invite_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+        }
         apply_label(existing);
         return;
     }
     let mut profile = MemberProfile::bare(actor_id.to_owned());
     profile.membership = Some("invite".to_owned());
+    profile.invite_id = invite_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
     apply_label(&mut profile);
     rows.push(profile);
     rows.sort_by(|left, right| left.actor_id.cmp(&right.actor_id));
@@ -865,6 +966,7 @@ fn local_pending_invite_profile_from_raw_operation(
     )?;
     let mut profile = MemberProfile::bare(actor_id.clone());
     profile.membership = Some("invite".to_owned());
+    profile.invite_id = trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")));
     if let Some(label) = trimmed_string(
         payload
             .get("invitee_label")
@@ -915,6 +1017,15 @@ fn member_group_matches(group: &MemberGroup, query: &str) -> bool {
                 || agent.display_name.to_lowercase().contains(&query)
                 || agent.agent_slug.to_lowercase().contains(&query)
         })
+}
+
+fn member_group_in_section(group: &MemberGroup, section: MemberRosterSection) -> bool {
+    match section {
+        MemberRosterSection::Members => !group.controller.is_governance_principal(),
+        MemberRosterSection::Owners => group.controller.is_owner,
+        MemberRosterSection::Admins => group.controller.is_admin && !group.controller.is_owner,
+        MemberRosterSection::PendingInvites => false,
+    }
 }
 
 fn agent_invite_target(agent_principal_id: &str, service_did: &str) -> String {
@@ -1214,10 +1325,30 @@ fn MemberRowActions(
 }
 
 #[component]
-fn PendingInviteRow(profile: MemberProfile) -> Element {
+fn PendingInviteRow(
+    profile: MemberProfile,
+    base_url: String,
+    token: Signal<String>,
+    account_did: String,
+    selected_realm_id: String,
+    can_cancel_invite: bool,
+    mut members: Signal<Vec<MemberProfile>>,
+    state_store: Signal<LocalStateStore>,
+    mut frontier_state: Signal<String>,
+    mut status_msg: Signal<String>,
+) -> Element {
     let member = profile.actor_id.clone();
     let member_label = profile.primary_label();
     let avatar_initial = member_avatar_initial(&profile);
+    let avatar_blob_ref = profile.avatar_blob_ref.clone();
+    let avatar_url = profile.avatar_url.clone();
+    let invite_id = profile.invite_id.clone().unwrap_or_default();
+    let can_cancel_this_invite = can_cancel_invite && !invite_id.trim().is_empty();
+    let cancel_title = if can_cancel_this_invite {
+        "Cancel pending invite"
+    } else {
+        "Invite id is not available yet"
+    };
     let state = profile
         .normalized_membership()
         .unwrap_or("invite")
@@ -1243,7 +1374,21 @@ fn PendingInviteRow(profile: MemberProfile) -> Element {
                 div {
                     class: "member-avatar member-avatar-pending",
                     title: "{member}",
-                    if avatar_initial == "?" {
+                    if let Some(blob_ref) = avatar_blob_ref.clone() {
+                        div { class: "member-avatar-image",
+                            crate::content::renderer::AuthenticatedBlobImage {
+                                blob_ref,
+                                alt_text: member_label.clone(),
+                            }
+                        }
+                    } else if let Some(url) = avatar_url.clone() {
+                        img {
+                            class: "member-avatar-img",
+                            src: "{url}",
+                            alt: "{member_label}",
+                            title: "{member}"
+                        }
+                    } else if avatar_initial == "?" {
                         crate::components::UiIcon { name: "user-plus" }
                     } else {
                         "{avatar_initial}"
@@ -1283,6 +1428,83 @@ fn PendingInviteRow(profile: MemberProfile) -> Element {
                                 span { title: "{subject_id}", "{subject_label}" }
                             }
                         }
+                    }
+                }
+            }
+            div { class: "actions",
+                if can_cancel_invite {
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "cancel-pending-invite-button",
+                        disabled: !can_cancel_this_invite,
+                        title: "{cancel_title}",
+                        onclick: {
+                            let base = base_url.clone();
+                            let realm = selected_realm_id.clone();
+                            let actor = account_did.clone();
+                            let invite_id = invite_id.clone();
+                            let member = member.clone();
+                            let member_label = member_label.clone();
+                            move |_| {
+                                if invite_id.trim().is_empty() {
+                                    status_msg.set("invite id is not available yet".to_owned());
+                                    return;
+                                }
+                                let base = base.clone();
+                                let realm = realm.clone();
+                                let actor = actor.clone();
+                                let invite_id = invite_id.clone();
+                                let member = member.clone();
+                                let member_label = member_label.clone();
+                                let api_token = token();
+                                spawn(async move {
+                                    let request_realm = realm.clone();
+                                    let request_invite_id = invite_id.clone();
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move {
+                                            api.reject_realm_invite(
+                                                &request_realm,
+                                                &actor,
+                                                &request_invite_id,
+                                                Some("admin_cancel"),
+                                            )
+                                            .await
+                                        },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => {
+                                            frontier_state.set(resp.event_id.clone());
+                                            state_store.write().append_raw_operation(
+                                                format!("ck:operation:{}", crate::operation::uuid_v7()),
+                                                Some(realm.clone()),
+                                                json!({
+                                                    "kind": "ck.invite.cancel",
+                                                    "invite_id": invite_id.clone(),
+                                                    "invitee": member.clone(),
+                                                    "state": "revoked",
+                                                    "event_id": resp.event_id,
+                                                }),
+                                            );
+                                            let mut next_members = members.read().clone();
+                                            next_members.retain(|profile| {
+                                                profile.invite_id.as_deref() != Some(invite_id.as_str())
+                                                    && !(profile.actor_id == member && profile.is_pending_invite())
+                                            });
+                                            members.set(next_members);
+                                            status_msg.set(format!("cancelled invite for {member_label}"));
+                                        }
+                                        Err(err) => status_msg.set(format!(
+                                            "cancel invite failed: {}",
+                                            err.display()
+                                        )),
+                                    }
+                                });
+                            }
+                        },
+                        "Cancel invite"
                     }
                 }
             }
@@ -1571,6 +1793,7 @@ pub fn RealmMembersPanel(
     let mut new_agent_pairing = use_signal(|| Option::<AgentProvisionSummary>::None);
     let block_confirm_did = use_signal(|| Option::<String>::None);
     let mut permissions = use_signal(RealmMemberPermissions::default);
+    let mut member_roster_section = use_signal(|| MemberRosterSection::Members);
     // Invite is now a modal launched from the list header "+" button.
     let mut invite_modal_open = use_signal(|| false);
     // Client-side member search + incremental paging. `member_filter`
@@ -1689,6 +1912,9 @@ pub fn RealmMembersPanel(
                         let invite = api
                             .authz_check_raw(&actor, "ck.invite.create", &realm)
                             .await;
+                        let cancel_invite = api
+                            .authz_check_raw(&actor, "ck.invite.cancel", &realm)
+                            .await;
                         // Member removal has no standalone capability action in
                         // v1; it is governed by Realm management authority. Probe
                         // the registered `ck.realm.admin` action (management,
@@ -1699,8 +1925,12 @@ pub fn RealmMembersPanel(
                         // spec-conformant server.
                         let remove = api.authz_check_raw(&actor, "ck.realm.admin", &realm).await;
                         let can_invite = invite.as_ref().map(authz_json_allowed).unwrap_or(false);
+                        let can_cancel_invite = cancel_invite
+                            .as_ref()
+                            .map(authz_json_allowed)
+                            .unwrap_or(false);
                         let can_remove = remove.as_ref().map(authz_json_allowed).unwrap_or(false);
-                        if invite.is_err() && remove.is_err() {
+                        if invite.is_err() && cancel_invite.is_err() && remove.is_err() {
                             status_msg.set(
                                 "member action permission check failed; write controls hidden"
                                     .to_owned(),
@@ -1709,6 +1939,7 @@ pub fn RealmMembersPanel(
                         permissions.set(RealmMemberPermissions {
                             loaded: true,
                             can_invite,
+                            can_cancel_invite,
                             can_remove,
                         });
                     }
@@ -1726,6 +1957,7 @@ pub fn RealmMembersPanel(
 
     let member_permissions = permissions();
     let can_invite = member_permissions.can_invite;
+    let can_cancel_invite = member_permissions.can_cancel_invite;
     let can_remove = member_permissions.can_remove;
 
     // Roster → grouped by controller → filtered → paged window. Filtering
@@ -1736,9 +1968,22 @@ pub fn RealmMembersPanel(
     let owned_agent_rows = owned_agents();
     let member_groups =
         group_members_with_owned_agents(&active_members, &owned_agent_rows, &account_did);
+    let selected_section = member_roster_section();
     let total_members = active_members.len();
     let total_pending_invites = pending_invite_rows.len();
     let total_groups = member_groups.len();
+    let total_owner_members = active_members
+        .iter()
+        .filter(|member| member.is_owner)
+        .count();
+    let total_admin_members = active_members
+        .iter()
+        .filter(|member| member.is_admin && !member.is_owner)
+        .count();
+    let total_regular_members = active_members
+        .iter()
+        .filter(|member| !member.is_governance_principal())
+        .count();
     let governance_member_count = active_members
         .iter()
         .filter(|member| member.is_governance_principal())
@@ -1752,10 +1997,14 @@ pub fn RealmMembersPanel(
         None
     };
     let filter_query = member_filter().trim().to_lowercase();
+    let section_groups: Vec<MemberGroup> = member_groups
+        .into_iter()
+        .filter(|group| member_group_in_section(group, selected_section))
+        .collect();
     let filtered_groups: Vec<MemberGroup> = if filter_query.is_empty() {
-        member_groups
+        section_groups
     } else {
-        member_groups
+        section_groups
             .into_iter()
             .filter(|group| member_group_matches(group, &filter_query))
             .collect()
@@ -1763,7 +2012,8 @@ pub fn RealmMembersPanel(
     let filtered_count = filtered_groups.len();
     let visible = member_visible().min(filtered_count);
     let visible_groups: Vec<MemberGroup> = filtered_groups[..visible].to_vec();
-    let has_more = visible < filtered_count;
+    let has_more =
+        selected_section != MemberRosterSection::PendingInvites && visible < filtered_count;
     let show_search = total_groups + total_pending_invites > MEMBER_SEARCH_THRESHOLD;
     let visible_pending_invites: Vec<MemberProfile> = if filter_query.is_empty() {
         pending_invite_rows.clone()
@@ -1775,6 +2025,41 @@ pub fn RealmMembersPanel(
             .collect()
     };
     let pending_invite_match_count = visible_pending_invites.len();
+    let selected_section_total = match selected_section {
+        MemberRosterSection::Members => total_regular_members,
+        MemberRosterSection::Owners => total_owner_members,
+        MemberRosterSection::Admins => total_admin_members,
+        MemberRosterSection::PendingInvites => total_pending_invites,
+    };
+    let selected_section_visible_count = if selected_section == MemberRosterSection::PendingInvites
+    {
+        pending_invite_match_count
+    } else {
+        filtered_count
+    };
+    let selected_section_empty = selected_section_visible_count == 0;
+    let selected_section_title = selected_section.title();
+    let selected_section_description = selected_section.description();
+    let members_section_class = if selected_section == MemberRosterSection::Members {
+        "members-admin-menu-item active"
+    } else {
+        "members-admin-menu-item"
+    };
+    let owners_section_class = if selected_section == MemberRosterSection::Owners {
+        "members-admin-menu-item active"
+    } else {
+        "members-admin-menu-item"
+    };
+    let admins_section_class = if selected_section == MemberRosterSection::Admins {
+        "members-admin-menu-item active"
+    } else {
+        "members-admin-menu-item"
+    };
+    let pending_section_class = if selected_section == MemberRosterSection::PendingInvites {
+        "members-admin-menu-item active"
+    } else {
+        "members-admin-menu-item"
+    };
     let member_set: BTreeSet<String> = active_members
         .iter()
         .map(|member| member.actor_id.clone())
@@ -1919,13 +2204,14 @@ pub fn RealmMembersPanel(
                                                         let mut last_err = String::new();
                                                         let mut last_mls_err = String::new();
                                                         let mut mls_ok = 0_usize;
-                                                        let mut ok_invites = Vec::<(String, String)>::new();
+                                                        let mut ok_invites =
+                                                            Vec::<(String, String, String)>::new();
                                                         for (did, consent_ref) in targets {
                                                             match api
                                                                 .invite_contact_to_realm(&realm, &actor, &did, &consent_ref)
                                                                 .await
                                                             {
-                                                                Ok(event_id) => {
+                                                                Ok((event_id, invite_id)) => {
                                                                     ok += 1;
                                                                     match submit_mls_admission_for_invitee(
                                                                         &api,
@@ -1941,7 +2227,11 @@ pub fn RealmMembersPanel(
                                                                         Ok(None) => {}
                                                                         Err(err) => last_mls_err = err.to_string(),
                                                                     }
-                                                                    ok_invites.push((did, event_id.clone()));
+                                                                    ok_invites.push((
+                                                                        did,
+                                                                        event_id.clone(),
+                                                                        invite_id,
+                                                                    ));
                                                                     frontier_state.set(event_id);
                                                                 }
                                                                 Err(err) => last_err = err.to_string(),
@@ -1951,13 +2241,14 @@ pub fn RealmMembersPanel(
                                                             let mut next_members = members.read().clone();
                                                             {
                                                                 let mut store = state_store.write();
-                                                                for (did, event_id) in ok_invites {
-                                                                    upsert_pending_invite_profile(&mut next_members, &did, None);
+                                                                for (did, event_id, invite_id) in ok_invites {
+                                                                    upsert_pending_invite_profile(&mut next_members, &did, None, Some(&invite_id));
                                                                     store.append_raw_operation(
                                                                         event_id.clone(),
                                                                         Some(realm.clone()),
                                                                         json!({
                                                                             "kind": "ck.invite.create",
+                                                                            "invite_id": invite_id,
                                                                             "invitee": did,
                                                                             "state": "pending",
                                                                             "event_id": event_id,
@@ -2134,6 +2425,7 @@ pub fn RealmMembersPanel(
                                                                 &mut next_members,
                                                                 &invitee_did,
                                                                 Some(&invitee_label),
+                                                                Some(&invite_id),
                                                             );
                                                             members.set(next_members);
                                                             invite_target.set(String::new());
@@ -2235,7 +2527,7 @@ pub fn RealmMembersPanel(
                 if !status_msg().is_empty() {
                     div { class: "muted", "data-testid": "realm-members-status", "{status_msg()}" }
                 }
-                if member_permissions.loaded && !can_invite && !can_remove {
+                if member_permissions.loaded && !can_invite && !can_cancel_invite && !can_remove {
                     div {
                         class: "muted",
                         "data-testid": "realm-member-actions-hidden",
@@ -2254,33 +2546,88 @@ pub fn RealmMembersPanel(
                         },
                     }
                 }
-                if total_pending_invites > 0 {
-                    div {
-                        class: "member-pending-invites",
-                        "data-testid": "pending-invites-list",
-                        div { class: "member-section-head",
-                            div {
-                                div { class: "entity-title", "Pending invites" }
-                                div { class: "muted", "Invitations sent for this Realm that have not been accepted yet." }
-                            }
-                            span {
-                                class: "badge member-pending-count-badge",
-                                "data-testid": "pending-invites-visible-count",
-                                "{pending_invite_match_count} shown"
-                            }
+                div { class: "members-admin-layout",
+                    nav { class: "members-admin-menu", "aria-label": "Member sections",
+                        button {
+                            class: "{members_section_class}",
+                            "data-testid": "members-section-members",
+                            onclick: move |_| {
+                                member_roster_section.set(MemberRosterSection::Members);
+                                member_visible.set(MEMBER_PAGE_SIZE);
+                            },
+                            span { "Members" }
+                            span { class: "badge", "{total_regular_members}" }
                         }
-                        if pending_invite_match_count == 0 {
-                            div {
-                                class: "muted member-pending-invite-empty",
-                                "data-testid": "pending-invites-no-match",
-                                "No pending invites match your search."
-                            }
+                        button {
+                            class: "{owners_section_class}",
+                            "data-testid": "members-section-owners",
+                            onclick: move |_| {
+                                member_roster_section.set(MemberRosterSection::Owners);
+                                member_visible.set(MEMBER_PAGE_SIZE);
+                            },
+                            span { "Owners" }
+                            span { class: "badge", "{total_owner_members}" }
                         }
-                        for invite in visible_pending_invites {
-                            PendingInviteRow { profile: invite.clone() }
+                        button {
+                            class: "{admins_section_class}",
+                            "data-testid": "members-section-admins",
+                            onclick: move |_| {
+                                member_roster_section.set(MemberRosterSection::Admins);
+                                member_visible.set(MEMBER_PAGE_SIZE);
+                            },
+                            span { "Admins" }
+                            span { class: "badge", "{total_admin_members}" }
+                        }
+                        button {
+                            class: "{pending_section_class}",
+                            "data-testid": "members-section-pending-invites",
+                            onclick: move |_| {
+                                member_roster_section.set(MemberRosterSection::PendingInvites);
+                                member_visible.set(MEMBER_PAGE_SIZE);
+                            },
+                            span { "Pending invites" }
+                            span { class: "badge member-pending-count-badge", "{total_pending_invites}" }
                         }
                     }
-                }
+                    div { class: "members-admin-content",
+                        div { class: "member-section-head",
+                            div {
+                                div { class: "entity-title", "{selected_section_title}" }
+                                div { class: "muted", "{selected_section_description}" }
+                            }
+                            span {
+                                class: "badge member-count-badge",
+                                "data-testid": "member-section-visible-count",
+                                "{selected_section_visible_count} shown"
+                            }
+                        }
+                        if selected_section == MemberRosterSection::PendingInvites {
+                            div {
+                                class: "member-pending-invites",
+                                "data-testid": "pending-invites-list",
+                                if pending_invite_match_count == 0 {
+                                    div {
+                                        class: "muted member-pending-invite-empty",
+                                        "data-testid": "pending-invites-no-match",
+                                        "No pending invites match your search."
+                                    }
+                                }
+                                for invite in visible_pending_invites {
+                                    PendingInviteRow {
+                                        profile: invite.clone(),
+                                        base_url: base_url.clone(),
+                                        token,
+                                        account_did: account_did.clone(),
+                                        selected_realm_id: selected_realm_id.clone(),
+                                        can_cancel_invite,
+                                        members,
+                                        state_store,
+                                        frontier_state,
+                                        status_msg,
+                                    }
+                                }
+                            }
+                        }
                 for group in visible_groups {
                     {
                         let member_profile = group.controller.clone();
@@ -2788,9 +3135,9 @@ pub fn RealmMembersPanel(
                         }
                     }
                 }
-                if filtered_count == 0 && pending_invite_match_count == 0 {
+                if selected_section_empty && selected_section != MemberRosterSection::PendingInvites {
                     div { class: "members-empty", "data-testid": "members-empty-state",
-                        if total_members == 0 && filter_query.is_empty() {
+                        if selected_section_total == 0 && filter_query.is_empty() {
                             div { class: "members-empty-icon", crate::components::UiIcon { name: "users" } }
                             div { class: "members-empty-title", {crate::i18n::tr("realm_admin.no_members_loaded")} }
                             if can_invite {
@@ -2815,6 +3162,8 @@ pub fn RealmMembersPanel(
                             },
                             "Load more — showing {visible} of {filtered_count} groups"
                         }
+                    }
+                }
                     }
                 }
             }
@@ -2876,7 +3225,7 @@ mod tests {
         alice.membership = Some("join".to_owned());
         let mut rows = vec![alice];
 
-        upsert_pending_invite_profile(&mut rows, "did:web:alice.example", Some("Alice"));
+        upsert_pending_invite_profile(&mut rows, "did:web:alice.example", Some("Alice"), None);
         let (active, pending) = split_member_profiles(rows);
 
         assert_eq!(active.len(), 1);
@@ -2888,7 +3237,12 @@ mod tests {
     fn optimistic_pending_invite_records_display_handle() {
         let mut rows = Vec::new();
 
-        upsert_pending_invite_profile(&mut rows, "did:web:bob.example", Some("bob:example.com"));
+        upsert_pending_invite_profile(
+            &mut rows,
+            "did:web:bob.example",
+            Some("bob:example.com"),
+            None,
+        );
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].membership.as_deref(), Some("invite"));
@@ -3044,6 +3398,35 @@ mod tests {
     }
 
     #[test]
+    fn projected_join_membership_overrides_earlier_pending_projection() {
+        let realm_id = "ck:realm:test";
+        let mut store = temp_store("pending-then-joined-membership");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "members": [
+                    {
+                        "actor_id": "did:web:bob.example",
+                        "membership": "invite"
+                    },
+                    {
+                        "actor_id": "did:web:bob.example",
+                        "membership": "join"
+                    }
+                ]
+            }),
+        );
+
+        let profiles = projected_member_profiles_for_realm(&store, realm_id);
+        let (active, pending) = split_member_profiles(profiles);
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].actor_id, "did:web:bob.example");
+        assert_eq!(active[0].membership.as_deref(), Some("join"));
+        assert!(pending.is_empty());
+    }
+
+    #[test]
     fn projected_member_profiles_restore_pending_invites_from_raw_operations() {
         let realm_id = "ck:realm:test";
         let mut store = temp_store("raw-pending-invite");
@@ -3065,6 +3448,39 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].actor_id, "did:web:bob.example");
         assert_eq!(pending[0].handles, vec!["bob:example.com"]);
+    }
+
+    #[test]
+    fn projected_member_profiles_drop_locally_cancelled_pending_invites() {
+        let realm_id = "ck:realm:test";
+        let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
+        let mut store = temp_store("raw-cancelled-pending-invite");
+        store.append_raw_operation(
+            "ck:event:invite-local".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.invite.create",
+                "invite_id": invite_id,
+                "invitee": "did:web:bob.example",
+                "invitee_label": "bob:example.com",
+                "state": "pending"
+            }),
+        );
+        store.append_raw_operation(
+            "ck:event:invite-cancel".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.invite.cancel",
+                "invite_id": invite_id,
+                "state": "revoked"
+            }),
+        );
+
+        let profiles = projected_member_profiles_for_realm(&store, realm_id);
+        let (active, pending) = split_member_profiles(profiles);
+
+        assert!(active.is_empty());
+        assert!(pending.is_empty());
     }
 
     #[test]

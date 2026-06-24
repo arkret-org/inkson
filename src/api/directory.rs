@@ -669,14 +669,14 @@ impl CokretApi {
     /// [`contact_recipient_service_did`]; if it can't be derived this fails
     /// closed so the UI can fall back to the locator path.
     ///
-    /// Returns the submitted invite event id on success.
+    /// Returns the submitted invite event id and invite id on success.
     pub async fn invite_contact_to_realm(
         &self,
         realm_id: &str,
         actor_id: &str,
         contact_did: &str,
         consent_grant_ref: &str,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<(String, String)> {
         let contact_did = contact_did.trim();
         cokret_sdk::Did::new(contact_did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid contact DID `{contact_did}`: {err}"))?;
@@ -705,7 +705,7 @@ impl CokretApi {
         )?
         .build_sdk_event("yougen")?;
         let submitted = self.submit_sdk_event(&event).await?;
-        Ok(submitted.event_id)
+        Ok((submitted.event_id, invite_id))
     }
 
     pub async fn resolve_invitee_for_invite(
