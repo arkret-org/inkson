@@ -130,6 +130,25 @@ pub(crate) fn wasm_allow_localstorage_secrets() -> bool {
         .unwrap_or(false)
 }
 
+/// Ensure wasm callers that need seed-grade material run on the upgraded
+/// IndexedDB/SubtleCrypto tier before touching signing seeds.
+#[cfg(target_arch = "wasm32")]
+pub async fn ensure_wasm_secure_key_store_ready(
+    service_name: &str,
+) -> Result<Arc<dyn SecureKeyStore>, SecureKeyStoreError> {
+    if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
+        return Ok(store.clone());
+    }
+    if wasm_allow_localstorage_secrets() {
+        return Ok(default_secure_key_store(service_name));
+    }
+    upgrade_wasm_secure_key_store_async(service_name)
+        .await?
+        .ok_or(SecureKeyStoreError::Unsupported(
+            WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
+        ))
+}
+
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
     key == SIGNING_SEED_KEY || key == WASM_LOCAL_IDENTITY_SEED_KEY
