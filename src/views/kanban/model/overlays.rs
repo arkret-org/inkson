@@ -25,6 +25,7 @@ pub(crate) fn local_created_card(
         synthesis_locked: false,
         created_by: "yougen".to_owned(),
         created_at: String::new(),
+        updated_by: String::new(),
         updated_at: String::new(),
         labels: vec!["draft".to_owned()],
         assignee: "yougen".to_owned(),

@@ -491,7 +491,11 @@ pub(super) fn projection_synthesis_revision(
     state_store: &LocalStateStore,
     author_context: Option<CardAuthorDisplayContext<'_>>,
 ) -> CardSynthesisRevision {
-    let actor_id = card.created_by.trim().to_owned();
+    let actor_id = if card.updated_by.trim().is_empty() {
+        card.created_by.trim().to_owned()
+    } else {
+        card.updated_by.trim().to_owned()
+    };
     let timestamp = if !card.updated_at.trim().is_empty() {
         card.updated_at.clone()
     } else {

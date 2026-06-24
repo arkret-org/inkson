@@ -570,7 +570,9 @@ mod tests {
 
     // ── G3.Y4 — Phase B/C/D model helpers ─────────────────────────
 
-    use super::super::{InteropApprovalState, LiveSessionRow, PublishModalState, live_session_rows};
+    use super::super::{
+        InteropApprovalState, LiveSessionRow, PublishModalState, live_session_rows,
+    };
 
     #[test]
     fn interop_approval_confirm_gated_on_human_acknowledgement() {
@@ -725,11 +727,7 @@ mod tests {
             op.content["object"]["metadata"]["fields"]["workflow_type"],
             "synthesis"
         );
-        assert!(
-            op.content["object"]["tracks"]
-                .get("synthesis")
-                .is_some()
-        );
+        assert!(op.content["object"]["tracks"].get("synthesis").is_some());
     }
 
     #[test]

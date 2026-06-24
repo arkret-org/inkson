@@ -21,8 +21,8 @@ pub mod device_pair_approval_prompt;
 pub mod did_resolution_health_banner;
 pub mod dismissible_popup;
 pub mod empty_state;
-/// Entry-time warning for accounts whose visible PCR / Realm projections do
-/// not yet show the recommended metadata+content E2EE floor.
+/// Entry-time auto-acknowledgement for accounts whose visible PCR / Realm
+/// projections do not yet show the recommended metadata+content E2EE floor.
 pub mod encryption_floor_prompt;
 /// P5 — recoverable error display + retry affordance. Pairs with the
 /// passive `ErrorBanner` below: this one carries a request_id and a

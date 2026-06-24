@@ -582,7 +582,7 @@ label.avatar-upload-button .ui-icon {
   min-width: 0;
 }
 
-.workspace-manage-search input {
+.workspace-manage-search input:not([type="checkbox"]):not([type="radio"]) {
   width: 100%;
   min-height: 36px;
   padding-left: 34px;
@@ -603,6 +603,16 @@ label.avatar-upload-button .ui-icon {
 .workspace-manage-search-icon .ui-icon {
   width: 16px;
   height: 16px;
+}
+
+.shell.rtl .workspace-manage-search input:not([type="checkbox"]):not([type="radio"]) {
+  padding-right: 34px;
+  padding-left: 12px;
+}
+
+.shell.rtl .workspace-manage-search-icon {
+  right: 11px;
+  left: auto;
 }
 
 .workspace-manage-actions {

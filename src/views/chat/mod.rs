@@ -417,8 +417,7 @@ pub fn ChatPanel(
                             // Leave the entry queued for the next reconnect
                             // tick; surface the failure but don't drop the
                             // message.
-                            status_msg
-                                .set(format!("outbox flush retry pending: {error:#}"));
+                            status_msg.set(format!("outbox flush retry pending: {error:#}"));
                         }
                     }
                 }

@@ -144,6 +144,24 @@ fn card_synthesis_track_entries_preserve_append_history() {
 }
 
 #[test]
+fn projection_synthesis_revision_prefers_updated_by_over_creator() {
+    let mut card = test_card("ck:strand:edit-me", "U");
+    card.synthesis = "bob synthesis".to_owned();
+    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.updated_by = "did:web:acme.example:users:bob".to_owned();
+    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+
+    let entries = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].body, "bob synthesis");
+    assert_eq!(entries[0].actor_id, "did:web:acme.example:users:bob");
+    assert_eq!(entries[0].author_label, "bob:acme.example");
+    assert_eq!(entries[0].timestamp_label, "2026-05-22 11:00");
+}
+
+#[test]
 fn card_synthesis_author_prefers_cached_member_primary_handle() {
     let actor = "did:web:auth.local.host:users:01kth8q1w1f9c9pt3a0zfvf6gb";
     let subject = "did:web:auth.local.host:principals:alice";

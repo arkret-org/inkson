@@ -441,6 +441,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         ]),
         created_by: Some("did:web:acme.example:users:alice".to_owned()),
         created_at: Some("2026-05-22T10:00:00Z".to_owned()),
+        updated_by: None,
         updated_at: None,
         state: "active".to_owned(),
     }];

@@ -341,6 +341,7 @@ pub(crate) fn card_from_projection_item(
     };
     let created_by = object_str(&["created_by", "actor_id", "author"]);
     let created_at = object_str(&["created_at", "timestamp"]);
+    let updated_by = object_str(&["updated_by"]);
     let updated_at = object_str(&["updated_at", "edited_at"]);
     // X10.2: bind the private-field value exprs once so the text + locked
     // checks read the same source.
@@ -385,6 +386,7 @@ pub(crate) fn card_from_projection_item(
         ),
         created_by,
         created_at,
+        updated_by,
         updated_at,
         labels: item
             .object

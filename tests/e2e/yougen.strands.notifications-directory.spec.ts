@@ -76,12 +76,14 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
   await refreshServer(page);
   await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await dismissBlockingRecoveryModal(page);
   const workspaceUrl = page.url();
 
   await page.getByTestId("topbar-notifications-button").click();
 
   expect(page.url()).toBe(workspaceUrl);
   await expect(page.getByTestId("notifications-drawer")).toBeVisible();
+  await expect(page.getByTestId("notifications-drawer-scrim")).toHaveCount(0);
   await expect(page.getByTestId("notifications-drawer-settings")).toBeVisible();
   await expect(page.getByTestId("notifications-settings-hint")).toHaveCount(0);
   await expect(page.getByTestId("realm-context-bar")).toBeVisible();
@@ -94,24 +96,41 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
     const header = document
       .querySelector(".workspace-header")
       ?.getBoundingClientRect();
+    const sidebar = document
+      .querySelector('[data-testid="sidebar"]')
+      ?.getBoundingClientRect();
     const panel = document
       .querySelector('[data-testid="notifications-drawer-panel"]')
       ?.getBoundingClientRect();
-    return header && panel
-      ? {
-          headerBottom: header.bottom,
-          panelTop: panel.top,
-          panelRight: panel.right,
-          panelBottom: panel.bottom,
-          viewportWidth: window.innerWidth,
-          viewportHeight: window.innerHeight,
-        }
-      : null;
+    if (!header || !sidebar || !panel) {
+      return null;
+    }
+    const sidebarHit = document.elementFromPoint(
+      sidebar.left + Math.min(24, sidebar.width / 2),
+      sidebar.top + Math.min(24, sidebar.height / 2),
+    );
+    return {
+      headerBottom: header.bottom,
+      sidebarRight: sidebar.right,
+      panelTop: panel.top,
+      panelLeft: panel.left,
+      panelRight: panel.right,
+      panelBottom: panel.bottom,
+      sidebarHitInsideDrawer: Boolean(
+        sidebarHit?.closest('[data-testid="notifications-drawer"]'),
+      ),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
   });
   expect(drawerLayout).not.toBeNull();
   expect(
     Math.abs(drawerLayout!.panelTop - drawerLayout!.headerBottom),
   ).toBeLessThanOrEqual(1);
+  expect(drawerLayout!.panelLeft).toBeGreaterThanOrEqual(
+    drawerLayout!.sidebarRight - 1,
+  );
+  expect(drawerLayout!.sidebarHitInsideDrawer).toBe(false);
   expect(
     Math.abs(drawerLayout!.panelRight - drawerLayout!.viewportWidth),
   ).toBeLessThanOrEqual(1);

@@ -543,16 +543,6 @@
   pointer-events: none;
 }
 
-.notifications-drawer-scrim {
-  position: absolute;
-  inset: 0;
-  border: 0;
-  padding: 0;
-  background: color-mix(in srgb, #020617 34%, transparent);
-  cursor: default;
-  pointer-events: auto;
-}
-
 .notifications-drawer-panel {
   position: relative;
   z-index: calc(var(--layer-modal) + 1);
@@ -1101,4 +1091,3 @@
 .account-menu-button {
   position: relative;
 }
-

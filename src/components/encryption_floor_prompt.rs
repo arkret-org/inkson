@@ -5,8 +5,6 @@ use serde_json::Value;
 
 use crate::local_state::LocalStateStore;
 use crate::realm_tree::string_field;
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::dialog::Dialog;
 
 #[component]
 pub fn EncryptionFloorPrompt(
@@ -23,119 +21,53 @@ pub fn EncryptionFloorPrompt(
     /// `Some(false)` none, `None` unknown/loading). Whether to offer a *new*
     /// Recovery Key setup is an account decision, not a per-device one.
     account_recovery_configured: Signal<Option<bool>>,
-    /// Session-scoped "Not now" flag, owned by the parent shell so it survives
-    /// this component being unmounted/remounted while `active_prompt` churns
-    /// during sync (e.g. a new Realm flushing in). A component-local
-    /// `use_signal` would reset to `false` on every remount, so with the
-    /// underlying `floor_low` condition still true the modal re-popped
-    /// repeatedly during Realm creation. Hoisting it makes "Not now" stick for
-    /// the rest of the session.
+    /// Session-scoped acknowledgement flag, owned by the parent shell so the
+    /// auto-apply effect survives this component being unmounted/remounted while
+    /// `active_prompt` churns during sync.
     mut dismissed: Signal<bool>,
 ) -> Element {
-    let mut status = use_signal(String::new);
+    use_effect(move || {
+        let session = token();
+        let actor = account_did();
+        if dismissed()
+            || !sync_bootstrap_complete()
+            || !device_authorization_check_complete()
+            || session.trim().is_empty()
+            || actor.trim().is_empty()
+            || needs_device_authorization()
+            || needs_mls_unlock()
+            || needs_mls_backup()
+            || recovery_key_setup_prompt()
+            || !account_needs_recommended_encryption_prompt(&state_store.read(), &actor)
+        {
+            return;
+        }
 
-    let session = token();
-    let actor = account_did();
-    if dismissed()
-        || !sync_bootstrap_complete()
-        || !device_authorization_check_complete()
-        || session.trim().is_empty()
-        || actor.trim().is_empty()
-        || needs_device_authorization()
-        || needs_mls_unlock()
-        || needs_mls_backup()
-        || recovery_key_setup_prompt()
-        || !account_needs_recommended_encryption_prompt(&state_store.read(), &actor)
-    {
-        return rsx! {};
-    }
+        // Whether to offer setting up a *new* 24-word Recovery Key is an
+        // account-level decision, not a per-device one. Treat unknown server
+        // state as not configured so the auto-apply path never assumes a
+        // Recovery Key exists before the account recovery probe has completed.
+        let local_recovery_configured =
+            crate::views::recovery::recovery_options_configured(&state_store.read(), &actor);
+        let recovery_key_configured =
+            matches!(account_recovery_configured(), Some(true)) || local_recovery_configured;
 
-    // Whether to offer setting up a *new* 24-word Recovery Key is an
-    // account-level decision, not a per-device one. Treat unknown server state
-    // as not configured so the dialog never claims a Recovery Key exists before
-    // the account recovery probe has completed.
-    let local_recovery_configured =
-        crate::views::recovery::recovery_options_configured(&state_store.read(), &actor);
-    let recovery_key_configured =
-        matches!(account_recovery_configured(), Some(true)) || local_recovery_configured;
-    let on_enable = move |_| {
-        acknowledge_dismissal(dismissed, account_did, state_store);
-        if recovery_key_configured {
-            status.set(String::new());
-        } else {
+        acknowledge_recommended_encryption(dismissed, account_did, state_store);
+        if !recovery_key_configured {
             recovery_key_setup_prompt.set(true);
         }
-    };
+    });
 
-    rsx! {
-        Dialog {
-            open: true,
-            on_open_change: move |open: bool| {
-                if !open {
-                    acknowledge_dismissal(dismissed, account_did, state_store);
-                }
-            },
-            "data-testid": "recommended-encryption-floor-modal",
-            "aria-labelledby": "recommended-encryption-floor-title",
-            "aria-label": "Recommended encryption is not enabled",
-            div {
-                class: "modal event mls-recovery-modal",
-                "data-testid": "recommended-encryption-floor-banner",
-                div { class: "modal-head event-head",
-                    h3 { id: "recommended-encryption-floor-title", "Use recommended encryption" }
-                    span { class: "muted", "PCR / Realm floor" }
-                }
-                div { class: "modal-body mls-recovery-modal-body",
-                    div { class: "muted",
-                        "The current account has no evidence of the recommended metadata and content encryption floor. Principal Control Realm and private collaboration state should use MLS with metadata_encryption_floor=e2ee_required and content_encryption_floor=e2ee_required."
-                    }
-                    if recovery_key_configured {
-                        div { class: "muted",
-                            "Your 24-word Recovery Key is already configured. For new private Realms, choose MLS with metadata and content floors set to e2ee_required; existing low-floor Realms need an explicit policy ratchet where the Realm supports it."
-                        }
-                    } else {
-                        div { class: "muted",
-                            "Choosing the recommended mode opens the 24-word Recovery Key setup prompt first. If encrypted material already exists on this device, the prompt will back it up immediately; otherwise the first encrypted Realm will use this Recovery Key when MLS material is created."
-                        }
-                    }
-                    if !status().is_empty() {
-                        div { class: "muted", "data-testid": "recommended-encryption-floor-status", "{status}" }
-                    }
-                }
-                div { class: "modal-foot mls-backup-row",
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "recommended-encryption-floor-enable",
-                        onclick: on_enable,
-                        if recovery_key_configured {
-                            "Use recommended encryption for new Realms"
-                        } else {
-                            "Set up 24-word Recovery Key"
-                        }
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "recommended-encryption-floor-dismiss",
-                        onclick: move |_| {
-                            acknowledge_dismissal(dismissed, account_did, state_store);
-                            status.set(String::new());
-                        },
-                        "Not now"
-                    }
-                }
-            }
-        }
-    }
+    rsx! {}
 }
 
-/// Hide the advisory floor modal and remember the choice for this account.
+/// Remember that the recommended encryption floor decision has been auto-applied.
 ///
-/// Sets the session-scoped `dismissed` signal (immediate hide, stable across the
-/// component remounting while `active_prompt` churns) and persists a per-account
-/// flag so the modal auto-shows at most once — across navigations and sessions —
-/// instead of re-popping on every render while `floor_low` stays true. Mirrors
-/// the `RecoverySetupReminder` once-per-account suppression.
-fn acknowledge_dismissal(
+/// Sets the session-scoped acknowledgement signal and persists a per-account
+/// flag so the advisory check runs at most once across navigations and sessions
+/// while `floor_low` stays true. Mirrors the `RecoverySetupReminder`
+/// once-per-account suppression.
+fn acknowledge_recommended_encryption(
     mut dismissed: Signal<bool>,
     account_did: Signal<String>,
     mut state_store: Signal<LocalStateStore>,

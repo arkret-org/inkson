@@ -80,6 +80,8 @@ pub struct StrandProjectionView {
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
+    pub updated_by: Option<String>,
+    #[serde(default)]
     pub updated_at: Option<String>,
 }
 

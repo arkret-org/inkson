@@ -100,6 +100,7 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         synthesis_locked: false,
         created_by: String::new(),
         created_at: String::new(),
+        updated_by: String::new(),
         updated_at: String::new(),
         labels: Vec::new(),
         assignee: String::new(),

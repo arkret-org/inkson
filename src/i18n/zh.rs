@@ -380,7 +380,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.signer.freshness.never", "尚未签名");
     dict.set("kanban.archive_action", "归档");
     dict.set("kanban.card.draft", "草稿");
-    dict.set("kanban.card.draft_hint", "已在本地排队;正在等待服务器确认该卡片。");
+    dict.set(
+        "kanban.card.draft_hint",
+        "已在本地排队;正在等待服务器确认该卡片。",
+    );
     dict.set(
         "kanban.archive_draft_blocked",
         "该卡片仍是本地草稿;请等待同步完成后再归档。",
@@ -654,8 +657,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.message.revised", "已修订");
     dict.set("chat.message.write_status", "这条消息已被编辑");
     // Offline send outbox.
-    dict.set("chat.outbox.queued_offline", "离线 - 已排队,重新联网后自动发送。");
-    dict.set("chat.outbox.offline_banner", "你已离线。消息已排队,重新联网后将自动发送。");
+    dict.set(
+        "chat.outbox.queued_offline",
+        "离线 - 已排队,重新联网后自动发送。",
+    );
+    dict.set(
+        "chat.outbox.offline_banner",
+        "你已离线。消息已排队,重新联网后将自动发送。",
+    );
     dict.set("chat.outbox.flushing", "已恢复联网 - 正在发送排队的消息…");
     dict.set("chat.outbox.flushed", "排队的消息已发送。");
     // Message shared pin and holder-private saved item actions.

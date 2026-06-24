@@ -561,12 +561,11 @@ pub fn RouterView() -> Element {
     let device_authorization_check_complete = use_signal(|| false);
     let account_has_other_devices = use_signal(|| false);
     let mut recovery_key_setup_prompt = use_signal(|| false);
-    // Session-scoped "Not now" flag for the recommended-encryption-floor modal.
-    // The modal is gated on `active_prompt == RecommendedEncryptionFloor`, which
-    // is re-resolved every render; during Realm creation the prompt churns away
-    // and back as sync flushes new state, remounting `EncryptionFloorPrompt`. A
-    // component-local dismissal would reset on each remount and re-pop, so the
-    // flag lives here and is folded into the render gate below.
+    // Session-scoped acknowledgement flag for the recommended-encryption-floor
+    // auto-apply effect. `active_prompt == RecommendedEncryptionFloor` is
+    // re-resolved every render; during Realm creation the prompt can churn away
+    // and back as sync flushes new state, remounting `EncryptionFloorPrompt`.
+    // Hoisting the flag prevents repeat auto-apply work in the same session.
     let encryption_floor_prompt_dismissed = use_signal(|| false);
     // In-memory "already auto-prompted recovery setup this session" guard. The
     // persisted localStorage flag handles across-session suppression, but a
@@ -2326,10 +2325,10 @@ pub fn RouterView() -> Element {
     use crate::account_health::AccountHealthPrompt;
     let show_recovery_setup_prompt =
         active_prompt == AccountHealthPrompt::RecoverySetupReminder && !recovery_key_setup_prompt();
-    // Per-account durable suppression for the advisory encryption-floor modal:
-    // once shown and acknowledged it stays dismissed across navigations and
-    // sessions (the in-session `encryption_floor_prompt_dismissed` signal covers
-    // the same frame before the persisted flag is read back).
+    // Per-account durable suppression for the advisory encryption-floor check:
+    // once auto-acknowledged it stays quiet across navigations and sessions (the
+    // in-session `encryption_floor_prompt_dismissed` signal covers the same
+    // frame before the persisted flag is read back).
     let encryption_floor_prompt_acknowledged =
         crate::app::encryption_floor_prompt_acknowledged(&state_store.read(), &account_did());
 
@@ -4931,19 +4930,9 @@ pub fn RouterView() -> Element {
                 div {
                     class: "notifications-drawer-layer",
                     "data-testid": "notifications-drawer",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        r#type: "button",
-                        class: "notifications-drawer-scrim",
-                        "data-testid": "notifications-drawer-scrim",
-                        "aria-label": "Close notifications",
-                        onclick: move |_| notifications_drawer_open.set(false),
-                    }
                     aside {
                         class: "notifications-drawer-panel",
                         "data-testid": "notifications-drawer-panel",
-                        role: "dialog",
-                        "aria-modal": "true",
                         "aria-label": crate::i18n::tr("nav.notifications"),
                         onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
                         div { class: "notifications-drawer-header",

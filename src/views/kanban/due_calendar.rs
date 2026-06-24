@@ -59,10 +59,7 @@ pub(super) fn parse_due_calendar_date(value: &str) -> Option<NaiveDate> {
 /// opaque to the reducer so the past-due semantics live in the UI).
 pub(super) fn due_value_is_overdue(value: &str) -> bool {
     let trimmed = value.trim();
-    if trimmed.is_empty()
-        || trimmed == "\u{2014}"
-        || trimmed.eq_ignore_ascii_case("unscheduled")
-    {
+    if trimmed.is_empty() || trimmed == "\u{2014}" || trimmed.eq_ignore_ascii_case("unscheduled") {
         return false;
     }
     match parse_due_calendar_date(trimmed) {

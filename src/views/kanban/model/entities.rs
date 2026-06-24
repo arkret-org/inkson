@@ -53,6 +53,7 @@ pub(crate) struct KanbanCard {
     pub(crate) synthesis_locked: bool,
     pub(crate) created_by: String,
     pub(crate) created_at: String,
+    pub(crate) updated_by: String,
     pub(crate) updated_at: String,
     pub(crate) labels: Vec<String>,
     pub(crate) assignee: String,

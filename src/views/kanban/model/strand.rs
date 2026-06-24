@@ -208,6 +208,11 @@ pub(crate) fn card_from_strand_projection(
             .clone()
             .or_else(|| strand_projection_field_string(strand, None, &["created_at", "timestamp"]))
             .unwrap_or_default(),
+        updated_by: strand
+            .updated_by
+            .clone()
+            .or_else(|| strand_projection_field_string(strand, None, &["updated_by"]))
+            .unwrap_or_default(),
         updated_at: strand
             .updated_at
             .clone()

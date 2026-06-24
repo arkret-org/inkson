@@ -208,6 +208,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         fields: Map::new(),
         created_by: None,
         created_at: None,
+        updated_by: None,
         updated_at: None,
         state: "active".to_owned(),
     };

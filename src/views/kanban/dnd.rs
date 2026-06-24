@@ -888,26 +888,21 @@ pub(super) fn dispatch_board_archive_cascade(
         let outcome = with_authed_api(&base, api_token, |api| async move {
             // 1) cascade child cards
             for strand_id in &active_card_ids {
-                let event = crate::operation::ck_ops::strand_archive(
-                    &realm_id, &actor_id, strand_id,
-                )?
-                .build_sdk_event("yougen")?;
+                let event =
+                    crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, strand_id)?
+                        .build_sdk_event("yougen")?;
                 api.submit_sdk_event(&event).await?;
             }
             // 2) cascade child lists
             for list_id in &active_list_ids {
-                let event =
-                    crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
-                        .build_sdk_event("yougen")?;
+                let event = crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
+                    .build_sdk_event("yougen")?;
                 api.submit_sdk_event(&event).await?;
             }
             // 3) archive the board container last
-            let board_event = crate::operation::ck_ops::realm_archive(
-                &realm_id,
-                &actor_id,
-                &board_space_id,
-            )
-            .build_sdk_event("yougen")?;
+            let board_event =
+                crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, &board_space_id)
+                    .build_sdk_event("yougen")?;
             api.submit_sdk_event(&board_event).await?;
             Ok::<(), anyhow::Error>(())
         })

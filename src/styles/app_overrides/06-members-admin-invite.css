@@ -856,10 +856,6 @@
     border-radius: 0;
   }
 
-  .notifications-drawer-scrim {
-    background: transparent;
-  }
-
   .sidebar {
     display: none;
   }

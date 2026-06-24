@@ -123,6 +123,7 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         state: "active".to_owned(),
         created_by: None,
         created_at: None,
+        updated_by: None,
         updated_at: None,
     };
 

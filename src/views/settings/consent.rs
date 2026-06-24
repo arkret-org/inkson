@@ -10,15 +10,14 @@
 //! Surfaces (testids consumed by `cotest/e2e/.../consent-grant.spec.ts`):
 //! - `consent-settings-panel` wrapper
 //! - `consent-grant-empty` empty state
-//! - direct grant form: `consent-new-grant-button` toggle,
-//!   `consent-new-grant-scope-input`, `consent-new-grant-grantee-input`,
-//!   `consent-new-grant-ttl-input`, `consent-new-grant-submit-button`
-//! - outbound request: `consent-request-button`,
-//!   `consent-request-scope-input`, `consent-request-holder-input`,
-//!   `consent-request-submit-button`, `consent-outgoing-request-row`
-//! - pending list: `consent-pending-row`, `consent-detail-button`,
-//!   `consent-pending-detail`, `consent-scope-select`,
-//!   `consent-valid-until-input`, `grant-consent-button`
+//! - direct grant form: `consent-new-grant-button` toggle, `consent-new-grant-scope-input`,
+//!   `consent-new-grant-grantee-input`, `consent-new-grant-ttl-input`,
+//!   `consent-new-grant-submit-button`
+//! - outbound request: `consent-request-button`, `consent-request-scope-input`,
+//!   `consent-request-holder-input`, `consent-request-submit-button`,
+//!   `consent-outgoing-request-row`
+//! - pending list: `consent-pending-row`, `consent-detail-button`, `consent-pending-detail`,
+//!   `consent-scope-select`, `consent-valid-until-input`, `grant-consent-button`
 //! - granted list: `consent-granted-row`, `revoke-consent-button`
 //! - `write-status` shared write feedback line.
 
@@ -174,9 +173,11 @@ pub fn ConsentSettingsPanel(
             let base = base.clone();
             load_error.set(None);
             spawn(async move {
-                match with_authed_api(&base, api_token, |api| async move {
-                    api.consent_cells().await
-                })
+                match with_authed_api(
+                    &base,
+                    api_token,
+                    |api| async move { api.consent_cells().await },
+                )
                 .await
                 {
                     Ok(list) => {
