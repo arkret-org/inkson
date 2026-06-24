@@ -307,6 +307,11 @@ fn notification_from_value(
     dnd: Option<&DndSettings>,
 ) -> Option<UiNotification> {
     let mut eval_ctx = notification_eval_context(&value);
+    if eval_ctx.sender.as_deref().is_some_and(|sender| {
+        crate::account_data::is_blocked(&local_state.client_blocklist, sender)
+    }) {
+        return None;
+    }
     // Apply the receiver's per-realm watch override (None when unconfigured).
     // Invites and directed overrides are exempt: invites can target a realm the
     // receiver is not currently in, and mentions/priority notifications are the

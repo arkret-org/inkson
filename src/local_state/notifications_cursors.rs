@@ -455,4 +455,17 @@ impl LocalStateStore {
     pub fn notification_kind_preferences(&self) -> BTreeMap<String, bool> {
         self.load().muted_notification_kinds
     }
+
+    pub fn notification_dnd_settings(&self) -> Option<crate::notification_rules::DndSettings> {
+        self.load().notification_dnd_settings
+    }
+
+    pub fn set_notification_dnd_settings(
+        &mut self,
+        settings: Option<crate::notification_rules::DndSettings>,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached.notification_dnd_settings = settings;
+        let _ = self.flush();
+    }
 }

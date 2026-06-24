@@ -28,7 +28,7 @@ pub fn NotificationsPanel(
         initial_state.notification_projection.clone(),
         &initial_state,
         None,
-        None,
+        initial_state.notification_dnd_settings.as_ref(),
     );
 
     let mut notifications = use_signal(move || initial_notifications.clone());

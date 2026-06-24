@@ -679,6 +679,7 @@ pub fn KanbanPanel(
     let mut new_card_title = use_signal(String::new);
     let mut adding_card_to = use_signal(|| Option::<String>::None);
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
+    let mut mls_sidecar_restore_key_seen = use_signal(String::new);
     let mut board_popover = use_signal(BoardToolbarPopover::default);
     let mut editing_card_detail = use_signal(|| false);
     let mut card_edit_scope = use_signal(CardEditScope::default);
@@ -1244,6 +1245,170 @@ pub fn KanbanPanel(
             }
         });
     });
+
+    // Locked author-private fields can become readable after another device
+    // uploads the account-private plaintext sidecar. A device that already has
+    // the account MLS secret should restore that sidecar silently with active
+    // device proof, then re-project the current board using a fresh backfill.
+    {
+        let restore_base = base_url.clone();
+        let restore_token = token;
+        let restore_realm_id = selected_realm_id.clone();
+        let restore_local_realm_id = local_realm_id.clone();
+        let restore_actor = account_did.clone();
+        let restore_device = device_id.clone();
+        let restore_sync_cursor = sync_cursor;
+        use_effect(move || {
+            let Some(card) = selected_card() else {
+                return;
+            };
+            if !card.body_locked && !card.synthesis_locked {
+                return;
+            }
+            let api_token = restore_token();
+            if restore_base.trim().is_empty()
+                || api_token.trim().is_empty()
+                || restore_realm_id.trim().is_empty()
+                || restore_actor.trim().is_empty()
+                || restore_device.trim().is_empty()
+            {
+                return;
+            }
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            if !matches!(
+                crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &restore_actor),
+                Ok(Some(_))
+            ) {
+                return;
+            }
+            let projection_shape = {
+                let containers_len = lifecycle_container_projection.read().len();
+                let strands_len = lifecycle_strand_projection.read().len();
+                format!("{containers_len}:{strands_len}")
+            };
+            let restore_key = format!(
+                "{}|{}|{}|{}|{}|{}|body={}|synthesis={}",
+                restore_base.trim().trim_end_matches('/'),
+                restore_actor.trim(),
+                restore_device.trim(),
+                restore_realm_id.trim(),
+                card.primary_strand_id,
+                projection_shape,
+                card.body_locked,
+                card.synthesis_locked
+            );
+            let cursor = restore_sync_cursor();
+            let restore_key = format!("{restore_key}|cursor={cursor}");
+            if mls_sidecar_restore_key_seen() == restore_key {
+                return;
+            }
+            mls_sidecar_restore_key_seen.set(restore_key);
+
+            let base = restore_base.clone();
+            let realm_id = restore_realm_id.clone();
+            let local_realm_id = restore_local_realm_id.clone();
+            let actor = restore_actor.clone();
+            let device = restore_device.clone();
+            spawn(async move {
+                for attempt in 0..5u32 {
+                    if attempt > 0 {
+                        crate::api::sleep_for(std::time::Duration::from_millis(
+                            500 * (1 << (attempt - 1)),
+                        ))
+                        .await;
+                    }
+                    let actor_for_fetch = actor.clone();
+                    let device_for_fetch = device.clone();
+                    let realm_for_fetch = realm_id.clone();
+                    let result =
+                        with_authed_api(&base, api_token.clone(), move |api| async move {
+                            let payload = crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+                                &api,
+                                &actor_for_fetch,
+                                &device_for_fetch,
+                            )
+                            .await?;
+                            let events = api
+                                .backfill(&realm_for_fetch)
+                                .await
+                                .map(|response| response.events)
+                                .unwrap_or_default();
+                            Ok((payload, events))
+                        })
+                        .await;
+                    let Ok((payload, events)) = result else {
+                        continue;
+                    };
+
+                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    let restored_private_plaintext = {
+                        let mut store = state_store.write();
+                        let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                            &payload,
+                            &mut store,
+                            secure_store.as_ref(),
+                            &actor,
+                            &device,
+                        );
+                        report.private_plaintext_restored || report.restored > 0
+                    };
+
+                    let remote_update_operations = strand_update_operations_from_events(&events);
+                    let container_items = lifecycle_container_projection.read().clone();
+                    let strand_items = lifecycle_strand_projection.read().clone();
+                    let current_board = selected_board_space_id();
+                    let raw_operations = state_store.read().load().raw_operations;
+                    let decrypt_store = state_store.read();
+                    let decrypt_ctx = MlsDecryptCtx {
+                        state_store: &decrypt_store,
+                        realm_id: &realm_id,
+                        actor_id: &actor,
+                        device_id: &device,
+                    };
+                    let (projected_columns, options, projected_board_id) =
+                        columns_from_lifecycle_projection_with_local(
+                            &container_items,
+                            &strand_items,
+                            &current_board,
+                            &raw_operations,
+                            &local_realm_id,
+                            Some(&decrypt_ctx),
+                        );
+                    let board_id = projected_board_id
+                        .clone()
+                        .unwrap_or_else(|| current_board.clone());
+                    let projected_columns = overlay_card_projection_with_operations_and_decrypt(
+                        projected_columns,
+                        &decrypt_store,
+                        &board_id,
+                        &remote_update_operations,
+                        Some(&decrypt_ctx),
+                    );
+                    drop(decrypt_store);
+                    if let Some(board_id) = projected_board_id
+                        && selected_board_space_id() != board_id
+                    {
+                        selected_board_space_id.set(board_id);
+                    }
+                    if !options.is_empty() && board_space_options() != options {
+                        board_space_options.set(options);
+                    }
+                    if !projected_columns.is_empty() && columns() != projected_columns {
+                        columns.set(projected_columns.clone());
+                        sync_selected_card_from_columns(selected_card, &projected_columns);
+                        projection_source.set(BoardProjectionSource::ApiDerived);
+                    } else {
+                        sync_selected_card_from_columns(selected_card, &projected_columns);
+                    }
+                    let card_unlocked = selected_card()
+                        .is_some_and(|card| !card.body_locked && !card.synthesis_locked);
+                    if restored_private_plaintext || card_unlocked {
+                        break;
+                    }
+                }
+            });
+        });
+    }
 
     // Hydrate Space-container / Strand lifecycle state from the soland
     // `/_cokret/self/projection/{spaces|strands}` endpoints so

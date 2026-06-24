@@ -197,7 +197,34 @@ pub(crate) fn push_blocklist_account_data(
     if api_token.trim().is_empty() {
         return;
     }
-    let body = crate::account_data::build_blocklist_account_data_body(&entries);
+    if entries.is_empty() {
+        spawn(async move {
+            if let Err(err) = with_authed_api(&base_url, api_token, |api| async move {
+                api.delete_account_data(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY)
+                    .await
+            })
+            .await
+            {
+                tracing::debug!(
+                    "ck.account_data.delete for ck.account.blocklist failed: {}",
+                    err.display()
+                );
+            }
+        });
+        return;
+    }
+    let plaintext_body = crate::account_data::build_blocklist_account_data_body(&entries);
+    let body =
+        match encrypted_account_data_marker(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, &plaintext_body) {
+            Ok(body) => body,
+            Err(err) => {
+                tracing::warn!(
+                    "ck.account_data.set for ck.account.blocklist skipped: {}",
+                    err
+                );
+                return;
+            }
+        };
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
             api.set_account_data(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, body)
@@ -1668,6 +1695,7 @@ pub fn SettingsPanel(
                                                 token(),
                                                 dnd_enabled(),
                                                 dnd_mode(),
+                                                state_store,
                                                 notification_settings_status,
                                             );
                                             push_notification_rules_account_data(

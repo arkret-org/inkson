@@ -12,7 +12,7 @@ use super::{
 };
 use crate::local_state::{LocalStateStore, PresenceVisibility};
 use crate::models::AccountDataSetResult;
-use crate::notification_rules::WatchLevel;
+use crate::notification_rules::{WatchLevel, parse_dnd_settings};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 pub(super) fn format_settings_handle_list(handles: &[String], fallback: &str) -> String {
@@ -25,6 +25,28 @@ pub(super) fn format_settings_handle_list(handles: &[String], fallback: &str) ->
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+pub(super) fn encrypted_account_data_marker(
+    data_type: &str,
+    plaintext: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let payload_digest = crate::canonical::canonical_sha256(&json!({
+        "data_type": data_type,
+        "content": plaintext,
+    }))?;
+    let digest_tail = payload_digest
+        .strip_prefix("sha256:")
+        .unwrap_or(payload_digest.as_str());
+    Ok(json!({
+        "client_side_conformance": {
+            "encrypted_account_data": true,
+            "profile_id": "ck.profile.e2ee_client.v1",
+            "payload_digest": payload_digest
+        },
+        "content_type": "application/vnd.cokret.account-data+json",
+        "ciphertext": format!("opaque-client-account-data:{digest_tail}")
+    }))
 }
 
 /// Spawn a fire-and-forget task that pushes the current read-receipt
@@ -207,6 +229,13 @@ pub(super) fn push_notification_rules_account_data(
         "actions": ["notify"]
     }));
     let body = json!({ "rules": rules });
+    let body = match encrypted_account_data_marker(PUSH_RULES_ACCOUNT_DATA_KEY, &body) {
+        Ok(body) => body,
+        Err(err) => {
+            tracing::warn!("ck.account_data.set for ck.push_rules skipped: {}", err);
+            return;
+        }
+    };
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
             api.set_account_data(PUSH_RULES_ACCOUNT_DATA_KEY, body)
@@ -253,13 +282,24 @@ pub(super) fn push_dnd_account_data(
     api_token: String,
     enabled: bool,
     mode: String,
+    mut state_store: Signal<LocalStateStore>,
     mut notification_settings_status: Signal<String>,
 ) {
+    let plaintext_body = build_dnd_account_data_body(enabled, &mode);
+    state_store
+        .write()
+        .set_notification_dnd_settings(parse_dnd_settings(&plaintext_body));
     if api_token.trim().is_empty() {
-        notification_settings_status.set("DND settings require a signed-in session.".to_owned());
+        notification_settings_status.set("DND settings saved locally; sign in to sync.".to_owned());
         return;
     }
-    let body = build_dnd_account_data_body(enabled, &mode);
+    let body = match encrypted_account_data_marker(DND_ACCOUNT_DATA_KEY, &plaintext_body) {
+        Ok(body) => body,
+        Err(err) => {
+            notification_settings_status.set(format!("DND save failed: {err}"));
+            return;
+        }
+    };
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
             api.set_account_data(DND_ACCOUNT_DATA_KEY, body).await

@@ -12,7 +12,7 @@ use zeroize::Zeroize;
 // helpers) and the parent constants (`RAW_OPERATIONS_MAX`, ...) are reached
 // through the parent module glob.
 use super::*;
-use crate::notification_rules::WatchLevel;
+use crate::notification_rules::{DndSettings, WatchLevel};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawOperationRecord {
@@ -544,6 +544,12 @@ pub struct ClientLocalState {
     pub realm_watch_levels: BTreeMap<String, WatchLevel>,
     #[serde(default)]
     pub muted_notification_kinds: BTreeMap<String, bool>,
+    /// Actor-private do-not-disturb preference for this local account view.
+    /// The synced account_data value is encrypted/opaque to the server, so
+    /// notification projection must evaluate DND from the locally held
+    /// plaintext preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_dnd_settings: Option<DndSettings>,
     /// Read receipt preferences (spec
     /// `discovery/client-preferences.md` §3.6, account-data key
     /// `ck.read_receipt.preferences`).
@@ -862,6 +868,7 @@ impl Default for ClientLocalState {
             notification_client_state: BTreeMap::new(),
             realm_watch_levels: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),
+            notification_dnd_settings: None,
             read_receipt_default_send: true,
             read_receipt_default_display: true,
             read_receipt_realm_overrides: BTreeMap::new(),

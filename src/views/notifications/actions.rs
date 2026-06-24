@@ -69,7 +69,7 @@ pub(crate) fn refresh_notifications(
         {
             Ok((response, invite_notifications)) => {
                 let push_rules = push_rules_from_account_data(&response.account_data);
-                let dnd = dnd_settings_from_account_data(&response.account_data);
+                let account_dnd = dnd_settings_from_account_data(&response.account_data);
                 let mut raw_notifications = raw_notifications_from_sources(
                     Some(&response.notifications),
                     &response.account_data,
@@ -84,11 +84,15 @@ pub(crate) fn refresh_notifications(
                     let mut store = state_store.write();
                     store.save_notification_projection(raw_notifications.clone());
                     let local_state = store.load();
+                    let effective_dnd = local_state
+                        .notification_dnd_settings
+                        .as_ref()
+                        .or(account_dnd.as_ref());
                     hydrate_notifications(
                         raw_notifications,
                         &local_state,
                         push_rules.as_ref(),
-                        dnd.as_ref(),
+                        effective_dnd,
                     )
                 };
                 notifications.set(hydrated);
@@ -237,7 +241,7 @@ fn accept_invite_notification(
         {
             Ok((Ok(sync), invite_notifications)) => {
                 let push_rules = push_rules_from_account_data(&sync.account_data);
-                let dnd = dnd_settings_from_account_data(&sync.account_data);
+                let account_dnd = dnd_settings_from_account_data(&sync.account_data);
                 let mut hidden_realms = joined_realm_ids(&sync);
                 hidden_realms.insert(accepted_realm.clone());
                 let mut realm_title_hints = BTreeMap::new();
@@ -275,11 +279,15 @@ fn accept_invite_notification(
                     apply_sync_projection_to_store(&mut store, &sync, &realm_title_hints);
                     store.save_notification_projection(raw_notifications.clone());
                     let local_state = store.load();
+                    let effective_dnd = local_state
+                        .notification_dnd_settings
+                        .as_ref()
+                        .or(account_dnd.as_ref());
                     hydrate_notifications(
                         raw_notifications,
                         &local_state,
                         push_rules.as_ref(),
-                        dnd.as_ref(),
+                        effective_dnd,
                     )
                 };
                 notifications.set(hydrated);
