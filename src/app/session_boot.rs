@@ -199,9 +199,10 @@ pub(super) fn inject_test_session_grant(
         tracing::warn!(?error, "test session injection: DPoP key persist failed");
         return None;
     }
-    if let Err(error) = crate::event_signer::activate_device_signer_from_seed_b64url(
+    if let Err(error) = crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
         &dpop_seed_b64url,
         Some(secure_store.as_ref()),
+        Some(device_id),
     ) {
         tracing::warn!(
             ?error,

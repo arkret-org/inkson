@@ -195,6 +195,11 @@ fn prepare_refresh_grant(
             });
         }
     };
+    if let Err(error) = crate::event_signer::bind_active_signer_device_id(&grant.device_id) {
+        return RefreshPrepared::Done(RefreshOutcome::Transient {
+            reason: format!("could not bind event signer to grant device: {error}"),
+        });
+    }
 
     RefreshPrepared::Ready {
         grant,

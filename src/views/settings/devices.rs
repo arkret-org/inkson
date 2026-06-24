@@ -1130,6 +1130,14 @@ fn render_pair_strand(
                             pair_status.set("This browser has no local device id yet. Sign in again or reload before pairing.".to_owned());
                             return;
                         }
+                        if let Err(err) =
+                            crate::event_signer::bind_active_signer_device_id(&requesting_device_id)
+                        {
+                            pair_status.set(format!(
+                                "Binding this device signer failed: {err}"
+                            ));
+                            return;
+                        }
                         let pairing_code = uuid_v7().replace('-', "");
                         let challenge_signature = uuid_v7().replace('-', "");
                         let payload = build_pair_payload(

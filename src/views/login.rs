@@ -491,6 +491,8 @@ async fn finish_oidc_callback(
         let mut store = state_store.write();
         let handle = crate::auth_dpop::ensure_device_key(&mut store)
             .map_err(|error| format!("DPoP key failed: {error}"))?;
+        crate::event_signer::bind_active_signer_device_id(&device)
+            .map_err(|error| format!("Event signer device binding failed: {error}"))?;
         let proof = handle
             .mint_proof("POST", &session_grants_url, None)
             .map_err(|error| format!("DPoP proof failed: {error}"))?;

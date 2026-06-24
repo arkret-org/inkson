@@ -120,6 +120,9 @@ pub struct YougenEventSigner {
     /// reference. Defaults to `<signer_did>#device` when the backend
     /// does not override it.
     verification_method: String,
+    /// Protocol device id for durable Event proofs. When present, ordinary
+    /// event proofs use `<event actor/controller>#<device_id>`.
+    device_id: Option<String>,
     /// Coarse mode tag used by the UI to colour the badge — `"ed25519"`
     /// for the in-process seed path and `"external"` for delegated
     /// backends.
@@ -139,6 +142,7 @@ impl std::fmt::Debug for YougenEventSigner {
         f.debug_struct("YougenEventSigner")
             .field("signer_did", &self.signer_did)
             .field("verification_method", &self.verification_method)
+            .field("device_id", &self.device_id)
             .field("mode_tag", &self.mode_tag)
             .field("algorithm", &self.inner.algorithm())
             .field("raw_signing_available", &self.raw_signing_key.is_some())
@@ -170,6 +174,7 @@ impl YougenEventSigner {
             inner,
             signer_did,
             verification_method,
+            device_id: None,
             mode_tag: "external",
             raw_signing_key: None,
             last_signed_at: Mutex::new(None),
@@ -185,6 +190,11 @@ impl YougenEventSigner {
     /// Verification method id embedded in each emitted proof.
     pub fn verification_method(&self) -> &str {
         &self.verification_method
+    }
+
+    /// Protocol `ck:device:*` id bound into ordinary Event proof fragments.
+    pub fn device_id(&self) -> Option<&str> {
+        self.device_id.as_deref()
     }
 
     /// Local seed-backed signer's Ed25519 public key in multibase form.
@@ -357,7 +367,20 @@ impl YougenEventSigner {
     }
 
     fn verification_method_for_sdk_event(&self, event: &cokret_sdk::Event) -> String {
-        format!("{}#device", event.actor_id.as_str())
+        let controller = event
+            .executed_by
+            .as_ref()
+            .map(|did| did.as_str())
+            .unwrap_or_else(|| event.actor_id.as_str());
+        if let Some(device_id) = self.device_id.as_deref() {
+            return format!("{controller}#{device_id}");
+        }
+        let stored_controller = verification_method_controller(&self.verification_method);
+        if stored_controller == controller {
+            self.verification_method.clone()
+        } else {
+            format!("{controller}#device")
+        }
     }
 
     /// The [`ProofType`] tag every proof emitted by this signer carries.
@@ -386,6 +409,18 @@ pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> Yo
     build_ed25519_signer_with_verification_method(seed, signer_did, verification_method)
 }
 
+/// Build a local Ed25519 signer for a concrete protocol device id. Event
+/// proofs are emitted as `<event actor/controller>#<device_id>`.
+pub fn build_ed25519_device_signer(
+    seed: [u8; 32],
+    signer_did: impl Into<String>,
+    device_id: impl Into<String>,
+) -> YougenEventSigner {
+    let mut signer = build_ed25519_signer(seed, signer_did);
+    signer.device_id = normalize_signer_device_id(Some(device_id.into()));
+    signer
+}
+
 /// Install the active device signer from the exact signing material used for
 /// this session device. Callers that just enrolled or rehydrated the device
 /// identity should use this instead of hand-building a signer so enrollment,
@@ -398,6 +433,22 @@ pub fn install_device_signer_from_material(
         material.seed,
         material.local_signing_did.clone(),
     ));
+    install_device_signer(signer)
+}
+
+pub fn install_device_signer_from_material_for_device(
+    material: &crate::secure_key_store::SigningSeedMaterial,
+    device_id: &str,
+) -> Arc<YougenEventSigner> {
+    let signer = Arc::new(build_ed25519_device_signer(
+        material.seed,
+        material.local_signing_did.clone(),
+        device_id,
+    ));
+    install_device_signer(signer)
+}
+
+fn install_device_signer(signer: Arc<YougenEventSigner>) -> Arc<YougenEventSigner> {
     let installed = install_active_signer(signer.clone());
     crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
     if installed {
@@ -418,6 +469,14 @@ pub fn activate_device_signer_from_seed(
     seed: [u8; 32],
     persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
 ) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+    activate_device_signer_from_seed_for_device(seed, persist_store, None)
+}
+
+pub fn activate_device_signer_from_seed_for_device(
+    seed: [u8; 32],
+    persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
+    device_id: Option<&str>,
+) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
     let material = match persist_store {
         Some(store) => crate::secure_key_store::store_signing_seed(store, &seed)
             .map_err(|err| anyhow::anyhow!("persist device signing seed failed: {err}"))?,
@@ -429,16 +488,29 @@ pub fn activate_device_signer_from_seed(
             }
         }
     };
-    let signer = Arc::new(build_ed25519_signer(
-        material.seed,
-        material.local_signing_did.clone(),
-    ));
+    let signer = match device_id.and_then(|device_id| normalize_signer_device_id(Some(device_id))) {
+        Some(device_id) => Arc::new(build_ed25519_device_signer(
+            material.seed,
+            material.local_signing_did.clone(),
+            device_id,
+        )),
+        None => Arc::new(build_ed25519_signer(
+            material.seed,
+            material.local_signing_did.clone(),
+        )),
+    };
     let expected_public_key = signer.public_key_multibase();
     let active_matches = active_signer()
         .and_then(|active| active.public_key_multibase())
         .is_some_and(|active_public_key| Some(active_public_key) == expected_public_key);
     let active = if active_matches {
-        active_signer().unwrap_or_else(|| signer.clone())
+        let active = active_signer().unwrap_or_else(|| signer.clone());
+        if signer.device_id.is_some() && active.device_id != signer.device_id {
+            replace_active_signer(Some(signer.clone()));
+            signer
+        } else {
+            active
+        }
     } else {
         let _ = replace_active_signer(Some(signer.clone()));
         signer
@@ -453,6 +525,14 @@ pub fn activate_device_signer_from_seed_b64url(
     seed_b64url: &str,
     persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
 ) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+    activate_device_signer_from_seed_b64url_for_device(seed_b64url, persist_store, None)
+}
+
+pub fn activate_device_signer_from_seed_b64url_for_device(
+    seed_b64url: &str,
+    persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
+    device_id: Option<&str>,
+) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
     let bytes = URL_SAFE_NO_PAD
         .decode(seed_b64url.as_bytes())
         .map_err(|err| anyhow::anyhow!("device signing seed base64url decode: {err}"))?;
@@ -464,7 +544,7 @@ pub fn activate_device_signer_from_seed_b64url(
     }
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
-    activate_device_signer_from_seed(seed, persist_store)
+    activate_device_signer_from_seed_for_device(seed, persist_store, device_id)
 }
 
 /// Build an Ed25519 signer with an explicit verification-method id.
@@ -485,10 +565,59 @@ pub fn build_ed25519_signer_with_verification_method(
         inner: Arc::new(sdk_signer),
         signer_did,
         verification_method,
+        device_id: None,
         mode_tag: "ed25519",
         raw_signing_key: Some(raw_signing_key),
         last_signed_at: Mutex::new(None),
     }
+}
+
+pub fn bind_active_signer_device_id(
+    device_id: &str,
+) -> Result<Option<Arc<YougenEventSigner>>, anyhow::Error> {
+    let Some(active) = active_signer() else {
+        return Ok(None);
+    };
+    let Some(device_id) = normalize_signer_device_id(Some(device_id)) else {
+        return Err(anyhow::anyhow!(
+            "device_id is required for device-bound event proofs"
+        ));
+    };
+    cokret_sdk::DeviceId::new(device_id.clone())
+        .map_err(|err| anyhow::anyhow!("invalid device_id for event signer: {err}"))?;
+    if active.device_id.as_deref() == Some(device_id.as_str()) {
+        return Ok(Some(active));
+    }
+    let rebound = Arc::new(YougenEventSigner {
+        inner: active.inner.clone(),
+        signer_did: active.signer_did.clone(),
+        verification_method: active.verification_method.clone(),
+        device_id: Some(device_id),
+        mode_tag: active.mode_tag,
+        raw_signing_key: active.raw_signing_key.clone(),
+        last_signed_at: Mutex::new(active.last_signed_at_snapshot()),
+    });
+    let _ = replace_active_signer(Some(rebound.clone()));
+    Ok(Some(rebound))
+}
+
+fn normalize_signer_device_id(device_id: Option<impl AsRef<str>>) -> Option<String> {
+    device_id
+        .as_ref()
+        .map(|value| value.as_ref().trim())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn verification_method_controller(verification_method: &str) -> &str {
+    let no_query = verification_method
+        .split_once('?')
+        .map(|(head, _)| head)
+        .unwrap_or(verification_method);
+    no_query
+        .split_once('#')
+        .map(|(head, _)| head)
+        .unwrap_or(no_query)
 }
 
 // Process-wide active signer slot. `OnceLock` so callers don't have to
@@ -657,6 +786,7 @@ mod tests {
     use crate::operation::{EventProofAudience, OperationBuilder, set_proof_mode};
 
     const TEST_REALM_ID: &str = "ck:realm:01964137-0000-7000-8000-000000000001";
+    const TEST_DEVICE_ID: &str = "ck:device:01964137-0000-7000-8000-000000000001";
 
     /// Same per-process guard pattern operation.rs uses — proof-mode
     /// and active-signer state is global so concurrent tests would
@@ -745,7 +875,7 @@ mod tests {
     #[test]
     fn sign_envelope_attaches_real_jws_proof() {
         let _g = reset();
-        let signer = build_ed25519_signer([3u8; 32], "did:web:bob.example");
+        let signer = build_ed25519_device_signer([3u8; 32], "did:web:bob.example", TEST_DEVICE_ID);
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
@@ -766,7 +896,10 @@ mod tests {
         let proof = event.proofs.first().expect("real proof attached");
         assert_eq!(proof.kind, "detached_jws");
         assert_eq!(proof.alg, "EdDSA");
-        assert_eq!(proof.verification_method, "did:web:bob.example#device");
+        assert_eq!(
+            proof.verification_method,
+            format!("did:web:bob.example#{TEST_DEVICE_ID}")
+        );
         assert!(proof.event_digest.as_str().starts_with("sha256:"));
         // Real detached JWS: header..signature, signature non-empty.
         let parts: Vec<&str> = proof.jws.split('.').collect();
@@ -785,7 +918,7 @@ mod tests {
     #[test]
     fn sign_envelope_roots_proof_in_event_actor() {
         let _g = reset();
-        let signer = build_ed25519_signer([9u8; 32], "did:key:zlocal");
+        let signer = build_ed25519_device_signer([9u8; 32], "did:key:zlocal", TEST_DEVICE_ID);
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
@@ -801,7 +934,10 @@ mod tests {
         signer.sign_envelope(&mut event).expect("sign");
 
         let proof = event.proofs.first().expect("proof");
-        assert_eq!(proof.verification_method, "did:web:alice.example#device");
+        assert_eq!(
+            proof.verification_method,
+            format!("did:web:alice.example#{TEST_DEVICE_ID}")
+        );
         assert_eq!(event.actor_id.as_str(), "did:web:alice.example");
     }
 
@@ -812,10 +948,13 @@ mod tests {
         };
         let _g = reset();
         let seed = [5u8; 32];
-        let signer = build_ed25519_signer(seed, "did:web:carol.example");
+        let signer = build_ed25519_device_signer(seed, "did:web:carol.example", TEST_DEVICE_ID);
 
         // Compute the matching verifying key for the seed via the SDK.
-        let sdk_signer = Ed25519DetachedJwsSigner::from_seed(seed, "did:web:carol.example#device");
+        let sdk_signer = Ed25519DetachedJwsSigner::from_seed(
+            seed,
+            format!("did:web:carol.example#{TEST_DEVICE_ID}"),
+        );
         let public_key = PublicKeyMaterial::Ed25519Raw {
             bytes: sdk_signer.verifying_key().to_bytes().to_vec(),
         };
@@ -869,8 +1008,11 @@ mod tests {
         };
         let _g = reset();
         let seed = [6u8; 32];
-        let signer = build_ed25519_signer(seed, "did:web:carol.example");
-        let sdk_signer = Ed25519DetachedJwsSigner::from_seed(seed, "did:web:carol.example#device");
+        let signer = build_ed25519_device_signer(seed, "did:web:carol.example", TEST_DEVICE_ID);
+        let sdk_signer = Ed25519DetachedJwsSigner::from_seed(
+            seed,
+            format!("did:web:carol.example#{TEST_DEVICE_ID}"),
+        );
         let public_key = PublicKeyMaterial::Ed25519Raw {
             bytes: sdk_signer.verifying_key().to_bytes().to_vec(),
         };
@@ -933,7 +1075,7 @@ mod tests {
     #[test]
     fn sign_sdk_event_with_context_attaches_typed_proof() {
         let _g = reset();
-        let signer = build_ed25519_signer([10u8; 32], "did:web:sdk.example");
+        let signer = build_ed25519_device_signer([10u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
         let mut event: cokret_sdk::Event = serde_json::from_value(json!({
             "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.message.create",
@@ -959,7 +1101,10 @@ mod tests {
 
         let proof = event.proofs.first().expect("proof");
         assert_eq!(proof.kind, "detached_jws");
-        assert_eq!(proof.verification_method, "did:web:sdk.example#device");
+        assert_eq!(
+            proof.verification_method,
+            format!("did:web:sdk.example#{TEST_DEVICE_ID}")
+        );
         assert_eq!(proof.domain.as_deref(), Some("did:web:server.example"));
         assert!(proof.audience.is_some());
         event
@@ -1049,7 +1194,11 @@ mod tests {
     #[test]
     fn sign_with_active_uses_installed_signer() {
         let _g = reset();
-        let signer = Arc::new(build_ed25519_signer([2u8; 32], "did:web:dave.example"));
+        let signer = Arc::new(build_ed25519_device_signer(
+            [2u8; 32],
+            "did:web:dave.example",
+            TEST_DEVICE_ID,
+        ));
         install_active_signer(signer);
 
         let prior_mode = current_proof_mode();
@@ -1065,7 +1214,10 @@ mod tests {
         set_proof_mode(prior_mode);
 
         let proof = event.proofs.first().expect("auto-attached proof");
-        assert_eq!(proof.verification_method, "did:web:dave.example#device");
+        assert_eq!(
+            proof.verification_method,
+            format!("did:web:dave.example#{TEST_DEVICE_ID}")
+        );
         // Submit guard accept-shape: header..signature, non-empty sig.
         assert!(proof.jws.contains(".."));
         let sig_segment = proof.jws.split("..").nth(1).unwrap();

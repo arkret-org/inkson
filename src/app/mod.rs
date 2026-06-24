@@ -316,9 +316,10 @@ pub fn RouterView() -> Element {
                     match dpop_record {
                         Ok(Some(record)) => {
                             if let Err(error) =
-                                crate::event_signer::activate_device_signer_from_seed_b64url(
+                                crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
                                     &record.seed_b64,
                                     Some(secure_store.as_ref()),
+                                    Some(&device_id_for_secure_upgrade()),
                                 )
                             {
                                 tracing::warn!(

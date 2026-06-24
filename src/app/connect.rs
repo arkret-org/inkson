@@ -267,6 +267,9 @@ async fn enroll_current_session_device(
         None => crate::event_signer::bootstrap_default_signer("yougen")
             .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
     };
+    let signer = crate::event_signer::bind_active_signer_device_id(device)
+        .map_err(|error| anyhow::anyhow!("bind event signer to device: {error}"))?
+        .unwrap_or(signer);
     let device_public_key = signer.public_key_multibase().ok_or_else(|| {
         anyhow::anyhow!("device enrollment requires a local Ed25519 active signer")
     })?;
