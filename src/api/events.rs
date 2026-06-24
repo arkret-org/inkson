@@ -21,7 +21,7 @@ impl CokretApi {
     /// invoke `on_frame` once per parsed frame.
     ///
     /// Round 4 (spec a77b995) — the parser is now typed against
-    /// [`cokret_sdk::EventsSubscribeFrameBody`] (the `tag = "kind"`,
+    /// [`cokret_sdk::EventsSubscribeFrame`] (the `tag = "kind"`,
     /// snake_case-discriminated frame body). Callers MUST route on the
     /// canonical variants: `Dropped { cursor }` → resume from `cursor`,
     /// `ResyncRequired` → full resync, `EpochRotation { epoch }` →
@@ -41,7 +41,7 @@ impl CokretApi {
         mut on_frame: F,
     ) -> anyhow::Result<()>
     where
-        F: FnMut(cokret_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
+        F: FnMut(cokret_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
     {
         if let Some(token) = after {
             validate_cursor(token)?;

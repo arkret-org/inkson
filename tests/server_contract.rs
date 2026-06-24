@@ -641,24 +641,24 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     assert!(sync.presence[0].get("sender").is_none());
 
     let frames = parse_events_subscribe_ndjson_text(
-        r#"{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
-{"kind":"frontier","frontier":{"ck:realm:demo":["ck:event:01"]}}
-{"kind":"catchup_complete"}
+        r#"{"kind":"heartbeat"}
+{"kind":"frontier","cursor":"ck:cursor:frontier"}
+{"kind":"catchup_complete","cursor":"ck:cursor:live"}
 "#,
     )
     .unwrap();
-    assert!(matches!(
-        frames[0],
-        cokret_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
-    ));
-    assert!(matches!(
-        &frames[1],
-        cokret_sdk::EventsSubscribeFrameBody::Frontier { .. }
-    ));
-    assert!(matches!(
-        &frames[2],
-        cokret_sdk::EventsSubscribeFrameBody::CatchupComplete
-    ));
+    assert_eq!(
+        frames[0].kind,
+        cokret_sdk::EventsSubscribeFrameKind::Heartbeat
+    );
+    assert_eq!(
+        frames[1].kind,
+        cokret_sdk::EventsSubscribeFrameKind::Frontier
+    );
+    assert_eq!(
+        frames[2].kind,
+        cokret_sdk::EventsSubscribeFrameKind::CatchupComplete
+    );
 }
 
 #[test]

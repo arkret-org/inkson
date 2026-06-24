@@ -198,30 +198,30 @@ fn parses_events_subscribe_ndjson_frames() {
     // `frontier` value; `catchup_complete` is a unit variant.
     let frames = parse_events_subscribe_ndjson_text(
         r#"
-{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
-{"kind":"frontier","frontier":{"ck:realm:demo":["ck:event:01"]}}
-{"kind":"catchup_complete"}
+{"kind":"heartbeat"}
+{"kind":"frontier","cursor":"ck:cursor:frontier"}
+{"kind":"catchup_complete","cursor":"ck:cursor:live"}
 "#,
     )
     .unwrap();
 
-    assert!(matches!(
-        frames[0],
-        cokret_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
-    ));
-    assert!(matches!(
-        &frames[1],
-        cokret_sdk::EventsSubscribeFrameBody::Frontier { .. }
-    ));
-    assert!(matches!(
-        &frames[2],
-        cokret_sdk::EventsSubscribeFrameBody::CatchupComplete
-    ));
+    assert_eq!(
+        frames[0].kind,
+        cokret_sdk::EventsSubscribeFrameKind::Heartbeat
+    );
+    assert_eq!(
+        frames[1].kind,
+        cokret_sdk::EventsSubscribeFrameKind::Frontier
+    );
+    assert_eq!(
+        frames[2].kind,
+        cokret_sdk::EventsSubscribeFrameKind::CatchupComplete
+    );
 }
 
 #[test]
 fn drains_split_events_subscribe_ndjson_chunks() {
-    let mut pending = br#"{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
+    let mut pending = br#"{"kind":"heartbeat"}
 {"kind":"resync_required""#
         .to_vec();
     let mut frames = Vec::new();
@@ -231,13 +231,13 @@ fn drains_split_events_subscribe_ndjson_chunks() {
     })
     .unwrap();
     assert_eq!(frames.len(), 1);
-    assert!(matches!(
-        frames[0],
-        cokret_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
-    ));
+    assert_eq!(
+        frames[0].kind,
+        cokret_sdk::EventsSubscribeFrameKind::Heartbeat
+    );
 
     pending.extend_from_slice(
-        br#","reason":"server restart"}
+        br#","reconnect_after_ms":5000}
 "#,
     );
     drain_events_subscribe_ndjson_lines(&mut pending, &mut |frame| {
@@ -247,8 +247,9 @@ fn drains_split_events_subscribe_ndjson_chunks() {
     .unwrap();
 
     assert!(pending.is_empty());
-    assert!(matches!(
-        &frames[1],
-        cokret_sdk::EventsSubscribeFrameBody::ResyncRequired { reason, .. } if reason == "server restart"
-    ));
+    assert_eq!(
+        frames[1].kind,
+        cokret_sdk::EventsSubscribeFrameKind::ResyncRequired
+    );
+    assert_eq!(frames[1].reconnect_after_ms, Some(5_000));
 }

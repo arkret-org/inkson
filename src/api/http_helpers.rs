@@ -374,12 +374,12 @@ pub(crate) fn events_subscribe_path(
 
 /// Round 4 (spec a77b995) — parse the round-4 typed
 /// `/events/subscribe` NDJSON stream. The frame body is
-/// [`cokret_sdk::EventsSubscribeFrameBody`] (tag = "kind",
+/// [`cokret_sdk::EventsSubscribeFrame`] (tag = "kind",
 /// snake_case-discriminated). Wire-breaking: the pre-round-4 untyped
 /// string-line parser is deleted.
 pub fn parse_events_subscribe_ndjson_text(
     input: &str,
-) -> anyhow::Result<Vec<cokret_sdk::EventsSubscribeFrameBody>> {
+) -> anyhow::Result<Vec<cokret_sdk::EventsSubscribeFrame>> {
     let mut frames = Vec::new();
     for line in input.lines() {
         if let Some(frame) = parse_events_subscribe_ndjson_line(line.as_bytes())? {
@@ -397,7 +397,7 @@ pub(crate) fn drain_events_subscribe_ndjson_lines<F>(
     on_frame: &mut F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(cokret_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
+    F: FnMut(cokret_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
 {
     while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
         let mut line: Vec<u8> = pending.drain(..=newline).collect();
@@ -416,7 +416,7 @@ where
 
 pub(crate) fn parse_events_subscribe_ndjson_line(
     line: &[u8],
-) -> anyhow::Result<Option<cokret_sdk::EventsSubscribeFrameBody>> {
+) -> anyhow::Result<Option<cokret_sdk::EventsSubscribeFrame>> {
     let trimmed = trim_ascii(line);
     if trimmed.is_empty() {
         return Ok(None);
