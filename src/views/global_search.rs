@@ -31,7 +31,7 @@ use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::views::account_projection::projection_events_from_sync_realms;
-use crate::views::helpers::short_protocol_id;
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 /// True when a `key` event should be treated as the global search
 /// trigger (`Ctrl+F` on Win/Linux, `Cmd+F` on macOS). The `meta` flag
@@ -344,7 +344,7 @@ pub fn GlobalSearchPanel(
                                 .to_owned();
                             let destination_for_button = destination.clone();
                             let realm_id_label = short_protocol_id(&realm_id_text);
-                            let sender_label = short_protocol_id(&sender);
+                            let sender_label = display_name_for_did(&state_store.read(), &sender);
                             rsx! {
                                 div {
                                     key: "{idx}",

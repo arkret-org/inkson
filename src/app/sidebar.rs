@@ -138,7 +138,8 @@ pub(super) fn toggle_sidebar_contact_pin(
     } else {
         "Unpinned Contact"
     };
-    status.set(format!("{action_status}: {}", short_protocol_id(&actor_id)));
+    let actor_label = crate::views::helpers::display_name_for_did(&state_store.read(), &actor_id);
+    status.set(format!("{action_status}: {actor_label}"));
     crate::views::settings::push_contact_remark_account_data(base_url, api_token, actor_id, next);
 }
 
@@ -279,11 +280,12 @@ pub(super) fn delete_sidebar_contact(
     base_url: String,
     api_token: String,
     peer: String,
+    state_store: Signal<LocalStateStore>,
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
     mut status: Signal<String>,
 ) {
-    let peer_label = short_protocol_id(&peer);
+    let peer_label = crate::views::helpers::display_name_for_did(&state_store.read(), &peer);
     status.set(format!("Deleting contact: {peer_label}"));
     spawn(async move {
         let peer_for_api = peer.clone();

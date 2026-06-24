@@ -36,7 +36,7 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::ConnectionState;
 use crate::views::account_projection::ProjectionEvent;
-use crate::views::helpers::{persist_config, short_protocol_id};
+use crate::views::helpers::{display_name_for_did, persist_config, short_protocol_id};
 
 // YOU-07-001: post-login / startup-check effects and small types moved to
 // `crate::app::bootstrap` (move-only; logic, signatures, and bytes unchanged).
@@ -430,6 +430,8 @@ pub fn RouterView() -> Element {
     let mut personal_handles = use_signal(Vec::<String>::new);
     let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
+    let contact_handles_lookup_key = use_signal(String::new);
+    let contact_handles_fetching = use_signal(BTreeSet::<String>::new);
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
@@ -1423,6 +1425,113 @@ pub fn RouterView() -> Element {
             });
         });
     }
+    {
+        let mut contact_handles_lookup_key = contact_handles_lookup_key;
+        let mut contact_handles_fetching = contact_handles_fetching;
+        let mut state_store_for_contact_handles = state_store;
+        use_effect(move || {
+            let lookup_base_url = base_url();
+            let lookup_token = token();
+            let lookup_supported = server_description().as_ref().is_some_and(|description| {
+                description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT)
+            });
+            let mut peers = direct_contact_rows
+                .read()
+                .iter()
+                .map(|contact| contact.peer.trim().to_owned())
+                .filter(|peer| peer.starts_with("did:"))
+                .collect::<BTreeSet<_>>();
+            if !lookup_supported || lookup_token.trim().is_empty() || peers.is_empty() {
+                if !contact_handles_lookup_key().is_empty() {
+                    contact_handles_lookup_key.set(String::new());
+                }
+                return;
+            }
+            peers.retain(|peer| {
+                state_store_for_contact_handles
+                    .read()
+                    .cached_member_handle_lookup(peer, None, None)
+                    .is_none()
+                    && !contact_handles_fetching.read().contains(peer)
+            });
+            if peers.is_empty() {
+                if !contact_handles_lookup_key().is_empty() {
+                    contact_handles_lookup_key.set(String::new());
+                }
+                return;
+            }
+            let peer_key = peers.iter().cloned().collect::<Vec<_>>().join(",");
+            let key = format!(
+                "{}|{}|{}|{}",
+                lookup_base_url,
+                !lookup_token.trim().is_empty(),
+                lookup_supported,
+                peer_key,
+            );
+            if contact_handles_lookup_key() == key {
+                return;
+            }
+            contact_handles_lookup_key.set(key);
+            for peer in &peers {
+                contact_handles_fetching.write().insert(peer.clone());
+            }
+            let base = lookup_base_url.clone();
+            let api_token = lookup_token.clone();
+            spawn(async move {
+                for subject_id in peers {
+                    let result =
+                        crate::views::helpers::with_authed_api(&base, api_token.clone(), {
+                            let subject_id = subject_id.clone();
+                            move |api| async move {
+                                api.list_handles_for_subject(&subject_id, None, Some("display"))
+                                    .await
+                            }
+                        })
+                        .await;
+                    match result {
+                        Ok(res) => {
+                            let primary = res
+                                .primary_handle
+                                .as_ref()
+                                .map(|handle| handle.canonical().to_owned());
+                            let claims_count = res.claims.len();
+                            let earliest_expiry = res
+                                .claims
+                                .iter()
+                                .filter_map(|claim| claim.expires_at.as_ref().cloned())
+                                .min();
+                            state_store_for_contact_handles
+                                .write()
+                                .save_member_handle_lookup(
+                                    res.subject.as_str().to_owned(),
+                                    None,
+                                    None,
+                                    primary,
+                                    claims_count,
+                                    Some(res.as_of),
+                                    earliest_expiry,
+                                );
+                        }
+                        Err(err) if !err.is_auth_expired() => {
+                            state_store_for_contact_handles
+                                .write()
+                                .save_member_handle_lookup(
+                                    subject_id.clone(),
+                                    None,
+                                    None,
+                                    None,
+                                    0,
+                                    None,
+                                    None,
+                                );
+                        }
+                        Err(_) => {}
+                    }
+                    contact_handles_fetching.write().remove(&subject_id);
+                }
+            });
+        });
+    }
     let active_server_label = normalize_server_url(&base_url());
     let account_did_value = account_did();
     let device_id_value = device_id();
@@ -1437,15 +1546,15 @@ pub fn RouterView() -> Element {
         personal_handles_value.join(", ")
     };
     let account_label = if has_session {
-        account_did_label.clone()
+        personal_handles_value
+            .first()
+            .map(|handle| format!("@{handle}"))
+            .unwrap_or_else(|| display_name_for_did(&state_store.read(), &account_did_value))
     } else {
         "Not signed in".to_owned()
     };
     let account_detail = if has_session {
-        personal_handles_value
-            .first()
-            .map(|handle| format!("@{handle}"))
-            .unwrap_or_else(|| format!("device {device_id_label}"))
+        format!("device {device_id_label}")
     } else {
         "Refresh server metadata, then sign in".to_owned()
     };
@@ -1901,11 +2010,7 @@ pub fn RouterView() -> Element {
         .read()
         .iter()
         .filter(|contact| {
-            let fallback_name = short_protocol_id(&contact.peer);
-            let display_name = contact_remarks_for_sidebar
-                .get(&contact.peer)
-                .map(|remark| remark.display_name(&fallback_name).to_owned())
-                .unwrap_or(fallback_name);
+            let display_name = display_name_for_did(&state_store.read(), &contact.peer);
             let scopes = contact
                 .bidirectional_scopes
                 .iter()
@@ -1927,14 +2032,9 @@ pub fn RouterView() -> Element {
         let right_remark = contact_remarks_for_sidebar.get(&right.peer);
         let left_pinned = left_remark.is_some_and(|remark| remark.pinned);
         let right_pinned = right_remark.is_some_and(|remark| remark.pinned);
-        let left_fallback = short_protocol_id(&left.peer);
-        let right_fallback = short_protocol_id(&right.peer);
-        let left_label = left_remark
-            .map(|remark| remark.display_name(&left_fallback).to_ascii_lowercase())
-            .unwrap_or_else(|| left_fallback.to_ascii_lowercase());
-        let right_label = right_remark
-            .map(|remark| remark.display_name(&right_fallback).to_ascii_lowercase())
-            .unwrap_or_else(|| right_fallback.to_ascii_lowercase());
+        let left_label = display_name_for_did(&state_store.read(), &left.peer).to_ascii_lowercase();
+        let right_label =
+            display_name_for_did(&state_store.read(), &right.peer).to_ascii_lowercase();
         right_pinned
             .cmp(&left_pinned)
             .then_with(|| left_label.cmp(&right_label))
@@ -2932,11 +3032,8 @@ pub fn RouterView() -> Element {
                                     };
                                     let contact_remark =
                                         contact_remarks_for_sidebar.get(&peer).cloned();
-                                    let fallback_name = short_protocol_id(&peer);
-                                    let display_name = contact_remark
-                                        .as_ref()
-                                        .map(|remark| remark.display_name(&fallback_name).to_owned())
-                                        .unwrap_or(fallback_name);
+                                    let display_name = display_name_for_did(&state_store.read(), &peer);
+                                    let unavailable_label = display_name.clone();
                                     let has_contact_remark = contact_remark
                                         .as_ref()
                                         .is_some_and(|remark| !remark.local_name.trim().is_empty());
@@ -2969,7 +3066,7 @@ pub fn RouterView() -> Element {
                                                         event.prevent_default();
                                                         event.stop_propagation();
                                                         if !can_resolve {
-                                                            status.set(format!("{}: {}", crate::i18n::tr("direct.unavailable"), peer));
+                                                            status.set(format!("{}: {}", crate::i18n::tr("direct.unavailable"), unavailable_label));
                                                             return;
                                                         }
                                                         if let Some(summary) = direct.clone()
@@ -3117,6 +3214,7 @@ pub fn RouterView() -> Element {
                                                                         base_url(),
                                                                         token(),
                                                                         peer.clone(),
+                                                                        state_store,
                                                                         direct_contact_rows,
                                                                         direct_contacts_loaded,
                                                                         status,
@@ -4484,6 +4582,7 @@ pub fn RouterView() -> Element {
                             has_session,
                             contact_rows: direct_contact_rows,
                             contacts_loaded: direct_contacts_loaded,
+                            state_store,
                             app_status: status,
                             query: contact_manage_query,
                             selection: manage_contact_selection,
@@ -4495,6 +4594,7 @@ pub fn RouterView() -> Element {
                         crate::views::contacts::ContactsPanel {
                             base_url: base_url(),
                             token,
+                            state_store,
                         }
                     },
                     Route::Setup | Route::SetupSection { .. } => {

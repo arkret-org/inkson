@@ -983,7 +983,8 @@ pub fn DirectoryPanel(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("-")
                                     .to_owned();
-                                let actor_id_label = short_protocol_id(&actor_id);
+                                let actor_id_label =
+                                    display_name_for_did(&state_store.read(), &actor_id);
                                 rsx! {
                                     span { title: "{actor_id}", "{actor_id_label}" }
                                 }
@@ -1057,12 +1058,14 @@ pub fn DirectoryPanel(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_owned();
+                                let actor_id_label =
+                                    display_name_for_did(&state_store.read(), &actor_id);
                                 rsx! {
                                     div {
                                         class: "muted",
                                         "data-testid": "actor-result-did",
                                         title: "{actor_id}",
-                                        "{actor_id}"
+                                        "{actor_id_label}"
                                     }
                                 }
                             }

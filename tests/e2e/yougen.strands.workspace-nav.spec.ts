@@ -29,16 +29,16 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await expect(shell.getByTestId("contacts-sidebar-search-input")).toBeVisible();
   await expect(shell.getByTestId("sidebar-new-contact-cta")).toBeVisible();
   await expect(shell.getByTestId("contacts-sidebar-summary")).toContainText("Contacts");
-  await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "did:web:bob.example" })).toContainText(
+  await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "bob:example.com" })).toContainText(
     "DM",
   );
-  await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "did:web:carol.example" })).toContainText(
+  await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "carol:example.com" })).toContainText(
     "pending",
   );
   await shell.getByTestId("realm-sidebar-manage-home-button").click();
   await expect(page).toHaveURL(/\/contacts\/manage$/);
   await expect(shell.getByTestId("contacts-manage-page")).toBeVisible();
-  await expect(shell.getByTestId("contacts-manage-page")).toContainText("did:web:bob.example");
+  await expect(shell.getByTestId("contacts-manage-page")).toContainText("bob:example.com");
 });
 
 test("new space strand uses sidebar realm context without home realm picker", async ({ page }) => {

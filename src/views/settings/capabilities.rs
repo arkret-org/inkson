@@ -20,7 +20,7 @@ use crate::components::{EmptyState, EmptyStateKind};
 use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
@@ -81,8 +81,6 @@ pub fn CapabilitiesSettingsCard(
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
-    let _ = state_store;
-
     let mut rows = use_signal(Vec::<CapabilityRow>::new);
     let mut status = use_signal(String::new);
     let mut detail_for = use_signal(|| Option::<String>::None);
@@ -142,8 +140,10 @@ pub fn CapabilitiesSettingsCard(
                 ul { class: "settings-list",
                     for row in rows.read().iter().cloned() {
                         {
-                            let issuer_did_label = short_protocol_id(&row.issuer_did);
-                            let subject_did_label = short_protocol_id(&row.subject_did);
+                            let issuer_did_label =
+                                display_name_for_did(&state_store.read(), &row.issuer_did);
+                            let subject_did_label =
+                                display_name_for_did(&state_store.read(), &row.subject_did);
                             rsx! {
                                 li {
                                     class: "event",
@@ -222,8 +222,14 @@ pub fn CapabilitiesSettingsCard(
                                         ol { class: "settings-list",
                                             for (idx, step) in row.chain.iter().enumerate() {
                                                 {
-                                                    let issuer_did_label = short_protocol_id(&step.issuer_did);
-                                                    let subject_did_label = short_protocol_id(&step.subject_did);
+                                                    let issuer_did_label = display_name_for_did(
+                                                        &state_store.read(),
+                                                        &step.issuer_did,
+                                                    );
+                                                    let subject_did_label = display_name_for_did(
+                                                        &state_store.read(),
+                                                        &step.subject_did,
+                                                    );
                                                     rsx! {
                                                         li {
                                                             class: "event",

@@ -26,7 +26,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 
 const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
 
@@ -642,8 +642,9 @@ pub fn RecoveryPanel(
                             div { class: "metric", "data-testid": "guardian-row",
                                 strong { "{g.label}" }
                                 {
-                                    let guardian_did_label = short_protocol_id(&g.did);
-                                    rsx! { span { class: "mono", title: "{g.did}", "{guardian_did_label}" } }
+                                    let guardian_did_label =
+                                        display_name_for_did(&state_store.read(), &g.did);
+                                    rsx! { span { title: "{g.did}", "{guardian_did_label}" } }
                                 }
                                 div { class: "muted",
                                     if g.note.is_empty() {

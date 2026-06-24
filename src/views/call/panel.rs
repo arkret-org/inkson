@@ -23,7 +23,7 @@ use crate::media::rtc::{DesiredMedia, MediaJoinRequest};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::views::call_signals::CallSignalHub;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 
 #[component]
 #[allow(clippy::too_many_arguments)]
@@ -156,8 +156,10 @@ pub fn CallPanel(
         });
     }
 
-    let account_label = short_protocol_id(&account_did);
+    let account_label = display_name_for_did(&state_store.read(), &account_did);
     let device_label = short_protocol_id(&device_id);
+    let peer_input_value = peer_input();
+    let peer_input_label = display_name_for_did(&state_store.read(), &peer_input_value);
 
     let observed_signals = state_store
         .read()
@@ -563,7 +565,7 @@ pub fn CallPanel(
                     div { class: "event", "data-testid": "call-outgoing-banner",
                         div { class: "event-head",
                             span { "Calling" }
-                            span { class: "mono", "{short_protocol_id(&peer_input())}" }
+                            span { title: "{peer_input_value}", "{peer_input_label}" }
                         }
                         div { class: "actions",
                             Button {
@@ -593,7 +595,7 @@ pub fn CallPanel(
                     div { class: "event", "data-testid": "call-incoming-banner", role: "alert",
                         div { class: "event-head",
                             span { "Incoming call" }
-                            span { class: "mono", "{short_protocol_id(&peer_input())}" }
+                            span { title: "{peer_input_value}", "{peer_input_label}" }
                         }
                         if media_plaintext_confirmation_required {
                             label { class: "checkbox-row",

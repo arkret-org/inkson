@@ -19,7 +19,7 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{authed_api, short_protocol_id};
+use crate::views::helpers::{authed_api, display_name_for_did, short_protocol_id};
 
 #[component]
 pub(super) fn RealmsSection(
@@ -562,9 +562,10 @@ pub(super) fn RealmsSection(
                                     div { class: "setup-chip-wrap",
                                         for member in parsed_seed_members.iter().take(8) {
                                             {
-                                                let member_label = short_protocol_id(member);
+                                                let member_label =
+                                                    display_name_for_did(&state_store.read(), member);
                                                 rsx! {
-                                                    span { class: "badge blue mono", title: "{member}", "{member_label}" }
+                                                    span { class: "badge blue", title: "{member}", "{member_label}" }
                                                 }
                                             }
                                         }

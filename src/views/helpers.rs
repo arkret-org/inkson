@@ -317,6 +317,13 @@ pub fn display_name_for_did(
     state_store: &crate::local_state::LocalStateStore,
     did: &str,
 ) -> String {
+    if let Some(handle) = state_store
+        .cached_member_handle_lookup(did, None, None)
+        .and_then(|entry| entry.primary_handle)
+        .and_then(|handle| crate::identity_handle::parse_user_handle(&handle).map(|h| h.display))
+    {
+        return handle;
+    }
     if let Some(handle) = handle_display_from_did(did) {
         return handle;
     }

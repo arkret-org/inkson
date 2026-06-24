@@ -43,7 +43,7 @@ use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 use crate::workflows::blocked_release_workflows;
 
 /// `ck.account_data` key used by the read-receipt preferences entry. Spec:
@@ -519,7 +519,14 @@ pub fn SettingsPanel(
     let account_default_avatar_tone = default_avatar_tone(&personal_handles, &account_did());
     let account_default_avatar_class =
         format!("avatar-img lg default-avatar tone-{account_default_avatar_tone}");
-    let principal_short_label = short_protocol_id(&principal_label);
+    let principal_short_label = if has_session {
+        personal_handles
+            .first()
+            .map(|handle| format!("@{handle}"))
+            .unwrap_or_else(|| display_name_for_did(&state_store.read(), &principal_label))
+    } else {
+        principal_label.clone()
+    };
     let device_short_label = short_protocol_id(&device_label);
     {
         let account_key = account_did();
@@ -2422,13 +2429,14 @@ pub fn SettingsPanel(
                             rsx! {
                                 for (actor_id, remark) in remarks {
                                     {
-                                        let actor_id_label = short_protocol_id(&actor_id);
+                                        let actor_id_label =
+                                            display_name_for_did(&state_store.read(), &actor_id);
                                         rsx! {
                                             div {
                                                 class: "actions",
                                                 "data-testid": "contact-remark-row",
                                                 "data-actor-did": "{actor_id}",
-                                                span { class: "mono", title: "{actor_id}", "{actor_id_label}" }
+                                                span { title: "{actor_id}", "{actor_id_label}" }
                                                 Input {
                                                     r#type: "text",
                                                     "data-testid": "contact-remark-input",
@@ -2470,15 +2478,17 @@ pub fn SettingsPanel(
                                                             contact_remarks_snapshot.set(
                                                                 state_store.read().contact_remarks(),
                                                             );
+                                                            let did_label =
+                                                                display_name_for_did(&state_store.read(), &did);
                                                             status.set(if next.is_empty() {
                                                                 format!(
                                                                     "Contact remark cleared for {}",
-                                                                    short_protocol_id(&did)
+                                                                    did_label
                                                                 )
                                                             } else {
                                                                 format!(
                                                                     "Contact remark saved: {} → {}",
-                                                                    short_protocol_id(&did), next.local_name
+                                                                    did_label, next.local_name
                                                                 )
                                                             });
                                                             push_contact_remark_account_data(
@@ -2505,9 +2515,11 @@ pub fn SettingsPanel(
                                                             contact_remarks_snapshot.set(
                                                                 state_store.read().contact_remarks(),
                                                             );
+                                                            let did_label =
+                                                                display_name_for_did(&state_store.read(), &did);
                                                             status.set(format!(
                                                                 "Contact remark cleared for {}",
-                                                                short_protocol_id(&did)
+                                                                did_label
                                                             ));
                                                             push_contact_remark_account_data(
                                                                 base_url(),
@@ -2578,9 +2590,11 @@ pub fn SettingsPanel(
                                 contact_remarks_snapshot.set(state_store.read().contact_remarks());
                                 new_contact_remark_did.set(String::new());
                                 new_contact_remark_name.set(String::new());
+                                let actor_label =
+                                    display_name_for_did(&state_store.read(), &actor_id);
                                 status.set(format!(
                                     "Contact remark saved: {} → {local_name}",
-                                    short_protocol_id(&actor_id)
+                                    actor_label
                                 ));
                                 push_contact_remark_account_data(
                                     base_url(),
@@ -2708,7 +2722,8 @@ pub fn SettingsPanel(
                                     let entries = state_store.read().client_blocklist();
                                     blocklist_snapshot.set(entries.clone());
                                     if changed {
-                                        let did_label = short_protocol_id(&did);
+                                        let did_label =
+                                            display_name_for_did(&state_store.read(), &did);
                                         blocklist_did_input.set(String::new());
                                         blocklist_reason_input.set(String::new());
                                         blocklist_status.set(format!(
@@ -2725,7 +2740,8 @@ pub fn SettingsPanel(
                                         ));
                                         push_blocklist_account_data(base(), token(), entries);
                                     } else {
-                                        let did_label = short_protocol_id(&did);
+                                        let did_label =
+                                            display_name_for_did(&state_store.read(), &did);
                                         blocklist_status.set(format!(
                                             "{} {did_label}",
                                             crate::i18n::tr(
@@ -2774,7 +2790,8 @@ pub fn SettingsPanel(
                         ul { class: "settings-list", "data-testid": "blocklist-entries",
                             for entry in blocklist_snapshot.read().iter() {
                                 {
-                                    let did_label = short_protocol_id(&entry.did);
+                                    let did_label =
+                                        display_name_for_did(&state_store.read(), &entry.did);
                                     rsx! {
                                         li { class: "settings-list-row", "data-testid": "blocklist-entry",
                                             div {
@@ -2799,7 +2816,8 @@ pub fn SettingsPanel(
                                                         let entries = state_store.read().client_blocklist();
                                                         blocklist_snapshot.set(entries.clone());
                                                         if changed {
-                                                            let did_label = short_protocol_id(&did);
+                                                            let did_label =
+                                                                display_name_for_did(&state_store.read(), &did);
                                                             blocklist_status.set(format!(
                                                                 "{} {did_label}",
                                                                 crate::i18n::tr(

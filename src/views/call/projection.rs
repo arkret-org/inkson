@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::types::CallParticipant;
 use crate::media::rtc::MediaGovernanceEvidence;
-use crate::views::helpers::short_protocol_id;
+use crate::views::helpers::{handle_display_from_did, short_protocol_id};
 
 pub(super) fn operation_body(payload: &Value) -> &Value {
     payload
@@ -418,7 +418,7 @@ pub(super) fn build_roster(
         roster.push(CallParticipant {
             actor_id: did.to_owned(),
             device_id: actor_devices.get(did).cloned(),
-            display_name: short_protocol_id(did),
+            display_name: handle_display_from_did(did).unwrap_or_else(|| short_protocol_id(did)),
             muted: false,
             speaking: false,
             screen_sharing: false,

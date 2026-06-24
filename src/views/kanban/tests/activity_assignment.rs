@@ -49,7 +49,9 @@ fn card_activity_items_show_local_strand_and_assignment_writes() {
         },
     ];
 
-    let items = card_activity_items(&card, &raw_operations);
+    let items = card_activity_items(&card, &raw_operations, &|actor| {
+        crate::views::helpers::short_protocol_id(actor)
+    });
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].title, "Due date cleared");
     assert_eq!(items[0].status, CardActivityStatus::Pending);

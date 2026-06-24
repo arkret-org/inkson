@@ -6,7 +6,7 @@ use super::model::{
     DocumentVersion, RemoteCursor,
 };
 use crate::local_state::LocalStateStore;
-use crate::views::helpers::short_protocol_id;
+use crate::views::helpers::{handle_display_from_did, short_protocol_id};
 
 pub fn document_collaboration_enabled() -> bool {
     cfg!(feature = "experimental-document-collaboration")
@@ -274,7 +274,10 @@ pub(super) fn cursors_from_projection(value: &Value) -> Vec<RemoteCursor> {
                             .get("display_name")
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| short_protocol_id(&actor_id)),
+                            .unwrap_or_else(|| {
+                                handle_display_from_did(&actor_id)
+                                    .unwrap_or_else(|| short_protocol_id(&actor_id))
+                            }),
                         actor_id,
                         line: cursor
                             .pointer("/cursor/line")

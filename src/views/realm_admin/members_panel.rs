@@ -109,7 +109,7 @@ impl MemberProfile {
             .or(self.display_name.as_deref())
             .or_else(|| self.handles.first().map(String::as_str))
             .map(str::to_owned)
-            .unwrap_or_else(|| short_protocol_id(&self.actor_id))
+            .unwrap_or_else(|| member_identity_fallback_label(&self.actor_id))
     }
 
     fn public_label(&self) -> String {
@@ -117,7 +117,7 @@ impl MemberProfile {
             .as_deref()
             .or_else(|| self.handles.first().map(String::as_str))
             .map(str::to_owned)
-            .unwrap_or_else(|| short_protocol_id(&self.actor_id))
+            .unwrap_or_else(|| member_identity_fallback_label(&self.actor_id))
     }
 
     fn role_label(&self) -> &'static str {
@@ -147,6 +147,10 @@ impl MemberProfile {
     fn is_governance_principal(&self) -> bool {
         self.is_owner || self.is_admin
     }
+}
+
+fn member_identity_fallback_label(did: &str) -> String {
+    handle_display_from_did(did).unwrap_or_else(|| short_protocol_id(did))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1022,15 +1026,16 @@ fn MemberRowActions(
                         let base = base_url.clone();
                         let realm = selected_realm_id.clone();
                         let target = target_did.clone();
+                        let target_label = target_label.clone();
                         let actor_account_did = account_did.clone();
                         move |_| {
                             let base = base.clone();
                             let realm = realm.clone();
                             let target = target.clone();
+                            let target_label = target_label.clone();
                             let api_token = token();
                             let actor_id = actor_account_did.clone();
                             spawn(async move {
-                                let target_for_msg = target.clone();
                                 let realm_for_api = realm.clone();
                                 match crate::views::helpers::with_authed_api(
                                     &base,
@@ -1071,7 +1076,7 @@ fn MemberRowActions(
                                         };
                                         status_msg.set(format!(
                                             "kicked {}{}",
-                                            short_protocol_id(&target_for_msg),
+                                            target_label,
                                             suffix
                                         ));
                                     }
@@ -1091,15 +1096,16 @@ fn MemberRowActions(
                         let base = base_url.clone();
                         let realm = selected_realm_id.clone();
                         let target = target_did.clone();
+                        let target_label = target_label.clone();
                         let actor_account_did = account_did.clone();
                         move |_| {
                             let base = base.clone();
                             let realm = realm.clone();
                             let target = target.clone();
+                            let target_label = target_label.clone();
                             let api_token = token();
                             let actor_id = actor_account_did.clone();
                             spawn(async move {
-                                let target_for_msg = target.clone();
                                 let realm_for_api = realm.clone();
                                 match crate::views::helpers::with_authed_api(
                                     &base,
@@ -1132,7 +1138,7 @@ fn MemberRowActions(
                                         };
                                         status_msg.set(format!(
                                             "banned {}{}",
-                                            short_protocol_id(&target_for_msg),
+                                            target_label,
                                             suffix
                                         ));
                                     }
@@ -1172,16 +1178,14 @@ fn MemberRowActions(
                         onclick: {
                             let target = target_did.clone();
                             let base = base_url.clone();
+                            let target_label = target_label.clone();
                             move |_| {
                                 let changed = state_store
                                     .write()
                                     .block_user(&target, None);
                                 block_confirm_did.set(None);
                                 if changed {
-                                    status_msg.set(format!(
-                                        "Blocked {}",
-                                        short_protocol_id(&target)
-                                    ));
+                                    status_msg.set(format!("Blocked {target_label}"));
                                     let entries = state_store
                                         .read()
                                         .client_blocklist();
@@ -1191,10 +1195,7 @@ fn MemberRowActions(
                                         entries,
                                     );
                                 } else {
-                                    status_msg.set(format!(
-                                        "{} is already blocked",
-                                        short_protocol_id(&target)
-                                    ));
+                                    status_msg.set(format!("{target_label} is already blocked"));
                                 }
                             }
                         },
@@ -1228,6 +1229,11 @@ fn PendingInviteRow(profile: MemberProfile) -> Element {
     let display_name = profile.display_name.clone().unwrap_or_default();
     let subject_id = profile.subject_id.clone().unwrap_or_default();
     let handles = profile.handles.clone();
+    let member_identity_label = handles
+        .first()
+        .cloned()
+        .unwrap_or_else(|| member_identity_fallback_label(&member));
+    let subject_label = member_identity_fallback_label(&subject_id);
     rsx! {
         div {
             class: "event member-row member-pending-invite-row",
@@ -1251,7 +1257,7 @@ fn PendingInviteRow(profile: MemberProfile) -> Element {
                     div { class: "muted member-row-sub member-profile-lines",
                         div { class: "member-profile-line",
                             span { "{state_label}" }
-                            span { class: "mono", title: "{member}", "{short_protocol_id(&member)}" }
+                            span { title: "{member}", "{member_identity_label}" }
                         }
                         div { class: "member-profile-line",
                             span { class: "member-profile-label", "Member state" }
@@ -1274,7 +1280,7 @@ fn PendingInviteRow(profile: MemberProfile) -> Element {
                         if !subject_id.is_empty() && subject_id != member {
                             div { class: "member-profile-line",
                                 span { class: "member-profile-label", "Subject" }
-                                span { class: "mono", title: "{subject_id}", "{short_protocol_id(&subject_id)}" }
+                                span { title: "{subject_id}", "{subject_label}" }
                             }
                         }
                     }
@@ -1820,6 +1826,7 @@ pub fn RealmMembersPanel(
                                         for contact in invite_contacts.read().clone() {
                                             {
                                                 let did = contact.peer.clone();
+                                                let did_label = display_name_for_did(&state_store.read(), &did);
                                                 let checked = selected_contacts.read().contains(&did);
                                                 let eligible = contact.grants_me_invite();
                                                 let has_ref = contact.invite_consent_ref().is_some();
@@ -1847,7 +1854,7 @@ pub fn RealmMembersPanel(
                                                                 selected_contacts.set(next);
                                                             },
                                                         }
-                                                        span { class: "mono", title: "{did}", " {short_protocol_id(&did)}" }
+                                                        span { title: "{did}", " {did_label}" }
                                                         if not_authorized {
                                                             span {
                                                                 class: "badge",
@@ -2296,6 +2303,11 @@ pub fn RealmMembersPanel(
                         let display_name = member_profile.display_name.clone().unwrap_or_default();
                         let subject_id = member_profile.subject_id.clone().unwrap_or_default();
                         let handles = member_profile.handles.clone();
+                        let member_identity_label = handles
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| member_identity_fallback_label(&member));
+                        let subject_label = member_identity_fallback_label(&subject_id);
                         let self_leave_reason = if is_self {
                             self_leave_disabled_reason.clone()
                         } else {
@@ -2391,7 +2403,7 @@ pub fn RealmMembersPanel(
                                             div { class: "muted member-row-sub member-profile-lines",
                                                 div { class: "member-profile-line",
                                                     span { "{role_label}" }
-                                                    span { class: "mono", title: "{member}", "{short_protocol_id(&member)}" }
+                                                    span { title: "{member}", "{member_identity_label}" }
                                                 }
                                                 if !remark_name.is_empty() && remark_name != public_label {
                                                     div { class: "member-profile-line",
@@ -2422,7 +2434,7 @@ pub fn RealmMembersPanel(
                                                 if !subject_id.is_empty() && subject_id != member {
                                                     div { class: "member-profile-line",
                                                         span { class: "member-profile-label", "Subject" }
-                                                        span { class: "mono", title: "{subject_id}", "{short_protocol_id(&subject_id)}" }
+                                                        span { title: "{subject_id}", "{subject_label}" }
                                                     }
                                                 }
                                             }

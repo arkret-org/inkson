@@ -13,6 +13,7 @@ use dioxus_router::hooks::use_navigator;
 
 use crate::components::{DismissiblePopup, TrustCacheBadge};
 use crate::i18n::tr;
+use crate::local_state::LocalStateStore;
 use crate::models::ContactListRow;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
@@ -20,7 +21,7 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 
 /// Maximum length of the optional contact-request greeting (protocol contract:
 /// `message` is `1..2000`).
@@ -215,6 +216,7 @@ pub fn ContactNewPanel(
 fn ContactRow(
     base_url: String,
     token: Signal<String>,
+    state_store: Signal<LocalStateStore>,
     contact: ContactListRow,
     on_changed: EventHandler<()>,
 ) -> Element {
@@ -232,7 +234,7 @@ fn ContactRow(
         .peer_service_did
         .clone()
         .filter(|s| !s.trim().is_empty());
-    let peer_label = short_protocol_id(&peer);
+    let peer_label = display_name_for_did(&state_store.read(), &peer);
     let is_pending_incoming = state == "pending_incoming";
     let is_pending_outgoing = state == "pending_outgoing" || state == "pending";
     let is_accepted = state == "accepted";
@@ -586,7 +588,11 @@ fn run_contact_action(
 }
 
 #[component]
-pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
+pub fn ContactsPanel(
+    base_url: String,
+    token: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+) -> Element {
     let mut contacts = use_signal(Vec::<ContactListRow>::new);
     let mut status = use_signal(|| "loading".to_owned());
     let mut error = use_signal(|| Option::<String>::None);
@@ -681,6 +687,7 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
                                         key: "{contact.peer}",
                                         base_url: base_url.clone(),
                                         token,
+                                        state_store,
                                         contact: contact.clone(),
                                         on_changed: move |_| reload.set(reload() + 1),
                                     }

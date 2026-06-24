@@ -42,8 +42,14 @@ impl CardAssignmentMutation {
     }
 }
 
-pub(super) fn assignment_activity_summary(mutation: &CardAssignmentMutation) -> String {
-    let actor = short_protocol_id(mutation.actor_id());
+pub(super) fn assignment_activity_summary(
+    mutation: &CardAssignmentMutation,
+    assignee_labels: &BTreeMap<String, String>,
+) -> String {
+    let actor = assignee_labels
+        .get(mutation.actor_id())
+        .cloned()
+        .unwrap_or_else(|| short_protocol_id(mutation.actor_id()));
     match mutation {
         CardAssignmentMutation::Create { .. } => format!("Assignee added: {actor}"),
         CardAssignmentMutation::Tombstone { .. } => format!("Assignee removed: {actor}"),
@@ -220,6 +226,7 @@ pub(super) fn dispatch_card_assignees_update(
     actor_id: String,
     current: KanbanCard,
     selected_actor_ids: BTreeSet<String>,
+    assignee_labels: BTreeMap<String, String>,
     mut columns: Signal<Vec<KanbanColumn>>,
     mut selected_card: Signal<Option<KanbanCard>>,
     mut state_store: Signal<LocalStateStore>,
@@ -301,7 +308,7 @@ pub(super) fn dispatch_card_assignees_update(
                 "assignment_strand_id": current.id.clone(),
                 "assignment_actor_id": mutation.actor_id(),
                 "assignment_relation_id": mutation.relation_id(),
-                "activity_summary": assignment_activity_summary(mutation),
+                "activity_summary": assignment_activity_summary(mutation, &assignee_labels),
             }),
         );
     }

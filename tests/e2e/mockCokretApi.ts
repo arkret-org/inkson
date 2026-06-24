@@ -147,6 +147,23 @@ export async function mockCokretApi(
     options.directoryPrimaryHandle === undefined
       ? primaryHandle
       : options.directoryPrimaryHandle;
+  const directoryHandleForSubject = (subject: string) => {
+    if (!directoryPrimaryHandle) {
+      return null;
+    }
+    if (subject === accountPrincipalId) {
+      return directoryPrimaryHandle;
+    }
+    const materialized = subject.match(/^did:web:([^:]+):users:([^:]+)$/);
+    if (materialized) {
+      return `${materialized[2]}:${materialized[1]}`;
+    }
+    const simpleExample = subject.match(/^did:web:([a-z0-9._-]+)\.example$/i);
+    if (simpleExample) {
+      return `${simpleExample[1].toLowerCase()}:example.com`;
+    }
+    return null;
+  };
   const currentDeviceId =
     options.currentDeviceId ?? "ck:device:01964137-0000-7000-8000-0000000000a1";
   const includeDemoRealms = options.includeDemoRealms ?? true;
@@ -1431,7 +1448,8 @@ export async function mockCokretApi(
     ) {
       const body = await route.request().postDataJSON();
       const subject = body.subject ?? accountPrincipalId;
-      if (!directoryPrimaryHandle) {
+      const subjectPrimaryHandle = directoryHandleForSubject(subject);
+      if (!subjectPrimaryHandle) {
         return json(route, {
           subject,
           primary_handle: null,
@@ -1442,13 +1460,13 @@ export async function mockCokretApi(
       }
       return json(route, {
         subject,
-        primary_handle: directoryPrimaryHandle,
+        primary_handle: subjectPrimaryHandle,
         as_of: "2026-04-28T12:00:00Z",
         has_more: false,
         claims: [
           {
             subject,
-            handle: directoryPrimaryHandle,
+            handle: subjectPrimaryHandle,
             issuer: "did:web:server.local",
             issuer_service_did: "did:web:server.local",
             binding_state: "verified",

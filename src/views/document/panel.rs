@@ -17,7 +17,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 
 #[component]
 pub fn DocumentPanel(
@@ -867,7 +867,7 @@ pub fn DocumentPanel(
                         let range_start = thread.range_start;
                         let range_end = thread.range_end;
                         let author_did = thread.author_did.clone();
-                        let author_did_label = short_protocol_id(&author_did);
+                        let author_did_label = display_name_for_did(&state_store.read(), &author_did);
                         let body = thread.body.clone();
                         let resolved = thread.resolved;
                         let orphaned = thread.orphaned;
@@ -891,7 +891,8 @@ pub fn DocumentPanel(
                                 div { class: "muted", "{body}" }
                                 for reply in replies.iter() {
                                     {
-                                        let reply_author_did_label = short_protocol_id(&reply.author_did);
+                                        let reply_author_did_label =
+                                            display_name_for_did(&state_store.read(), &reply.author_did);
                                         rsx! {
                                             div { class: "muted",
                                                 span { class: "mono", title: "{reply.author_did}", "{reply_author_did_label}: " }

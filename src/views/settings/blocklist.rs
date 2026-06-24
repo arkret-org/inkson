@@ -26,7 +26,7 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
-use crate::views::helpers::short_protocol_id;
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 /// `reason_code` options offered for a personal block. Mirrors the report
 /// reason enum in `governance/content-moderation.md` §3.2 (`spam`,
@@ -158,6 +158,11 @@ pub fn BlocklistSettingsCard(
                             let blocked_at = entry.blocked_at.clone().unwrap_or_default();
                             let kind = entry.kind.clone();
                             let kind_label = target_kind_label(&kind);
+                            let entry_label = if kind == "actor" {
+                                display_name_for_did(&state_store.read(), &entry.did)
+                            } else {
+                                short_protocol_id(&entry.did)
+                            };
                             let applies_summary = if entry.applies_to.is_empty() {
                                 "all surfaces".to_owned()
                             } else {
@@ -173,7 +178,7 @@ pub fn BlocklistSettingsCard(
                                     "data-blocked-at": "{blocked_at}",
                                     div { class: "event-head",
                                         span { class: "badge", "{kind_label}" }
-                                        span { class: "mono", title: "{entry.did}", "{entry.did}" }
+                                        span { title: "{entry.did}", "{entry_label}" }
                                         if !blocked_at.is_empty() {
                                             span { class: "muted", "{blocked_at}" }
                                         }
@@ -201,9 +206,17 @@ pub fn BlocklistSettingsCard(
                                                     let next = state_store.read().client_blocklist();
                                                     entries.set(next.clone());
                                                     if changed {
+                                                        let target_label = if target_kind == "actor" {
+                                                            display_name_for_did(
+                                                                &state_store.read(),
+                                                                &target_value,
+                                                            )
+                                                        } else {
+                                                            short_protocol_id(&target_value)
+                                                        };
                                                         status.set(format!(
                                                             "Unblocked {}",
-                                                            short_protocol_id(&target_value)
+                                                            target_label
                                                         ));
                                                         crate::views::settings::push_blocklist_account_data(
                                                             base(),
@@ -361,9 +374,14 @@ pub fn BlocklistSettingsCard(
                                 let next = state_store.read().client_blocklist();
                                 entries.set(next.clone());
                                 if changed {
+                                    let target_label = if kind == "actor" {
+                                        display_name_for_did(&state_store.read(), &target)
+                                    } else {
+                                        short_protocol_id(&target)
+                                    };
                                     status.set(format!(
                                         "blocklist updated; added {}",
-                                        short_protocol_id(&target)
+                                        target_label
                                     ));
                                     add_input.set(String::new());
                                     crate::views::settings::push_blocklist_account_data(
@@ -372,9 +390,14 @@ pub fn BlocklistSettingsCard(
                                         next,
                                     );
                                 } else {
+                                    let target_label = if kind == "actor" {
+                                        display_name_for_did(&state_store.read(), &target)
+                                    } else {
+                                        short_protocol_id(&target)
+                                    };
                                     status.set(format!(
                                         "{} is already blocked",
-                                        short_protocol_id(&target)
+                                        target_label
                                     ));
                                 }
                             }

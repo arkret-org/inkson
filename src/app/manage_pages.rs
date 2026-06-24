@@ -303,6 +303,7 @@ pub(super) fn ContactsManagePage(
     has_session: bool,
     mut contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut contacts_loaded: Signal<bool>,
+    state_store: Signal<LocalStateStore>,
     mut app_status: Signal<String>,
     mut query: Signal<String>,
     mut selection: Signal<BTreeSet<String>>,
@@ -331,7 +332,12 @@ pub(super) fn ContactsManagePage(
         .iter()
         .filter(|contact| {
             let scopes = contact_manage_scope_summary(contact);
-            sidebar_text_matches_query(&normalized_query, &[&contact.peer, &contact.state, &scopes])
+            let display_name =
+                crate::views::helpers::display_name_for_did(&state_store.read(), &contact.peer);
+            sidebar_text_matches_query(
+                &normalized_query,
+                &[&contact.peer, &contact.state, &display_name, &scopes],
+            )
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -436,7 +442,10 @@ pub(super) fn ContactsManagePage(
                                                     }
                                                     Err(err) => failed.push(format!(
                                                         "{} ({})",
-                                                        short_protocol_id(&peer),
+                                                        crate::views::helpers::display_name_for_did(
+                                                            &state_store.read(),
+                                                            &peer,
+                                                        ),
                                                         err.display()
                                                     )),
                                                 }
@@ -516,6 +525,10 @@ pub(super) fn ContactsManagePage(
                                     {
                                         let peer = contact.peer.clone();
                                         let checked = selected_ids.contains(&peer);
+                                        let peer_label = crate::views::helpers::display_name_for_did(
+                                            &state_store.read(),
+                                            &peer,
+                                        );
                                         let scopes_label = contact_manage_scope_summary(&contact);
                                         let direct_label = contact
                                             .direct_conversation
@@ -543,7 +556,7 @@ pub(super) fn ContactsManagePage(
                                                     },
                                                 }
                                                 div { class: "workspace-manage-row-main",
-                                                    strong { title: "{peer}", "{peer}" }
+                                                    strong { title: "{peer}", "{peer_label}" }
                                                     span { class: "muted", title: "{scopes_label}", "{scopes_label}" }
                                                 }
                                                 div { class: "workspace-manage-row-meta",

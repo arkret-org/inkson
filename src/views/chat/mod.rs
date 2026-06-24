@@ -2866,8 +2866,7 @@ pub fn ChatPanel(
                                             "data-actor-did": "{did_attr}",
                                             "data-presence-state": "{state}",
                                             span { class: "presence-dot presence-dot-{state}" }
-                                            span { class: "presence-name", "{display}" }
-                                            span { class: "muted mono", title: "{did_attr}", " {did_attr}" }
+                                            span { class: "presence-name", title: "{did_attr}", "{display}" }
                                             span { class: "muted", " ({state})" }
                                         }
                                     }

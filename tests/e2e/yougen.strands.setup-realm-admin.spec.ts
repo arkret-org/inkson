@@ -230,7 +230,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   });
   expect(inviteBody.payload.introduction_evidence_digest).toMatch(/^sha256:/);
   expect(inviteBody.payload.x_member_delivery_binding).toBeUndefined();
-  await expect(page.getByTestId("realm-members-status")).toContainText("invited did:web:carol.example");
+  await expect(page.getByTestId("realm-members-status")).toContainText("invited carol:example.com");
   // The invite modal closes itself once the create event is accepted.
   await expect(page.getByTestId("invite-member-modal")).toHaveCount(0);
 

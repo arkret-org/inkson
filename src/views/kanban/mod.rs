@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -4314,10 +4314,32 @@ pub fn KanbanPanel(
                                                                     })
                                                                     .collect::<Vec<_>>()
                                                             };
+                                                            let assignee_label_lookup = {
+                                                                let mut labels = BTreeMap::new();
+                                                                for (actor_id, label, _) in &assigned_people {
+                                                                    labels.insert(actor_id.clone(), label.clone());
+                                                                }
+                                                                for (actor_id, label, _, _) in &picker_people {
+                                                                    labels.insert(actor_id.clone(), label.clone());
+                                                                }
+                                                                labels
+                                                            };
                                                             let picker_open = assignee_picker_open();
                                                             let edit_status = assignee_edit_status();
-                                                            let activity_items =
-                                                                card_activity_items(card, &store.raw_operations);
+                                                            let activity_store = state_store.read();
+                                                            let activity_actor_label = |actor_id: &str| {
+                                                                assignee_label_for_actor(
+                                                                    &activity_store,
+                                                                    &realm_context,
+                                                                    &realm_member_rows,
+                                                                    actor_id,
+                                                                )
+                                                            };
+                                                            let activity_items = card_activity_items(
+                                                                card,
+                                                                &store.raw_operations,
+                                                                &activity_actor_label,
+                                                            );
                                                             rsx! {
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
@@ -4400,6 +4422,7 @@ pub fn KanbanPanel(
                                                                                             let realm = selected_realm_id.clone();
                                                                                             let actor = account_did.clone();
                                                                                             let current_card = card.clone();
+                                                                                            let assignee_labels = assignee_label_lookup.clone();
                                                                                             move |_| {
                                                                                                 assignee_selected_actor_ids.set(BTreeSet::new());
                                                                                                 if dispatch_card_assignees_update(
@@ -4409,6 +4432,7 @@ pub fn KanbanPanel(
                                                                                                     actor.clone(),
                                                                                                     current_card.clone(),
                                                                                                     BTreeSet::new(),
+                                                                                                    assignee_labels.clone(),
                                                                                                     columns,
                                                                                                     selected_card,
                                                                                                     state_store,
@@ -4520,6 +4544,7 @@ pub fn KanbanPanel(
                                                                                                 let realm = selected_realm_id.clone();
                                                                                                 let actor = account_did.clone();
                                                                                                 let current_card = card.clone();
+                                                                                                let assignee_labels = assignee_label_lookup.clone();
                                                                                                 move |_| {
                                                                                                     if dispatch_card_assignees_update(
                                                                                                         base.clone(),
@@ -4528,6 +4553,7 @@ pub fn KanbanPanel(
                                                                                                         actor.clone(),
                                                                                                         current_card.clone(),
                                                                                                         assignee_selected_actor_ids(),
+                                                                                                        assignee_labels.clone(),
                                                                                                         columns,
                                                                                                         selected_card,
                                                                                                         state_store,
