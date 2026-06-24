@@ -1032,8 +1032,7 @@ fn proof_sender_device_from_verification_method(
                 .map(|(head, _)| head)
                 .unwrap_or(method);
             let (controller, fragment) = no_query.split_once('#')?;
-            (controller == actor && fragment.starts_with("ck:device:"))
-                .then(|| fragment.to_owned())
+            (controller == actor && fragment.starts_with("ck:device:")).then(|| fragment.to_owned())
         })
 }
 
@@ -1702,6 +1701,10 @@ mod tests {
                         {
                             "actor_id": "did:web:bob.example",
                             "proofs": [{"verification_method": "did:web:bob.example#device"}]
+                        },
+                        {
+                            "actor_id": "did:web:carol.example",
+                            "proofs": [{"verification_method": "did:web:carol.example#ck:device:01904100-0000-7000-8000-000000000002"}]
                         }
                     ]
                 }
@@ -1709,10 +1712,16 @@ mod tests {
         );
         assert_eq!(
             collect_persistent_proof_sender_devices(&response),
-            vec![(
-                "did:web:alice.example".to_owned(),
-                "ck:device:01904100-0000-7000-8000-000000000001".to_owned()
-            )]
+            vec![
+                (
+                    "did:web:alice.example".to_owned(),
+                    "ck:device:01904100-0000-7000-8000-000000000001".to_owned()
+                ),
+                (
+                    "did:web:carol.example".to_owned(),
+                    "ck:device:01904100-0000-7000-8000-000000000002".to_owned()
+                )
+            ]
         );
     }
 

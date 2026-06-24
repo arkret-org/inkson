@@ -13,16 +13,29 @@ mod device_identity_proof_tests {
         actor_id: &str,
         device_id: &str,
     ) -> Value {
+        signed_message_envelope_inner(signer, actor_id, Some(device_id))
+    }
+
+    fn signed_message_envelope_inner(
+        signer: &crate::event_signer::YougenEventSigner,
+        actor_id: &str,
+        device_id: Option<&str>,
+    ) -> Value {
         let mut envelope = json!({
             "kind": "ck.message.create",
             "realm_id": "ck:realm:r",
             "actor_id": actor_id,
-            "device_id": device_id,
             "created_at": "2026-06-16T00:00:00Z",
             "message_id": "ck:msg:1",
             "strand_id": "ck:strand:general",
             "content": { "body": "hello from a verified device" }
         });
+        if let Some(device_id) = device_id {
+            envelope
+                .as_object_mut()
+                .unwrap()
+                .insert("device_id".to_owned(), json!(device_id));
+        }
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
         let verification_method = signer.verification_method().to_owned();
@@ -148,8 +161,7 @@ mod device_identity_proof_tests {
             actor,
             format!("{actor}#{device}"),
         );
-        let mut envelope = signed_message_envelope(&signer, actor, device);
-        envelope.as_object_mut().unwrap().remove("device_id");
+        let envelope = signed_message_envelope_inner(&signer, actor, None);
         crate::device_directory::seed_positive_for_test(actor, device, pubkey(56));
 
         assert_eq!(
