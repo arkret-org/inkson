@@ -193,6 +193,11 @@ pub fn RealmAdminPanel(
         + usize::from(covered_seals_alert);
     let projected_member_count =
         projected_members_for_realm(&state_store.read(), &selected_realm_id).len();
+    // RRK durability active (mode != none + mls-exporter-aead-v1) gates the
+    // Realm-level recovery panel in the Security section.
+    let durability_rrk_active = state_store
+        .read()
+        .realm_durability_is_rrk_active(&selected_realm_id);
 
     rsx! {
         div { class: "settings realm-settings", "data-testid": "realm-admin-panel",
@@ -289,6 +294,16 @@ pub fn RealmAdminPanel(
                         }
                     }
                 }
+            }
+            // encryption-and-audit.md §2.10.8 disclosure obligation — RRK
+            // durability banner. Renders only when this Realm's effective
+            // durability_policy.mode != none AND content_scheme is
+            // mls-exporter-aead-v1; otherwise it is a no-op. Members MUST see
+            // that history is continuously sealed to a verifiable recovery
+            // holder who can decrypt all history (never "real-time listening").
+            crate::components::DurabilityDisclosureBanner {
+                realm_id: selected_realm_id.clone(),
+                state_store,
             }
             // Realm-wide notary-paused banner. Fires whenever any tracked
             // Move for this Realm has surfaced `NotaryPaused`. The Space
@@ -477,6 +492,24 @@ pub fn RealmAdminPanel(
                             strong { "Next step" }
                             span { "{security_next_step}" }
                         }
+                    }
+                }
+                // RRK durability policy editor (realm-and-space.md §2.3.1 /
+                // encryption-and-audit.md §2.10.8). Writes durability_policy via
+                // ck.realm.policy_components; prompts the operator that a
+                // following ck.mls.commit activates sealing + re-disclosure.
+                super::durability::DurabilityPolicyEditor {
+                    base_url: base_url.clone(),
+                    token,
+                    realm_id: selected_realm_id.clone(),
+                    actor_id: account_did.clone(),
+                    state_store,
+                }
+                // Realm-level RRK recovery panel — only when durability is active.
+                if durability_rrk_active {
+                    super::durability_recovery::DurabilityRecoveryPanel {
+                        realm_id: selected_realm_id.clone(),
+                        state_store,
                     }
                 }
                 // Covered_frontier_lag alert banner. Mirrors sodmin's admin

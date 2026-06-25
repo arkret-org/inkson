@@ -147,6 +147,53 @@ fn realm_tree_projection_value_is_mls_encrypted(body: &Value) -> bool {
     false
 }
 
+/// Extract the effective `durability_policy` (RRK, realm-and-space.md §2.3.1)
+/// from a cached realm-tree projection body, if present. Scans the same nested
+/// containers as the encryption-state reader since the local projection nests
+/// the realm body. Returns the SDK-typed [`cokret_sdk::models::DurabilityPolicy`]
+/// so the client never re-defines the spec shape; `None` when absent or malformed.
+fn realm_tree_projection_value_durability_policy(
+    body: &Value,
+) -> Option<cokret_sdk::models::DurabilityPolicy> {
+    let null = Value::Null;
+    for container in [
+        body,
+        body.get("summary").unwrap_or(&null),
+        body.get("object").unwrap_or(&null),
+        body.get("realm").unwrap_or(&null),
+        body.get("metadata").unwrap_or(&null),
+    ] {
+        if let Some(policy) = container.get("durability_policy")
+            && !policy.is_null()
+            && let Ok(parsed) =
+                serde_json::from_value::<cokret_sdk::models::DurabilityPolicy>(policy.clone())
+        {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+/// Extract the effective `content_scheme` selector from a cached realm-tree
+/// projection body. RRK durability is only effective when this is
+/// `mls-exporter-aead-v1` (encryption-and-audit.md §2.10.8 scheme constraint).
+fn realm_tree_projection_value_content_scheme(body: &Value) -> Option<String> {
+    use crate::realm_tree::string_field;
+    let null = Value::Null;
+    for container in [
+        body,
+        body.get("summary").unwrap_or(&null),
+        body.get("object").unwrap_or(&null),
+        body.get("realm").unwrap_or(&null),
+        body.get("metadata").unwrap_or(&null),
+    ] {
+        if let Some(scheme) = string_field(container, &["content_scheme"]) {
+            return Some(scheme);
+        }
+    }
+    None
+}
+
 /// SEC-08 (`encryption-and-audit.md` §2.9) — does a cached realm-tree
 /// projection declare the `ck.profile.mls.minimal_metadata_realm.v1` profile?
 ///

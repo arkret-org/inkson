@@ -1748,10 +1748,8 @@ pub fn RouterView() -> Element {
             }
             admit_in_flight.set(true);
             spawn(async move {
-                let outcome = crate::views::helpers::with_authed_api(
-                    &base,
-                    session,
-                    |api| async move {
+                let outcome =
+                    crate::views::helpers::with_authed_api(&base, session, |api| async move {
                         crate::views::realm_admin::reconcile_mls_admissions_for_realm(
                             &api,
                             admit_state_store,
@@ -1760,9 +1758,8 @@ pub fn RouterView() -> Element {
                             device,
                         )
                         .await
-                    },
-                )
-                .await;
+                    })
+                    .await;
                 admit_in_flight.set(false);
                 match outcome {
                     Ok(admitted) if admitted > 0 => {
@@ -1831,9 +1828,7 @@ pub fn RouterView() -> Element {
                 let requests: Vec<serde_json::Value> = inbox
                     .iter()
                     .filter(|message| {
-                        message
-                            .get("kind")
-                            .and_then(serde_json::Value::as_str)
+                        message.get("kind").and_then(serde_json::Value::as_str)
                             == Some("ck.realm_key.request")
                     })
                     .cloned()

@@ -645,9 +645,9 @@ fn realm_key_share_envelope(
     let sealed =
         cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(recipient_pub, secrets)
             .unwrap();
-    let (lo, hi) = secrets
-        .iter()
-        .fold((u64::MAX, 0_u64), |(lo, hi), (e, _)| (lo.min(*e), hi.max(*e)));
+    let (lo, hi) = secrets.iter().fold((u64::MAX, 0_u64), |(lo, hi), (e, _)| {
+        (lo.min(*e), hi.max(*e))
+    });
     let event = crate::mls::admission::build_realm_key_share_event(
         realm,
         "did:web:alice.example",
@@ -702,14 +702,8 @@ fn ingest_realm_key_share_installs_history_secrets() {
 
     // A share addressed to a different device installs nothing.
     let other = "ck:device:01904100-0000-7000-8000-0000000000ff";
-    let foreign = realm_key_share_envelope(
-        realm,
-        bob_actor,
-        other,
-        alice_device,
-        &bob_pub,
-        &secrets,
-    );
+    let foreign =
+        realm_key_share_envelope(realm, bob_actor, other, alice_device, &bob_pub, &secrets);
     assert_eq!(
         ingest_realm_key_share(&mut state, &secure, realm, bob_actor, bob_device, &foreign),
         0
@@ -732,7 +726,10 @@ fn history_secrets_survive_json_persistence_round_trip() {
         let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
         state.save_history_secret(realm.to_owned(), 7, vec![9u8; 32]);
         state.save_history_secret(realm.to_owned(), 8, vec![8u8; 32]);
-        assert!(state.persist_error().is_none(), "history secrets must persist");
+        assert!(
+            state.persist_error().is_none(),
+            "history secrets must persist"
+        );
     }
     let restarted = crate::local_state::LocalStateStore::with_path(path.clone());
     assert_eq!(restarted.history_secret_for(realm, 7), Some(vec![9u8; 32]));

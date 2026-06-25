@@ -456,9 +456,7 @@ fn device_hpke_private_key_key(
             "device_id is required for device HPKE key".to_owned(),
         ));
     }
-    Ok(format!(
-        "{DEVICE_HPKE_PRIVATE_KEY_PREFIX}.{actor}.{device}"
-    ))
+    Ok(format!("{DEVICE_HPKE_PRIVATE_KEY_PREFIX}.{actor}.{device}"))
 }
 
 /// Load (or first-create + persist) this device's raw 32-byte X25519 HPKE

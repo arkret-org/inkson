@@ -149,7 +149,10 @@ fn try_history_decrypt_standalone(
     let candidates = exact
         .into_iter()
         .map(|secret| (payload.epoch, secret))
-        .chain(scan.into_iter().filter(|(epoch, _)| *epoch != payload.epoch));
+        .chain(
+            scan.into_iter()
+                .filter(|(epoch, _)| *epoch != payload.epoch),
+        );
     for (epoch, secret) in candidates {
         let aad_bytes = history_content_aad_bytes(realm_id, epoch);
         if let Ok(plaintext) = cokret_sdk::mls::decrypt_content_exporter_aead_standalone(
@@ -242,20 +245,19 @@ pub fn ingest_realm_key_share(
     device_id: &str,
     share_envelope: &serde_json::Value,
 ) -> usize {
-    let content = share_envelope
-        .get("content")
-        .unwrap_or(share_envelope);
-    let payload: cokret_sdk::RealmKeySharePayload =
-        match serde_json::from_value(content.clone()) {
-            Ok(payload) => payload,
-            Err(err) => {
-                tracing::debug!(%realm_id, error = %err, "skip malformed ck.realm_key.share");
-                return 0;
-            }
-        };
-    // Only consume shares addressed to THIS device (the seal opens only with
-    // this device's HPKE private key anyway, but check the routing first).
-    if payload.recipient_device_id.trim() != device_id.trim() {
+    let content = share_envelope.get("content").unwrap_or(share_envelope);
+    let payload: cokret_sdk::RealmKeySharePayload = match serde_json::from_value(content.clone()) {
+        Ok(payload) => payload,
+        Err(err) => {
+            tracing::debug!(%realm_id, error = %err, "skip malformed ck.realm_key.share");
+            return 0;
+        }
+    };
+    // Only consume member_device shares addressed to THIS device (the seal opens
+    // only with this device's HPKE private key anyway, but check the routing
+    // first). RRK shares (share_class=realm_recovery_key) carry no
+    // recipient_device_id and are not consumed here.
+    if payload.recipient_device_id.as_deref().map(str::trim) != Some(device_id.trim()) {
         return 0;
     }
     // Best-effort sender-device authentication (device-lifecycle.md §13): when
@@ -271,7 +273,11 @@ pub fn ingest_realm_key_share(
         );
         return 0;
     }
-    let Some(sealed) = payload.ciphertext.as_deref().filter(|c| !c.trim().is_empty()) else {
+    let Some(sealed) = payload
+        .ciphertext
+        .as_deref()
+        .filter(|c| !c.trim().is_empty())
+    else {
         return 0;
     };
     let privkey = match super::load_device_hpke_private_key(secure_store, actor_id, device_id) {

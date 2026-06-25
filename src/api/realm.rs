@@ -418,6 +418,51 @@ impl CokretApi {
         })
     }
 
+    /// Set (or clear) the Realm Recovery Key (RRK) `durability_policy` via a
+    /// `ck.realm.policy_components` event (realm-and-space.md §2.3.1 write path —
+    /// no new event kind; durability is a policy component).
+    ///
+    /// `policy` is the SDK-typed [`cokret_sdk::models::DurabilityPolicy`]
+    /// so the client never re-defines the spec shape. `policy_revision` MUST be a
+    /// monotonic increment of the Realm's current policy revision (the reducer
+    /// rejects a stale revision). After this lands, a subsequent `ck.mls.commit`
+    /// covering the membership frontier activates the new epoch's sealing
+    /// obligation and triggers re-disclosure (§2.10.8) — the caller SHOULD prompt
+    /// an MLS commit / self-update afterward.
+    ///
+    /// Pre-condition (caller-enforced): RRK durability is only effective when the
+    /// Realm uses `content_scheme=mls-exporter-aead-v1`; declaring `mode != none`
+    /// on a plain `mls-rfc9420` Realm is rejected server-side
+    /// (`durability_scheme_incompatible`).
+    pub async fn set_realm_durability_policy(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        policy: &cokret_sdk::models::DurabilityPolicy,
+        policy_revision: u64,
+    ) -> anyhow::Result<()> {
+        let actor_id = actor_id.trim();
+        if actor_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "actor_id is required for ck.realm.policy_components"
+            ));
+        }
+        let durability_value = serde_json::to_value(policy)
+            .map_err(|err| anyhow::anyhow!("serialize durability_policy: {err}"))?;
+        let policy_components = json!({
+            "policy_revision": policy_revision,
+            "durability_policy": durability_value,
+        });
+        let event = build_realm_state_event(
+            realm_id,
+            actor_id,
+            EventKind::RealmPolicyComponents,
+            policy_components,
+        )?;
+        self.submit_built_event(&event).await?;
+        Ok(())
+    }
+
     /// Create an invite via `ck.invite.create` event (spec-canonical). The
     /// `invite_id` is generated client-side so the caller can correlate
     /// optimistic UI rows with the eventual server projection.

@@ -1600,6 +1600,28 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             &device_id,
         );
     }
+    // Eager RRK seal (encryption-and-audit.md §2.10.8): if this Realm declares an
+    // effective `durability_policy` (mode != none + mls-exporter-aead-v1), seal
+    // the retained history_secret(s) to every recovery recipient right after the
+    // admission commit advances the epoch and before any (future) GC. yougen
+    // never GCs history_secrets, so this only needs to be eager, not blocking.
+    if state_store.read().realm_durability_is_rrk_active(&realm_id) {
+        if let Err(err) = seal_history_to_recovery_recipients(
+            api,
+            state_store,
+            realm_id.clone(),
+            actor_id.clone(),
+            device_id.clone(),
+        )
+        .await
+        {
+            tracing::warn!(
+                realm = %short_protocol_id(&realm_id),
+                error = %err,
+                "RRK eager seal pass failed after admission commit; history_secret retained for retry"
+            );
+        }
+    }
     // Proactive provider push of `ck.realm_key.share` at admission time would
     // need the invitee device's HPKE public key. The claimed KeyPackage's
     // X25519 init key is not surfaced by the current SDK, and yougen seals to a
@@ -1663,14 +1685,14 @@ pub(crate) async fn share_history_to_requester(
     let recipient_pubkey =
         cokret_sdk::base64url_decode(request.recipient_hpke_public_key.trim().as_bytes())
             .map_err(|err| anyhow::anyhow!("decode requester HPKE public key: {err}"))?;
-    let sealed = cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(
-        &recipient_pubkey,
-        &range,
-    )
-    .map_err(|err| anyhow::anyhow!("seal history secrets: {err}"))?;
-    let (min_epoch, max_epoch) = range.iter().fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {
-        (lo.min(*epoch), hi.max(*epoch))
-    });
+    let sealed =
+        cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(&recipient_pubkey, &range)
+            .map_err(|err| anyhow::anyhow!("seal history secrets: {err}"))?;
+    let (min_epoch, max_epoch) = range
+        .iter()
+        .fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {
+            (lo.min(*epoch), hi.max(*epoch))
+        });
     let share = crate::mls::admission::build_realm_key_share_event(
         &realm_id,
         &actor_id,
@@ -1685,6 +1707,122 @@ pub(crate) async fn share_history_to_requester(
     api.submit_sdk_events_batch(&realm_id, vec![share], None)
         .await?;
     Ok(true)
+}
+
+/// Eager RRK seal hook (encryption-and-audit.md §2.10.8): after a commit
+/// advances `realm_id`'s epoch and this device has retained the new epoch's
+/// `history_secret`, seal every retained `(epoch, history_secret)` to each
+/// `durability_policy.recovery_recipients[]` and submit the
+/// provider-initiated `ck.realm_key.share` Events.
+///
+/// MUST run only when the Realm's effective durability is RRK-active
+/// (`mode != none` AND `content_scheme == mls-exporter-aead-v1`); the caller
+/// gates on [`LocalStateStore::realm_durability_is_rrk_active`].
+///
+/// **RYW guard (§2.10.8 eager timing)**: yougen never GCs `history_secret`s
+/// (`mls_sidecar` is monotonic), so the dangerous "GC before seal accepted"
+/// window does not exist structurally — the retained secret survives until the
+/// store is wiped. This hook only has to be *eager*: it fires right after the
+/// advancing commit, and a recipient whose RRK is unverified or whose share
+/// fails to submit leaves the secret retained (never GC'd) so a later pass can
+/// re-seal. A `durability_seal_missing_before_gc`-class loss is therefore not
+/// reachable from this client.
+///
+/// Returns `Ok((sealed, unverified))` recipient counts for diagnostics; a
+/// non-fatal failure is logged, never surfaced as a hard error (the commit
+/// itself already landed).
+pub(crate) async fn seal_history_to_recovery_recipients(
+    api: &crate::api::CokretApi,
+    mut state_store: Signal<LocalStateStore>,
+    realm_id: String,
+    actor_id: String,
+    device_id: String,
+) -> anyhow::Result<(usize, usize)> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    // Ensure the just-advanced epoch's key is retained before sealing.
+    {
+        let mut store = state_store.write();
+        let _ = crate::mls::runtime::derive_and_retain_realm_history_secret(
+            &mut store,
+            secure_store.as_ref(),
+            &realm_id,
+            &actor_id,
+            &device_id,
+        );
+    }
+    let (policy, history_secrets, policy_digest) = {
+        let store = state_store.read();
+        let Some(policy) = store.realm_durability_policy(&realm_id) else {
+            return Ok((0, 0));
+        };
+        if !crate::mls::durability::durability_is_effective(&policy) {
+            return Ok((0, 0));
+        }
+        let history_secrets = store.history_secrets_for(&realm_id);
+        // Bind the effective policy at seal time to the realm seal view's
+        // state_root (the closest stable governance digest the client holds).
+        let policy_digest = store
+            .seal_view_for_realm(&realm_id)
+            .state_root
+            .map(Value::String)
+            .unwrap_or(Value::Null);
+        (policy, history_secrets, policy_digest)
+    };
+    if history_secrets.is_empty() {
+        return Ok((0, 0));
+    }
+    // Fetch each recipient principal's raw DID Document (carrying service /
+    // keyAgreement) so the SDK authority can verify the active RRK service entry.
+    let mut did_documents: BTreeMap<String, Value> = BTreeMap::new();
+    for recipient in &policy.recovery_recipients {
+        if let Some(document) =
+            crate::did_resolver::fetch_raw_did_document_json(&api.http, &recipient.principal_id)
+                .await
+        {
+            did_documents.insert(recipient.recipient_id.clone(), document);
+        }
+    }
+    let outcomes = crate::mls::durability::build_eager_seal_events(
+        &realm_id,
+        &actor_id,
+        &device_id,
+        &policy,
+        &history_secrets,
+        &did_documents,
+        policy_digest,
+    );
+    let mut events = Vec::new();
+    let mut unverified = 0_usize;
+    for outcome in outcomes {
+        match outcome {
+            crate::mls::durability::RecipientSealOutcome::Sealed { event, .. } => {
+                events.push(event);
+            }
+            crate::mls::durability::RecipientSealOutcome::Unverified {
+                recipient_id,
+                reason,
+            } => {
+                unverified += 1;
+                tracing::warn!(
+                    realm = %short_protocol_id(&realm_id),
+                    recipient = %recipient_id,
+                    %reason,
+                    "RRK eager seal skipped recipient (fail-closed); history_secret retained for retry"
+                );
+            }
+        }
+    }
+    let sealed = events.len();
+    if !events.is_empty() {
+        api.submit_sdk_events_batch(&realm_id, events, None).await?;
+        tracing::info!(
+            sealed,
+            unverified,
+            realm = %short_protocol_id(&realm_id),
+            "submitted provider-initiated RRK ck.realm_key.share(s)"
+        );
+    }
+    Ok((sealed, unverified))
 }
 
 /// History-sharing visibility tiers (realm-and-space.md) under which a
@@ -1741,10 +1879,10 @@ pub(crate) struct HistoryKeyRequestPlan {
 ///
 /// Returns `Some(plan)` iff **all** hold:
 /// - `history_visibility` admits a pre-join pull (shared/invited/world_readable);
-/// - there is a pre-join epoch (`< join_epoch`) with no installed
-///   `history_secret` — i.e. an actual decryptable gap;
-/// - at least one provider candidate `(principal, device)` exists that is not
-///   this device's own actor.
+/// - there is a pre-join epoch (`< join_epoch`) with no installed `history_secret` — i.e. an actual
+///   decryptable gap;
+/// - at least one provider candidate `(principal, device)` exists that is not this device's own
+///   actor.
 ///
 /// The requested range is `[0, join_epoch - 1]` (every pre-join epoch). The
 /// provider-side §13 gate trims it to what policy actually allows; asking for
@@ -1817,15 +1955,12 @@ fn provider_candidates_from_inbox(
         }
         // Keep realm-scoped messages and ones that carry no realm hint (a
         // directed to-device delivery already addressed to this device).
-        let scope_realm = message
-            .get("realm_id")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                message
-                    .get("content")
-                    .and_then(|content| content.get("realm_id"))
-                    .and_then(Value::as_str)
-            });
+        let scope_realm = message.get("realm_id").and_then(Value::as_str).or_else(|| {
+            message
+                .get("content")
+                .and_then(|content| content.get("realm_id"))
+                .and_then(Value::as_str)
+        });
         if scope_realm.is_some_and(|value| value.trim() != realm_id) {
             continue;
         }
@@ -2054,9 +2189,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             .map(|member| member.actor_id)
             .filter(|did| {
                 let did = did.trim();
-                !did.is_empty()
-                    && did != actor_id.trim()
-                    && !group_member_dids.contains(did)
+                !did.is_empty() && did != actor_id.trim() && !group_member_dids.contains(did)
             })
             .collect()
     };

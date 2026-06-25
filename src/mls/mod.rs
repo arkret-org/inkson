@@ -7,6 +7,7 @@
 
 pub mod account_recovery;
 pub(crate) mod admission;
+pub mod durability;
 pub mod governance;
 pub mod mimi_client;
 pub mod persistence;

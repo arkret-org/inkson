@@ -204,6 +204,48 @@ impl LocalStateStore {
             .is_some_and(realm_tree_projection_value_is_mls_encrypted)
     }
 
+    /// The effective `durability_policy` (RRK, realm-and-space.md §2.3.1) for
+    /// `realm_id` from the latest cached realm-tree projection, if declared.
+    /// SDK-typed so the disclosure banner + seal hook share one shape with the
+    /// reducer. `None` when no projection / no policy / `mode == none`-shaped
+    /// absence.
+    pub fn realm_durability_policy(
+        &self,
+        realm_id: &str,
+    ) -> Option<cokret_sdk::models::DurabilityPolicy> {
+        self.load()
+            .realm_tree_projections
+            .get(realm_id.trim())
+            .and_then(super::realm_tree_projection_value_durability_policy)
+    }
+
+    /// The effective `content_scheme` selector for `realm_id`. RRK durability is
+    /// only effective when this is `mls-exporter-aead-v1`
+    /// (encryption-and-audit.md §2.10.8). `None` falls back to the legacy
+    /// `mls-rfc9420` PrivateMessage path (no deliverable `history_secret`).
+    pub fn realm_content_scheme(&self, realm_id: &str) -> Option<String> {
+        self.load()
+            .realm_tree_projections
+            .get(realm_id.trim())
+            .and_then(super::realm_tree_projection_value_content_scheme)
+    }
+
+    /// True when `realm_id`'s effective durability policy is RRK-active: a
+    /// projected `durability_policy.mode != none` AND
+    /// `content_scheme == mls-exporter-aead-v1` (the §2.10.8 scheme gate). Drives
+    /// whether the disclosure banner renders and whether the seal hook runs.
+    pub fn realm_durability_is_rrk_active(&self, realm_id: &str) -> bool {
+        let scheme_ok = self
+            .realm_content_scheme(realm_id)
+            .map(|scheme| scheme.trim().to_ascii_lowercase().replace('_', "-"))
+            .is_some_and(|scheme| scheme == "mls-exporter-aead-v1");
+        scheme_ok
+            && self
+                .realm_durability_policy(realm_id)
+                .as_ref()
+                .is_some_and(crate::mls::durability::durability_is_effective)
+    }
+
     /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
     /// realm-tree projection declare the
     /// `ck.profile.mls.minimal_metadata_realm.v1` profile? The committer uses

@@ -203,8 +203,11 @@ pub(crate) fn build_realm_key_share_event(
         history_visibility: None,
     };
     let mut payload = cokret_sdk::RealmKeySharePayload {
+        share_class: cokret_sdk::RealmKeyShareClass::MemberDevice,
         recipient_principal_id: recipient_did,
-        recipient_device_id: recipient_device_id.trim().to_owned(),
+        recipient_device_id: Some(recipient_device_id.trim().to_owned()),
+        recipient_verification_method: None,
+        recovery_recipient_id: None,
         sender_device_id: sender_device_id.trim().to_owned(),
         // Filled below: a real Ed25519 signature over
         // `RealmKeySharePayload::sender_signing_input()` (device-lifecycle.md
@@ -240,6 +243,36 @@ pub(crate) fn build_realm_key_share_event(
     .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
 }
 
+/// Wrap an already-constructed [`cokret_sdk::RealmKeySharePayload`] (e.g. the
+/// provider-initiated RRK seal produced by
+/// `cokret_sdk::history_recovery::seal_history_secrets_to_recovery_recipient`)
+/// into a durable `ck.realm_key.share` Event, filling the
+/// `sender_device_signature` with this device's active Ed25519 signer
+/// (best-effort: an empty object if no signer is installed — the per-secret HPKE
+/// seal still gates confidentiality / integrity).
+///
+/// Unlike [`build_realm_key_share_event`], the seal + payload are already done by
+/// the SDK authority; this only authenticates the sender device and converts to
+/// a wire Event.
+pub(crate) fn wrap_realm_key_share_payload_event(
+    realm_id: &str,
+    actor_id: &str,
+    mut payload: cokret_sdk::RealmKeySharePayload,
+) -> Result<cokret_sdk::Event, String> {
+    payload.sender_device_signature =
+        sign_realm_key_share_sender_signature(&payload).unwrap_or_else(|| json!({}));
+    let body = serde_json::to_value(&payload)
+        .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
+    crate::operation::OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::RealmKeyShare,
+    )
+    .body(body)
+    .build_sdk_event("yougen")
+    .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
+}
+
 /// Sign the canonical `RealmKeySharePayload::sender_signing_input()` with this
 /// device's active Ed25519 event signer (raw signature over canonical JSON,
 /// not a detached JWS — the receiver verifies the raw signature in
@@ -252,7 +285,7 @@ pub(crate) fn build_realm_key_share_event(
 /// or `None` when no raw-capable signer is installed (best-effort: the caller
 /// then emits an empty object and the share still validates; the per-secret
 /// HPKE seal remains the integrity gate).
-fn sign_realm_key_share_sender_signature(
+pub(crate) fn sign_realm_key_share_sender_signature(
     payload: &cokret_sdk::RealmKeySharePayload,
 ) -> Option<Value> {
     let signer = crate::event_signer::active_signer()?;
