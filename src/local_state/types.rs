@@ -636,6 +636,24 @@ pub struct ClientLocalState {
     /// needless round-trip on every encrypted write after the first).
     #[serde(default)]
     pub mls_genesis_emitted: BTreeSet<String>,
+    /// MLS governance `policy_root` locked at `ck.mls.genesis`, keyed by the
+    /// same effective-scope key as [`Self::mls_genesis_emitted`]
+    /// (`mls_effective_scope_snapshot_key`).
+    ///
+    /// `encryption-and-audit.md` §2.5.1: the genesis-locked `policy_root` binds
+    /// the group's epoch chain; soland's `apply_commit_epoch` carries it forward
+    /// unchanged on every commit and rejects any `ck.mls.commit` whose binding
+    /// declares a different value with `governance_binding_mismatch`. Deriving
+    /// `policy_root` from the live Seal `state_root` (which advances on every
+    /// non-policy event — space/strand/message create) made the admission commit
+    /// drift away from the genesis-locked root the moment the creator did any
+    /// work before inviting, so the add-member commit was rejected while its
+    /// Welcome still landed — leaving the invitee at epoch N+1 and the admin at
+    /// epoch N (permanent fork, mutually undecryptable). We therefore record the
+    /// genesis-locked value once and reuse the exact bytes for every later
+    /// commit instead of recomputing from a moving root.
+    #[serde(default)]
+    pub mls_genesis_policy_root: BTreeMap<String, String>,
     /// X5.1 — local-only plaintext sidecar for the author's own encrypted
     /// private strand fields. Keyed `realm_id -> strand_id -> field_path ->
     /// plaintext` where `field_path` is the dotted private patch path
@@ -903,6 +921,7 @@ impl Default for ClientLocalState {
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
+            mls_genesis_policy_root: BTreeMap::new(),
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
             history_secrets: BTreeMap::new(),

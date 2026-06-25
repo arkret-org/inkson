@@ -510,6 +510,48 @@ impl LocalStateStore {
             let _ = self.flush();
         }
     }
+
+    /// The genesis-locked MLS `policy_root` for this Realm's group, if recorded.
+    ///
+    /// See [`crate::local_state::types::PersistedState::mls_genesis_policy_root`]:
+    /// every `ck.mls.commit` MUST declare the exact `policy_root` that
+    /// `ck.mls.genesis` locked, or soland rejects it with
+    /// `governance_binding_mismatch`. Commit builders read this so they reuse the
+    /// locked bytes instead of recomputing from the moving Seal `state_root`.
+    pub fn genesis_policy_root_for_effective_scope(
+        &self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+    ) -> Option<String> {
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        self.load().mls_genesis_policy_root.get(&key).cloned()
+    }
+
+    /// Record the genesis-locked MLS `policy_root` for this Realm's group.
+    ///
+    /// First-writer-wins: the value is locked at genesis and never changes for
+    /// the life of the group (soland carries it forward unchanged), so a later
+    /// call with a drifted root MUST NOT overwrite the genuine genesis value.
+    pub fn record_genesis_policy_root_for_effective_scope(
+        &mut self,
+        realm_id: impl Into<String>,
+        circle_id: Option<&str>,
+        policy_root: &str,
+    ) {
+        let policy_root = policy_root.trim();
+        if policy_root.is_empty() {
+            return;
+        }
+        self.ensure_cached_loaded();
+        let key = mls_effective_scope_snapshot_key(&realm_id.into(), circle_id);
+        if self.cached.mls_genesis_policy_root.contains_key(&key) {
+            return;
+        }
+        self.cached
+            .mls_genesis_policy_root
+            .insert(key, policy_root.to_owned());
+        let _ = self.flush();
+    }
 }
 
 pub(crate) fn mls_effective_scope_snapshot_key(realm_id: &str, circle_id: Option<&str>) -> String {
