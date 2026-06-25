@@ -576,6 +576,16 @@ pub fn apply_welcome_messages_with_device_snapshot(
             outcome.record_failure(format!("welcome claim envelope: {reason}"));
             continue;
         }
+        // The admission's Welcome carries the same `governance_binding` as its
+        // `ck.mls.commit`, so the joining member records the genesis-locked
+        // `policy_root` here. Without it, a later self-update commit by this
+        // member would recompute `policy_root` from its own moving Seal
+        // `state_root` and be rejected `governance_binding_mismatch`.
+        let welcome_policy_root = welcome_value
+            .get("governance_binding")
+            .and_then(|binding| binding.get("policy_root"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
         let welcome = match serde_json::from_value::<cokret_sdk::MlsWelcomeEnvelope>(welcome_value)
         {
             Ok(welcome) => welcome,
@@ -682,6 +692,9 @@ pub fn apply_welcome_messages_with_device_snapshot(
             &salt,
         );
         state_store.save_mls_snapshot(realm_id.to_owned(), snapshot);
+        if let Some(policy_root) = welcome_policy_root.as_deref() {
+            state_store.record_genesis_policy_root_for_effective_scope(realm_id, None, policy_root);
+        }
         if let Some(key_package_id) = welcome_entry.key_package_id.as_deref()
             && let Err(err) = delete_mls_key_package_identity_state(
                 secure_store,

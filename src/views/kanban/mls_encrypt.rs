@@ -129,6 +129,32 @@ pub(super) fn kanban_mls_policy_root(
     cokret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
+/// Resolve the `policy_root` a `ck.mls.commit` MUST declare for this group.
+///
+/// soland's `apply_commit_epoch` carries the genesis-locked `policy_root`
+/// forward unchanged on every epoch advance and rejects any commit whose
+/// binding declares a different value (`governance_binding_mismatch`). So a
+/// commit MUST reuse the exact bytes `ck.mls.genesis` locked — NOT recompute
+/// from the live Seal `state_root`, which advances on every non-policy event
+/// and would drift the commit away from genesis. We return the recorded
+/// genesis-locked root when present, falling back to the Seal-derived root only
+/// for groups created before this value was tracked (`encryption-and-audit.md`
+/// §2.5.1, [`crate::local_state::types::PersistedState::mls_genesis_policy_root`]).
+pub(super) fn kanban_mls_commit_policy_root(
+    state_store: &LocalStateStore,
+    seal_view: &LocalSealView,
+    realm_id: &str,
+    circle_id: Option<&str>,
+) -> Result<cokret_sdk::Hash, String> {
+    if let Some(stored) =
+        state_store.genesis_policy_root_for_effective_scope(realm_id, circle_id)
+    {
+        return cokret_sdk::Hash::new(stored)
+            .map_err(|err| format!("stored MLS genesis policy_root invalid: {err:?}"));
+    }
+    kanban_mls_policy_root(seal_view, realm_id)
+}
+
 pub(super) fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool {
     let actor = actor_id.trim();
     if actor.is_empty() {
@@ -213,7 +239,7 @@ pub(super) fn ensure_creator_mls_snapshot_for_encrypted_scope(
 /// The genesis governance binding installs epoch `0 -> 0` and mirrors the
 /// commit path's realm_id / membership_frontier / policy_root derivation.
 pub(crate) fn build_creator_mls_genesis_event(
-    state_store: &LocalStateStore,
+    state_store: &mut LocalStateStore,
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
@@ -230,7 +256,7 @@ pub(crate) fn build_creator_mls_genesis_event(
 }
 
 pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
-    state_store: &LocalStateStore,
+    state_store: &mut LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
@@ -262,6 +288,16 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         .map_err(|err| format!("invalid MLS genesis Realm id: {err:?}"))?;
     let membership_frontier = kanban_mls_membership_frontier(&seal_view, &event_id_typed);
     let policy_root = kanban_mls_policy_root(&seal_view, realm_id)?;
+    // Lock the genesis `policy_root` so every later `ck.mls.commit` reuses these
+    // exact bytes instead of recomputing from the moving Seal `state_root`
+    // (which drifts the moment the creator does any non-policy work before
+    // inviting, getting the add-member commit rejected with
+    // `governance_binding_mismatch` — see `mls_genesis_policy_root`).
+    state_store.record_genesis_policy_root_for_effective_scope(
+        realm_id,
+        circle,
+        policy_root.as_str(),
+    );
     let governance_binding = match circle {
         Some(circle_id) => {
             let typed_circle_id = cokret_sdk::CircleId::new(circle_id.to_owned())
@@ -425,7 +461,7 @@ fn kanban_mls_commit_event_from_store_for_effective_scope_with_membership_fronti
     let membership_frontier = explicit_membership_frontier
         .map(Ok)
         .unwrap_or_else(|| kanban_self_update_membership_frontier(&base_group_state_ref))?;
-    let policy_root = kanban_mls_policy_root(&seal_view, realm_id)?;
+    let policy_root = kanban_mls_commit_policy_root(state_store, &seal_view, realm_id, circle)?;
     let governance_binding = match circle {
         Some(circle_id) => {
             let typed_circle_id = cokret_sdk::CircleId::new(circle_id.to_owned())

@@ -262,7 +262,19 @@ pub(crate) fn build_secure_send(
                 .map_err(|err| format!("MLS commit event id invalid: {err:?}"))?;
             let realm_id_typed = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
                 .map_err(|err| format!("MLS commit Realm id invalid: {err:?}"))?;
-            let policy_root = mls_policy_root(seal_view, realm_id, &local_schedule_hash)?;
+            // Reuse the genesis-locked `policy_root` (soland carries it forward
+            // unchanged and rejects a drifted binding with
+            // `governance_binding_mismatch`); only fall back to the Seal-derived
+            // root for groups created before it was tracked. See
+            // `mls_encrypt::kanban_mls_commit_policy_root`.
+            let policy_root = match state_store
+                .read()
+                .genesis_policy_root_for_effective_scope(realm_id, None)
+            {
+                Some(stored) => cokret_sdk::Hash::new(stored)
+                    .map_err(|err| format!("stored MLS genesis policy_root invalid: {err:?}"))?,
+                None => mls_policy_root(seal_view, realm_id, &local_schedule_hash)?,
+            };
             let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
                 realm_id_typed,
                 real_commit_envelope.group_id.clone(),

@@ -816,12 +816,12 @@ pub(super) fn RealmsSection(
                                                             let genesis_event = creator_genesis_summary
                                                                 .as_ref()
                                                                 .and_then(|genesis_summary| {
-                                                                    let store = state_store.read();
+                                                                    let mut store = state_store.write();
                                                                     if store.mls_genesis_emitted_for(&realm_id) {
                                                                         return None;
                                                                     }
                                                                     match crate::views::kanban::build_creator_mls_genesis_event(
-                                                                        &store,
+                                                                        &mut store,
                                                                         &realm_id,
                                                                         &actor,
                                                                         &device,

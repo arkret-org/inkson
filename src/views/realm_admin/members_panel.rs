@@ -1583,7 +1583,31 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     };
     let next_epoch = admission.snapshot.epoch;
     let invitee_device_id = claim.device_id.clone();
-    api.submit_sdk_events_batch(&realm_id, vec![admission.commit, admission.welcome], None)
+    // Fail-closed ordering: submit the add-member `ck.mls.commit` FIRST and
+    // confirm soland accepted it BEFORE delivering the Welcome. The Welcome
+    // hands the invitee the post-add (epoch N+1) group state; if it landed while
+    // the commit was rejected (e.g. `governance_binding_mismatch`), the invitee
+    // would join at epoch N+1 while this admin and the server stayed at epoch N —
+    // a permanent fork in which neither side can decrypt the other's messages.
+    // Submitting the Welcome only after the commit confirms keeps every member
+    // on one epoch chain.
+    let commit_event_id = admission.commit.event_id.clone();
+    let commit_outcome = api
+        .submit_sdk_events_batch(&realm_id, vec![admission.commit], None)
+        .await?;
+    let commit_accepted = commit_outcome
+        .accepted
+        .iter()
+        .chain(commit_outcome.duplicate.iter())
+        .any(|event_id| event_id == &commit_event_id);
+    if !commit_accepted {
+        return Err(anyhow::anyhow!(
+            "MLS admission commit for invitee was not accepted (status={:?}, rejected={:?}); invitee not admitted to avoid an epoch fork",
+            commit_outcome.status,
+            commit_outcome.rejected
+        ));
+    }
+    api.submit_sdk_events_batch(&realm_id, vec![admission.welcome], None)
         .await?;
     {
         let mut store = state_store.write();
@@ -2301,10 +2325,28 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         )
         .map_err(|err| anyhow::anyhow!(err))?
     };
-    let mut events = Vec::with_capacity(admission.welcomes.len() + 1);
-    events.push(admission.commit);
-    events.extend(admission.welcomes);
-    api.submit_sdk_events_batch(&realm_id, events, None).await?;
+    // Fail-closed ordering (see `submit_mls_admission_for_invitee`): the
+    // batched add-member `ck.mls.commit` MUST be accepted before its Welcomes
+    // ship, or rejected-commit-but-delivered-Welcome forks the invitees onto an
+    // epoch this admin and the server never reach.
+    let commit_event_id = admission.commit.event_id.clone();
+    let commit_outcome = api
+        .submit_sdk_events_batch(&realm_id, vec![admission.commit], None)
+        .await?;
+    let commit_accepted = commit_outcome
+        .accepted
+        .iter()
+        .chain(commit_outcome.duplicate.iter())
+        .any(|event_id| event_id == &commit_event_id);
+    if !commit_accepted {
+        return Err(anyhow::anyhow!(
+            "MLS batch admission commit was not accepted (status={:?}, rejected={:?}); invitees not admitted to avoid an epoch fork",
+            commit_outcome.status,
+            commit_outcome.rejected
+        ));
+    }
+    api.submit_sdk_events_batch(&realm_id, admission.welcomes, None)
+        .await?;
     state_store
         .write()
         .save_mls_snapshot(realm_id, admission.snapshot);
@@ -2365,9 +2407,9 @@ async fn ensure_mls_genesis_frontier_for_invite(
         )
     })?;
     let genesis_event = {
-        let store = state_store.read();
+        let mut store = state_store.write();
         crate::views::kanban::build_creator_mls_genesis_event(
-            &store,
+            &mut store,
             realm_id,
             actor_id,
             device_id,
