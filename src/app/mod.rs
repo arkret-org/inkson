@@ -2250,8 +2250,6 @@ pub fn RouterView() -> Element {
             Route::KanbanRealm { .. }
                 | Route::KanbanBoard { .. }
                 | Route::KanbanBoardTask { .. }
-                | Route::DocumentRealm { .. }
-                | Route::DocumentMorph { .. }
         )
     {
         let stored_surface =
@@ -4823,22 +4821,6 @@ pub fn RouterView() -> Element {
                                     rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
                                 }
                             }
-                            RealmSurface::Document => {
-                                if full_ready {
-                                    rsx! {
-                                        crate::views::document::DocumentPanel {
-                                            base_url: base_url(),
-                                            token,
-                                            selected_realm_id: active_realm_id.clone(),
-                                            document_ref: None,
-                                            state_store,
-                                            account_did: account_did(),
-                                        }
-                                    }
-                                } else {
-                                    rsx! { ProfileGateNotice { profile: "full_client" } }
-                                }
-                            }
                         }
                     },
                     Route::DirectConversation { realm_id, strand_id } => {
@@ -5092,34 +5074,6 @@ pub fn RouterView() -> Element {
                             device_id: device_id(),
                             token,
                             state_store,
-                        }
-                    },
-                    Route::Document
-                    | Route::DocumentNew
-                    | Route::DocumentRealm { .. }
-                    | Route::DocumentMorph { .. } => {
-                        if let Some(sid) = route.realm_id()
-                            && selected_realm_id() != sid
-                        {
-                            selected_realm_id.set(sid.to_owned());
-                        }
-                        let document_ref = match &route {
-                            Route::DocumentMorph { morph_id, .. } => Some(morph_id.clone()),
-                            _ => None,
-                        };
-                        rsx! {
-                            if full_ready {
-                                crate::views::document::DocumentPanel {
-                                    base_url: base_url(),
-                                    token,
-                                    selected_realm_id: active_realm_id.clone(),
-                                    document_ref,
-                                    state_store,
-                                    account_did: account_did(),
-                                }
-                            } else {
-                                ProfileGateNotice { profile: "full_client" }
-                            }
                         }
                     },
                     Route::Call {

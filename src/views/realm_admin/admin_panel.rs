@@ -1548,6 +1548,13 @@ pub fn RealmAdminPanel(
                         "Trust bundle import, validation, and revocation are not wired in yougen. Use the deployment's admin tooling for federation trust changes."
                     }
                 }
+                // YGN-ORG-03 — Realm ↔ organization binding / revocation.
+                // Distinguishes declared hint / pending consent / verified
+                // active / revoked-expired, drives the two-step bind flow, and
+                // separates organization-side revoke from Realm-side remove.
+                super::RealmOrganizationPanel {
+                    realm_id: selected_realm_id.clone(),
+                }
             }
 
             // P3 — moderation reviewer workbench (decision/lift + appeal

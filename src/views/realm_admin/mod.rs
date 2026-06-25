@@ -13,12 +13,14 @@ mod durability;
 mod durability_recovery;
 mod members_panel;
 mod metadata;
+mod organization;
 mod permissions;
 mod policy;
 mod section;
 
 pub use admin_panel::RealmAdminPanel;
 pub use members_panel::RealmMembersPanel;
+pub use organization::RealmOrganizationPanel;
 pub(crate) use members_panel::{
     joined_member_signature_for_realm, pending_history_request_dedup_key,
     reconcile_mls_admissions_for_realm, request_history_keys_for_realm, share_history_to_requester,

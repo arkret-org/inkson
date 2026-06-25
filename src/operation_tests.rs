@@ -205,34 +205,6 @@ fn event_envelope_rejects_unknown_top_level_fields() {
 }
 
 #[test]
-fn document_morph_create_carries_document_body() {
-    let op = ck_ops::document_morph_create(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
-        "did:web:alice.example",
-        "ck:morph:0196419b-0000-7000-8000-000000000002",
-        "Untitled Document",
-        json!({"blocks": [{"id": "block-1", "kind": "Heading", "content": "Hi"}]}),
-    )
-    .expect("builds")
-    .build("test_node");
-
-    assert_eq!(op.kind.as_str(), "ck.morph.create");
-    assert_eq!(
-        op.content["object"]["id"],
-        "ck:morph:0196419b-0000-7000-8000-000000000002"
-    );
-    assert!(op.content.get("morph_id").is_none());
-    assert_eq!(op.content["object"]["morph_type"], "document");
-    assert_eq!(
-        op.content["object"]["fields"]["document"]["blocks"][0]["kind"],
-        "Heading"
-    );
-    assert!(op.content["object"]["facets"]["documentable"].is_object());
-    assert_registered_payload_valid(&op);
-    assert_payload_field_names_are_spec_canonical(&op.content);
-}
-
-#[test]
 fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     let op = ck_ops::kanban_card_strand_create(
         "ck:realm:0196419b-0000-7000-8000-000000000001",
@@ -322,53 +294,6 @@ fn mls_commit_builder_matches_registered_payload_schema() {
     assert!(op.content.get("group_id").is_none());
     assert!(op.content.get("preconditions").is_none());
     assert!(op.content.get("effects").is_none());
-    assert_registered_payload_valid(&op);
-    assert_payload_field_names_are_spec_canonical(&op.content);
-}
-
-#[test]
-fn document_morph_update_targets_existing_morph_id() {
-    let op = ck_ops::document_morph_update(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
-        "did:web:alice.example",
-        "ck:morph:0196419b-0000-7000-8000-000000000002",
-        json!({"blocks": []}),
-    )
-    .expect("builds")
-    .build("test_node");
-
-    assert_eq!(op.kind.as_str(), "ck.morph.update");
-    assert_eq!(
-        op.content["target_ref"],
-        "ck:morph:0196419b-0000-7000-8000-000000000002"
-    );
-    assert!(op.content.get("morph_id").is_none());
-    assert!(op.content["patch"]["fields"]["value"]["document"]["blocks"].is_array());
-    assert_registered_payload_valid(&op);
-    assert_payload_field_names_are_spec_canonical(&op.content);
-}
-
-#[test]
-fn document_comment_create_carries_anchor_range() {
-    let op = ck_ops::document_comment_create(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
-        "did:web:alice.example",
-        "ck:morph:0196419b-0000-7000-8000-000000000002",
-        4,
-        9,
-        "needs detail",
-        None,
-    )
-    .expect("builds")
-    .build("test_node");
-
-    assert_eq!(op.kind.as_str(), "ck.message.create");
-    assert_eq!(
-        op.content["content"]["morph_id"],
-        "ck:morph:0196419b-0000-7000-8000-000000000002"
-    );
-    assert_eq!(op.content["content"]["anchor_range"]["start"], 4);
-    assert_eq!(op.content["content"]["anchor_range"]["end"], 9);
     assert_registered_payload_valid(&op);
     assert_payload_field_names_are_spec_canonical(&op.content);
 }
@@ -564,7 +489,7 @@ fn object_patch_family_builders_match_registered_payload_schema() {
         )
         .expect("builds")
         .build("node"),
-        ck_ops::realm_organization_update(
+        ck_ops::realm_metadata_update(
             realm_id,
             actor,
             json!({ "title": { "$op": "set", "value": "Engineering" } }),
@@ -1049,4 +974,276 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     .build("node");
     assert_eq!(result.kind.as_str(), "ck.agent.interop_session.result");
     assert_eq!(result.content["audit_binding"]["merkle_root"], "sha256:abc");
+}
+
+// ── YGN-ORG-05 — ck.realm.organization builder snapshot + negative tests ──
+//
+// Covers the YGN-ORG-02 builder: active / revoked payload snapshots against
+// the registered spec schema, plus negative coverage for missing delegation,
+// missing proof, and the status / revocation coupling. These are the
+// client-side counterparts of the SDK statement verifier tests; the helper
+// produces real `ck.realm.organization` events that cotest can reuse.
+mod realm_organization_builder_tests {
+    use chrono::TimeZone;
+    use cokret_sdk::models::{
+        RealmOrganizationControlScope, RealmOrganizationIssuerRole, RealmOrganizationRelationship,
+        RealmOrganizationStatus, SignatureMaterial,
+    };
+
+    use super::*;
+    use crate::operation::ck_ops::RealmOrganizationAuthorizationInput;
+
+    const REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000010";
+    const ACTOR: &str = "did:web:alice.example";
+    const ORG_DID: &str = "did:webvh:example.test:orgs:org1";
+    const ORG_VM: &str = "did:webvh:example.test:orgs:org1#k1";
+
+    fn signed_at() -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc.with_ymd_and_hms(2026, 6, 25, 12, 0, 0).unwrap()
+    }
+
+    fn direct_org_auth() -> RealmOrganizationAuthorizationInput {
+        // OrganizationDid is a non-delegated role: no delegation_ref.
+        RealmOrganizationAuthorizationInput {
+            issuer: ORG_DID.to_owned(),
+            issuer_role: RealmOrganizationIssuerRole::OrganizationDid,
+            verification_method: ORG_VM.to_owned(),
+            delegation_ref: None,
+            executed_by: Some("did:web:admin.example".to_owned()),
+            signed_at: signed_at(),
+            proof: SignatureMaterial::NonEmptyString("c2ln".to_owned()),
+        }
+    }
+
+    fn delegated_org_auth() -> RealmOrganizationAuthorizationInput {
+        RealmOrganizationAuthorizationInput {
+            issuer: "did:web:gov.example".to_owned(),
+            issuer_role: RealmOrganizationIssuerRole::GovernanceService,
+            verification_method: "did:web:gov.example#k1".to_owned(),
+            delegation_ref: Some("ck:grant:01904100-0000-7000-8000-000000000001".to_owned()),
+            executed_by: None,
+            signed_at: signed_at(),
+            proof: SignatureMaterial::NonEmptyString("c2ln".to_owned()),
+        }
+    }
+
+    #[test]
+    fn active_statement_matches_registered_payload_schema() {
+        let event = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-1",
+            ORG_DID,
+            RealmOrganizationRelationship::Owner,
+            RealmOrganizationStatus::Active,
+            vec![
+                RealmOrganizationControlScope::OfficialBadge,
+                RealmOrganizationControlScope::RealmAdmin,
+            ],
+            signed_at(),
+            direct_org_auth(),
+            None,
+        )
+        .expect("builds")
+        .build("node");
+
+        assert_eq!(event.kind.as_str(), "ck.realm.organization");
+        // The statement binds the organization DID, not a Space/Strand id.
+        assert_eq!(event.local_target_ref(), Some(ORG_DID));
+        assert_eq!(event.content["organization_id"], ORG_DID);
+        assert_eq!(event.content["relationship"], "owner");
+        assert_eq!(event.content["status"], "active");
+        assert!(event.content.get("revokes_statement_id").is_none());
+        // The organization proof is carried verbatim, not synthesized from the
+        // local login session.
+        assert_eq!(
+            event.content["authorization"]["issuer_role"],
+            "organization_did"
+        );
+        assert_eq!(event.content["authorization"]["proof"], "c2ln");
+        assert_payload_field_names_are_spec_canonical(&event.content);
+        assert_registered_payload_valid(&event);
+    }
+
+    #[test]
+    fn delegated_active_statement_carries_delegation_ref() {
+        let event = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-gov",
+            ORG_DID,
+            RealmOrganizationRelationship::Governance,
+            RealmOrganizationStatus::Active,
+            vec![RealmOrganizationControlScope::ModerationPolicy],
+            signed_at(),
+            delegated_org_auth(),
+            None,
+        )
+        .expect("builds")
+        .build("node");
+
+        assert_eq!(event.content["relationship"], "governance");
+        assert_eq!(
+            event.content["authorization"]["issuer_role"],
+            "governance_service"
+        );
+        assert_eq!(
+            event.content["authorization"]["delegation_ref"],
+            "ck:grant:01904100-0000-7000-8000-000000000001"
+        );
+        assert_registered_payload_valid(&event);
+    }
+
+    #[test]
+    fn revoked_statement_matches_registered_payload_schema() {
+        let event = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-2",
+            ORG_DID,
+            RealmOrganizationRelationship::Owner,
+            RealmOrganizationStatus::Revoked,
+            vec![RealmOrganizationControlScope::OfficialBadge],
+            signed_at(),
+            direct_org_auth(),
+            Some("org-stmt-1".to_owned()),
+        )
+        .expect("builds")
+        .build("node");
+
+        assert_eq!(event.content["status"], "revoked");
+        assert_eq!(event.content["revokes_statement_id"], "org-stmt-1");
+        assert_registered_payload_valid(&event);
+    }
+
+    #[test]
+    fn revoked_without_revokes_statement_id_is_rejected() {
+        let error = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-3",
+            ORG_DID,
+            RealmOrganizationRelationship::Owner,
+            RealmOrganizationStatus::Revoked,
+            vec![RealmOrganizationControlScope::OfficialBadge],
+            signed_at(),
+            direct_org_auth(),
+            None,
+        )
+        .expect_err("revoked must require revokes_statement_id");
+        assert!(
+            error.to_string().contains("revokes_statement_id"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn active_with_revokes_statement_id_is_rejected() {
+        let error = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-4",
+            ORG_DID,
+            RealmOrganizationRelationship::Owner,
+            RealmOrganizationStatus::Active,
+            vec![RealmOrganizationControlScope::OfficialBadge],
+            signed_at(),
+            direct_org_auth(),
+            Some("org-stmt-1".to_owned()),
+        )
+        .expect_err("active must not carry revokes_statement_id");
+        assert!(
+            error.to_string().contains("revokes_statement_id"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn delegated_role_without_delegation_ref_is_rejected() {
+        let mut auth = delegated_org_auth();
+        auth.delegation_ref = None;
+        let error = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-5",
+            ORG_DID,
+            RealmOrganizationRelationship::Governance,
+            RealmOrganizationStatus::Active,
+            vec![RealmOrganizationControlScope::ModerationPolicy],
+            signed_at(),
+            auth,
+            None,
+        )
+        .expect_err("delegated role must carry delegation_ref");
+        assert!(error.to_string().contains("delegation_ref"), "{error:#}");
+    }
+
+    #[test]
+    fn non_delegated_role_with_delegation_ref_is_rejected() {
+        let mut auth = direct_org_auth();
+        auth.delegation_ref =
+            Some("ck:grant:01904100-0000-7000-8000-000000000001".to_owned());
+        let error = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-6",
+            ORG_DID,
+            RealmOrganizationRelationship::Owner,
+            RealmOrganizationStatus::Active,
+            vec![RealmOrganizationControlScope::OfficialBadge],
+            signed_at(),
+            auth,
+            None,
+        )
+        .expect_err("non-delegated role must not carry delegation_ref");
+        assert!(error.to_string().contains("delegation_ref"), "{error:#}");
+    }
+
+    #[test]
+    fn missing_proof_is_rejected_by_registered_schema() {
+        // An empty proof string is structurally invalid; the registered spec
+        // schema rejects it. The builder copies the proof verbatim, so this
+        // guards that a missing/empty organization proof can never ship.
+        let mut auth = direct_org_auth();
+        auth.proof = SignatureMaterial::NonEmptyString(String::new());
+        let event = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-7",
+            ORG_DID,
+            RealmOrganizationRelationship::Owner,
+            RealmOrganizationStatus::Active,
+            vec![RealmOrganizationControlScope::OfficialBadge],
+            signed_at(),
+            auth,
+            None,
+        )
+        .expect("builds (schema enforces the empty-proof rejection)")
+        .build("node");
+        let catalog = cokret_sdk::schema::event_payload_validator_catalog();
+        assert!(
+            catalog
+                .validate_payload(event.kind.as_str(), &event.content)
+                .is_err(),
+            "empty organization proof must violate the registered schema"
+        );
+    }
+
+    #[test]
+    fn empty_control_scopes_is_rejected() {
+        let error = ck_ops::realm_organization_statement(
+            REALM_ID,
+            ACTOR,
+            "org-stmt-8",
+            ORG_DID,
+            RealmOrganizationRelationship::Owner,
+            RealmOrganizationStatus::Active,
+            Vec::new(),
+            signed_at(),
+            direct_org_auth(),
+            None,
+        )
+        .expect_err("control_scopes must not be empty");
+        assert!(error.to_string().contains("control_scopes"), "{error:#}");
+    }
 }

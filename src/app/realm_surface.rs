@@ -1,48 +1,45 @@
-//! Per-realm surface (Board/Document) selection: the `RealmSurface`
-//! enum + its label/route/availability helpers, the private-data preference
-//! load/persist pair, and the route→surface resolution used by the router
-//! reconcile. Moved out of `app.rs` (YOU-07-001, move only); re-exported from
-//! the parent so inline call sites and `app_tests.rs` `use super::*` resolve
-//! unchanged.
+//! Per-realm surface selection: the `RealmSurface` enum + its
+//! label/route/availability helpers, the private-data preference load/persist
+//! pair, and the route→surface resolution used by the router reconcile. Moved
+//! out of `app.rs` (YOU-07-001, move only); re-exported from the parent so
+//! inline call sites and `app_tests.rs` `use super::*` resolve unchanged.
+//!
+//! The `Document` surface (Board/Document toggle + `/document` routes + morph
+//! editor) was removed; `Board` is now the only per-Realm surface.
 
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RealmSurface {
     Board,
-    Document,
 }
 
 impl RealmSurface {
-    pub(crate) fn top_nav() -> [Self; 2] {
-        [Self::Board, Self::Document]
+    pub(crate) fn top_nav() -> [Self; 1] {
+        [Self::Board]
     }
 
     pub(crate) fn short_label(self) -> &'static str {
         match self {
             Self::Board => "Board",
-            Self::Document => "Document",
         }
     }
 
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::Board => "Board View",
-            Self::Document => "Document View",
         }
     }
 
     pub(crate) fn icon_name(self) -> &'static str {
         match self {
             Self::Board => "board",
-            Self::Document => "file",
         }
     }
 
     pub(crate) fn preference_value(self) -> &'static str {
         match self {
             Self::Board => "board",
-            Self::Document => "document",
         }
     }
 
@@ -51,7 +48,6 @@ impl RealmSurface {
             "timeline" => Some(Self::Board),
             "board" => Some(Self::Board),
             "discussion" => Some(Self::Board),
-            "document" => Some(Self::Document),
             _ => None,
         }
     }
@@ -59,7 +55,6 @@ impl RealmSurface {
     pub(crate) fn route(self, realm_id: String) -> Route {
         match self {
             Self::Board => Route::KanbanRealm { realm_id },
-            Self::Document => Route::DocumentRealm { realm_id },
         }
     }
 
@@ -67,11 +62,10 @@ impl RealmSurface {
         self,
         _minimal_ready: bool,
         kanban_ready: bool,
-        full_ready: bool,
+        _full_ready: bool,
     ) -> bool {
         match self {
             Self::Board => kanban_ready,
-            Self::Document => full_ready,
         }
     }
 }
@@ -131,10 +125,6 @@ pub(crate) fn resolve_realm_surface(
         | Route::KanbanBoard { .. }
         | Route::KanbanBoardTask { .. }
         | Route::KanbanTask { .. } => Some(RealmSurface::Board),
-        Route::Document
-        | Route::DocumentNew
-        | Route::DocumentRealm { .. }
-        | Route::DocumentMorph { .. } => Some(RealmSurface::Document),
         Route::RealmMembers { .. } | Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
             None
         }
@@ -153,10 +143,6 @@ pub(crate) fn route_uses_realm_context(route: &Route) -> bool {
             | Route::KanbanBoard { .. }
             | Route::KanbanBoardTask { .. }
             | Route::KanbanTask { .. }
-            | Route::Document
-            | Route::DocumentNew
-            | Route::DocumentRealm { .. }
-            | Route::DocumentMorph { .. }
             | Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
             | Route::RealmAdminSection { .. }

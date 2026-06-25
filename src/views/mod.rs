@@ -11,7 +11,6 @@
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ck.strand.move, ck.strand.reorder, ck.space.update (board/list container)|
 // | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.strand.tracks.update (unified), ck.message.*                      |
-// | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | ck.strand.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ck.realm.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ck.read_cursor.advance / ck.receipt.read / @-mention) |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ck.key.verification.*, ck.mls.welcome                              |
@@ -53,7 +52,6 @@ pub mod dashboard;
 /// users do not need to read this surface.
 pub mod developer;
 pub mod directory;
-pub mod document;
 pub mod file_transfer;
 /// A6.1 — global cross-Realm message search panel. The Cokret HTTP
 /// catalog currently has no spec-defined global search endpoint; cross-Realm
@@ -109,7 +107,6 @@ pub enum AppView {
     /// on a synthetic `ck.notification.*` event.
     Notifications,
     FileTransfer,
-    Document,
     /// Recovery — Recovery Key (24 words) + restore-from-backup, with Social
     /// Recovery behind an Advanced fold (claude-design `desktop/recovery.html`,
     /// crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)

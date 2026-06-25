@@ -26,10 +26,10 @@ mod calendar;
 mod capability;
 mod device_mls;
 mod discussion;
-mod document;
 mod incident_kanban;
 mod invite;
 mod moderation;
+mod morph;
 mod realm;
 mod relation;
 mod space;
@@ -41,10 +41,10 @@ pub use calendar::*;
 pub use capability::*;
 pub use device_mls::*;
 pub use discussion::*;
-pub use document::*;
 pub use incident_kanban::*;
 pub use invite::*;
 pub use moderation::*;
+pub use morph::*;
 pub use realm::*;
 pub use relation::*;
 pub use space::*;
@@ -90,11 +90,6 @@ pub(super) fn circle_id_value(value: &str) -> anyhow::Result<cokret_sdk::CircleI
 pub(super) fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
     cokret_sdk::StrandId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
-}
-
-pub(super) fn morph_id_value(value: &str) -> anyhow::Result<cokret_sdk::MorphId> {
-    cokret_sdk::MorphId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))
 }
 
 pub(super) fn sdk_payload_value(

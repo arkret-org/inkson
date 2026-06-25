@@ -690,10 +690,10 @@ fn auth_surface_routes_authenticated_login_to_app_shell() {
 }
 
 #[test]
-fn realm_top_nav_starts_with_board_and_excludes_removed_surface() {
+fn realm_top_nav_is_board_only() {
     let surfaces = RealmSurface::top_nav();
 
-    assert_eq!(surfaces, [RealmSurface::Board, RealmSurface::Document]);
+    assert_eq!(surfaces, [RealmSurface::Board]);
     assert_eq!(
         RealmSurface::from_preference("timeline"),
         Some(RealmSurface::Board)
@@ -702,6 +702,8 @@ fn realm_top_nav_starts_with_board_and_excludes_removed_surface() {
         RealmSurface::from_preference("discussion"),
         Some(RealmSurface::Board)
     );
+    // The removed `document` surface no longer resolves.
+    assert_eq!(RealmSurface::from_preference("document"), None);
 }
 
 #[test]

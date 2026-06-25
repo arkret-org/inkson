@@ -128,18 +128,6 @@ pub enum Route {
     #[route("/notifications/settings", NotificationsSettingsPage)]
     NotificationsSettings,
 
-    #[route("/document", RoutePage)]
-    Document,
-
-    #[route("/document/new", RoutePage)]
-    DocumentNew,
-
-    #[route("/document/:realm_id/morph/:morph_id", DocumentMorphPage)]
-    DocumentMorph { realm_id: String, morph_id: String },
-
-    #[route("/document/:realm_id", DocumentRealmPage)]
-    DocumentRealm { realm_id: String },
-
     /// Live call surface. Optional query params deep-link an in-progress
     /// or outgoing call: `call_id` (the `ck:call:…` id), `peer` (the 1:1
     /// callee DID, empty for SFU group calls), `realm_id`, `video` (`1`
@@ -256,18 +244,6 @@ fn KanbanBoardTaskPage(realm_id: String, board_id: String, task_id: String) -> E
 }
 
 #[component]
-fn DocumentRealmPage(realm_id: String) -> Element {
-    let _ = realm_id;
-    rsx! {}
-}
-
-#[component]
-fn DocumentMorphPage(realm_id: String, morph_id: String) -> Element {
-    let _ = (realm_id, morph_id);
-    rsx! {}
-}
-
-#[component]
 fn NotificationsSettingsPage() -> Element {
     rsx! {}
 }
@@ -318,10 +294,6 @@ impl Route {
             | Route::KanbanBoardTask { .. }
             | Route::KanbanTask { .. } => AppView::Kanban,
             Route::Notifications => AppView::Notifications,
-            Route::Document
-            | Route::DocumentNew
-            | Route::DocumentRealm { .. }
-            | Route::DocumentMorph { .. } => AppView::Document,
             Route::Onboarding => AppView::Onboarding,
             Route::Quarantine => AppView::Quarantine,
             Route::Agents => AppView::Agents,
@@ -341,9 +313,7 @@ impl Route {
             | Route::KanbanTask { realm_id, .. }
             | Route::RealmMembers { realm_id }
             | Route::RealmAdmin { realm_id }
-            | Route::RealmAdminSection { realm_id, .. }
-            | Route::DocumentRealm { realm_id }
-            | Route::DocumentMorph { realm_id, .. } => Some(realm_id.as_str()),
+            | Route::RealmAdminSection { realm_id, .. } => Some(realm_id.as_str()),
             _ => None,
         }
     }
@@ -400,7 +370,6 @@ impl From<AppView> for Route {
             },
             AppView::Kanban => Route::Kanban,
             AppView::Notifications => Route::Notifications,
-            AppView::Document => Route::DocumentNew,
             AppView::Recovery => Route::Recovery,
             AppView::Onboarding => Route::Onboarding,
             AppView::Quarantine => Route::Quarantine,
@@ -451,12 +420,6 @@ mod tests {
             // to `AppView::Dashboard` and would not roundtrip.
             Route::Kanban,
             Route::Notifications,
-            Route::Document,
-            Route::DocumentNew,
-            Route::DocumentMorph {
-                realm_id: "ck:realm:roundtrip".to_owned(),
-                morph_id: "ck:morph:roundtrip".to_owned(),
-            },
             Route::Recovery,
             Route::Onboarding,
             Route::Quarantine,

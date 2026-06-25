@@ -202,9 +202,6 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
         "chat" | "discussion" => Route::KanbanRealm {
             realm_id: realm_id.to_owned(),
         },
-        "document" => Route::DocumentRealm {
-            realm_id: realm_id.to_owned(),
-        },
         _ => Route::Realm {
             realm_id: realm_id.to_owned(),
         },

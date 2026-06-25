@@ -431,6 +431,45 @@ fn markdown_to_safe_html(src: &str) -> String {
 
     let mut out = String::with_capacity(src.len() + 32);
     md_html::push_html(&mut out, parser);
+    add_link_target(out)
+}
+
+/// Inject `target="_blank" rel="noopener noreferrer"` into the anchors
+/// pulldown-cmark emits.
+///
+/// `push_html` writes bare `<a href="…">` tags with no target. Inside the
+/// app's webview a bare external anchor either navigates the whole SPA away
+/// (blowing up the session) or is swallowed entirely, so a saved
+/// description's links look styled but do nothing on click. The
+/// link-preview path already opens in a new tab with `noopener`; mirror
+/// that here so inline markdown links are actually navigable and can't
+/// reach back into the opener (`window.opener` reverse-tabnabbing).
+///
+/// In-page fragment anchors (footnote references / back-references emitted
+/// by `ENABLE_FOOTNOTES`) start with `#` and must stay in the document, so
+/// they are left untouched.
+fn add_link_target(html: String) -> String {
+    const NEEDLE: &str = "<a href=\"";
+    const INJECT: &str = "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"";
+
+    if !html.contains(NEEDLE) {
+        return html;
+    }
+
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut rest = html.as_str();
+    while let Some(idx) = rest.find(NEEDLE) {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx + NEEDLE.len()..];
+        // Footnote anchors point in-page (`href="#…"`) — keep them local.
+        if after.starts_with('#') {
+            out.push_str(NEEDLE);
+        } else {
+            out.push_str(INJECT);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
     out
 }
 
@@ -1088,6 +1127,58 @@ mod tests {
         assert!(
             rel.contains("href=\"/local/path\""),
             "relative link mangled: {rel}"
+        );
+    }
+
+    #[test]
+    fn markdown_to_safe_html_opens_links_in_new_tab() {
+        // A saved link must be clickable after render: open in a new tab
+        // with `noopener` so it neither blows up the SPA nor reaches back
+        // into the opener.
+        let http = markdown_to_safe_html("[docs](https://example.com/p)");
+        assert!(
+            http.contains("target=\"_blank\""),
+            "missing target on external link: {http}"
+        );
+        assert!(
+            http.contains("rel=\"noopener noreferrer\""),
+            "missing rel on external link: {http}"
+        );
+        assert!(
+            http.contains("href=\"https://example.com/p\""),
+            "href mangled: {http}"
+        );
+        // Relative links get the same treatment.
+        let rel = markdown_to_safe_html("[local](/wasm/coauth-frontend.js)");
+        assert!(
+            rel.contains("target=\"_blank\""),
+            "relative link missing target: {rel}"
+        );
+        assert!(
+            rel.contains("href=\"/wasm/coauth-frontend.js\""),
+            "relative href mangled: {rel}"
+        );
+    }
+
+    #[test]
+    fn add_link_target_leaves_footnote_anchors_in_page() {
+        // Footnote refs/backrefs point in-page; they must not be hijacked
+        // into a new tab.
+        let html = markdown_to_safe_html("text with a footnote[^1]\n\n[^1]: the note");
+        assert!(html.contains("href=\"#"), "expected a fragment anchor: {html}");
+        // No fragment anchor should carry target="_blank".
+        for piece in html.split("<a ").skip(1) {
+            if piece.starts_with("href=\"#") {
+                assert!(
+                    !piece.starts_with("href=\"#\" target"),
+                    "footnote anchor was hijacked: {html}"
+                );
+            }
+        }
+        // Specifically: the injected sequence must never precede a `#` href.
+        assert!(
+            !html.contains("rel=\"noopener noreferrer\" href=\"#"),
+            "footnote anchor got target/rel: {html}"
         );
     }
 

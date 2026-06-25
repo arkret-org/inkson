@@ -823,7 +823,12 @@ pub fn DirectoryPanel(
                         let profile_visibility = value_str(&org, "profile_visibility", "unknown");
                         let directory_services = value_vec(&org, "directory_services");
                         let proof_count = value_vec(&org, "proofs").len();
-                        let verified = value_bool_any(&org, &["verified_badge", "verified"]);
+                        // YGN-ORG-04: a single `verified` bool is not enough —
+                        // show the proof-backed relationship the organization
+                        // statement asserts (owner / governance /
+                        // directory_certifier), and never show an official
+                        // badge for a stale / revoked / expired projection.
+                        let verified_relationships = verified_org_relationships(&org);
                         let member_count = value_count_any(&org, &["member_count", "actor_count", "members"]);
                         let realm_count = value_count_any(&org, &["realm_count", "realms"]);
                         let inheritance_hint = if realm_count > 0 {
@@ -849,13 +854,20 @@ pub fn DirectoryPanel(
                                 }
                                 div { class: "entity-title",
                                     "{org_name}"
-                                    if verified {
+                                    // Proof-backed relationship badges. Each badge
+                                    // names the relationship the organization
+                                    // signed (owner / governance /
+                                    // directory_certifier); a declared-only or
+                                    // stale / revoked / expired projection yields
+                                    // no badge at all.
+                                    for relationship in verified_relationships.clone() {
                                         span {
                                             class: "badge badge-success",
                                             style: "margin-left: 8px;",
-                                            title: "Organization verification badge",
+                                            title: "Proof-backed organization relationship",
                                             "data-testid": "organization-verified-badge",
-                                            "verified"
+                                            "data-relationship": "{relationship}",
+                                            "{relationship}"
                                         }
                                     }
                                 }
@@ -1211,6 +1223,71 @@ fn value_bool_any(value: &Value, keys: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+/// YGN-ORG-04 — derive the proof-backed organization relationships to badge
+/// from a directory organization preview.
+///
+/// Returns the relationship names (`owner` / `governance` /
+/// `directory_certifier`) the organization has a live, proof-backed statement
+/// for. A `sponsor` relationship is intentionally NOT an official directory
+/// badge. The result is empty (no official badge) when:
+///   - the projection is `stale` or `divergent`, or
+///   - a relationship is revoked / inactive / expired, or
+///   - the preview only carries a declared hint (no proof-backed relationship).
+///
+/// The legacy single `verified_badge` / `verified` bool is deliberately NOT
+/// honored on its own: a bare bool cannot distinguish a declared hint from a
+/// verified relationship, which is exactly the confusion this task removes.
+/// Field names align with the forthcoming teabay / soland projection
+/// (TBY-ORG-02): a `verified_relationships` array of
+/// `{relationship, status, expires_at}` objects.
+fn verified_org_relationships(org: &Value) -> Vec<String> {
+    // A stale / divergent projection is never authoritative enough to badge.
+    if value_bool_any(org, &["stale"]) || value_bool_any(org, &["divergent"]) {
+        return Vec::new();
+    }
+
+    let now = crate::clock::now_rfc3339_secs();
+    let mut out = Vec::new();
+    if let Some(entries) = org
+        .get("verified_relationships")
+        .and_then(|value| value.as_array())
+    {
+        for entry in entries {
+            let relationship = entry
+                .get("relationship")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if !is_official_badge_relationship(relationship) {
+                continue;
+            }
+            // status defaults to active when omitted; anything other than
+            // "active" (revoked / pending / etc.) does not badge.
+            let status = entry
+                .get("status")
+                .and_then(|value| value.as_str())
+                .unwrap_or("active");
+            if status != "active" {
+                continue;
+            }
+            // expired statements lose the badge. `expires_at` is an RFC3339
+            // string; absence means no expiry.
+            if let Some(expires_at) = entry.get("expires_at").and_then(|value| value.as_str()) {
+                if !expires_at.is_empty() && expires_at <= now.as_str() {
+                    continue;
+                }
+            }
+            if !out.iter().any(|existing| existing == relationship) {
+                out.push(relationship.to_owned());
+            }
+        }
+    }
+    out
+}
+
+fn is_official_badge_relationship(relationship: &str) -> bool {
+    matches!(relationship, "owner" | "governance" | "directory_certifier")
+}
+
 fn value_count_any(value: &Value, keys: &[&str]) -> usize {
     keys.iter()
         .find_map(|key| {
@@ -1362,4 +1439,91 @@ fn value_vec(value: &Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn declared_only_org_gets_no_verified_badge() {
+        // YGN-ORG-04 acceptance: a declared-only Realm/organization with no
+        // proof-backed relationship array shows no verified badge.
+        let org = json!({
+            "organization_did": "did:web:hint.example",
+            "display_name": "Hinted Org",
+            // Legacy bool is intentionally ignored on its own.
+            "verified_badge": true,
+        });
+        assert!(verified_org_relationships(&org).is_empty());
+    }
+
+    #[test]
+    fn active_relationships_are_badged() {
+        let org = json!({
+            "organization_did": "did:web:acme.example",
+            "verified_relationships": [
+                { "relationship": "owner", "status": "active" },
+                { "relationship": "governance", "status": "active" },
+            ],
+        });
+        let rels = verified_org_relationships(&org);
+        assert!(rels.contains(&"owner".to_owned()));
+        assert!(rels.contains(&"governance".to_owned()));
+    }
+
+    #[test]
+    fn sponsor_is_not_an_official_badge() {
+        let org = json!({
+            "verified_relationships": [
+                { "relationship": "sponsor", "status": "active" },
+            ],
+        });
+        assert!(verified_org_relationships(&org).is_empty());
+    }
+
+    #[test]
+    fn revoked_or_expired_relationships_drop_the_badge() {
+        let org = json!({
+            "verified_relationships": [
+                { "relationship": "owner", "status": "revoked" },
+                { "relationship": "governance", "status": "active", "expires_at": "2000-01-01T00:00:00Z" },
+            ],
+        });
+        assert!(verified_org_relationships(&org).is_empty());
+    }
+
+    #[test]
+    fn stale_or_divergent_projection_drops_all_badges() {
+        let stale = json!({
+            "stale": true,
+            "verified_relationships": [
+                { "relationship": "owner", "status": "active" },
+            ],
+        });
+        assert!(verified_org_relationships(&stale).is_empty());
+
+        let divergent = json!({
+            "divergent": true,
+            "verified_relationships": [
+                { "relationship": "owner", "status": "active" },
+            ],
+        });
+        assert!(verified_org_relationships(&divergent).is_empty());
+    }
+
+    #[test]
+    fn far_future_expiry_keeps_the_badge() {
+        let org = json!({
+            "verified_relationships": [
+                { "relationship": "directory_certifier", "status": "active", "expires_at": "9999-01-01T00:00:00Z" },
+            ],
+        });
+        assert_eq!(
+            verified_org_relationships(&org),
+            vec!["directory_certifier".to_owned()]
+        );
+    }
 }
