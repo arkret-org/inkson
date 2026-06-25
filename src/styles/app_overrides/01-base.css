@@ -250,7 +250,7 @@
 .discussion-shell.embedded .discussion-composer {
   grid-column: 1;
   grid-row: 2;
-  padding: 0;
+  padding: 0 0 10px;
   border: 0;
   border-radius: 0;
   background: transparent;
