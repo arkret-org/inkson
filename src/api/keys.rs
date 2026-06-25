@@ -217,6 +217,89 @@ impl CokretApi {
             .await
     }
 
+    /// Submit an ephemeral `ck.realm_key.request` (realm-and-space.md
+    /// history-sharing): a late-joining device asks the provider device named by
+    /// `target_source_ref` to seal the retained `history_secret` range to
+    /// `recipient_hpke_public_key`. soland relays it to the provider's to-device
+    /// queue (`relay_ephemeral_realm_key_request`); the provider answers with a
+    /// durable `ck.realm_key.share`.
+    ///
+    /// Posts directly to `/_cokret/self/ephemeral` rather than via
+    /// [`Self::submit_ephemeral_envelope`], whose SDK guard only admits the
+    /// broadcast ephemeral allowlist (`ck.realm_key.request` is a directed relay,
+    /// not a broadcast signal).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_realm_key_request(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        device_id: &str,
+        provider_device_ref: &str,
+        recipient_hpke_public_key: &str,
+        from_epoch: u64,
+        to_epoch: u64,
+    ) -> anyhow::Result<Value> {
+        let payload = cokret_sdk::RealmKeyRequestPayload {
+            key_scope: cokret_sdk::RealmKeyScope {
+                effective_scope: json!({ "realm_id": crate::operation::trim_realm_id(realm_id) }),
+                policy_digest: Value::Null,
+                membership_frontier_digest: None,
+                from_epoch: Some(from_epoch),
+                to_epoch: Some(to_epoch),
+                history_visibility: None,
+            },
+            recipient_principal_id: cokret_sdk::Did::new(actor_id.trim().to_owned())?,
+            recipient_device_id: device_id.trim().to_owned(),
+            recipient_hpke_public_key: recipient_hpke_public_key.trim().to_owned(),
+            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            target_source_ref: provider_device_ref.trim().to_owned(),
+            created_at: crate::clock::now_utc(),
+        };
+        payload
+            .validate()
+            .map_err(|err| anyhow::anyhow!("ck.realm_key.request invalid: {err}"))?;
+        let sent_at = crate::clock::now_utc();
+        let envelope = cokret_sdk::EphemeralEnvelope {
+            // `ck.realm_key.request` is a directed ephemeral relay, not a broadcast
+            // signal, so it has no `events::kinds` constant; the literal is the
+            // wire kind soland's `relay_ephemeral_realm_key_request` matches on.
+            kind: "ck.realm_key.request".to_owned(),
+            realm_id: cokret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?,
+            actor_id: cokret_sdk::Did::new(actor_id.trim().to_owned())?,
+            device_id: Some(cokret_sdk::DeviceId::new(device_id.trim().to_owned())?),
+            sent_at,
+            // Directed relay; soland enforces its own TTL. Stay well under the
+            // 5-minute ephemeral ceiling.
+            expires_at: sent_at + chrono::Duration::minutes(5),
+            payload: serde_json::to_value(&payload)?,
+            proof: None,
+        };
+        self.post_json("_cokret/self/ephemeral", &envelope).await
+    }
+
+    /// Generic typed to-device push of a `ck.realm_key.share` (or any directed
+    /// kind) straight to a recipient device's queue. The provider's primary path
+    /// is the durable `ck.realm_key.share` event (soland projects it to-device);
+    /// this is the direct-push fallback for an out-of-band reply.
+    pub async fn submit_to_device_message(
+        &self,
+        txn_id: &str,
+        target_actor: &str,
+        target_device_id: &str,
+        kind: &str,
+        content: Value,
+    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
+        self.send_device_message_envelope(
+            txn_id,
+            target_actor,
+            target_device_id,
+            kind,
+            &crate::clock::rfc3339_secs_in(60),
+            content,
+        )
+        .await
+    }
+
     pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesGetOutcome> {
         self.get_json("_cokret/self/device_messages").await
     }

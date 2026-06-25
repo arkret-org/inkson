@@ -542,6 +542,13 @@ pub fn RouterView() -> Element {
     let sidebar_row_perms = use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
     let mls_key_package_publish_key_seen = use_signal(|| Option::<String>::None);
     let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
+    // Admin-side counterpart of the Welcome bootstrap: serialize admission
+    // reconciliation so per-sync retries cannot overlap and double-admit.
+    let mls_admission_reconcile_in_flight = use_signal(|| false);
+    // History sharing (encryption-and-audit.md): single-flight guard for the
+    // to-device `ck.realm_key.share` ingest + `ck.realm_key.request` provider
+    // response pass, so per-sync retries cannot overlap.
+    let realm_key_sharing_in_flight = use_signal(|| false);
     // Step 3 of the account-MLS-secret auto-unlock strand: set by the bootstrap
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
@@ -1668,6 +1675,224 @@ pub fn RouterView() -> Element {
                         tracing::warn!(%error, "MLS KeyPackage publish bootstrap failed");
                     }
                 }
+            });
+        });
+    }
+    {
+        // Admin-side MLS admission reconciliation — the producer counterpart of
+        // the invitee Welcome bootstrap below. When a member actually joins an
+        // encrypted Realm this device administers, (re)admit anyone not yet in
+        // the MLS group so their `ck.mls.welcome` is finally produced. Closes
+        // the invite-time race where admission ran before the invitee had
+        // published a KeyPackage: re-runs each sync round (via `sync_cursor`)
+        // so a member who publishes their KeyPackage after joining is picked up.
+        let admit_route_uses_realm_context = route_uses_realm_context;
+        let admit_context_realm_id = context_realm_id.clone();
+        let admit_state_store = state_store;
+        let admit_sync_cursor = sync_cursor;
+        let mut admit_in_flight = mls_admission_reconcile_in_flight;
+        let mut admit_last_error = last_error;
+        let secure_store_ready_for_admit = secure_store_bootstrap_ready;
+        use_effect(move || {
+            if !secure_store_ready_for_admit() || !admit_route_uses_realm_context {
+                return;
+            }
+            let selected = selected_realm_id();
+            let realm_id = admit_context_realm_id
+                .clone()
+                .filter(|realm| !realm.trim().is_empty())
+                .unwrap_or(selected);
+            if realm_id.trim().is_empty() {
+                return;
+            }
+            let description = server_description();
+            if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
+                || !sync_bootstrap_complete()
+            {
+                return;
+            }
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+                return;
+            }
+            // Re-fire on every sync round so a late-published KeyPackage is
+            // retried; cheap pre-filter avoids work when there is nothing to do.
+            let _ = admit_sync_cursor();
+            let admit_capable_with_others = {
+                let store = admit_state_store.read();
+                store.mls_snapshot_for(&realm_id).is_some()
+                    && crate::views::realm_admin::joined_member_signature_for_realm(
+                        &store, &realm_id,
+                    )
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|did| !did.is_empty())
+                    .any(|did| did != actor.trim())
+            };
+            if !admit_capable_with_others {
+                return;
+            }
+            if admit_in_flight() {
+                return;
+            }
+            admit_in_flight.set(true);
+            spawn(async move {
+                let outcome = crate::views::helpers::with_authed_api(
+                    &base,
+                    session,
+                    |api| async move {
+                        crate::views::realm_admin::reconcile_mls_admissions_for_realm(
+                            &api,
+                            admit_state_store,
+                            realm_id,
+                            actor,
+                            device,
+                        )
+                        .await
+                    },
+                )
+                .await;
+                admit_in_flight.set(false);
+                match outcome {
+                    Ok(admitted) if admitted > 0 => {
+                        tracing::info!(admitted, "admitted joined members into MLS group");
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        admit_last_error.set(Some(format!("MLS admission reconcile: {error:?}")));
+                    }
+                }
+            });
+        });
+    }
+    {
+        // History sharing (encryption-and-audit.md): drain the to-device inbox
+        // for this Realm, (a) installing every inbound `ck.realm_key.share`'s
+        // sealed `history_secret`s so pre-join content becomes decryptable
+        // (tier-3), and (b) — as a provider — answering every inbound
+        // `ck.realm_key.request` by sealing the retained history range back to
+        // the requester. Re-runs each sync round so a late share/request is
+        // picked up; a single-flight guard prevents overlap.
+        let share_route_uses_realm_context = route_uses_realm_context;
+        let share_context_realm_id = context_realm_id.clone();
+        let mut share_state_store = state_store;
+        let share_sync_cursor = sync_cursor;
+        let mut share_in_flight = realm_key_sharing_in_flight;
+        let secure_store_ready_for_share = secure_store_bootstrap_ready;
+        use_effect(move || {
+            if !secure_store_ready_for_share() {
+                return;
+            }
+            if !share_route_uses_realm_context {
+                return;
+            }
+            let realm_id = share_context_realm_id
+                .clone()
+                .unwrap_or_else(|| selected_realm_id());
+            if realm_id.trim().is_empty() {
+                return;
+            }
+            let description = server_description();
+            if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
+                || !sync_bootstrap_complete()
+            {
+                return;
+            }
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+                return;
+            }
+            // Re-fire on every sync round so a freshly delivered share/request is
+            // consumed.
+            let _ = share_sync_cursor();
+            // Cheap pre-filter: nothing to do when no realm_key.* envelopes are
+            // queued for this Realm.
+            let (shares, requests) = {
+                let store = share_state_store.read();
+                let inbox = store.to_device_inbox();
+                let shares = crate::mls::runtime::collect_realm_key_share_messages_for_realm(
+                    &inbox, &realm_id,
+                );
+                let requests: Vec<serde_json::Value> = inbox
+                    .iter()
+                    .filter(|message| {
+                        message
+                            .get("kind")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("ck.realm_key.request")
+                    })
+                    .cloned()
+                    .collect();
+                (shares, requests)
+            };
+            if shares.is_empty() && requests.is_empty() {
+                return;
+            }
+            if share_in_flight() {
+                return;
+            }
+            share_in_flight.set(true);
+            // (a) Install inbound shares locally (no network needed).
+            if !shares.is_empty() {
+                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                let mut store = share_state_store.write();
+                let mut installed = 0_usize;
+                for share in &shares {
+                    installed += crate::mls::runtime::ingest_realm_key_share(
+                        &mut store,
+                        secure_store.as_ref(),
+                        &realm_id,
+                        &actor,
+                        &device,
+                        share,
+                    );
+                }
+                if installed > 0 {
+                    tracing::info!(
+                        installed,
+                        realm = %short_protocol_id(&realm_id),
+                        "installed history_secret(s) from ck.realm_key.share"
+                    );
+                }
+            }
+            // (b) Answer inbound requests (network).
+            spawn(async move {
+                for request_envelope in requests {
+                    let Some(content) = request_envelope.get("content") else {
+                        continue;
+                    };
+                    let request: cokret_sdk::RealmKeyRequestPayload =
+                        match serde_json::from_value(content.clone()) {
+                            Ok(request) => request,
+                            Err(_) => continue,
+                        };
+                    let realm = realm_id.clone();
+                    let actor_c = actor.clone();
+                    let device_c = device.clone();
+                    let _ = crate::views::helpers::with_authed_api(
+                        &base,
+                        session.clone(),
+                        |api| async move {
+                            crate::views::realm_admin::share_history_to_requester(
+                                &api,
+                                share_state_store,
+                                realm,
+                                actor_c,
+                                device_c,
+                                &request,
+                            )
+                            .await
+                        },
+                    )
+                    .await;
+                }
+                share_in_flight.set(false);
             });
         });
     }

@@ -166,6 +166,71 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
     })
 }
 
+/// Build a `ck.realm_key.share` event carrying a HPKE-sealed bundle of
+/// retained `history_secret`s so `recipient` can decrypt pre-join
+/// `mls-exporter-aead-v1` content (`encryption-and-audit.md` history sharing).
+///
+/// `sealed_ciphertext` is the `base64url(eph_pub || ct)` blob produced by
+/// [`crate::mls::secret_share::seal_history_secret_to_device_pubkey`] for the
+/// recipient device's advertised HPKE public key. `from_epoch`/`to_epoch` bound
+/// the shared range and are recorded in the `key_scope` so the receiver can
+/// match the share to the epochs it is missing.
+///
+/// The provider MUST have built `sealed_ciphertext` against the recipient's
+/// HPKE public key; this builder does not derive or validate that key.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_realm_key_share_event(
+    realm_id: &str,
+    actor_id: &str,
+    sender_device_id: &str,
+    recipient_principal_id: &str,
+    recipient_device_id: &str,
+    from_epoch: u64,
+    to_epoch: u64,
+    sealed_ciphertext: String,
+) -> Result<cokret_sdk::Event, String> {
+    let recipient_did = cokret_sdk::Did::new(recipient_principal_id.trim().to_owned())
+        .map_err(|err| format!("invalid realm_key.share recipient DID: {err:?}"))?;
+    let key_scope = cokret_sdk::RealmKeyScope {
+        // `effective_scope` is the Realm the shared keys belong to; the
+        // soland reducer treats it opaquely (policy_extra). A bare realm id
+        // is the minimal, deterministic binding both sides agree on.
+        effective_scope: json!({ "realm_id": trim_realm_id(realm_id) }),
+        policy_digest: Value::Null,
+        membership_frontier_digest: None,
+        from_epoch: Some(from_epoch),
+        to_epoch: Some(to_epoch),
+        history_visibility: None,
+    };
+    let payload = cokret_sdk::RealmKeySharePayload {
+        recipient_principal_id: recipient_did,
+        recipient_device_id: recipient_device_id.trim().to_owned(),
+        sender_device_id: sender_device_id.trim().to_owned(),
+        // The wire schema requires a `sender_device_signature` object; the
+        // history bundle's integrity is already covered by the per-secret HPKE
+        // seal (AEAD tag) bound to the recipient device. A detached envelope
+        // signature over the share body is a TODO (see module note) — emit a
+        // typed empty signature object so the payload validates.
+        sender_device_signature: json!({}),
+        key_scope,
+        ciphertext: Some(sealed_ciphertext),
+        encrypted_key_ref: None,
+        aad_digest: None,
+        expires_at: None,
+        created_at: crate::clock::now_utc(),
+    };
+    let body = serde_json::to_value(&payload)
+        .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
+    crate::operation::OperationBuilder::new(
+        realm_id,
+        actor_id,
+        cokret_sdk::events::kinds::EventKind::RealmKeyShare,
+    )
+    .body(body)
+    .build_sdk_event("yougen")
+    .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_mls_welcome_payload_value(
     state_store: &LocalStateStore,

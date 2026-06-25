@@ -677,6 +677,23 @@ pub struct ClientLocalState {
     /// only remaining way to render it.
     #[serde(default)]
     pub mls_decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
+    /// Per-(realm, epoch) MLS `history_secret`s installed from an inbound
+    /// `ck.realm_key.share` (encryption-and-audit.md history-sharing). Each
+    /// value is a 32-byte exporter-derived secret that lets this device
+    /// decrypt `mls-exporter-aead-v1` content authored at that epoch — even
+    /// epochs that predate this device's join (tier-3 history decrypt).
+    ///
+    /// Keyed `realm_id -> epoch -> secret`. Persisted so a joiner that has been
+    /// granted history keeps read access across restarts. Like the other MLS
+    /// sidecars this is device-local: the secrets arrive HPKE-sealed to this
+    /// device and are never re-shared from here.
+    ///
+    /// Nested string-keyed maps (not a `(String, u64)` tuple key) because
+    /// `serde_json` rejects non-string map keys — the store flushes to JSON, so
+    /// a tuple key would silently fail to persist. `u64` epoch keys serialize as
+    /// strings, which round-trips cleanly.
+    #[serde(default)]
+    pub history_secrets: BTreeMap<String, BTreeMap<u64, Vec<u8>>>,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -888,6 +905,7 @@ impl Default for ClientLocalState {
             mls_genesis_emitted: BTreeSet::new(),
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
+            history_secrets: BTreeMap::new(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),

@@ -626,3 +626,196 @@ fn local_welcome_hint_filters_by_realm_group_id() {
         "1:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     );
 }
+
+// ── History sharing (encryption-and-audit.md): provider push +
+//    receiver ingest + tier-3 history decrypt ──────────────────────
+
+/// Build a `ck.realm_key.share` envelope sealing `secrets` to `recipient_pub`,
+/// as the provider's `build_realm_key_share_event` would emit it on the wire
+/// (the `content` is the `RealmKeySharePayload`).
+#[cfg(not(target_arch = "wasm32"))]
+fn realm_key_share_envelope(
+    realm: &str,
+    recipient_actor: &str,
+    recipient_device: &str,
+    sender_device: &str,
+    recipient_pub: &[u8],
+    secrets: &[(u64, Vec<u8>)],
+) -> serde_json::Value {
+    let sealed =
+        cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(recipient_pub, secrets)
+            .unwrap();
+    let (lo, hi) = secrets
+        .iter()
+        .fold((u64::MAX, 0_u64), |(lo, hi), (e, _)| (lo.min(*e), hi.max(*e)));
+    let event = crate::mls::admission::build_realm_key_share_event(
+        realm,
+        "did:web:alice.example",
+        sender_device,
+        recipient_actor,
+        recipient_device,
+        lo,
+        hi,
+        sealed,
+    )
+    .unwrap();
+    json!({
+        "kind": event.kind.as_str(),
+        "content": event.content,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn ingest_realm_key_share_installs_history_secrets() {
+    // A provider seals two epochs' history secrets to bob's device HPKE public
+    // key; bob ingests the share and both secrets land in local state.
+    let mut state = temp_state_store("history-share-ingest");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000e1";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000e2";
+    let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+
+    let (_priv, bob_pub) =
+        load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
+    let secrets = vec![(3_u64, vec![3u8; 32]), (4_u64, vec![4u8; 32])];
+    let share = realm_key_share_envelope(
+        realm,
+        bob_actor,
+        bob_device,
+        alice_device,
+        &bob_pub,
+        &secrets,
+    );
+
+    // Routing filter accepts the share for this realm.
+    let matched = collect_realm_key_share_messages_for_realm(&[share.clone()], realm);
+    assert_eq!(matched.len(), 1);
+
+    let installed =
+        ingest_realm_key_share(&mut state, &secure, realm, bob_actor, bob_device, &share);
+    assert_eq!(installed, 2);
+    assert_eq!(state.history_secret_for(realm, 3), Some(vec![3u8; 32]));
+    assert_eq!(state.history_secret_for(realm, 4), Some(vec![4u8; 32]));
+    assert_eq!(state.history_secrets_for(realm).len(), 2);
+
+    // A share addressed to a different device installs nothing.
+    let other = "ck:device:01904100-0000-7000-8000-0000000000ff";
+    let foreign = realm_key_share_envelope(
+        realm,
+        bob_actor,
+        other,
+        alice_device,
+        &bob_pub,
+        &secrets,
+    );
+    assert_eq!(
+        ingest_realm_key_share(&mut state, &secure, realm, bob_actor, bob_device, &foreign),
+        0
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn history_secrets_survive_json_persistence_round_trip() {
+    // The store flushes to JSON; a granted history_secret must survive a
+    // "restart" (fresh store over the same backing file). Regression guard for
+    // the map key type — `serde_json` cannot serialize a non-string map key, so
+    // this would fail loudly if `history_secrets` reverted to a tuple key.
+    let path = std::env::temp_dir().join(format!(
+        "yougen-test-history-secret-persist-{}.json",
+        crate::operation::uuid_v7()
+    ));
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000d9";
+    {
+        let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
+        state.save_history_secret(realm.to_owned(), 7, vec![9u8; 32]);
+        state.save_history_secret(realm.to_owned(), 8, vec![8u8; 32]);
+        assert!(state.persist_error().is_none(), "history secrets must persist");
+    }
+    let restarted = crate::local_state::LocalStateStore::with_path(path.clone());
+    assert_eq!(restarted.history_secret_for(realm, 7), Some(vec![9u8; 32]));
+    assert_eq!(restarted.history_secrets_for(realm).len(), 2);
+    let _ = std::fs::remove_file(path);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
+    // End-to-end tier-3: the provider (alice) encrypts content under the
+    // `mls-exporter-aead-v1` scheme and shares the epoch's `history_secret`;
+    // bob installs it and `decrypt_application_payload` opens the pre-join
+    // content the live receive ratchet cannot.
+    let mut state = temp_state_store("history-share-tier3");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f1";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000f2";
+    let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+
+    // Bob holds a join-epoch snapshot (so `decrypt_application_payload` can
+    // instantiate a group), but cannot ratchet to alice's exporter-aead content.
+    let mut alice_group =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    let epoch = alice_group.epoch();
+
+    // Provider encrypts content via exporter-aead, binding the shared
+    // `history_content_aad_bytes(realm, epoch)` AAD (constraint ①), and exports
+    // the epoch's history secret.
+    let aad_bytes = history_content_aad_bytes(realm, epoch);
+    let plaintext = br#"{"body":"pre-join history"}"#;
+    let nonce_and_ct = alice_group
+        .encrypt_content_exporter_aead(realm, &aad_bytes, plaintext)
+        .unwrap();
+    let history_secret = alice_group
+        .export_history_secret_range(epoch, epoch)
+        .into_iter()
+        .find(|(e, _)| *e == epoch)
+        .map(|(_, secret)| secret)
+        .expect("retained history secret for the current epoch");
+
+    // Wrap the exporter-aead blob as the `EncryptedPayload` a content event
+    // would carry (epoch + base64url(nonce||ct)).
+    let payload = cokret_sdk::EncryptedPayload {
+        scheme: cokret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        group_id: mls_group_id_for_realm(realm),
+        epoch,
+        content_type: "application/json".to_owned(),
+        ciphertext: cokret_sdk::base64url_encode(&nonce_and_ct),
+        aad: None,
+        payload_digest: cokret_sdk::Hash::new(cokret_sdk::canonical::sha256_digest(&nonce_and_ct))
+            .unwrap(),
+        key_ref: None,
+    };
+
+    // Before the share: bob cannot decrypt (no history secret; live ratchet
+    // cannot open exporter-aead content).
+    assert!(
+        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
+            .is_none(),
+        "bob must not read pre-join content before the share lands"
+    );
+
+    // Provider seals + bob ingests the share.
+    let (_priv, bob_pub) =
+        load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
+    let share = realm_key_share_envelope(
+        realm,
+        bob_actor,
+        bob_device,
+        alice_device,
+        &bob_pub,
+        &[(epoch, history_secret)],
+    );
+    assert_eq!(
+        ingest_realm_key_share(&mut state, &secure, realm, bob_actor, bob_device, &share),
+        1
+    );
+
+    // After the share: tier-3 history decrypt reads the content.
+    let decrypted =
+        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
+            .expect("tier-3 history decrypt opens pre-join content");
+    assert_eq!(decrypted, plaintext);
+}

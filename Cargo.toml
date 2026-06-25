@@ -122,6 +122,7 @@ thiserror = {workspace = true}
 tracing = {workspace = true}
 unicode-normalization = {workspace = true}
 url = {workspace = true}
+x25519-dalek = {workspace = true,features = ["static_secrets"]}
 zeroize = {workspace = true,features = ["derive"]}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -322,6 +323,7 @@ hmac = "0.13"
 hpke-rs = "0.6"
 hpke-rs-crypto = "0.6"
 hpke-rs-rust-crypto = "0.6"
+x25519-dalek = "2.0.1"
 image = {version = "0.25.10",default-features = false}
 js-sys = "0.3"
 jsonschema = {version = "0.46.5",default-features = false}

@@ -18,6 +18,20 @@ pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "yougen.mls_key_package.identity_state.v1";
 const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "yougen.mls_key_package.publish_marker.v1";
+/// Per-(actor, device) X25519 keypair used to receive HPKE-sealed
+/// `history_secret`s in a `ck.realm_key.share`. This device advertises the
+/// public half as `recipient_hpke_public_key` in a `ck.realm_key.request` and
+/// opens the sealed reply with the private half.
+///
+/// TODO(history-share): ideally the receiver would advertise (and open with)
+/// the X25519 init-key private half of its published MLS KeyPackage so a
+/// provider can seal proactively at admission time from the claim alone.
+/// OpenMLS does not surface that raw private scalar through the current SDK,
+/// so we mint a dedicated, persisted device HPKE keypair instead. The provider
+/// therefore can only seal once the receiver has advertised this key (the
+/// request path); the admission-time proactive push is best-effort and skipped
+/// when the invitee's HPKE public key is not yet known.
+const DEVICE_HPKE_PRIVATE_KEY_PREFIX: &str = "yougen.device_hpke_x25519.private.v1";
 
 /// Stored account-scoped MLS snapshot secret plus the local key version that
 /// carried it.
@@ -423,6 +437,94 @@ pub fn prepare_account_mls_secret_rotation(
         new_secret,
         rewrapped_snapshots,
     })
+}
+
+/// Storage key for this device's HPKE X25519 private key (history sharing).
+fn device_hpke_private_key_key(
+    actor_id: &str,
+    device_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    let actor = actor_id.trim();
+    let device = device_id.trim();
+    if actor.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "actor_id is required for device HPKE key".to_owned(),
+        ));
+    }
+    if device.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "device_id is required for device HPKE key".to_owned(),
+        ));
+    }
+    Ok(format!(
+        "{DEVICE_HPKE_PRIVATE_KEY_PREFIX}.{actor}.{device}"
+    ))
+}
+
+/// Load (or first-create + persist) this device's raw 32-byte X25519 HPKE
+/// private key for history sharing, returning `(private_key, public_key)` as
+/// raw 32-byte vectors. The public half is advertised in a
+/// `ck.realm_key.request`; the private half opens the sealed reply. Stable
+/// across calls and restarts on the same device.
+pub fn load_or_create_device_hpke_keypair(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<(Vec<u8>, Vec<u8>), SecureKeyStoreError> {
+    let key = device_hpke_private_key_key(actor_id, device_id)?;
+    if let Some(existing) = store.get_secret(&key)?
+        && !existing.trim().is_empty()
+    {
+        let sk = URL_SAFE_NO_PAD
+            .decode(existing.trim().as_bytes())
+            .map_err(|err| {
+                SecureKeyStoreError::Backend(format!("decode device HPKE private key: {err}"))
+            })?;
+        let pk = x25519_public_from_private(&sk)?;
+        return Ok((sk, pk));
+    }
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed)
+        .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom: {err}")))?;
+    let sk = seed.to_vec();
+    let pk = x25519_public_from_private(&sk)?;
+    store.store_secret(&key, &URL_SAFE_NO_PAD.encode(&sk))?;
+    Ok((sk, pk))
+}
+
+/// Load (without creating) this device's HPKE X25519 private key, if present.
+pub fn load_device_hpke_private_key(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Option<Vec<u8>>, SecureKeyStoreError> {
+    let key = device_hpke_private_key_key(actor_id, device_id)?;
+    let Some(secret) = store.get_secret(&key)? else {
+        return Ok(None);
+    };
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    URL_SAFE_NO_PAD
+        .decode(trimmed.as_bytes())
+        .map(Some)
+        .map_err(|err| {
+            SecureKeyStoreError::Backend(format!("decode device HPKE private key: {err}"))
+        })
+}
+
+/// Derive the raw 32-byte X25519 public key for a raw 32-byte private key.
+fn x25519_public_from_private(private_key: &[u8]) -> Result<Vec<u8>, SecureKeyStoreError> {
+    let scalar: [u8; 32] = private_key.try_into().map_err(|_| {
+        SecureKeyStoreError::Backend(format!(
+            "device HPKE private key must be 32 bytes, got {}",
+            private_key.len()
+        ))
+    })?;
+    let secret = x25519_dalek::StaticSecret::from(scalar);
+    let public = x25519_dalek::PublicKey::from(&secret);
+    Ok(public.as_bytes().to_vec())
 }
 
 /// Commit a prepared rotation to local state and the secure store.

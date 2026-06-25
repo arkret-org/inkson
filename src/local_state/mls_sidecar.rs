@@ -52,6 +52,55 @@ impl LocalStateStore {
         self.load().mls_snapshots.get(&key).cloned()
     }
 
+    // ── MLS history-secret persistence (history sharing) ────────────
+
+    /// Install a per-(realm, epoch) MLS `history_secret` recovered from an
+    /// inbound `ck.realm_key.share`. Idempotent: a re-install at the same
+    /// `(realm, epoch)` overwrites with the (identical) secret. Empty secrets
+    /// are ignored so a malformed share can never shadow a real key.
+    pub fn save_history_secret(
+        &mut self,
+        realm_id: impl Into<String>,
+        epoch: u64,
+        secret: Vec<u8>,
+    ) {
+        if secret.is_empty() {
+            return;
+        }
+        let realm_id = realm_id.into();
+        self.cached
+            .history_secrets
+            .entry(realm_id)
+            .or_default()
+            .insert(epoch, secret);
+        let _ = self.flush();
+    }
+
+    /// All installed `history_secret`s for `realm_id`, as `(epoch, secret)`
+    /// pairs ordered by epoch. Used by the tier-3 history decrypt retry to
+    /// try every granted epoch key against a pre-join ciphertext.
+    pub fn history_secrets_for(&self, realm_id: &str) -> Vec<(u64, Vec<u8>)> {
+        self.load()
+            .history_secrets
+            .get(realm_id.trim())
+            .map(|by_epoch| {
+                by_epoch
+                    .iter()
+                    .map(|(epoch, secret)| (*epoch, secret.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The installed `history_secret` for an exact `(realm, epoch)`, if any.
+    pub fn history_secret_for(&self, realm_id: &str, epoch: u64) -> Option<Vec<u8>> {
+        self.load()
+            .history_secrets
+            .get(realm_id.trim())
+            .and_then(|by_epoch| by_epoch.get(&epoch))
+            .cloned()
+    }
+
     /// Snapshot of every persisted MLS envelope. Used by the boot
     /// path to rehydrate every known Realm's group in one pass and by
     /// device-recovery strands to enumerate the encrypted snapshots that

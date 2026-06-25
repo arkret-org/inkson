@@ -18,6 +18,10 @@ mod section;
 pub use admin_panel::RealmAdminPanel;
 pub use members_panel::RealmMembersPanel;
 pub(crate) use members_panel::submit_mls_admission_for_invitees;
+pub(crate) use members_panel::{
+    joined_member_signature_for_realm, reconcile_mls_admissions_for_realm,
+    share_history_to_requester,
+};
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to

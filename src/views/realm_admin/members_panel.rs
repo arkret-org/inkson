@@ -1582,12 +1582,206 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .map_err(|err| anyhow::anyhow!(err))?
     };
     let next_epoch = admission.snapshot.epoch;
+    let invitee_device_id = claim.device_id.clone();
     api.submit_sdk_events_batch(&realm_id, vec![admission.commit, admission.welcome], None)
         .await?;
-    state_store
-        .write()
-        .save_mls_snapshot(realm_id, admission.snapshot);
+    {
+        let mut store = state_store.write();
+        store.save_mls_snapshot(realm_id.clone(), admission.snapshot);
+        // History sharing (encryption-and-audit.md): retain THIS epoch's
+        // `history_secret` so a late joiner can later be granted read access to
+        // content authored from here on. Best-effort — a failure to retain only
+        // means the provider must re-derive on demand from the current epoch.
+        let _ = crate::mls::runtime::derive_and_retain_realm_history_secret(
+            &mut store,
+            secure_store.as_ref(),
+            &realm_id,
+            &actor_id,
+            &device_id,
+        );
+    }
+    // Proactive provider push of `ck.realm_key.share` at admission time would
+    // need the invitee device's HPKE public key. The claimed KeyPackage's
+    // X25519 init key is not surfaced by the current SDK, and yougen seals to a
+    // dedicated per-device HPKE key the invitee advertises in a
+    // `ck.realm_key.request`. So the proactive push is deferred to the
+    // request-driven path: the invitee sends `ck.realm_key.request` (advertising
+    // its HPKE public key), and `share_history_to_requester` answers it.
+    // TODO(history-share): seal proactively once the invitee HPKE pubkey is
+    // resolvable at admission time.
+    tracing::debug!(
+        realm = %short_protocol_id(&realm_id),
+        invitee_device = %short_protocol_id(&invitee_device_id),
+        "retained history_secret for late-joiner sharing; awaiting ck.realm_key.request"
+    );
     Ok(Some(next_epoch))
+}
+
+/// Provider-side: answer one `ck.realm_key.request` from a late joiner by
+/// sealing the retained `history_secret` range to the requester's advertised
+/// HPKE public key and submitting a durable `ck.realm_key.share`
+/// (`encryption-and-audit.md` history sharing).
+///
+/// Returns `Ok(true)` when a share was built and submitted, `Ok(false)` when
+/// the provider holds no history secret to share (it will be retried once the
+/// provider has retained one). `request` is the inbound `ck.realm_key.request`
+/// to-device envelope; `realm_id`/`actor_id`/`device_id` are the provider's.
+pub(crate) async fn share_history_to_requester(
+    api: &crate::api::CokretApi,
+    mut state_store: Signal<LocalStateStore>,
+    realm_id: String,
+    actor_id: String,
+    device_id: String,
+    request: &cokret_sdk::RealmKeyRequestPayload,
+) -> anyhow::Result<bool> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    // Ensure the current epoch's key is retained, then gather every retained
+    // (epoch, secret) the requester is asking for.
+    {
+        let mut store = state_store.write();
+        let _ = crate::mls::runtime::derive_and_retain_realm_history_secret(
+            &mut store,
+            secure_store.as_ref(),
+            &realm_id,
+            &actor_id,
+            &device_id,
+        );
+    }
+    let all = state_store.read().history_secrets_for(&realm_id);
+    if all.is_empty() {
+        return Ok(false);
+    }
+    let from = request.key_scope.from_epoch.unwrap_or(0);
+    let to = request.key_scope.to_epoch.unwrap_or(u64::MAX);
+    let range: Vec<(u64, Vec<u8>)> = all
+        .into_iter()
+        .filter(|(epoch, _)| *epoch >= from && *epoch <= to)
+        .collect();
+    if range.is_empty() {
+        return Ok(false);
+    }
+    let recipient_pubkey =
+        cokret_sdk::base64url_decode(request.recipient_hpke_public_key.trim().as_bytes())
+            .map_err(|err| anyhow::anyhow!("decode requester HPKE public key: {err}"))?;
+    let sealed = cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(
+        &recipient_pubkey,
+        &range,
+    )
+    .map_err(|err| anyhow::anyhow!("seal history secrets: {err}"))?;
+    let (min_epoch, max_epoch) = range.iter().fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {
+        (lo.min(*epoch), hi.max(*epoch))
+    });
+    let share = crate::mls::admission::build_realm_key_share_event(
+        &realm_id,
+        &actor_id,
+        &device_id,
+        request.recipient_principal_id.as_str(),
+        &request.recipient_device_id,
+        min_epoch,
+        max_epoch,
+        sealed,
+    )
+    .map_err(|err| anyhow::anyhow!(err))?;
+    api.submit_sdk_events_batch(&realm_id, vec![share], None)
+        .await?;
+    Ok(true)
+}
+
+/// Stable signature of a Realm's joined-member DIDs (sorted, joined-only).
+/// Used as a reactive dedup key so admin-side admission reconciliation re-runs
+/// when membership changes, but not on every unrelated sync tick.
+pub(crate) fn joined_member_signature_for_realm(store: &LocalStateStore, realm_id: &str) -> String {
+    let mut dids: Vec<String> = projected_member_profiles_for_realm(store, realm_id)
+        .into_iter()
+        .filter(|member| member.normalized_membership() == Some("join"))
+        .map(|member| member.actor_id)
+        .collect();
+    dids.sort();
+    dids.dedup();
+    dids.join(",")
+}
+
+/// Admin-side admission reconciliation — closes the invite-time race.
+///
+/// `submit_mls_admission_for_invitee` historically ran the instant an invite
+/// was sent, before the invitee had accepted and published an MLS KeyPackage:
+/// the claim failed, no `ck.mls.welcome` was produced, and the invitee was
+/// stuck "waiting for a Welcome". This pass runs on sync — for every Realm
+/// member who has actually joined (`membership=join`) but is not yet in this
+/// device's MLS group, it (re)attempts admission. Members already in the group
+/// are skipped (no commit spam); members who still have not published a
+/// KeyPackage just error and are retried on the next sync once they publish.
+///
+/// Returns the number of members newly admitted on this pass.
+pub(crate) async fn reconcile_mls_admissions_for_realm(
+    api: &crate::api::CokretApi,
+    state_store: Signal<LocalStateStore>,
+    realm_id: String,
+    actor_id: String,
+    device_id: String,
+) -> anyhow::Result<usize> {
+    // Only Realms this device can admit into: holding MLS state ⇒ able to build
+    // the commit + Welcome. Without a snapshot we are not an admit-capable
+    // member and have nothing to reconcile.
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let group_member_dids: BTreeSet<String> = {
+        let store = state_store.read();
+        match crate::mls::runtime::mls_group_member_principal_ids_for_realm(
+            &store,
+            secure_store.as_ref(),
+            &realm_id,
+            &actor_id,
+            &device_id,
+        ) {
+            Some(dids) => dids.into_iter().collect(),
+            None => return Ok(0),
+        }
+    };
+    // Joined Realm members not yet represented in the MLS group, excluding self.
+    let pending: Vec<String> = {
+        let store = state_store.read();
+        projected_member_profiles_for_realm(&store, &realm_id)
+            .into_iter()
+            .filter(|member| member.normalized_membership() == Some("join"))
+            .map(|member| member.actor_id)
+            .filter(|did| {
+                let did = did.trim();
+                !did.is_empty()
+                    && did != actor_id.trim()
+                    && !group_member_dids.contains(did)
+            })
+            .collect()
+    };
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let mut admitted = 0_usize;
+    for invitee_did in pending {
+        match submit_mls_admission_for_invitee(
+            api,
+            state_store,
+            realm_id.clone(),
+            actor_id.clone(),
+            device_id.clone(),
+            invitee_did.clone(),
+        )
+        .await
+        {
+            Ok(Some(_)) => admitted += 1,
+            Ok(None) => {}
+            // Most commonly the invitee has not published a KeyPackage yet —
+            // expected, and retried on the next sync — so stay at debug level.
+            Err(error) => {
+                tracing::debug!(
+                    realm = %short_protocol_id(&realm_id),
+                    invitee = %short_protocol_id(&invitee_did),
+                    %error,
+                    "MLS admission deferred (will retry on next sync)"
+                );
+            }
+        }
+    }
+    Ok(admitted)
 }
 
 pub(crate) async fn submit_mls_admission_for_invitees(
@@ -3395,6 +3589,30 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].actor_id, "did:web:bob.example");
         assert_eq!(pending[0].membership.as_deref(), Some("invite"));
+    }
+
+    #[test]
+    fn joined_member_signature_lists_only_joined_members_sorted() {
+        let realm_id = "ck:realm:test";
+        let mut store = temp_store("joined-signature");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "members": [
+                    { "actor_id": "did:web:carol.example", "membership": "join" },
+                    { "actor_id": "did:web:alice.example", "membership": "join" },
+                    { "actor_id": "did:web:bob.example", "membership": "invite" }
+                ]
+            }),
+        );
+
+        // Only `join` members, deduped and sorted — `bob` (invite) is excluded
+        // so an outstanding invite never triggers an admission attempt, and the
+        // signature is stable regardless of projection ordering.
+        assert_eq!(
+            joined_member_signature_for_realm(&store, realm_id),
+            "did:web:alice.example,did:web:carol.example"
+        );
     }
 
     #[test]

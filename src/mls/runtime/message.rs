@@ -40,6 +40,22 @@ struct WelcomeMessageEntry {
     key_package_id: Option<String>,
 }
 
+/// Canonical exporter-aead `aad_bytes` for `(realm_id, epoch)`, bound into the
+/// `mls-exporter-aead-v1` content AEAD AAD on both the provider encrypt and the
+/// receiver tier-3 decrypt paths (`encryption-and-audit.md` history sharing,
+/// constraint ①: the epoch MUST be encoded so a key from epoch N can only open
+/// content authored at epoch N). MUST be reconstructed byte-identically on both
+/// ends — the SDK binds it verbatim into the AEAD AAD.
+pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> Vec<u8> {
+    let aad = serde_json::json!({
+        "purpose": "ck.realm_key.history_content.v1",
+        "realm_id": realm_id.trim(),
+        "epoch": epoch,
+    });
+    cokret_sdk::canonical::canonical_json_bytes(&aad)
+        .unwrap_or_else(|_| format!("{}|{epoch}", realm_id.trim()).into_bytes())
+}
+
 pub fn decrypt_application_payload(
     state_store: &crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -60,10 +76,26 @@ pub fn decrypt_application_payload(
     if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
         return Some(plaintext);
     }
+    // A local snapshot is required to instantiate a `CokretMlsGroup`. The
+    // exporter-aead history-decrypt path does not use the group's ratchet state
+    // (the content key derives purely from the supplied `history_secret`), but
+    // the SDK exposes it as a `&self` method, so we need *some* group instance.
+    // TODO(history-share): a free-fn `decrypt_content_exporter_aead` would let a
+    // never-Welcomed joiner (no snapshot) read granted history; for now a
+    // history-granted device in practice already holds a join-epoch snapshot.
     let snapshot = state_store.mls_snapshot_for(realm_id)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
-    let plaintext = group.decrypt_payload(payload).ok()?;
+    let plaintext = match group.decrypt_payload(payload) {
+        Ok(plaintext) => plaintext,
+        Err(_) => {
+            // Tier-3 history decrypt: the live receive ratchet cannot open this
+            // (pre-join epoch, or another device's content this group can't
+            // ratchet to). Fall back to any granted `history_secret` for the
+            // payload's epoch and decrypt it as `mls-exporter-aead-v1` content.
+            return try_history_decrypt_via_group(&group, state_store, realm_id, payload);
+        }
+    };
     // §5.6 MUST: persist the advanced receive chain. A failure to export /
     // serialize the post-decrypt state is NOT a soft failure we may swallow
     // silently — without the write-back the consumed message key would make
@@ -84,6 +116,192 @@ pub fn decrypt_application_payload(
         }
     }
     Some(plaintext)
+}
+
+/// Tier-3 history decrypt: try every granted `history_secret` for this Realm
+/// against `payload`, decrypting the ciphertext as `mls-exporter-aead-v1`
+/// content (`encryption-and-audit.md` history sharing). The provider that
+/// authored the content bound `history_content_aad_bytes(realm_id, epoch)` into
+/// the AEAD AAD, so the receiver reconstructs the same value here. Returns the
+/// first secret that opens the payload, else `None` (a device that was not
+/// granted the epoch's key, or a non-exporter-aead payload). Does NOT touch
+/// the receive ratchet.
+fn try_history_decrypt_via_group(
+    group: &cokret_sdk::CokretMlsGroup,
+    state_store: &crate::local_state::LocalStateStore,
+    realm_id: &str,
+    payload: &cokret_sdk::EncryptedPayload,
+) -> Option<Vec<u8>> {
+    let nonce_and_ct = cokret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
+    // The payload's own epoch is the only key that can open it; prefer the exact
+    // match, but fall back to scanning all granted secrets so a payload whose
+    // epoch field drifted from the keyed epoch still resolves.
+    let exact = state_store.history_secret_for(realm_id, payload.epoch);
+    let scan = state_store.history_secrets_for(realm_id);
+    let candidates = exact
+        .into_iter()
+        .map(|secret| (payload.epoch, secret))
+        .chain(scan.into_iter().filter(|(epoch, _)| *epoch != payload.epoch));
+    for (epoch, secret) in candidates {
+        let aad_bytes = history_content_aad_bytes(realm_id, epoch);
+        if let Ok(plaintext) =
+            group.decrypt_content_exporter_aead(&secret, realm_id, &nonce_and_ct, &aad_bytes)
+        {
+            return Some(plaintext);
+        }
+    }
+    None
+}
+
+/// Provider-side: derive + retain the **current** epoch `history_secret` for a
+/// Realm and persist it locally, so this device can later seal it into a
+/// `ck.realm_key.share` for a late joiner (`encryption-and-audit.md` history
+/// sharing). MUST be called while the group is at the epoch whose key is being
+/// retained (OpenMLS only exports the current epoch). Returns
+/// `(epoch, history_secret)` on success.
+///
+/// Persisting into the provider's own `history_secrets` lets a past epoch's key
+/// survive an app restart (OpenMLS could not re-derive it once the group has
+/// advanced past that epoch).
+pub fn derive_and_retain_realm_history_secret(
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Option<(u64, Vec<u8>)> {
+    let snapshot = state_store.mls_snapshot_for(realm_id)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    let epoch = snapshot.epoch;
+    let history_secret = group.derive_and_retain_history_secret(realm_id).ok()?;
+    if history_secret.is_empty() {
+        return None;
+    }
+    state_store.save_history_secret(realm_id.to_owned(), epoch, history_secret.clone());
+    Some((epoch, history_secret))
+}
+
+/// Filter a to-device inbox / device-messages batch down to the
+/// `ck.realm_key.share` envelopes addressed at this Realm. The discriminator is
+/// the envelope `kind`; the Realm binding is the share payload's
+/// `key_scope.effective_scope.realm_id` (set by
+/// [`crate::mls::admission::build_realm_key_share_event`]).
+pub fn collect_realm_key_share_messages_for_realm(
+    messages: &[serde_json::Value],
+    realm_id: &str,
+) -> Vec<serde_json::Value> {
+    let realm_id = realm_id.trim();
+    messages
+        .iter()
+        .filter(|message| {
+            message
+                .get("kind")
+                .or_else(|| message.get("type"))
+                .and_then(|t| t.as_str())
+                == Some(cokret_sdk::events::kinds::REALM_KEY_SHARE)
+        })
+        .filter(|message| {
+            // Accept shares whose scope names this realm, OR carry no scope hint
+            // (a directed to-device share already addressed to this device).
+            let scope_realm = message
+                .get("content")
+                .and_then(|content| content.get("key_scope"))
+                .and_then(|scope| scope.get("effective_scope"))
+                .and_then(|scope| scope.get("realm_id"))
+                .and_then(serde_json::Value::as_str);
+            scope_realm.is_none_or(|value| value.trim() == realm_id)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Open one inbound `ck.realm_key.share` with this device's HPKE private key and
+/// install every recovered `(epoch, history_secret)` into local state, so the
+/// tier-3 decrypt path can read pre-join content. Returns the number of secrets
+/// installed (0 when the share is not for this device / does not open / carries
+/// no ciphertext). The share `ciphertext` is the
+/// `base64url(eph_pub || ct)` blob produced by
+/// [`crate::mls::secret_share::seal_history_secret_to_device_pubkey`].
+pub fn ingest_realm_key_share(
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    share_envelope: &serde_json::Value,
+) -> usize {
+    let content = share_envelope
+        .get("content")
+        .unwrap_or(share_envelope);
+    let payload: cokret_sdk::RealmKeySharePayload =
+        match serde_json::from_value(content.clone()) {
+            Ok(payload) => payload,
+            Err(err) => {
+                tracing::debug!(%realm_id, error = %err, "skip malformed ck.realm_key.share");
+                return 0;
+            }
+        };
+    // Only consume shares addressed to THIS device (the seal opens only with
+    // this device's HPKE private key anyway, but check the routing first).
+    if payload.recipient_device_id.trim() != device_id.trim() {
+        return 0;
+    }
+    let Some(sealed) = payload.ciphertext.as_deref().filter(|c| !c.trim().is_empty()) else {
+        return 0;
+    };
+    let privkey = match super::load_device_hpke_private_key(secure_store, actor_id, device_id) {
+        Ok(Some(privkey)) => privkey,
+        Ok(None) => {
+            tracing::debug!(%realm_id, "no device HPKE key to open ck.realm_key.share");
+            return 0;
+        }
+        Err(err) => {
+            tracing::debug!(%realm_id, error = %err, "load device HPKE key failed");
+            return 0;
+        }
+    };
+    let secrets =
+        match cokret_sdk::secret_share::open_history_secret_with_device_privkey(&privkey, sealed) {
+            Ok(secrets) => secrets,
+            Err(err) => {
+                tracing::debug!(%realm_id, error = %err, "open ck.realm_key.share failed");
+                return 0;
+            }
+        };
+    let mut installed = 0_usize;
+    for (epoch, secret) in secrets {
+        if secret.is_empty() {
+            continue;
+        }
+        state_store.save_history_secret(realm_id.to_owned(), epoch, secret);
+        installed += 1;
+    }
+    installed
+}
+
+/// Read-only: list the principal DIDs currently in this Realm's local MLS
+/// group, or `None` when this device holds no MLS state for the Realm (it can
+/// neither introspect the roster nor produce Welcomes). Used by the admin-side
+/// admission reconciler to find joined members not yet represented in the
+/// group. Does NOT advance or persist any chain.
+pub fn mls_group_member_principal_ids_for_realm(
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Option<Vec<String>> {
+    let snapshot = state_store.mls_snapshot_for(realm_id)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    Some(
+        group
+            .member_principal_ids()
+            .iter()
+            .map(|did| did.as_str().to_owned())
+            .collect(),
+    )
 }
 
 /// Export + re-encrypt the post-decrypt group state as a snapshot envelope,
