@@ -235,17 +235,18 @@ impl CokretApi {
         actor_id: &str,
         device_id: &str,
         provider_device_ref: &str,
+        provider_principal_id: &str,
         recipient_hpke_public_key: &str,
         from_epoch: u64,
         to_epoch: u64,
     ) -> anyhow::Result<Value> {
         let payload = cokret_sdk::RealmKeyRequestPayload {
-            key_scope: cokret_sdk::RealmKeyScope {
+            key_scope: cokret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "realm_id": crate::operation::trim_realm_id(realm_id) }),
-                policy_digest: Value::Null,
+                policy_digest: None,
                 membership_frontier_digest: None,
-                from_epoch: Some(from_epoch),
-                to_epoch: Some(to_epoch),
+                from_epoch,
+                to_epoch,
                 history_visibility: None,
             },
             recipient_principal_id: cokret_sdk::Did::new(actor_id.trim().to_owned())?,
@@ -253,6 +254,10 @@ impl CokretApi {
             recipient_hpke_public_key: recipient_hpke_public_key.trim().to_owned(),
             requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: provider_device_ref.trim().to_owned(),
+            // The principal that owns `target_source_ref` (the provider device the
+            // requester picked as its history source). Required by the SDK request
+            // schema so the relay can route to the provider's to-device queue.
+            target_principal_id: cokret_sdk::Did::new(provider_principal_id.trim().to_owned())?,
             created_at: crate::clock::now_utc(),
         };
         payload

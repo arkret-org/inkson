@@ -549,6 +549,14 @@ pub fn RouterView() -> Element {
     // to-device `ck.realm_key.share` ingest + `ck.realm_key.request` provider
     // response pass, so per-sync retries cannot overlap.
     let realm_key_sharing_in_flight = use_signal(|| false);
+    // History sharing (receiver-initiated pull): dedup key of the last
+    // `ck.realm_key.request` this device emitted, as
+    // `"{realm}|{from}|{to}|{installed_signature}"`. The installed-secret
+    // signature is folded in so that once a `ck.realm_key.share` lands and
+    // installs a `history_secret`, the key changes and a still-open gap can be
+    // re-requested — but an unchanged state never re-emits the same request on
+    // every sync tick.
+    let realm_key_request_dedup = use_signal(|| Option::<String>::None);
     // Step 3 of the account-MLS-secret auto-unlock strand: set by the bootstrap
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
@@ -1781,6 +1789,7 @@ pub fn RouterView() -> Element {
         let mut share_state_store = state_store;
         let share_sync_cursor = sync_cursor;
         let mut share_in_flight = realm_key_sharing_in_flight;
+        let mut share_request_dedup = realm_key_request_dedup;
         let secure_store_ready_for_share = secure_store_bootstrap_ready;
         use_effect(move || {
             if !secure_store_ready_for_share() {
@@ -1831,7 +1840,21 @@ pub fn RouterView() -> Element {
                     .collect();
                 (shares, requests)
             };
-            if shares.is_empty() && requests.is_empty() {
+            // (c) Receiver-initiated pull pre-filter: compute a dedup key that
+            // folds in this device's installed-history-secret signature for the
+            // Realm, so the request fires once per distinct gap state and re-fires
+            // only after a freshly installed secret changes that state. `None`
+            // when there is no pull need (not encrypted / no snapshot / no gap).
+            let pull_request_key = {
+                let store = share_state_store.read();
+                crate::views::realm_admin::pending_history_request_dedup_key(
+                    &store, &realm_id, &actor,
+                )
+            };
+            let needs_pull = pull_request_key
+                .as_deref()
+                .is_some_and(|key| share_request_dedup().as_deref() != Some(key));
+            if shares.is_empty() && requests.is_empty() && !needs_pull {
                 return;
             }
             if share_in_flight() {
@@ -1891,6 +1914,49 @@ pub fn RouterView() -> Element {
                         },
                     )
                     .await;
+                }
+                // (c) Receiver-initiated pull: ask a joined provider device to
+                // seal the missing pre-join history range to this device. Guarded
+                // by `needs_pull` (dedup against the installed-secret signature) so
+                // we emit at most one request per distinct gap state.
+                if needs_pull {
+                    let realm = realm_id.clone();
+                    let actor_c = actor.clone();
+                    let device_c = device.clone();
+                    let outcome = crate::views::helpers::with_authed_api(
+                        &base,
+                        session.clone(),
+                        |api| async move {
+                            crate::views::realm_admin::request_history_keys_for_realm(
+                                &api,
+                                share_state_store,
+                                realm,
+                                actor_c,
+                                device_c,
+                            )
+                            .await
+                        },
+                    )
+                    .await;
+                    match outcome {
+                        // Record the dedup key whether or not a request was
+                        // actually emitted: a `None` means "no eligible provider /
+                        // gap right now", and re-trying every sync tick against the
+                        // same unchanged state would only spam. The key changes as
+                        // soon as a share installs a secret, releasing the guard.
+                        Ok(_) => {
+                            if let Some(key) = pull_request_key.clone() {
+                                share_request_dedup.set(Some(key));
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(
+                                realm = %short_protocol_id(&realm_id),
+                                ?error,
+                                "history key request deferred (will retry on next sync)"
+                            );
+                        }
+                    }
                 }
                 share_in_flight.set(false);
             });

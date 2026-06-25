@@ -76,14 +76,15 @@ pub fn decrypt_application_payload(
     if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
         return Some(plaintext);
     }
-    // A local snapshot is required to instantiate a `CokretMlsGroup`. The
-    // exporter-aead history-decrypt path does not use the group's ratchet state
-    // (the content key derives purely from the supplied `history_secret`), but
-    // the SDK exposes it as a `&self` method, so we need *some* group instance.
-    // TODO(history-share): a free-fn `decrypt_content_exporter_aead` would let a
-    // never-Welcomed joiner (no snapshot) read granted history; for now a
-    // history-granted device in practice already holds a join-epoch snapshot.
-    let snapshot = state_store.mls_snapshot_for(realm_id)?;
+    // A local snapshot lets us instantiate a `CokretMlsGroup` and try the live
+    // receive ratchet first. But the exporter-aead history-decrypt path does NOT
+    // need a group at all — the content key derives purely from the granted
+    // `history_secret` — so a never-Welcomed joiner (no snapshot) can still read
+    // granted history via the group-free standalone path below. When no snapshot
+    // is present we skip straight to tier-3 history decrypt.
+    let Some(snapshot) = state_store.mls_snapshot_for(realm_id) else {
+        return try_history_decrypt_standalone(state_store, realm_id, payload);
+    };
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     let plaintext = match group.decrypt_payload(payload) {
@@ -93,7 +94,9 @@ pub fn decrypt_application_payload(
             // (pre-join epoch, or another device's content this group can't
             // ratchet to). Fall back to any granted `history_secret` for the
             // payload's epoch and decrypt it as `mls-exporter-aead-v1` content.
-            return try_history_decrypt_via_group(&group, state_store, realm_id, payload);
+            // This is group-free, so it works whether or not the snapshot could
+            // ratchet to the payload's epoch.
+            return try_history_decrypt_standalone(state_store, realm_id, payload);
         }
     };
     // §5.6 MUST: persist the advanced receive chain. A failure to export /
@@ -126,8 +129,13 @@ pub fn decrypt_application_payload(
 /// first secret that opens the payload, else `None` (a device that was not
 /// granted the epoch's key, or a non-exporter-aead payload). Does NOT touch
 /// the receive ratchet.
-fn try_history_decrypt_via_group(
-    group: &cokret_sdk::CokretMlsGroup,
+///
+/// Group-free: uses the SDK's
+/// [`cokret_sdk::mls::decrypt_content_exporter_aead_standalone`] so a device
+/// that holds the granted `history_secret` but has **no** local MLS snapshot
+/// for the Realm (e.g. a member granted history before processing its own
+/// Welcome) can still read pre-join content.
+fn try_history_decrypt_standalone(
     state_store: &crate::local_state::LocalStateStore,
     realm_id: &str,
     payload: &cokret_sdk::EncryptedPayload,
@@ -144,9 +152,12 @@ fn try_history_decrypt_via_group(
         .chain(scan.into_iter().filter(|(epoch, _)| *epoch != payload.epoch));
     for (epoch, secret) in candidates {
         let aad_bytes = history_content_aad_bytes(realm_id, epoch);
-        if let Ok(plaintext) =
-            group.decrypt_content_exporter_aead(&secret, realm_id, &nonce_and_ct, &aad_bytes)
-        {
+        if let Ok(plaintext) = cokret_sdk::mls::decrypt_content_exporter_aead_standalone(
+            &secret,
+            realm_id,
+            &nonce_and_ct,
+            &aad_bytes,
+        ) {
             return Some(plaintext);
         }
     }
@@ -247,6 +258,19 @@ pub fn ingest_realm_key_share(
     if payload.recipient_device_id.trim() != device_id.trim() {
         return 0;
     }
+    // Best-effort sender-device authentication (device-lifecycle.md §13): when
+    // the share carries a populated `sender_device_signature`, verify it over
+    // `sender_signing_input()` and reject on mismatch. An empty / absent
+    // signature object is tolerated (legacy provider, or no signer installed at
+    // share time) — the per-secret HPKE seal still gates confidentiality and
+    // integrity, so we do not fail closed on a missing signature.
+    if !verify_realm_key_share_sender_signature(&payload) {
+        tracing::debug!(
+            %realm_id,
+            "reject ck.realm_key.share: sender_device_signature present but invalid"
+        );
+        return 0;
+    }
     let Some(sealed) = payload.ciphertext.as_deref().filter(|c| !c.trim().is_empty()) else {
         return 0;
     };
@@ -278,6 +302,61 @@ pub fn ingest_realm_key_share(
         installed += 1;
     }
     installed
+}
+
+/// Best-effort verification of a `ck.realm_key.share` payload's
+/// `sender_device_signature` (device-lifecycle.md §13).
+///
+/// Returns `true` when the signature is absent / an empty object (legacy
+/// provider, or no signer installed at share time — tolerated because the
+/// per-secret HPKE seal already gates integrity), OR when a populated
+/// signature object verifies over [`cokret_sdk::RealmKeySharePayload::sender_signing_input`].
+/// Returns `false` only when a populated signature object is present but fails
+/// to verify (malformed, wrong key, or tampered body).
+///
+/// The verifying key is taken from the signature object's
+/// `signer_public_key_multibase` (self-asserted by the provider). This binds
+/// the share body to *some* Ed25519 key the provider controls; a stronger
+/// binding of that key to `sender_device_id` requires DID resolution and is a
+/// follow-up — for now the HPKE seal remains the confidentiality/integrity
+/// gate and this signature is an additional best-effort authenticity check.
+pub(crate) fn verify_realm_key_share_sender_signature(
+    payload: &cokret_sdk::RealmKeySharePayload,
+) -> bool {
+    use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
+
+    let sig_obj = &payload.sender_device_signature;
+    // Empty / absent signature object → tolerated (best-effort).
+    let is_empty = sig_obj.is_null()
+        || sig_obj
+            .as_object()
+            .is_some_and(|map| map.is_empty() || !map.contains_key("signature"));
+    if is_empty {
+        return true;
+    }
+    let Some(sig_b64) = sig_obj.get("signature").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    let Some(pubkey_multibase) = sig_obj
+        .get("signer_public_key_multibase")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return false;
+    };
+    let Ok(sig_bytes) = cokret_sdk::base64url_decode(sig_b64.as_bytes()) else {
+        return false;
+    };
+    let Ok(signature) = Signature::from_slice(&sig_bytes) else {
+        return false;
+    };
+    let Ok(pubkey_bytes) = cokret_sdk::decode_ed25519_multibase(pubkey_multibase) else {
+        return false;
+    };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&pubkey_bytes) else {
+        return false;
+    };
+    let signing_input = payload.sender_signing_input();
+    verifying_key.verify(&signing_input, &signature).is_ok()
 }
 
 /// Read-only: list the principal DIDs currently in this Realm's local MLS

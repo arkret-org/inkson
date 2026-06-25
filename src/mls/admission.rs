@@ -202,15 +202,18 @@ pub(crate) fn build_realm_key_share_event(
         to_epoch: Some(to_epoch),
         history_visibility: None,
     };
-    let payload = cokret_sdk::RealmKeySharePayload {
+    let mut payload = cokret_sdk::RealmKeySharePayload {
         recipient_principal_id: recipient_did,
         recipient_device_id: recipient_device_id.trim().to_owned(),
         sender_device_id: sender_device_id.trim().to_owned(),
-        // The wire schema requires a `sender_device_signature` object; the
-        // history bundle's integrity is already covered by the per-secret HPKE
-        // seal (AEAD tag) bound to the recipient device. A detached envelope
-        // signature over the share body is a TODO (see module note) — emit a
-        // typed empty signature object so the payload validates.
+        // Filled below: a real Ed25519 signature over
+        // `RealmKeySharePayload::sender_signing_input()` (device-lifecycle.md
+        // §13). Initialized empty so the payload validates even if no active
+        // signer is installed (best-effort, see below). The per-secret HPKE seal
+        // (AEAD tag) bound to the recipient device already covers confidentiality
+        // + integrity of the shared keys; this detached signature additionally
+        // authenticates the *sender device* to the receiver, independent of the
+        // durable Event-envelope proof.
         sender_device_signature: json!({}),
         key_scope,
         ciphertext: Some(sealed_ciphertext),
@@ -219,6 +222,12 @@ pub(crate) fn build_realm_key_share_event(
         expires_at: None,
         created_at: crate::clock::now_utc(),
     };
+    // Sign `sender_signing_input()` with this device's active Ed25519 event
+    // signer and embed the detached signature. If no signer is installed we
+    // degrade to the empty object (the HPKE seal still protects the payload);
+    // the receiver verifies the signature only when present.
+    payload.sender_device_signature =
+        sign_realm_key_share_sender_signature(&payload).unwrap_or_else(|| json!({}));
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
     crate::operation::OperationBuilder::new(
@@ -229,6 +238,32 @@ pub(crate) fn build_realm_key_share_event(
     .body(body)
     .build_sdk_event("yougen")
     .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
+}
+
+/// Sign the canonical `RealmKeySharePayload::sender_signing_input()` with this
+/// device's active Ed25519 event signer (raw signature over canonical JSON,
+/// not a detached JWS — the receiver verifies the raw signature in
+/// [`crate::mls::runtime::verify_realm_key_share_sender_signature`]).
+///
+/// Returns a typed `sender_device_signature` object:
+/// ```json
+/// { "alg": "Ed25519", "signature": "<b64url>", "signer_public_key_multibase": "z.." }
+/// ```
+/// or `None` when no raw-capable signer is installed (best-effort: the caller
+/// then emits an empty object and the share still validates; the per-secret
+/// HPKE seal remains the integrity gate).
+fn sign_realm_key_share_sender_signature(
+    payload: &cokret_sdk::RealmKeySharePayload,
+) -> Option<Value> {
+    let signer = crate::event_signer::active_signer()?;
+    let pubkey_multibase = signer.public_key_multibase()?;
+    let signing_input = payload.sender_signing_input();
+    let signature = signer.sign_raw(&signing_input).ok()?;
+    Some(json!({
+        "alg": "Ed25519",
+        "signature": URL_SAFE_NO_PAD.encode(signature),
+        "signer_public_key_multibase": pubkey_multibase,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]

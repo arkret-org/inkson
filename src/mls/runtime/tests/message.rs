@@ -819,3 +819,132 @@ fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
             .expect("tier-3 history decrypt opens pre-join content");
     assert_eq!(decrypted, plaintext);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn tier3_history_decrypt_works_without_local_snapshot() {
+    // Group-free tier-3: a member granted a `history_secret` but holding NO
+    // local MLS snapshot for the Realm (e.g. granted before processing its own
+    // Welcome) still reads pre-join exporter-aead content via the standalone
+    // SDK path. Regression guard for the "must have a snapshot first" relaxation.
+    let mut state = temp_state_store("history-share-no-snapshot");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f3";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000f4";
+
+    // Build alice's group WITHOUT persisting any snapshot into `state`.
+    let alice = cokret_sdk::CokretMlsIdentity::new_basic(
+        cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+            .unwrap(),
+    )
+    .unwrap();
+    let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
+    let epoch = alice_group.epoch();
+
+    let aad_bytes = history_content_aad_bytes(realm, epoch);
+    let plaintext = br#"{"body":"no-snapshot history"}"#;
+    let nonce_and_ct = alice_group
+        .encrypt_content_exporter_aead(realm, &aad_bytes, plaintext)
+        .unwrap();
+    let history_secret = alice_group
+        .export_history_secret_range(epoch, epoch)
+        .into_iter()
+        .find(|(e, _)| *e == epoch)
+        .map(|(_, secret)| secret)
+        .expect("retained history secret for the current epoch");
+
+    let payload = cokret_sdk::EncryptedPayload {
+        scheme: cokret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        group_id: mls_group_id_for_realm(realm),
+        epoch,
+        content_type: "application/json".to_owned(),
+        ciphertext: cokret_sdk::base64url_encode(&nonce_and_ct),
+        aad: None,
+        payload_digest: cokret_sdk::Hash::new(cokret_sdk::canonical::sha256_digest(&nonce_and_ct))
+            .unwrap(),
+        key_ref: None,
+    };
+
+    // No snapshot for the realm: the live-ratchet path cannot even instantiate
+    // a group, but the granted history secret still opens the content.
+    assert!(state.mls_snapshot_for(realm).is_none());
+    assert!(
+        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
+            .is_none(),
+        "without the granted secret there is nothing to decrypt"
+    );
+
+    state.save_history_secret(realm.to_owned(), epoch, history_secret);
+    let decrypted =
+        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
+            .expect("group-free tier-3 decrypt opens content with no local snapshot");
+    assert_eq!(decrypted, plaintext);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn realm_key_share_sender_signature_round_trips() {
+    // Provider signs `sender_signing_input()` with the active Ed25519 device
+    // signer; the receiver verifies it. A tampered body, a wrong key, or a
+    // missing signature are each handled as specified (reject on bad signature,
+    // tolerate an absent one).
+    use ed25519_dalek::SigningKey;
+
+    let _signer_guard = {
+        let seed = [42u8; 32];
+        let verifying = SigningKey::from_bytes(&seed).verifying_key();
+        let did = crate::did_key::did_key_from_verifying_key(&verifying);
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_signer(seed, did));
+        crate::event_signer::replace_active_signer(Some(signer));
+        // Restore the global signer slot when the test ends.
+        struct Restore;
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                crate::event_signer::replace_active_signer(None);
+            }
+        }
+        Restore
+    };
+
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f5";
+    let recipient_actor = "did:web:bob.example";
+    let recipient_device = "ck:device:01904100-0000-7000-8000-0000000000f6";
+    let sender_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+
+    let event = crate::mls::admission::build_realm_key_share_event(
+        realm,
+        "did:web:alice.example",
+        sender_device,
+        recipient_actor,
+        recipient_device,
+        3,
+        4,
+        "c2VhbGVk".to_owned(),
+    )
+    .unwrap();
+    let payload: cokret_sdk::RealmKeySharePayload =
+        serde_json::from_value(event.content.clone()).unwrap();
+
+    // A real signature object was attached, and it verifies.
+    assert!(
+        payload
+            .sender_device_signature
+            .get("signature")
+            .and_then(serde_json::Value::as_str)
+            .is_some(),
+        "an active signer must attach a real sender_device_signature"
+    );
+    assert!(verify_realm_key_share_sender_signature(&payload));
+
+    // Tamper with the covered body → signature must no longer verify.
+    let mut tampered = payload.clone();
+    tampered.ciphertext = Some("dGFtcGVyZWQ".to_owned());
+    assert!(!verify_realm_key_share_sender_signature(&tampered));
+
+    // An empty signature object is tolerated (best-effort, HPKE seal gates).
+    let mut unsigned = payload.clone();
+    unsigned.sender_device_signature = json!({});
+    assert!(verify_realm_key_share_sender_signature(&unsigned));
+}

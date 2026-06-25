@@ -1651,8 +1651,8 @@ pub(crate) async fn share_history_to_requester(
     if all.is_empty() {
         return Ok(false);
     }
-    let from = request.key_scope.from_epoch.unwrap_or(0);
-    let to = request.key_scope.to_epoch.unwrap_or(u64::MAX);
+    let from = request.key_scope.from_epoch;
+    let to = request.key_scope.to_epoch;
     let range: Vec<(u64, Vec<u8>)> = all
         .into_iter()
         .filter(|(epoch, _)| *epoch >= from && *epoch <= to)
@@ -1685,6 +1685,314 @@ pub(crate) async fn share_history_to_requester(
     api.submit_sdk_events_batch(&realm_id, vec![share], None)
         .await?;
     Ok(true)
+}
+
+/// History-sharing visibility tiers (realm-and-space.md) under which a
+/// late-joining member is *eligible* to pull pre-join history. `world_readable`
+/// / `shared` / `invited` admit a reader; `joined` and unknown values do not (a
+/// `joined`-visibility Realm grants no pre-join window, so there is nothing to
+/// request). The provider-side §13 gate is the authority; this is only the
+/// cheap client-side pre-filter so we don't emit a request that will be denied.
+fn history_visibility_admits_prejoin_pull(history_visibility: &str) -> bool {
+    matches!(
+        history_visibility.trim().to_ascii_lowercase().as_str(),
+        "world_readable" | "shared" | "invited"
+    )
+}
+
+/// Read the Realm's projected `history_visibility`, scanning the same nested
+/// containers (`summary`/`object`/`realm`/`metadata`) the encryption-state
+/// reader walks, since the local projection nests the realm body. Returns the
+/// trimmed lowercased value, or `None` when the projection carries no hint.
+fn projected_history_visibility_for_realm(
+    store: &LocalStateStore,
+    realm_id: &str,
+) -> Option<String> {
+    let state = store.load();
+    let body = state.realm_tree_projections.get(realm_id)?;
+    let null = Value::Null;
+    let containers = [
+        body,
+        body.get("summary").unwrap_or(&null),
+        body.get("object").unwrap_or(&null),
+        body.get("realm").unwrap_or(&null),
+        body.get("metadata").unwrap_or(&null),
+    ];
+    containers.into_iter().find_map(|container| {
+        crate::realm_tree::string_field(container, &["history_visibility"])
+            .map(|value| value.trim().to_ascii_lowercase())
+    })
+}
+
+/// A planned `ck.realm_key.request`: the provider device to ask and the epoch
+/// range whose `history_secret`s are missing locally.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HistoryKeyRequestPlan {
+    pub provider_principal_id: String,
+    pub provider_device_ref: String,
+    pub from_epoch: u64,
+    pub to_epoch: u64,
+}
+
+/// Pure planning core for the receiver-initiated history pull. Decides whether
+/// to emit a `ck.realm_key.request` and, if so, against which provider and over
+/// which epoch range — given only plain inputs so it is unit-testable without a
+/// store or network.
+///
+/// Returns `Some(plan)` iff **all** hold:
+/// - `history_visibility` admits a pre-join pull (shared/invited/world_readable);
+/// - there is a pre-join epoch (`< join_epoch`) with no installed
+///   `history_secret` — i.e. an actual decryptable gap;
+/// - at least one provider candidate `(principal, device)` exists that is not
+///   this device's own actor.
+///
+/// The requested range is `[0, join_epoch - 1]` (every pre-join epoch). The
+/// provider-side §13 gate trims it to what policy actually allows; asking for
+/// the full pre-join window keeps the client honest about "I can't read any of
+/// it" without the client having to know the retention floor. When
+/// `join_epoch == 0` there is no pre-join window and we return `None`.
+pub(crate) fn plan_history_key_request(
+    history_visibility: &str,
+    join_epoch: u64,
+    installed_epochs: &[u64],
+    self_actor_id: &str,
+    provider_candidates: &[(String, String)],
+) -> Option<HistoryKeyRequestPlan> {
+    if !history_visibility_admits_prejoin_pull(history_visibility) {
+        return None;
+    }
+    if join_epoch == 0 {
+        return None;
+    }
+    let to_epoch = join_epoch - 1;
+    let installed: BTreeSet<u64> = installed_epochs.iter().copied().collect();
+    // A gap is any pre-join epoch we have not installed a history_secret for.
+    let has_gap = (0..=to_epoch).any(|epoch| !installed.contains(&epoch));
+    if !has_gap {
+        return None;
+    }
+    let self_actor = self_actor_id.trim();
+    let provider = provider_candidates.iter().find(|(principal, device)| {
+        let principal = principal.trim();
+        let device = device.trim();
+        !principal.is_empty() && !device.is_empty() && principal != self_actor
+    })?;
+    Some(HistoryKeyRequestPlan {
+        provider_principal_id: provider.0.trim().to_owned(),
+        provider_device_ref: provider.1.trim().to_owned(),
+        from_epoch: 0,
+        to_epoch,
+    })
+}
+
+/// Provider candidates `(sender_principal, sender_device_id)` harvested from the
+/// to-device inbox: every `ck.mls.welcome` / `ck.mls.commit` / `ck.realm_key.share`
+/// soland relays carries the *sending* (admitting / sharing) device's
+/// `(sender, sender_device_id)`. That device is by construction a joined member
+/// that holds Realm history, and soland's relay addresses the provider by
+/// `(target_principal_id, target_source_ref=ck:device:<id>)`, so this is exactly
+/// the addressing tuple `submit_realm_key_request` needs. Self-authored messages
+/// are excluded so the requester never names itself as provider.
+fn provider_candidates_from_inbox(
+    inbox: &[Value],
+    realm_id: &str,
+    self_actor_id: &str,
+) -> Vec<(String, String)> {
+    let realm_id = realm_id.trim();
+    let self_actor = self_actor_id.trim();
+    let mut seen = BTreeSet::<(String, String)>::new();
+    let mut out = Vec::new();
+    for message in inbox {
+        let kind = message
+            .get("kind")
+            .or_else(|| message.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let is_history_bearing = matches!(
+            kind,
+            "ck.mls.welcome" | "ck.mls.commit" | "ck.realm_key.share"
+        ) || kind == cokret_sdk::events::kinds::REALM_KEY_SHARE;
+        if !is_history_bearing {
+            continue;
+        }
+        // Keep realm-scoped messages and ones that carry no realm hint (a
+        // directed to-device delivery already addressed to this device).
+        let scope_realm = message
+            .get("realm_id")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                message
+                    .get("content")
+                    .and_then(|content| content.get("realm_id"))
+                    .and_then(Value::as_str)
+            });
+        if scope_realm.is_some_and(|value| value.trim() != realm_id) {
+            continue;
+        }
+        let principal = message
+            .get("sender")
+            .or_else(|| message.get("origin"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let device = message
+            .get("sender_device_id")
+            .or_else(|| {
+                message
+                    .get("content")
+                    .and_then(|content| content.get("sender_device_id"))
+            })
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let (Some(principal), Some(device)) = (principal, device) else {
+            continue;
+        };
+        if principal == self_actor {
+            continue;
+        }
+        let entry = (principal.to_owned(), device.to_owned());
+        if seen.insert(entry.clone()) {
+            out.push(entry);
+        }
+    }
+    out
+}
+
+/// Dedup key for the receiver-initiated pull, or `None` when there is nothing to
+/// request. The key folds in the requested range and a signature of the
+/// currently installed `history_secret` epochs, so it is stable while the gap
+/// state is unchanged (suppressing per-sync re-emits) yet changes the instant a
+/// share installs a new secret (releasing the dedup guard so a still-open gap can
+/// be re-requested). Mirrors `request_history_keys_for_realm`'s eligibility test
+/// — encrypted + joined + visibility admits + an actual gap + a provider exists —
+/// so the key is `Some` exactly when a request would be emitted.
+pub(crate) fn pending_history_request_dedup_key(
+    store: &LocalStateStore,
+    realm_id: &str,
+    actor_id: &str,
+) -> Option<String> {
+    if !store.realm_projection_is_mls_encrypted(realm_id) {
+        return None;
+    }
+    let snapshot = store.mls_snapshot_for(realm_id)?;
+    let join_epoch = snapshot.epoch;
+    let mut installed_epochs: Vec<u64> = store
+        .history_secrets_for(realm_id)
+        .into_iter()
+        .map(|(epoch, _)| epoch)
+        .collect();
+    installed_epochs.sort_unstable();
+    let history_visibility =
+        projected_history_visibility_for_realm(store, realm_id).unwrap_or_default();
+    let inbox = store.to_device_inbox();
+    let providers = provider_candidates_from_inbox(&inbox, realm_id, actor_id);
+    let plan = plan_history_key_request(
+        &history_visibility,
+        join_epoch,
+        &installed_epochs,
+        actor_id,
+        &providers,
+    )?;
+    let installed_signature = installed_epochs
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    Some(format!(
+        "{realm_id}|{}|{}|{installed_signature}",
+        plan.from_epoch, plan.to_epoch
+    ))
+}
+
+/// Receiver-initiated history pull (history sharing, last leg): when this device
+/// holds an MLS snapshot for an mls-encrypted Realm but cannot read some pre-join
+/// epoch's content (no installed `history_secret`) and the Realm's
+/// `history_visibility` admits a pre-join window, emit one `ck.realm_key.request`
+/// to a joined provider device asking it to seal the missing range back.
+///
+/// Returns `Some((from_epoch, to_epoch))` of the range actually requested (so the
+/// caller can record it for dedup), or `None` when nothing was requested (not
+/// encrypted / no snapshot / visibility forbids / no gap / no provider).
+pub(crate) async fn request_history_keys_for_realm(
+    api: &crate::api::CokretApi,
+    state_store: Signal<LocalStateStore>,
+    realm_id: String,
+    actor_id: String,
+    device_id: String,
+) -> anyhow::Result<Option<(u64, u64)>> {
+    // Gather every plain input under one read borrow, then drop it before the
+    // (async) network call.
+    let (plan, history_visibility) = {
+        let store = state_store.read();
+        // Must be an mls-encrypted Realm this device has actually joined.
+        if !store.realm_projection_is_mls_encrypted(&realm_id) {
+            return Ok(None);
+        }
+        let Some(snapshot) = store.mls_snapshot_for(&realm_id) else {
+            return Ok(None);
+        };
+        // TODO(history-sharing): use the precise join epoch once the snapshot
+        // records it. The current epoch is an over-approximation of the pre-join
+        // window (`[0, current_epoch-1]`); the provider-side §13 gate trims the
+        // range to what retention + policy actually allow, so over-asking is safe.
+        let join_epoch = snapshot.epoch;
+        let installed_epochs: Vec<u64> = store
+            .history_secrets_for(&realm_id)
+            .into_iter()
+            .map(|(epoch, _)| epoch)
+            .collect();
+        // `joined` / unknown visibility ⇒ no pre-join window ⇒ skip cheaply.
+        let history_visibility =
+            projected_history_visibility_for_realm(&store, &realm_id).unwrap_or_default();
+        let inbox = store.to_device_inbox();
+        let providers = provider_candidates_from_inbox(&inbox, &realm_id, &actor_id);
+        let plan = plan_history_key_request(
+            &history_visibility,
+            join_epoch,
+            &installed_epochs,
+            &actor_id,
+            &providers,
+        );
+        (plan, history_visibility)
+    };
+    let Some(plan) = plan else {
+        tracing::debug!(
+            realm = %short_protocol_id(&realm_id),
+            history_visibility = %history_visibility,
+            "history pull skipped: no eligible gap or provider"
+        );
+        return Ok(None);
+    };
+    // This device's HPKE public key — the provider seals the reply to it; the
+    // matching private half (same keypair) opens it on ingest.
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let (_privkey, pubkey) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+        secure_store.as_ref(),
+        &actor_id,
+        &device_id,
+    )
+    .map_err(|err| anyhow::anyhow!("load device HPKE keypair for history request: {err}"))?;
+    let recipient_hpke_public_key = cokret_sdk::base64url_encode(&pubkey);
+    api.submit_realm_key_request(
+        &realm_id,
+        &actor_id,
+        &device_id,
+        &plan.provider_device_ref,
+        &plan.provider_principal_id,
+        &recipient_hpke_public_key,
+        plan.from_epoch,
+        plan.to_epoch,
+    )
+    .await?;
+    tracing::info!(
+        realm = %short_protocol_id(&realm_id),
+        provider = %short_protocol_id(&plan.provider_principal_id),
+        from_epoch = plan.from_epoch,
+        to_epoch = plan.to_epoch,
+        "sent ck.realm_key.request for pre-join history"
+    );
+    Ok(Some((plan.from_epoch, plan.to_epoch)))
 }
 
 /// Stable signature of a Realm's joined-member DIDs (sorted, joined-only).
@@ -3761,5 +4069,125 @@ mod tests {
             mention_state_from_entries(&entries, "ck:realm:01904100-0000-7000-8000-000000000001");
         assert_eq!(policy, AgentMentionPolicy::Allowed);
         assert!(selection.accept_third_party_mention);
+    }
+
+    // ── Receiver-initiated history pull (ck.realm_key.request) ──────────
+
+    const PROVIDER_DID: &str = "did:web:provider.example";
+    const SELF_DID: &str = "did:web:self.example";
+    const PROVIDER_DEVICE: &str = "ck:device:01904100-0000-7000-8000-0000000000aa";
+
+    #[test]
+    fn plans_request_when_prejoin_gap_and_provider_exist() {
+        // Joined at epoch 3, no history_secrets installed, visibility=shared,
+        // a non-self provider device is available ⇒ request [0, 2] from it.
+        let providers = vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())];
+        let plan = plan_history_key_request("shared", 3, &[], SELF_DID, &providers)
+            .expect("a pre-join gap with a provider yields a plan");
+        assert_eq!(plan.from_epoch, 0);
+        assert_eq!(plan.to_epoch, 2);
+        assert_eq!(plan.provider_principal_id, PROVIDER_DID);
+        assert_eq!(plan.provider_device_ref, PROVIDER_DEVICE);
+    }
+
+    #[test]
+    fn skips_request_when_visibility_forbids_prejoin_pull() {
+        let providers = vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())];
+        // `joined` visibility grants no pre-join window.
+        assert!(plan_history_key_request("joined", 3, &[], SELF_DID, &providers).is_none());
+        // Unknown / empty visibility is treated as forbidding the pull.
+        assert!(plan_history_key_request("", 3, &[], SELF_DID, &providers).is_none());
+    }
+
+    #[test]
+    fn skips_request_when_no_prejoin_window() {
+        // Joined at the genesis epoch ⇒ there is no `< join_epoch` history.
+        let providers = vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())];
+        assert!(plan_history_key_request("shared", 0, &[], SELF_DID, &providers).is_none());
+    }
+
+    #[test]
+    fn skips_request_when_all_prejoin_epochs_installed() {
+        // Joined at epoch 3 and every pre-join epoch (0,1,2) is already installed.
+        let providers = vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())];
+        assert!(plan_history_key_request("shared", 3, &[0, 1, 2], SELF_DID, &providers).is_none());
+    }
+
+    #[test]
+    fn plans_request_when_partial_gap_remains() {
+        // Installed 0 and 2 but 1 is still missing ⇒ still a gap, still request.
+        let providers = vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())];
+        let plan = plan_history_key_request("invited", 3, &[0, 2], SELF_DID, &providers)
+            .expect("a remaining gap yields a plan");
+        assert_eq!((plan.from_epoch, plan.to_epoch), (0, 2));
+    }
+
+    #[test]
+    fn skips_request_when_only_self_is_a_provider() {
+        // The only candidate is this device's own actor ⇒ no external provider.
+        let providers = vec![(SELF_DID.to_owned(), PROVIDER_DEVICE.to_owned())];
+        assert!(plan_history_key_request("shared", 3, &[], SELF_DID, &providers).is_none());
+        // Empty candidate list ⇒ no provider.
+        assert!(plan_history_key_request("shared", 3, &[], SELF_DID, &[]).is_none());
+    }
+
+    #[test]
+    fn harvests_provider_candidates_from_history_bearing_inbox_messages() {
+        let inbox = vec![
+            // A Welcome from the admitting (provider) device — top-level sender +
+            // sender_device_id, addressed to this realm.
+            json!({
+                "kind": "ck.mls.welcome",
+                "sender": PROVIDER_DID,
+                "sender_device_id": PROVIDER_DEVICE,
+                "content": { "realm_id": "ck:realm:abc" },
+            }),
+            // A self-authored message must never name ourselves as provider.
+            json!({
+                "kind": "ck.mls.commit",
+                "sender": SELF_DID,
+                "sender_device_id": "ck:device:self",
+                "realm_id": "ck:realm:abc",
+            }),
+            // Unrelated kind is ignored.
+            json!({
+                "kind": "ck.typing",
+                "sender": "did:web:noise.example",
+                "sender_device_id": "ck:device:noise",
+                "realm_id": "ck:realm:abc",
+            }),
+            // A message for a different realm is filtered out.
+            json!({
+                "kind": "ck.mls.welcome",
+                "sender": "did:web:other.example",
+                "sender_device_id": "ck:device:other",
+                "realm_id": "ck:realm:zzz",
+            }),
+        ];
+        let candidates = provider_candidates_from_inbox(&inbox, "ck:realm:abc", SELF_DID);
+        assert_eq!(
+            candidates,
+            vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())]
+        );
+    }
+
+    #[test]
+    fn provider_candidates_dedup_repeated_sender() {
+        let inbox = vec![
+            json!({
+                "kind": "ck.mls.welcome",
+                "sender": PROVIDER_DID,
+                "sender_device_id": PROVIDER_DEVICE,
+                "realm_id": "ck:realm:abc",
+            }),
+            json!({
+                "kind": "ck.realm_key.share",
+                "sender": PROVIDER_DID,
+                "sender_device_id": PROVIDER_DEVICE,
+                "realm_id": "ck:realm:abc",
+            }),
+        ];
+        let candidates = provider_candidates_from_inbox(&inbox, "ck:realm:abc", SELF_DID);
+        assert_eq!(candidates.len(), 1);
     }
 }

@@ -19,7 +19,8 @@ pub use admin_panel::RealmAdminPanel;
 pub use members_panel::RealmMembersPanel;
 pub(crate) use members_panel::submit_mls_admission_for_invitees;
 pub(crate) use members_panel::{
-    joined_member_signature_for_realm, reconcile_mls_admissions_for_realm,
+    joined_member_signature_for_realm, pending_history_request_dedup_key,
+    reconcile_mls_admissions_for_realm, request_history_keys_for_realm,
     share_history_to_requester,
 };
 
