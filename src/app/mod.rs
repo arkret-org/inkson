@@ -189,6 +189,21 @@ pub fn RouterView() -> Element {
     let initial_server_url = initial_config.server_url.clone();
     let initial_account_did = initial_config.account_did.clone();
     let initial_device_id = initial_config.device_id.clone();
+    // Pin the active per-account device-seed scope to the persisted account on
+    // boot, before any async secure-store effect activates the device signer.
+    // Without this the process-global scope would default to bootstrap after a
+    // reload and the signer would read an empty bootstrap seed instead of this
+    // account's device key. Login completion (`adopt_device_seed_scope_on_login`)
+    // updates the scope when a different principal signs in.
+    {
+        let boot_seed_scope = initial_config.account_did.clone();
+        use_hook(move || {
+            let scope = boot_seed_scope.trim();
+            crate::secure_key_store::set_active_device_seed_scope(
+                (!scope.is_empty()).then_some(scope),
+            );
+        });
+    }
     let base_url = use_signal(move || initial_server_url);
     let mut account_did = use_signal(move || initial_account_did);
     let device_id = use_signal(move || initial_device_id);

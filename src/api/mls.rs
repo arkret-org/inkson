@@ -81,6 +81,10 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
         created_at: crate::clock::now_utc(),
         expires_at: Some(claim.expires_at),
         device_signature: None,
+        // Reconstructed claim-side record (admin builds the Welcome from the
+        // KeyPackage bytes, which already carry any last_resort extension); the
+        // flag is not re-published, so a plain default is correct here.
+        last_resort: false,
     })
 }
 

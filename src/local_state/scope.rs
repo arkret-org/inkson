@@ -107,7 +107,9 @@ impl LocalStateStore {
         #[cfg(not(test))]
         {
             let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-            let _ = secure_store.delete_secret(Self::SECURE_DPOP_DEVICE_KEY);
+            let _ = secure_store.delete_secret(
+                &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
+            );
         }
         self.ensure_cached_loaded();
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
@@ -125,7 +127,9 @@ impl LocalStateStore {
         #[cfg(not(test))]
         if record.is_none() {
             let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-            if let Err(error) = secure_store.delete_secret(Self::SECURE_DPOP_DEVICE_KEY) {
+            if let Err(error) = secure_store.delete_secret(
+                &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
+            ) {
                 tracing::debug!(
                     ?error,
                     "secure_key_store DPoP key delete on clear failed (likely already missing)",
@@ -153,7 +157,11 @@ impl LocalStateStore {
                 Some(public_record)
             }
             None => {
-                secure_store.delete_secret(Self::SECURE_DPOP_DEVICE_KEY)?;
+                secure_store.delete_secret(
+                    &crate::secure_key_store::account_scoped_device_key(
+                        Self::SECURE_DPOP_DEVICE_KEY,
+                    ),
+                )?;
                 None
             }
         };

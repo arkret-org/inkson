@@ -233,7 +233,10 @@ pub(crate) fn store_identity_record_in_secure_store(
 pub(crate) fn load_dpop_device_key_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
-    let Some(json) = secure_store.get_secret(LocalStateStore::SECURE_DPOP_DEVICE_KEY)? else {
+    let Some(json) = secure_store.get_secret(&crate::secure_key_store::account_scoped_device_key(
+        LocalStateStore::SECURE_DPOP_DEVICE_KEY,
+    ))?
+    else {
         return Ok(None);
     };
     let record = serde_json::from_str(&json).map_err(|error| {
@@ -253,7 +256,12 @@ pub(crate) fn store_dpop_device_key_in_secure_store(
             "serialize DPoP device key record: {error}"
         ))
     })?;
-    secure_store.store_secret(LocalStateStore::SECURE_DPOP_DEVICE_KEY, &json)
+    secure_store.store_secret(
+        &crate::secure_key_store::account_scoped_device_key(
+            LocalStateStore::SECURE_DPOP_DEVICE_KEY,
+        ),
+        &json,
+    )
 }
 
 pub(crate) fn plaintext_identity_seed_fallback_allowed() -> bool {

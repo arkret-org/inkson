@@ -65,8 +65,10 @@ pub use platform::AndroidKeystoreSecureKeyStore;
 #[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 pub use platform::IosKeychainSecureKeyStore;
 pub use signing_seed::{
-    SIGNING_SEED_KEY, SigningSeedMaterial, ensure_signing_seed, load_signing_seed,
-    store_signing_seed,
+    SIGNING_SEED_KEY, SigningSeedMaterial, account_scoped_device_key, active_device_seed_scope,
+    adopt_device_seed_scope_on_login, ensure_signing_seed, ensure_signing_seed_scoped,
+    load_signing_seed, load_signing_seed_scoped, reset_device_seed_scope_for_signin,
+    set_active_device_seed_scope, store_signing_seed, store_signing_seed_scoped,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -151,7 +153,12 @@ pub async fn ensure_wasm_secure_key_store_ready(
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
-    key == SIGNING_SEED_KEY || key == WASM_LOCAL_IDENTITY_SEED_KEY
+    // Matches both the bootstrap seed key and every per-account scoped seed
+    // key (`<SIGNING_SEED_KEY>.<account-b64>`) so account-scoped device seeds
+    // keep the IndexedDB-only, no-localStorage-mirror seed tier.
+    key == SIGNING_SEED_KEY
+        || key.starts_with(&format!("{SIGNING_SEED_KEY}."))
+        || key == WASM_LOCAL_IDENTITY_SEED_KEY
 }
 
 #[cfg(any(target_arch = "wasm32", test))]

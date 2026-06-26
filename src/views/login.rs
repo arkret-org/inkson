@@ -183,12 +183,37 @@ pub fn LoginPanel(
                     disabled: is_busy(),
                     onclick: move |_| {
                         let principal = base_url();
-                        let device = normalize_device_id(&device_id());
+                        // A fresh interactive sign-in establishes a fresh device.
+                        // Mint a new v7 device_id and (below) reset the bootstrap
+                        // seed scope so the device *key* minted for whichever
+                        // principal the OIDC flow resolves to is brand-new — never
+                        // the previously signed-in account's key. (Re-using a
+                        // specific account's device without churn is the job of the
+                        // account picker that pre-selects the scope before sign-in.)
+                        let device = crate::config::new_device_id();
                         let actor = account_did();
                         device_id.set(device.clone());
+                        let mut reset_state_store = state_store;
                         is_busy.set(true);
                         auth_status.set("Opening server sign-in...".to_owned());
                         spawn(async move {
+                            #[cfg(target_arch = "wasm32")]
+                            let _ = crate::secure_key_store::ensure_wasm_secure_key_store_ready(
+                                "yougen",
+                            )
+                            .await;
+                            let secure_store =
+                                crate::secure_key_store::default_secure_key_store("yougen");
+                            if let Err(error) =
+                                crate::secure_key_store::reset_device_seed_scope_for_signin(
+                                    secure_store.as_ref(),
+                                )
+                            {
+                                tracing::warn!(%error, "reset device seed scope for sign-in failed");
+                            }
+                            // Drop the cached DPoP record so the device key is
+                            // rebuilt from the freshly-scoped bootstrap seed.
+                            reset_state_store.write().set_dpop_device_key(None);
                             match start_oidc_strand(&principal, device.trim()).await {
                                 Ok(()) => {
                                     persist_config(
@@ -560,6 +585,21 @@ async fn finish_oidc_callback(
     } else {
         account.did
     };
+    // The resolved principal is now known: re-home the bootstrap device seed
+    // (the one bound to the session grant just issued above) under this
+    // account's scope and clear the bootstrap entry, so a later sign-in for a
+    // *different* account on this browser cannot inherit this account's device
+    // key. Sets the active seed scope to this account for the rest of the
+    // session.
+    {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        if let Err(error) = crate::secure_key_store::adopt_device_seed_scope_on_login(
+            secure_store.as_ref(),
+            &canonical_actor,
+        ) {
+            tracing::warn!(%error, "adopt account device seed scope on login failed");
+        }
+    }
     let personal_handle = crate::app::personal_handle_from_account_handle(&account.handle);
     let _ = clear_persisted_oidc_scaffold();
 

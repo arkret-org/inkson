@@ -493,8 +493,17 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         .map_err(|error| format!("MLS device_id: {error:?}"))?;
     let identity = cokret_sdk::CokretMlsIdentity::new_basic(principal, device)
         .map_err(|error| format!("create MLS identity: {error}"))?;
+    // Publish a reusable last-resort KeyPackage. Single-use KeyPackages are
+    // consumed on claim, so once an admission claims it the member has no
+    // claimable KeyPackage left — if that admission's Welcome is ever lost
+    // (consumed server-side but never applied client-side, e.g. a Welcome
+    // to-device message that expired, or a transient resolution failure during
+    // apply), the member becomes permanently un-addable: the admin reconcile
+    // loop can never re-admit it and it is stuck "pending invite" forever. A
+    // last-resort KeyPackage is kept claimable by the server and retains its
+    // init key across repeated Welcomes, so re-admission always succeeds.
     let record = identity
-        .key_package_record()
+        .last_resort_key_package_record()
         .map_err(|error| format!("create MLS KeyPackage: {error}"))?;
     let key_package_id = record.keypackage_id.clone();
     let key_package_ref = record.keypackage_ref.as_str().to_owned();
