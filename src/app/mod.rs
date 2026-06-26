@@ -4668,13 +4668,18 @@ pub fn RouterView() -> Element {
                                                 // Device-level state (local_identity,
                                                 // push_registration) is preserved.
                                                 state_store.write().clear_account_scoped();
-                                                // G3.Y0 — this is the *hard* logout path
-                                                // (user clicked "Log out"). Wipe the
-                                                // device DPoP key so the next sign-in
-                                                // rotates `cnf.jkt`. The soft path
-                                                // (`session_refresh`'s LoginRequired
-                                                // outcome) deliberately keeps the key.
-                                                state_store.write().set_dpop_device_key(None);
+                                                // G3.Y0 — daily "Log out" is a SOFT logout:
+                                                // it ends the session (grant + token cleared
+                                                // below) but deliberately KEEPS this account's
+                                                // device key (the account-scoped DPoP record /
+                                                // signing seed) and persisted `account_did`, so
+                                                // the login screen offers "Continue as <account>"
+                                                // and re-authentication reuses the SAME device —
+                                                // no key rotation, no MLS re-admission. Wiping the
+                                                // device (true rotation / "remove this device") is
+                                                // reserved for a separate explicit action; it must
+                                                // clear the account-scoped seed, not just this
+                                                // in-memory record.
                                                 let _ = crate::coauth::clear_persisted_oidc_scaffold();
                                                 // Wipe the in-memory UI signals too so the
                                                 // sidebar can't paint a frame of stale

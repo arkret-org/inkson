@@ -150,6 +150,54 @@ pub fn LoginPanel(
         is_busy.set(false);
     });
 
+    // Shared interactive sign-in launcher. `reuse=true` re-authenticates the
+    // already-known account: its `device_id` and persisted account scope are
+    // kept, so the OIDC callback (a fresh wasm instance) re-pins this account's
+    // device seed via the boot hook and reuses the SAME device — no key
+    // rotation, no MLS re-admission. `reuse=false` mints a fresh device for a
+    // new/different account and resets the bootstrap seed scope so the new
+    // device key is never the previous account's. Captures only `Copy` signals,
+    // so the closure is itself `Copy` and can drive multiple buttons.
+    let launch_sign_in = move |reuse: bool| {
+        let principal = base_url();
+        let persisted_actor = account_did();
+        let reuse = reuse && !persisted_actor.trim().is_empty();
+        let (device, actor) = if reuse {
+            (normalize_device_id(&device_id()), persisted_actor)
+        } else {
+            (crate::config::new_device_id(), String::new())
+        };
+        device_id.set(device.clone());
+        let mut reset_state_store = state_store;
+        is_busy.set(true);
+        auth_status.set("Opening server sign-in...".to_owned());
+        spawn(async move {
+            if !reuse {
+                #[cfg(target_arch = "wasm32")]
+                let _ =
+                    crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await;
+                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
+                    secure_store.as_ref(),
+                ) {
+                    tracing::warn!(%error, "reset device seed scope for sign-in failed");
+                }
+                // Drop the cached DPoP record so the device key is rebuilt from
+                // the freshly-scoped bootstrap seed.
+                reset_state_store.write().set_dpop_device_key(None);
+            }
+            match start_oidc_strand(&principal, device.trim()).await {
+                Ok(()) => {
+                    persist_config(config_store, principal, actor, device, String::new());
+                }
+                Err(error) => {
+                    is_busy.set(false);
+                    auth_status.set(error);
+                }
+            }
+        });
+    };
+
     rsx! {
         Card { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": "Login",
             div { class: "auth-brand",
@@ -176,62 +224,50 @@ pub fn LoginPanel(
                     },
                 }
 
-                Button {
-                    variant: ButtonVariant::Primary,
-                    class: "auth-primary",
-                    "data-testid": "start-server-login-button",
-                    disabled: is_busy(),
-                    onclick: move |_| {
-                        let principal = base_url();
-                        // A fresh interactive sign-in establishes a fresh device.
-                        // Mint a new v7 device_id and (below) reset the bootstrap
-                        // seed scope so the device *key* minted for whichever
-                        // principal the OIDC flow resolves to is brand-new — never
-                        // the previously signed-in account's key. (Re-using a
-                        // specific account's device without churn is the job of the
-                        // account picker that pre-selects the scope before sign-in.)
-                        let device = crate::config::new_device_id();
-                        let actor = account_did();
-                        device_id.set(device.clone());
-                        let mut reset_state_store = state_store;
-                        is_busy.set(true);
-                        auth_status.set("Opening server sign-in...".to_owned());
-                        spawn(async move {
-                            #[cfg(target_arch = "wasm32")]
-                            let _ = crate::secure_key_store::ensure_wasm_secure_key_store_ready(
-                                "yougen",
-                            )
-                            .await;
-                            let secure_store =
-                                crate::secure_key_store::default_secure_key_store("yougen");
-                            if let Err(error) =
-                                crate::secure_key_store::reset_device_seed_scope_for_signin(
-                                    secure_store.as_ref(),
-                                )
-                            {
-                                tracing::warn!(%error, "reset device seed scope for sign-in failed");
+                {
+                    let known_account = account_did().trim().to_owned();
+                    let account_label = {
+                        let handle = account_primary_handle();
+                        if !handle.trim().is_empty() {
+                            handle
+                        } else {
+                            crate::app::personal_handle_from_account_handle(&known_account)
+                                .unwrap_or_else(|| known_account.clone())
+                        }
+                    };
+                    rsx! {
+                        if known_account.is_empty() {
+                            // First sign-in on this browser: always a fresh device.
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                class: "auth-primary",
+                                "data-testid": "start-server-login-button",
+                                disabled: is_busy(),
+                                onclick: move |_| { let mut go = launch_sign_in; go(false); },
+                                if is_busy() { "Working..." } else { "Continue" }
                             }
-                            // Drop the cached DPoP record so the device key is
-                            // rebuilt from the freshly-scoped bootstrap seed.
-                            reset_state_store.write().set_dpop_device_key(None);
-                            match start_oidc_strand(&principal, device.trim()).await {
-                                Ok(()) => {
-                                    persist_config(
-                                        config_store,
-                                        principal,
-                                        actor,
-                                        device,
-                                        String::new(),
-                                    );
-                                }
-                                Err(error) => {
-                                    is_busy.set(false);
-                                    auth_status.set(error);
-                                }
+                        } else {
+                            // Re-authenticate the known account on its existing
+                            // device (no key rotation / re-admission)…
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                class: "auth-primary",
+                                "data-testid": "start-server-login-button",
+                                disabled: is_busy(),
+                                onclick: move |_| { let mut go = launch_sign_in; go(true); },
+                                if is_busy() { "Working..." } else { "Continue as {account_label}" }
                             }
-                        });
-                    },
-                    if is_busy() { "Working..." } else { "Continue" }
+                            // …or sign in as a different account with a fresh device.
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                class: "auth-secondary",
+                                "data-testid": "start-different-account-login-button",
+                                disabled: is_busy(),
+                                onclick: move |_| { let mut go = launch_sign_in; go(false); },
+                                "Use a different account"
+                            }
+                        }
+                    }
                 }
 
                 if !auth_status().is_empty() {
