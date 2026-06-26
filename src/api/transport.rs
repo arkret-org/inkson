@@ -87,7 +87,9 @@ impl CokretApi {
     ) -> anyhow::Result<Self> {
         let signing_key =
             crate::coauth::session_grant_signing_key_from_pem(session_private_key_pem)?;
-        self.session_key_id = Some(session_key_thumbprint(&signing_key.verifying_key()));
+        self.session_key_id = Some(crate::dpop::jwk_thumbprint_ed25519(
+            &signing_key.verifying_key(),
+        ));
         self.session_signing_key = Some(signing_key);
         Ok(self)
     }

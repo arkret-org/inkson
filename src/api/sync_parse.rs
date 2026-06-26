@@ -4,6 +4,15 @@ pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
     Ok(serde_json::from_value(value)?)
 }
 
+/// Maximum bytes the native NDJSON streaming reader will buffer before a
+/// newline is seen. A spec-compliant server delimits every frame with `\n`;
+/// a faulty/malicious server that keeps pushing bytes without a delimiter
+/// (or a single oversized frame) would otherwise grow `pending` without
+/// bound until the client OOMs. Frames are small control/delta envelopes;
+/// 16 MiB is far above any legitimate single frame yet caps the OOM vector.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_ACCOUNT_SUBSCRIBE_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
 #[cfg(test)]
 pub(crate) fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOutcome> {
     match parse_account_subscribe_snapshot_outcome(bytes)? {
@@ -159,6 +168,14 @@ pub(crate) async fn drain_account_subscribe_response(
     let mut pending: Vec<u8> = Vec::new();
     'stream: while let Some(chunk) = response.chunk().await? {
         pending.extend_from_slice(&chunk);
+        // Cap the inter-newline buffer: a server that never delimits a frame
+        // (or sends an oversized single frame) MUST NOT be able to grow this
+        // buffer without bound. Fail closed instead of risking OOM.
+        if pending.len() > MAX_ACCOUNT_SUBSCRIBE_FRAME_BYTES {
+            anyhow::bail!(
+                "account subscribe frame exceeded {MAX_ACCOUNT_SUBSCRIBE_FRAME_BYTES} bytes without a newline delimiter"
+            );
+        }
         while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
             let mut line: Vec<u8> = pending.drain(..=newline).collect();
             if line.last() == Some(&b'\n') {

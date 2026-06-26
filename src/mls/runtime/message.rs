@@ -544,6 +544,190 @@ fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<&'
     Some(cokret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
 }
 
+/// YGN-SEC-01 闸门 (1): 接受一个入站 Welcome 之前,独立验证其 `claim_envelope`
+/// 的发送者签名(`encryption-and-audit.md` §发送 admin gate;`admission.rs`
+/// `sign_welcome_claim_envelope` 是发送端)。
+///
+/// fail-closed 语义:
+/// - 当 `welcome_value` 携带 `claim_envelope` 时,签名 **必须** 验证通过;形态非法、
+///   验签 key 解析不到、或签名不匹配,一律 `Err(reason)` → 调用方 `record_failure`
+///   并拒绝该 Welcome(绝不放行未验签者把本设备拉入群)。
+/// - 验签 key **经 `device_directory` 解析**(同步缓存,bootstrap 已经
+///   `prefetch_device_keys` 预热),绝不取自 envelope 自述的 `kid`/`requester_did`。
+/// - `ssk_generation` 分支(发送端用 cross-signing self-signing key 签名)在客户端
+///   当前 **无法可靠解析远端 actor 的 SSK 公钥**(`device_directory` 只解析设备
+///   signing key,SSK 公钥需要 actor 的 cross-signing publish + DID 锚定,本同步
+///   接收路径无该输入),按纪律对该分支同样 fail-closed(宁可拒绝)。
+///
+/// 返回 `Ok(())` 仅当:(a) `welcome_value` 不含 `claim_envelope`(降维后的纯
+/// routing+ciphertext Welcome,无可验之物——governance_binding 闸门与服务端
+/// admin gate 兜底),或 (b) 携带且经目录解析的设备签名验证通过。
+fn verify_welcome_claim_envelope_signer(
+    welcome_value: &serde_json::Value,
+) -> Result<(), String> {
+    use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
+
+    let Some(claim_value) = welcome_value.get("claim_envelope") else {
+        // 没有可验签的 claim_envelope(soland 降维后的纯 Welcome)。此处不是放行
+        // 授权,而是"无此材料":真正的 epoch/Seal 绑定由 governance_binding 闸门
+        // (2) 强制;服务端 admission admin gate 是额外一层。
+        return Ok(());
+    };
+    let envelope: cokret_sdk::MlsWelcomeClaimEnvelope =
+        serde_json::from_value(claim_value.clone())
+            .map_err(|err| format!("claim_envelope decode: {err}"))?;
+    // 形态校验:kid/sig 非空、alg ∈ {EdDSA, Ed25519}。
+    envelope
+        .validate_signature_shape()
+        .map_err(|reason| format!("claim_envelope signature shape: {reason}"))?;
+
+    // ssk_generation 分支:无法在本同步接收路径可靠解析 SSK 公钥 → fail-closed。
+    if envelope.ssk_generation.is_some() {
+        return Err(
+            "claim_envelope is self-signing-key signed (ssk_generation present); the \
+             cross-signing SSK public key cannot be resolved on the synchronous receive \
+             path, so this Welcome is rejected fail-closed (YGN-SEC-01)"
+                .to_owned(),
+        );
+    }
+
+    // device 分支:经 device_directory 同步缓存解析 (actor, device) 的设备签名 key。
+    let Some(requester_device_id) = envelope
+        .requester_device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(
+            "claim_envelope carries neither ssk_generation nor requester_device_id; \
+             no resolvable signer (YGN-SEC-01)"
+                .to_owned(),
+        );
+    };
+    let requester_did = envelope.requester_did.as_str();
+    let verifying_key = match crate::device_directory::cached_device_signing_key(
+        requester_did,
+        requester_device_id,
+    ) {
+        crate::device_directory::CacheLookup::Hit(material) => {
+            let bytes = material.ed25519_bytes().map_err(|err| {
+                format!("claim_envelope signer key decode ({requester_did}/{requester_device_id}): {err}")
+            })?;
+            VerifyingKey::from_bytes(&bytes).map_err(|err| {
+                format!("claim_envelope signer key invalid ({requester_did}/{requester_device_id}): {err}")
+            })?
+        }
+        crate::device_directory::CacheLookup::NegativeHit => {
+            return Err(format!(
+                "claim_envelope signer {requester_did}/{requester_device_id} is revoked / \
+                 absent in directory (negative verdict); Welcome rejected (YGN-SEC-01)"
+            ));
+        }
+        crate::device_directory::CacheLookup::Miss => {
+            return Err(format!(
+                "claim_envelope signer key for {requester_did}/{requester_device_id} not in \
+                 device-directory cache; fail-closed (YGN-SEC-01)"
+            ));
+        }
+    };
+
+    let signing_bytes = envelope
+        .canonical_signing_bytes()
+        .map_err(|err| format!("claim_envelope canonical bytes: {err}"))?;
+    let sig_bytes = cokret_sdk::base64url_decode(envelope.signature.sig.as_bytes())
+        .map_err(|err| format!("claim_envelope signature decode: {err}"))?;
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|err| format!("claim_envelope signature malformed: {err}"))?;
+    verifying_key
+        .verify(&signing_bytes, &signature)
+        .map_err(|err| format!("claim_envelope signature verification failed: {err}"))?;
+    Ok(())
+}
+
+/// YGN-SEC-01 闸门 (2): 在持久化快照之前,独立验证 Welcome 内嵌的
+/// `governance_binding`(`encryption-and-audit.md` :438 — 客户端在接受 MLS epoch
+/// 前 MUST 独立验证 `governance_binding` 指向的 Seal view 与 state_root)。
+///
+/// 这里把"仅记录 policy_root"升级为"独立验证 MLS 群 **真实内嵌** 的
+/// governance_binding extension 与服务端转发的 durable payload 声明逐字段一致":
+/// 用 welcome 声明的 `mls_group_id`/`previous_epoch`/`next_epoch`/`policy_root`/
+/// `binding_profile`/`reducer_profile` 构造 expected context,交给 SDK
+/// `CokretMlsGroup::verify_current_governance_binding` 比对 MLS GroupContext 内嵌
+/// 的 CBOR binding。任一字段不一致或 MLS 群没有 binding extension → `Err` → 拒绝。
+///
+/// 当 `welcome_value` 不含 `governance_binding`(降维后的纯 Welcome)时返回
+/// `Ok(None)`:无声明可比对(此路径下 Seal inclusion 由服务端 admission +
+/// claim_envelope 闸门兜底)。携带时返回 `Ok(Some(policy_root))` 供调用方记录
+/// genesis policy_root。
+///
+/// 边界(spec :438 完整要求):本同步接收路径未注入 Cokret Seal view,无法回补
+/// Control Move inclusion proof 把 `policy_root`/`state_root` 锚到一个已接受的
+/// Seal。此处保证的是"MLS 群内嵌 binding == 服务端声明",尚未完成"声明的 Seal
+/// 在本设备已接受的 Seal 视图中可被 inclusion-proof 验证"。完整闭合见下方 TODO。
+fn verify_welcome_governance_binding(
+    group: &cokret_sdk::CokretMlsGroup,
+    welcome_value: &serde_json::Value,
+) -> Result<Option<String>, String> {
+    let Some(binding) = welcome_value.get("governance_binding") else {
+        return Ok(None);
+    };
+
+    let mls_group_id = binding
+        .get("mls_group_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "governance_binding.mls_group_id missing".to_owned())?;
+    let previous_epoch = binding
+        .get("previous_epoch")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "governance_binding.previous_epoch missing".to_owned())?;
+    let next_epoch = binding
+        .get("next_epoch")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "governance_binding.next_epoch missing".to_owned())?;
+    let policy_root_str = binding
+        .get("policy_root")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "governance_binding.policy_root missing".to_owned())?
+        .to_owned();
+    // binding_profile / reducer_profile 默认走 spec 常量(welcome 声明可覆盖)。
+    let binding_profile = binding
+        .get("binding_profile")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE)
+        .to_owned();
+    let reducer_profile = binding
+        .get("reducer_profile")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(cokret_sdk::CORE_REDUCER_PROFILE)
+        .to_owned();
+
+    let policy_root_hash = cokret_sdk::Hash::new(policy_root_str.clone())
+        .map_err(|err| format!("governance_binding.policy_root invalid hash: {err:?}"))?;
+
+    let mut expected = cokret_sdk::MlsGovernanceBindingValidationContext::for_commit(
+        mls_group_id,
+        previous_epoch,
+        next_epoch,
+        &binding_profile,
+        &reducer_profile,
+    );
+    expected.policy_root = Some(&policy_root_hash);
+
+    // 比对 MLS 群真实内嵌的 governance_binding extension 与上面声明的 expected。
+    // 群内无 binding extension、profile/epoch/policy_root 任一不符 → Err。
+    group
+        .verify_current_governance_binding(&expected)
+        .map_err(|err| format!("governance_binding independent verification failed: {err}"))?;
+
+    // TODO(YGN-SEC-01, encryption-and-audit.md:438): 完整闭合还需把声明的
+    // policy_root / state_root 对一个本设备已接受的 Cokret Seal view 做 Control
+    // Move inclusion-proof 校验,失败时标记 epoch 为 decryption_pending /
+    // state_mismatch。本同步接收路径当前未注入 Seal view,故此层依赖 claim_envelope
+    // 闸门 (1) + 服务端 admission admin gate 兜底,留待 Seal view 注入后补齐。
+
+    Ok(Some(policy_root_str))
+}
+
 pub fn apply_welcome_messages_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -576,16 +760,23 @@ pub fn apply_welcome_messages_with_device_snapshot(
             outcome.record_failure(format!("welcome claim envelope: {reason}"));
             continue;
         }
+        // YGN-SEC-01 闸门 (1): 接受 Welcome 之前,先独立验证 claim_envelope 发送者
+        // 签名(经 device_directory 解析 key,fail-closed)。在 join 之前做,因为
+        // 签名校验不依赖 MLS 协议层解密,提前拒绝攻击者构造的 Welcome。
+        if let Err(reason) = verify_welcome_claim_envelope_signer(&welcome_value) {
+            outcome.record_failure(format!("welcome claim envelope authz: {reason}"));
+            continue;
+        }
         // The admission's Welcome carries the same `governance_binding` as its
         // `ck.mls.commit`, so the joining member records the genesis-locked
         // `policy_root` here. Without it, a later self-update commit by this
         // member would recompute `policy_root` from its own moving Seal
         // `state_root` and be rejected `governance_binding_mismatch`.
-        let welcome_policy_root = welcome_value
-            .get("governance_binding")
-            .and_then(|binding| binding.get("policy_root"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned);
+        //
+        // YGN-SEC-01 闸门 (2) 在 join 之后(需要 MLS 群对象)再独立验证此
+        // governance_binding 与 MLS GroupContext 内嵌值一致,见下方
+        // `verify_welcome_governance_binding`;此处保留原始 JSON 供该校验使用。
+        let welcome_value_for_governance = welcome_value.clone();
         let welcome = match serde_json::from_value::<cokret_sdk::MlsWelcomeEnvelope>(welcome_value)
         {
             Ok(welcome) => welcome,
@@ -649,6 +840,18 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
+        // YGN-SEC-01 闸门 (2): 独立验证 MLS 群内嵌的 governance_binding 与服务端
+        // 转发的 durable payload 声明一致(`encryption-and-audit.md` :438)。失败
+        // (群内无 binding / profile / epoch / policy_root 不符)→ 拒绝该 Welcome,
+        // 不持久化快照。返回声明的 policy_root 供下方 genesis 记录。
+        let welcome_policy_root =
+            match verify_welcome_governance_binding(&group, &welcome_value_for_governance) {
+                Ok(policy_root) => policy_root,
+                Err(reason) => {
+                    outcome.record_failure(format!("welcome governance_binding authz: {reason}"));
+                    continue;
+                }
+            };
         let post_state = match group.export_state_record() {
             Ok(post_state) => post_state,
             Err(err) => {

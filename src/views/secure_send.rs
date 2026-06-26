@@ -100,12 +100,10 @@ pub(crate) fn run_local_mls_encrypt(
 /// Normalise a seal/state reference to a bare `sha256:<hex>` hash when it is
 /// one (peeling `ck:seal:` / `ck:state:` prefixes), else `None`.
 pub(crate) fn mls_sha256_hash_from_ref(value: &str) -> Option<String> {
-    if let Some(hex) = value.strip_prefix("sha256:")
-        && hex.len() == 64
-        && hex
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
-    {
+    // Leaf digest grammar is validated by the single canonical validator
+    // `cokret_sdk::Hash::new`; restrict to the `sha256:` form this MLS surface
+    // uses (Hash::new also accepts blake3, which is not a state/seal ref here).
+    if value.starts_with("sha256:") && cokret_sdk::Hash::new(value).is_ok() {
         return Some(value.to_owned());
     }
     for prefix in ["ck:seal:", "ck:state:"] {

@@ -54,7 +54,7 @@ fn self_request_pop_signature_roundtrips_with_sdk_verifier() {
     .expect("SDK verifies yougen-produced PoP signature");
     assert_eq!(
         verified.signature_input.key_id,
-        session_key_thumbprint(&signing.verifying_key())
+        crate::dpop::jwk_thumbprint_ed25519(&signing.verifying_key())
     );
     assert!(verified.signature_input.expires - verified.signature_input.created <= 300);
 }

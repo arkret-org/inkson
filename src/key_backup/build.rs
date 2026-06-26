@@ -241,10 +241,14 @@ pub fn build_did_recovery_backup_body(
     )
 }
 
-/// AEAD identifiers for HPKE backups (HPKE uses ChaCha20Poly1305 internally,
-/// 12-byte nonce derived by the HPKE key schedule — no wire nonce).
-pub const HPKE_AEAD_NAME: &str = "chacha20_poly1305";
-pub const HPKE_AEAD_PROFILE: &str = "ck.aead.chacha20_poly1305.v1";
+/// AEAD identifiers for HPKE backups. This surface pins the v1 default-MUST
+/// application-layer HPKE suite `ck.hpke_x25519_aead_xchacha20poly1305.v1`
+/// (see [`crate::hpke_backup::HPKE_SUITE`]), whose AEAD is XChaCha20-Poly1305
+/// (extended 192-bit nonce). The `encryption.hpke_suite` selector is written
+/// explicitly so `aead.name` is unambiguously consistent with the selected
+/// suite per `hpke-suite-registry.json` registry rules.
+pub const HPKE_AEAD_NAME: &str = "xchacha20_poly1305";
+pub const HPKE_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
 
 /// `info` transcript bound into the HPKE context (key-management.md §7.5.2):
 /// canonical_json of the envelope identity tuple. Both sealer and opener
@@ -294,6 +298,7 @@ pub fn build_recovery_public_key_backup_body(
         "encryption": {
             "recipient_method": "recovery_public_key",
             "recipient_key_ref": recovery_key_ref,
+            "hpke_suite": crate::hpke_backup::HPKE_SUITE,
             "aead": {
                 "name": HPKE_AEAD_NAME,
                 "aead_profile": HPKE_AEAD_PROFILE,

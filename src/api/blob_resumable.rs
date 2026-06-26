@@ -176,9 +176,24 @@ impl CokretApi {
                 Err(_) => None,
             };
             match committed {
-                Some(new_offset) => {
+                // A successful chunk MUST advance the committed offset. A
+                // server returning `204 + Upload-Offset: <= offset` (e.g. a
+                // constant `0`) would otherwise reset the retry budget and
+                // make the loop re-send the same chunk forever (livelock /
+                // traffic amplification). Treat non-advancing offsets as a
+                // protocol violation and charge them against the retry budget.
+                Some(new_offset) if new_offset > offset => {
                     offset = new_offset;
                     retries = 0;
+                }
+                Some(_) => {
+                    retries += 1;
+                    if retries > MAX_CHUNK_RETRIES {
+                        anyhow::bail!(
+                            "resumable upload offset did not advance (server returned non-monotonic Upload-Offset)"
+                        );
+                    }
+                    offset = self.resumable_committed_offset(&upload_url).await?;
                 }
                 None => {
                     // Offset desync or transport drop — resync via HEAD,

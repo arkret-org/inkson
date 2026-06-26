@@ -20,20 +20,9 @@ fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
 }
 
 pub(super) fn kanban_sha256_hash_from_ref(value: &str) -> Option<String> {
-    if let Some(hex) = value.strip_prefix("sha256:")
-        && hex.len() == 64
-        && hex
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
-    {
-        return Some(value.to_owned());
-    }
-    for prefix in ["ck:seal:", "ck:state:"] {
-        if let Some(rest) = value.strip_prefix(prefix) {
-            return kanban_sha256_hash_from_ref(rest);
-        }
-    }
-    None
+    // Identical seal/state-ref normalisation as the secure-send path; delegate
+    // to the single implementation instead of forking the digest grammar.
+    crate::views::secure_send::mls_sha256_hash_from_ref(value)
 }
 
 pub(super) fn kanban_object_ref_from_seal_ref(value: &str) -> Option<String> {

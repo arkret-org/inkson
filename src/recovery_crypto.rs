@@ -80,7 +80,6 @@ pub const VAULT_NONCE_SALT_LEN: usize = 16;
 pub const VAULT_AEAD_NAME: &str = "xchacha20_poly1305";
 pub const VAULT_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
 
-const HKDF_COMMITMENT_INFO: &[u8] = b"cokret-key-backup-commitment-v1";
 const HKDF_NONCE_INFO: &[u8] = b"cokret-key-backup-aead-nonce-v1";
 const HKDF_PASSKEY_WRAP_INFO: &[u8] = b"cokret-recovery-passkey-wrap-v1";
 
@@ -201,11 +200,14 @@ fn vault_aead_key(
     hkdf_subkey(root, info.as_bytes())
 }
 
-/// `key_commitment = SHA256(HKDF(root, "cokret-key-backup-commitment-v1"))`
-/// (key-management.md §7.5). Lets a recovering client reject a wrong passphrase
-/// before touching the ciphertext.
-pub fn vault_key_commitment(root: &VaultKek) -> Result<String> {
-    let commitment_key = hkdf_subkey(&root.key, HKDF_COMMITMENT_INFO)?;
+/// `key_commitment = SHA256(HKDF(root, "cokret-key-backup/<backup_class>/commitment/v1"))`
+/// (key-management.md §7.1 MUST + §7.2 recommended construction). The HKDF info
+/// is domain-isolated by `backup_class` so the commitment — like every other
+/// per-class KDF context — is never reused across `backup_class` domains. Lets a
+/// recovering client reject a wrong passphrase before touching the ciphertext.
+pub fn vault_key_commitment(root: &VaultKek, backup_class: &str) -> Result<String> {
+    let info = format!("cokret-key-backup/{backup_class}/commitment/v1");
+    let commitment_key = hkdf_subkey(&root.key, info.as_bytes())?;
     Ok(format!(
         "sha256:{}",
         hex_lower(&Sha256::digest(*commitment_key))
@@ -274,7 +276,7 @@ pub fn seal_vault(
         salt_b64: B64.encode(root.salt),
         nonce_b64: B64.encode(nonce),
         nonce_salt_b64,
-        key_commitment: vault_key_commitment(root)?,
+        key_commitment: vault_key_commitment(root, ctx.backup_class)?,
     })
 }
 
@@ -301,7 +303,7 @@ pub fn open_vault(
     let root = derive_vault_kek_with_salt(passphrase, &salt)?;
 
     // Wrong-passphrase fail-fast via key_commitment before any AEAD work.
-    if !key_commitment.is_empty() && vault_key_commitment(&root)? != key_commitment {
+    if !key_commitment.is_empty() && vault_key_commitment(&root, ctx.backup_class)? != key_commitment {
         return Err(anyhow!(
             "vault decrypt failed: key_commitment mismatch (wrong passphrase)"
         ));
@@ -774,12 +776,17 @@ mod tests {
         let b = derive_vault_kek_with_salt(b"pp", &[1u8; VAULT_SALT_LEN]).unwrap();
         let c = derive_vault_kek_with_salt(b"other", &[1u8; VAULT_SALT_LEN]).unwrap();
         assert_eq!(
-            vault_key_commitment(&a).unwrap(),
-            vault_key_commitment(&b).unwrap()
+            vault_key_commitment(&a, "secret_storage").unwrap(),
+            vault_key_commitment(&b, "secret_storage").unwrap()
         );
         assert_ne!(
-            vault_key_commitment(&a).unwrap(),
-            vault_key_commitment(&c).unwrap()
+            vault_key_commitment(&a, "secret_storage").unwrap(),
+            vault_key_commitment(&c, "secret_storage").unwrap()
+        );
+        // Domain isolation: same root, different backup_class → different commitment.
+        assert_ne!(
+            vault_key_commitment(&a, "secret_storage").unwrap(),
+            vault_key_commitment(&a, "mls_history").unwrap()
         );
     }
 

@@ -288,26 +288,50 @@ impl CokretApi {
 
                 let mut decryptor = StreamDecryptor::new(envelope, content_key)
                     .map_err(|err| anyhow::anyhow!("stream attachment decrypt: {err}"))?;
+                // All three length fields (`size_bytes`, `segment_size`,
+                // `segment_count`) come from the server-supplied envelope and
+                // are not cross-checked by `StreamDecryptor::new`. Validate the
+                // declared geometry up front with checked arithmetic so a
+                // malformed envelope returns an error instead of wrapping (in
+                // release the overflow-checks are off) and panicking on the
+                // wasm32 `usize` slice below.
+                let last_index = (segment_count - 1) as u64;
+                // Bytes covered by all-but-last full segments must not exceed
+                // the declared total plaintext size; the last segment carries
+                // the (>=0) remainder.
+                let leading_bytes = (segment_size as u64)
+                    .checked_mul(last_index)
+                    .ok_or_else(|| anyhow::anyhow!("stream envelope segment geometry overflow"))?;
+                if leading_bytes > envelope.size_bytes {
+                    return Err(anyhow::anyhow!(
+                        "stream envelope segment_size * (segment_count - 1) exceeds size_bytes"
+                    ));
+                }
+                let last_pt_len = (envelope.size_bytes - leading_bytes) as usize;
                 let mut plaintext = Vec::with_capacity(envelope.size_bytes as usize);
                 let mut offset = 0usize;
                 for index in 0..segment_count {
                     // Per §3.3.1: every segment but the last carries exactly
                     // `segment_size` plaintext bytes; the last carries the
                     // remainder. Each ciphertext segment adds a 16-byte tag.
-                    let last_index = segment_count - 1;
-                    let pt_len = if index < last_index {
+                    let pt_len = if (index as u64) < last_index {
                         segment_size
                     } else {
-                        (envelope.size_bytes - (segment_size as u64) * (last_index as u64)) as usize
+                        last_pt_len
                     };
-                    let seg_len = pt_len + TAG_LEN;
-                    if offset + seg_len > ciphertext.len() {
+                    let seg_len = pt_len
+                        .checked_add(TAG_LEN)
+                        .ok_or_else(|| anyhow::anyhow!("stream segment length overflow"))?;
+                    let seg_end = offset
+                        .checked_add(seg_len)
+                        .ok_or_else(|| anyhow::anyhow!("stream ciphertext offset overflow"))?;
+                    if seg_end > ciphertext.len() {
                         return Err(anyhow::anyhow!(
                             "stream ciphertext shorter than declared segments"
                         ));
                     }
-                    let segment = &ciphertext[offset..offset + seg_len];
-                    offset += seg_len;
+                    let segment = &ciphertext[offset..seg_end];
+                    offset = seg_end;
                     let seg_plaintext = decryptor
                         .push_segment(index, segment)
                         .map_err(|err| anyhow::anyhow!("stream segment decrypt: {err}"))?;

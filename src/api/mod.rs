@@ -306,12 +306,7 @@ pub use views::*;
 /// maximum (api-conventions.md §3.2) while tolerating modest clock skew.
 const POP_SIGNATURE_WINDOW_SECONDS: i64 = 120;
 
-/// RFC 7638 JWK thumbprint of an Ed25519 verifying key (the `keyid` soland
-/// accepts for the PoP binding check).
-fn session_key_thumbprint(verifying_key: &ed25519_dalek::VerifyingKey) -> String {
-    use base64::Engine as _;
-    use sha2::{Digest, Sha256};
-    let x = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key.to_bytes());
-    let canonical = format!("{{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"{x}\"}}");
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(canonical.as_bytes()))
-}
+// The RFC 7638 Ed25519 JWK thumbprint (the `keyid` soland accepts for the PoP
+// binding check) has a single canonical implementation in
+// `crate::dpop::jwk_thumbprint_ed25519`; callers use it directly so the PoP
+// `jkt` and the DPoP `jkt` can never diverge.

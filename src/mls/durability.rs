@@ -98,8 +98,8 @@ pub fn seal_history_secrets(
 }
 
 /// HKDF `info` deriving the offline RRK X25519 private key from the 24-word
-/// recovery credential. Distinct from the `did_recovery` HPKE info
-/// (`crate::hpke_backup::RECOVERY_KEY_HPKE_INFO`) so the RRK domain is isolated
+/// recovery credential. Distinct from the `did_recovery` HPKE key-schedule info
+/// in `crate::hpke_backup` so the RRK domain is isolated
 /// (identity-did.md §8.3 / realm-and-space.md §2.3.1: the same key MUST NOT serve
 /// both `did_recovery` and `CokretRealmHistoryRecoveryKey`).
 const RRK_DERIVE_INFO: &[u8] = b"cokret-realm-history-recovery-key-x25519-v1";

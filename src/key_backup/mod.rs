@@ -130,19 +130,14 @@ pub(crate) fn is_base64url_token(value: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
+/// Protocol digest check: delegates to the single canonical validator
+/// `cokret_sdk::Hash::new`, which accepts only the registered `sha256:` /
+/// `blake3:` forms with lowercase-hex digests (digest-suite-registry). The
+/// previous hand-rolled version additionally accepted `sha3_256:` / `sha512:`
+/// and uppercase hex — both rejected by the protocol — so it has been removed
+/// to avoid forking the digest grammar.
 pub(crate) fn is_sha_digest(value: &str) -> bool {
-    value
-        .strip_prefix("sha256:")
-        .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|ch| ch.is_ascii_hexdigit()))
-        || value
-            .strip_prefix("sha3_256:")
-            .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|ch| ch.is_ascii_hexdigit()))
-        || value
-            .strip_prefix("blake3:")
-            .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|ch| ch.is_ascii_hexdigit()))
-        || value
-            .strip_prefix("sha512:")
-            .is_some_and(|hex| hex.len() == 128 && hex.chars().all(|ch| ch.is_ascii_hexdigit()))
+    cokret_sdk::Hash::new(value).is_ok()
 }
 
 #[cfg(test)]

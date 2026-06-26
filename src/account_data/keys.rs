@@ -196,18 +196,14 @@ pub fn build_private_account_data_tombstone(
 }
 
 fn validate_sha256_digest(value: &str) -> anyhow::Result<()> {
-    let Some(hex) = value.strip_prefix("sha256:") else {
+    // State digests are pinned to sha256 here, so require that prefix, then
+    // delegate the hex/casing grammar to the single canonical validator
+    // `cokret_sdk::Hash::new` instead of re-deriving the rule locally.
+    if value.strip_prefix("sha256:").is_none() {
         anyhow::bail!("expected_state_digest must use sha256:<hex>");
-    };
-    if hex.len() != 64 || !hex.as_bytes().iter().all(u8::is_ascii_hexdigit) {
-        anyhow::bail!("expected_state_digest must be a sha256 digest");
     }
-    if !hex
-        .as_bytes()
-        .iter()
-        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-    {
-        anyhow::bail!("expected_state_digest hex must be lowercase");
+    if cokret_sdk::Hash::new(value).is_err() {
+        anyhow::bail!("expected_state_digest must be a lowercase sha256 digest");
     }
     Ok(())
 }

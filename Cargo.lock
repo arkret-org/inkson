@@ -1103,6 +1103,7 @@ name = "cokret-keystore"
 version = "0.3.0"
 dependencies = [
  "cokret-core",
+ "tracing",
 ]
 
 [[package]]
@@ -9201,9 +9202,6 @@ dependencies = [
  "gloo-timers 0.4.0",
  "hkdf 0.13.0",
  "hmac 0.13.0",
- "hpke-rs",
- "hpke-rs-crypto",
- "hpke-rs-rust-crypto",
  "image",
  "js-sys",
  "jsonschema",

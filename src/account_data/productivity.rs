@@ -91,12 +91,11 @@ pub fn validate_draft_slot(kind: cokret_sdk::DraftKind, draft_slot: &str) -> any
             let Some(hex) = draft_slot.strip_prefix(DRAFT_STRAND_FIELD_SLOT_PREFIX) else {
                 anyhow::bail!("strand_field draft_slot must start with field_");
             };
-            if hex.len() != 64
-                || !hex
-                    .as_bytes()
-                    .iter()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-            {
+            // The slot carries a bare 64-char lowercase sha256 hex; validate the
+            // hex/casing grammar via the canonical `cokret_sdk::Hash::new` by
+            // re-attaching the `sha256:` prefix it expects, rather than
+            // re-deriving the rule inline.
+            if cokret_sdk::Hash::new(format!("sha256:{hex}")).is_err() {
                 anyhow::bail!("strand_field draft_slot must carry a lowercase sha256 hex digest");
             }
         }

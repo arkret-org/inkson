@@ -667,25 +667,21 @@ async fn finish_oidc_callback(
 /// path expects. The grant is device-bound (`cnf.jkt`), so its signing key for
 /// the introspection proof is the device DPoP key, persisted here as
 /// `session_private_key_pem`. `grant_id` / `session_public_key` / `audience`
-/// ride in the outcome's `scope_details` object.
+/// are top-level outcome fields (mirroring `SessionGrantRefreshOutcome`);
+/// `scope_details` is the agent-only overlay and MUST be absent for human grants.
 fn session_grant_info_from_outcome(
     outcome: &cokret_sdk::SessionGrantOutcome,
     dpop_handle: &crate::auth_dpop::DpopHandle,
 ) -> Result<CoauthSessionGrantInfo, String> {
-    let details = &outcome.scope_details;
-    let grant_id = details
-        .get("grant_id")
-        .and_then(|value| value.as_str())
-        .map(ToOwned::to_owned);
-    let session_public_key = details
-        .get("session_public_key")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default()
-        .to_owned();
-    let audience = details
-        .get("audience")
-        .and_then(|value| value.as_str())
-        .map(ToOwned::to_owned);
+    let grant_id = outcome
+        .grant_id
+        .as_ref()
+        .map(|value| value.as_str().to_owned());
+    let session_public_key = outcome
+        .session_public_key
+        .clone()
+        .unwrap_or_default();
+    let audience = outcome.audience.clone();
     let session_private_key_pem = dpop_handle
         .session_signing_key_pkcs8_pem()
         .map_err(|error| format!("export device session key: {error}"))?;

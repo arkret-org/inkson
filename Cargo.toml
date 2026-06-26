@@ -76,9 +76,13 @@ mobile-ios = []
 # encryption-and-audit.md §2.9: the v2 reaction routing tag HMACs over the
 # NFC-normalised canonical emoji bytes, so the chosen-emoji privacy property
 # holds regardless of the sender's input normalisation form.
-# key-management.md §7.5.2: `recipient_method=recovery_public_key` backups are
-# HPKE base-mode (DHKEM(X25519,HKDF-SHA256) + HKDF-SHA256 + ChaCha20Poly1305).
-# hpke-rs (RustCrypto backend) is the audited RFC 9180 impl and builds on wasm.
+# key-management.md §7.5.2: `recipient_method=recovery_public_key` backups pin
+# the v1 default-MUST application-layer HPKE suite
+# `ck.hpke_x25519_aead_xchacha20poly1305.v1` (DHKEM(X25519,HKDF-SHA256) +
+# HKDF-SHA256 + XChaCha20-Poly1305). The XChaCha AEAD is outside RFC 9180's
+# base registry, so `hpke_backup.rs` hand-rolls DHKEM + HKDF + XChaCha20 over
+# x25519-dalek / chacha20poly1305 / hkdf (same stack as the SDK recovery seal)
+# rather than the `hpke-rs` RFC 9180 single-shot API.
 # Phase A.6 #1: zero plaintext-secret bytes on drop / overwrite for the
 # in-memory secure key store. The crate is already in the dependency graph
 # transitively (via ed25519-dalek / chacha20poly1305 / openmls); making it
@@ -109,9 +113,6 @@ getrandom = {workspace = true,features = ["wasm_js"]}
 getrandom_02 = {workspace = true,features = ["js"]}
 hkdf = {workspace = true}
 hmac = {workspace = true}
-hpke-rs = {workspace = true}
-hpke-rs-crypto = {workspace = true}
-hpke-rs-rust-crypto = {workspace = true}
 image = {workspace = true,default-features = false,features = ["gif", "jpeg", "png", "webp"]}
 pulldown-cmark = {workspace = true,default-features = false,features = ["html"]}
 qrcode = {workspace = true,default-features = false,features = ["svg"]}
