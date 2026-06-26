@@ -41,13 +41,12 @@ export function mockCokretContract(req) {
     // Canonical EventsSubmitOutcome wire shape (soland head 37ce729):
     // {status, accepted[], cursor} — no top-level event_id/sync_token.
     const acceptedId = body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e";
+    // soland's EventsSubmitOutcome skips empty/null fields (duplicate, rejected,
+    // actor_frontier, realm_frontier) via serde skip_serializing_if, so a clean
+    // accept serializes to exactly {status, accepted, cursor}. Match that shape.
     return json({
       status: "accepted",
       accepted: [acceptedId],
-      duplicate: [],
-      rejected: [],
-      actor_frontier: {},
-      realm_frontier: {},
       cursor: "sx:e2e:event",
     });
   }
