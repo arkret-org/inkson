@@ -91,13 +91,13 @@ mod personal_agent_tests {
     fn requested_scope_widens_to_realm_when_any_write_preset_selected() {
         assert_eq!(requested_scope_for_presets(&[]), None);
         assert_eq!(
-            requested_scope_for_presets(&[AgentPermissionPreset::ReadOnly]),
+            requested_scope_for_presets(&[AgentGrantPreset::ReadOnly]),
             Some(AgentKeyScope::Limited)
         );
         assert_eq!(
             requested_scope_for_presets(&[
-                AgentPermissionPreset::ReadOnly,
-                AgentPermissionPreset::ReplyAsAgent,
+                AgentGrantPreset::ReadOnly,
+                AgentGrantPreset::ReplyAsAgent,
             ]),
             Some(AgentKeyScope::Realm)
         );
@@ -106,7 +106,7 @@ mod personal_agent_tests {
     #[test]
     fn expand_preset_grant_emits_registered_actions_and_inactive_flag() {
         let grant = expand_preset_grant(
-            AgentPermissionPreset::ReplyAsAgent,
+            AgentGrantPreset::ReplyAsAgent,
             "did:web:agents.example:summary",
             Some("ck:realm:01"),
             "2026-06-26T00:00:00Z",
@@ -127,7 +127,7 @@ mod personal_agent_tests {
     #[test]
     fn expand_preset_grant_act_on_behalf_carries_controller_approval() {
         let grant = expand_preset_grant(
-            AgentPermissionPreset::ActOnBehalf,
+            AgentGrantPreset::ActOnBehalf,
             "did:web:agents.example:summary",
             None,
             "2026-06-26T00:00:00Z",

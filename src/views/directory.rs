@@ -180,7 +180,7 @@ pub fn DirectoryPanel(
                     div { class: "metric",
                         strong { "Discoverability" }
                         span {
-                            crate::components::PermissionPill {
+                            crate::components::VisibilityPill {
                                 prefix: "disc".to_owned(),
                                 value: "listed".to_owned(),
                                 kind: "discoverability".to_owned(),
@@ -191,7 +191,7 @@ pub fn DirectoryPanel(
                     div { class: "metric",
                         strong { "Join Rule" }
                         span {
-                            crate::components::PermissionPill {
+                            crate::components::VisibilityPill {
                                 prefix: "join".to_owned(),
                                 value: "invite_only".to_owned(),
                                 kind: "join_rule".to_owned(),
@@ -202,7 +202,7 @@ pub fn DirectoryPanel(
                     div { class: "metric",
                         strong { "History Visibility" }
                         span {
-                            crate::components::PermissionPill {
+                            crate::components::VisibilityPill {
                                 prefix: "hist".to_owned(),
                                 value: "shared_history".to_owned(),
                                 kind: "history".to_owned(),
@@ -212,13 +212,13 @@ pub fn DirectoryPanel(
                     }
                 }
                 div { class: "actions", "data-testid": "permission-pill-examples",
-                    crate::components::PermissionPillRow {
+                    crate::components::VisibilityPillRow {
                         discoverability: Some("public".to_owned()),
                         join_rule: Some("knock".to_owned()),
                         history_visibility: Some("world_readable".to_owned()),
                     }
                     span { class: "muted", "·" }
-                    crate::components::PermissionPillRow {
+                    crate::components::VisibilityPillRow {
                         discoverability: Some("invite_only".to_owned()),
                         join_rule: Some("restricted".to_owned()),
                         history_visibility: Some("invited".to_owned()),

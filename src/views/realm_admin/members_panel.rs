@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
-use super::permissions::{RealmMemberPermissions, authz_json_allowed};
+use super::capabilities::{RealmMemberCapabilities, authz_json_allowed};
 use crate::components::SelfAttributionBadge;
 use crate::local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
 use crate::operation::ck_ops;
@@ -2469,7 +2469,7 @@ pub fn RealmMembersPanel(
     let mut new_agent_slug = use_signal(|| "summary".to_owned());
     let mut new_agent_pairing = use_signal(|| Option::<AgentProvisionSummary>::None);
     let block_confirm_did = use_signal(|| Option::<String>::None);
-    let mut permissions = use_signal(RealmMemberPermissions::default);
+    let mut permissions = use_signal(RealmMemberCapabilities::default);
     let mut member_roster_section = use_signal(|| MemberRosterSection::Members);
     // Invite is now a modal launched from the list header "+" button.
     let mut invite_modal_open = use_signal(|| false);
@@ -2573,13 +2573,13 @@ pub fn RealmMembersPanel(
         use_effect(move || {
             let api_token = token();
             if api_token.trim().is_empty() || actor.trim().is_empty() || realm.trim().is_empty() {
-                permissions.set(RealmMemberPermissions {
+                permissions.set(RealmMemberCapabilities {
                     loaded: true,
-                    ..RealmMemberPermissions::default()
+                    ..RealmMemberCapabilities::default()
                 });
                 return;
             }
-            permissions.set(RealmMemberPermissions::default());
+            permissions.set(RealmMemberCapabilities::default());
             let base = base.clone();
             let actor = actor.clone();
             let realm = realm.clone();
@@ -2613,7 +2613,7 @@ pub fn RealmMembersPanel(
                                     .to_owned(),
                             );
                         }
-                        permissions.set(RealmMemberPermissions {
+                        permissions.set(RealmMemberCapabilities {
                             loaded: true,
                             can_invite,
                             can_cancel_invite,
@@ -2621,9 +2621,9 @@ pub fn RealmMembersPanel(
                         });
                     }
                     Err(error) => {
-                        permissions.set(RealmMemberPermissions {
+                        permissions.set(RealmMemberCapabilities {
                             loaded: true,
-                            ..RealmMemberPermissions::default()
+                            ..RealmMemberCapabilities::default()
                         });
                         status_msg.set(format!("member action permission check failed: {error}"));
                     }

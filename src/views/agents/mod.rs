@@ -48,7 +48,7 @@ pub use components::{
     SidecarThreadGuard,
 };
 pub use model::{
-    ActionApproveDialogState, ActionRequestNonceStatus, AgentPermissionPreset,
+    ActionApproveDialogState, ActionRequestNonceStatus, AgentGrantPreset,
     AuditChainVerifyOutcome, HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState,
     actor_kind_badge_class, actor_kind_label, agent_pair_url, agent_state_badge_class,
     agent_state_is_terminal, agent_state_label, agents_enabled,

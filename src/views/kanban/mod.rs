@@ -2305,20 +2305,16 @@ pub fn KanbanPanel(
                                         Button {
                                             variant: ButtonVariant::Secondary,
                                             "data-testid": "replay-board-queue",
-                                            onclick: {
-                                                // Replay path resubmits a queued Move via
-                                                // api.submit_move.
-                                                let base = base_url.clone();
-                                                move |_| {
-                                                    replay_first_move(
-                                                        base.clone(),
-                                                        token,
-                                                        write_records,
-                                                        board_status,
-                                                    );
-                                                }
+                                            onclick: move |_| {
+                                                // Automatic replay is not wired yet
+                                                // (YOU-07-002): this quarantines the
+                                                // first failed write for manual review.
+                                                quarantine_first_failed_write(
+                                                    write_records,
+                                                    board_status,
+                                                );
                                             },
-                                            "Replay Queue"
+                                            "Quarantine for Review"
                                         }
                                         span { class: "muted", "{manual_conflict_review_count} review / {write_record_count} total" }
                                     }

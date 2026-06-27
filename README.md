@@ -12,8 +12,9 @@ After cloning, enable the project's pre-commit hooks:
 git config core.hooksPath .githooks
 ```
 
-The hook runs `cargo fmt --all -- --check` and `cargo clippy --no-deps -- -D
-warnings` on staged Rust changes. If `.githooks/pre-commit` is missing on
+The hook runs `cargo fmt --all -- --check` and `cargo clippy --all-targets
+--no-deps -- -D warnings` on staged Rust changes (matching CI's
+`--all-targets` clippy scope). If `.githooks/pre-commit` is missing on
 a branch, copy it from
 [`cokret-rust-sdk`](https://github.com/cokret/cokret-rust-sdk) and
 adapt to your local toolchain.
@@ -28,7 +29,7 @@ Current Realm / Space vocabulary:
   inside a Realm. Surfaced in the UI as **Space** (zh: 空间).
 
 The friendly UI strings live under the `friendly.realm.*` / `friendly.space.*`
-i18n keys in `src/i18n.rs`; protocol-level identifiers stay reachable via
+i18n keys in `src/i18n/` (`en.rs` / `zh.rs`); protocol-level identifiers stay reachable via
 **Show technical details** on every actor / object surface.
 
 ## Round R4 (protocol review closures)

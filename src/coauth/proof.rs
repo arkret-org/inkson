@@ -2,7 +2,6 @@ use anyhow::Context;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// Session-grant introspection proof claims. Mirrors
 /// coauth's `SessionGrantIntrospectionProofClaims` (see
@@ -122,10 +121,7 @@ pub(crate) fn oidc_request_canonical_digest(
     state: &str,
 ) -> anyhow::Result<cokret_sdk::Hash> {
     let canonical = format!("oidc_code_exchange|{issuer}|{client_id}|{authorization_code}|{state}");
-    let digest = format!(
-        "sha256:{}",
-        crate::canonical::hex_encode(&Sha256::digest(canonical.as_bytes()))
-    );
+    let digest = cokret_sdk::canonical::sha256_digest(canonical.as_bytes());
     cokret_sdk::Hash::new(digest)
         .map_err(|error| anyhow::anyhow!("invalid oidc request digest: {error}"))
 }
@@ -134,10 +130,7 @@ pub(crate) fn oidc_request_canonical_digest(
 /// (`"sha256:" + hex(sha256(grant_jwt))`). Public so callers can verify
 /// their proof binding before sending.
 pub fn session_grant_jwt_hash(grant_jwt: &str) -> String {
-    format!(
-        "sha256:{}",
-        crate::canonical::hex_encode(&Sha256::digest(grant_jwt.as_bytes()))
-    )
+    cokret_sdk::canonical::sha256_digest(grant_jwt.as_bytes())
 }
 
 /// Internal helper: serialize claims to canonical JSON, base64url-encode

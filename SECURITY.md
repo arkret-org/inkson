@@ -4,7 +4,7 @@
 
 | Version | Status |
 | --- | --- |
-| Unreleased local 0.9.x | Supported for local release-readiness testing |
+| Unreleased local 0.3.x | Supported for local release-readiness testing |
 | Older local builds | Best-effort only |
 
 ## Reporting
@@ -26,11 +26,18 @@ Include:
 
 Use the lowest-bandwidth channel that still lets you attach repro steps.
 
-- **Email**: `<security@>` (PGP-encrypted preferred).
-- **PGP fingerprint**: `<TODO(P5-impl) FINGERPRINT — replace once a real key is generated>`
-- **GitHub Private Vulnerability Reporting**: available on the canonical
-  yougen repository once the project metadata is finalized. Until then,
-  prefer the email channel above.
+> **Pre-release notice:** yougen has not been publicly released, so the
+> dedicated security email and PGP key below are **not yet provisioned**.
+> Until they are, report privately through GitHub Private Vulnerability
+> Reporting on the canonical repository, or via direct maintainer contact.
+> This file is updated with a real address + PGP fingerprint as part of the
+> public-release checklist.
+
+- **Email**: not yet provisioned (a dedicated `security@` address with a
+  published PGP key ships with the first public release).
+- **PGP fingerprint**: not yet generated (see the pre-release notice above).
+- **GitHub Private Vulnerability Reporting**: preferred channel until the
+  email/PGP channel is provisioned.
 
 Reports are acknowledged within 3 business days. If you do not receive an
 acknowledgement, your message did not arrive — please retry through a

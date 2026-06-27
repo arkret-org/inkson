@@ -1384,13 +1384,17 @@ pub(super) fn locate_strand_position_in_projection(
     StrandPositionExpectation::Initial
 }
 
-/// Marks the first queued / soft-failed write as Quarantined. Event
-/// submit is the only write surface now, and a failed event needs the UI
-/// to reconstruct the equivalent envelope (TODO: wire that through
-/// ck_ops::strand_position_*) rather than replay stale bytes.
-pub(super) fn replay_first_move(
-    _base_url: String,
-    _token: Signal<String>,
+/// Quarantines the first queued / soft-failed / conflicted board write for
+/// manual review.
+///
+/// This is NOT a replay yet: event submit is the only write surface now, and
+/// a failed write needs the UI to reconstruct the equivalent
+/// `ck.strand.update` / `ck.component.strand.position.v1` envelope via
+/// `ck_ops::strand_position_*` rather than replay stale bytes. That
+/// reconstruction is tracked by **YOU-07-002 (kanban write replay)**; until it
+/// lands, the matching toolbar control is labelled "Quarantine for Review"
+/// (not "Replay") so the UI never promises a replay it can't perform.
+pub(super) fn quarantine_first_failed_write(
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
@@ -1399,17 +1403,16 @@ pub(super) fn replay_first_move(
             || record.state == CardState::SoftFailed
             || record.state == CardState::Conflict
     }) else {
-        board_status.set("no queued write to replay".to_owned());
+        board_status.set("no queued write to quarantine".to_owned());
         return;
     };
     if let Some(record) = write_records.write().get_mut(idx) {
         record.state = CardState::Quarantined;
         record.note =
-            "replay via ck.self.events.command.submit not yet wired; quarantining for manual review"
-                .to_owned();
+            "automatic replay not wired (YOU-07-002); quarantined for manual review".to_owned();
     }
     board_status.set(
-        "replay not available — write quarantined (TODO: rebuild ck.strand.update envelope)"
+        "write quarantined for manual review — automatic replay not yet available (YOU-07-002)"
             .to_owned(),
     );
 }

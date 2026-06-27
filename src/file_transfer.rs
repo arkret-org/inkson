@@ -15,7 +15,7 @@ pub use cokret_sdk::{
 };
 use hkdf::Hkdf;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::api::CokretApi;
 use crate::models::AccountDataSetResult;
@@ -737,13 +737,10 @@ fn file_transfer_device_key_txn_id(
     recipient_actor_id: &str,
     recipient_device_id: &str,
 ) -> String {
-    let digest = Sha256::digest(format!(
-        "{transfer_id}\n{recipient_actor_id}\n{recipient_device_id}"
-    ));
-    format!(
-        "file-transfer-key-{transfer_id}-{}",
-        &crate::canonical::hex_encode(&digest)[..16]
-    )
+    let digest_hex = cokret_sdk::canonical::sha256_hex(
+        format!("{transfer_id}\n{recipient_actor_id}\n{recipient_device_id}").as_bytes(),
+    );
+    format!("file-transfer-key-{transfer_id}-{}", &digest_hex[..16])
 }
 
 fn file_transfer_item_from_account_data(
@@ -982,10 +979,7 @@ fn random_base64url(bytes_len: usize) -> anyhow::Result<String> {
 }
 
 fn sha256_digest(bytes: &[u8]) -> String {
-    format!(
-        "sha256:{}",
-        crate::canonical::hex_encode(&Sha256::digest(bytes))
-    )
+    cokret_sdk::canonical::sha256_digest(bytes)
 }
 
 fn decode_fixed<const N: usize>(value: &str) -> anyhow::Result<[u8; N]> {

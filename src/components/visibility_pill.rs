@@ -1,4 +1,6 @@
-//! Permission pills — three independent dimensions per `discovery/discovery-directory.md`:
+//! Visibility pills — three independent dimensions per `discovery/discovery-directory.md`.
+//! These are Realm visibility/policy dimensions (NOT authorization /
+//! capability "permissions"); the spec keeps them strictly independent:
 //!
 //! - **Discoverability** decides whether a Space / Org / Actor / Applet can be found.
 //! - **Join Rule** decides how a subject can join.
@@ -134,7 +136,7 @@ fn history_visibility_from_str_loose(value: &str) -> HistoryVisibility {
 /// Single-dimension pill. `prefix` is required so readers can tell which of
 /// the three dimensions this pill represents.
 #[component]
-pub fn PermissionPill(prefix: String, value: String, kind: String) -> Element {
+pub fn VisibilityPill(prefix: String, value: String, kind: String) -> Element {
     let class = match kind.as_str() {
         "discoverability" => discoverability_from_str_loose(&value).class_name(),
         "join_rule" => join_rule_from_str_loose(&value).class_name(),
@@ -155,7 +157,7 @@ pub fn PermissionPill(prefix: String, value: String, kind: String) -> Element {
 /// Compact component that surfaces all three dimensions at once. Unset
 /// dimensions render as `—`.
 #[component]
-pub fn PermissionPillRow(
+pub fn VisibilityPillRow(
     discoverability: Option<String>,
     join_rule: Option<String>,
     history_visibility: Option<String>,
@@ -165,9 +167,9 @@ pub fn PermissionPillRow(
     let hist = history_visibility.unwrap_or_else(|| "—".to_owned());
     rsx! {
         div { class: "actions", "data-testid": "permission-pill-row",
-            PermissionPill { prefix: "disc".to_owned(), value: disc, kind: "discoverability".to_owned() }
-            PermissionPill { prefix: "join".to_owned(), value: join, kind: "join_rule".to_owned() }
-            PermissionPill { prefix: "hist".to_owned(), value: hist, kind: "history".to_owned() }
+            VisibilityPill { prefix: "disc".to_owned(), value: disc, kind: "discoverability".to_owned() }
+            VisibilityPill { prefix: "join".to_owned(), value: join, kind: "join_rule".to_owned() }
+            VisibilityPill { prefix: "hist".to_owned(), value: hist, kind: "history".to_owned() }
         }
     }
 }

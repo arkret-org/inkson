@@ -29,34 +29,34 @@ fn demo_crypto_fallbacks_are_compiled_out() {
 
 // ── Production-path wire guards ─────────────────────────────────
 //
-// `upload_keys` / `publish_mls_key_package` now produce real
-// event-signer `device_signature`s and fail-closed when no signer is
-// installed (asserted just above). `send_to_device` remains the
-// demo-only opaque-ciphertext entry point and still pins the contract
-// that no dev placeholder reaches the wire when the binary is
-// compiled without the `demo-crypto` feature. The prod path
-// `anyhow::bail!`s synchronously inside the async fn, so it's
-// safe to call without spinning up a network mock — no HTTP byte
-// is sent.
+// `publish_mls_key_package` produces a real event-signer
+// `device_signature` and fails-closed when no signer is installed
+// (asserted just below). `upload_keys` / `send_to_device` are the
+// demo-only placeholder entry points (placeholder one-time key
+// material / opaque ciphertext) and pin the contract that no dev
+// placeholder reaches the wire when the binary is compiled without
+// the `demo-crypto` feature. Their prod path `anyhow::bail!`s
+// synchronously inside the async fn, so it's safe to call without
+// spinning up a network mock — no HTTP byte is sent.
 //
 // CI gate: see `.github/workflows/ci.yml` (`cargo check
 // --workspace --no-default-features`) which compiles this module
 // with `not(feature = "demo-crypto")` enabled.
 
 #[tokio::test]
-async fn upload_keys_fails_closed_without_active_signer() {
-    // Device-identity Phase 2: `upload_keys` now produces a REAL
-    // `device_signature` via the active event-signer. With no signer
-    // installed it MUST fail-closed (never emit a placeholder).
+async fn upload_keys_fails_closed_without_demo_crypto() {
+    // `upload_keys` ships placeholder one-time key material, so the
+    // non-`demo-crypto` build MUST fail-closed before any wire byte
+    // leaves the device (never emit a placeholder prekey).
     let api = CokretApi::new("http://127.0.0.1:8787").unwrap();
     let err = api
         .upload_keys("ck:device:test-prod-guard")
         .await
-        .expect_err("MUST refuse to upload without an active event-signer");
+        .expect_err("MUST refuse to upload placeholder prekeys without demo-crypto");
     let msg = format!("{err}");
     assert!(
-        msg.contains("device_signature") && msg.contains("event-signer"),
-        "error must name the missing signer, got: {msg}"
+        msg.contains("demo-crypto") && msg.contains("placeholder"),
+        "error must name the demo-crypto gate, got: {msg}"
     );
 }
 

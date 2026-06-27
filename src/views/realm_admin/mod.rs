@@ -8,13 +8,12 @@
 //! visibility are preserved via the re-exports below.
 
 mod admin_panel;
-mod device_revoke;
 mod durability;
 mod durability_recovery;
+mod capabilities;
 mod members_panel;
 mod metadata;
 mod organization;
-mod permissions;
 mod policy;
 mod section;
 

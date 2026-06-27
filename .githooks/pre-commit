@@ -9,4 +9,6 @@ if [ -z "$rust_touched" ]; then
 fi
 
 cargo fmt --all -- --check
-cargo clippy --no-deps -- -D warnings
+# Match CI (`.github/workflows/ci.yml`) which lints `--all-targets` so
+# test/example/bench code is covered too — avoids "local green, CI red".
+cargo clippy --all-targets --no-deps -- -D warnings

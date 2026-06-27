@@ -280,10 +280,7 @@ mod tests {
         assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
         assert_eq!(
             asset.ciphertext_digest(),
-            format!(
-                "sha256:{}",
-                crate::canonical::hex_encode(&Sha256::digest(&asset.ciphertext))
-            )
+            cokret_sdk::canonical::sha256_digest(&asset.ciphertext)
         );
         // ciphertext-only metadata: no plaintext filename / media type leaks
         // into the wire envelope.

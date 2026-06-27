@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 use super::components::{ActorKindBadge, DraftApprovalPanel, SidecarExposureDisclosure};
 use super::model::{
-    AgentPermissionPreset, agent_pair_url, agent_state_badge_class, agent_state_label,
+    AgentGrantPreset, agent_pair_url, agent_state_badge_class, agent_state_label,
     agent_view_from_directory_row, expand_preset_grant, is_pairing_request_expired,
     participation_ceiling_reason, requested_scope_for_presets,
 };
@@ -113,7 +113,7 @@ pub fn PersonalAgentAdminPanel(
     let mut new_agent_slug = use_signal(|| "summary".to_owned());
     // CKP-0008 §4.7 — selected permission presets for the provision form
     // and the Realm the preset grants are scoped to.
-    let mut provision_presets = use_signal(Vec::<AgentPermissionPreset>::new);
+    let mut provision_presets = use_signal(Vec::<AgentGrantPreset>::new);
     let mut provision_realm = use_signal(String::new);
     // CKP-0008 §4.3 — pairing handle returned by the provision call.
     // When `Some`, the pairing guide card renders the code / request id /
@@ -362,7 +362,7 @@ pub fn PersonalAgentAdminPanel(
                         oninput: move |event: FormEvent| provision_realm.set(event.value()),
                     }
                     div { class: "muted", "Permission presets (CKP-0008 §4.7) — select one or more:" }
-                    for preset in AgentPermissionPreset::ALL {
+                    for preset in AgentGrantPreset::ALL {
                         {
                             let is_on = provision_presets.read().contains(&preset);
                             rsx! {

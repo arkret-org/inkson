@@ -64,6 +64,10 @@ pub(crate) fn sign_keys_upload_batch_with_signer(
     device_signature_tuple_for_input(signer, &input, "keys/upload")
 }
 
+// Only the `demo-crypto` `upload_keys` path ships placeholder one-time keys;
+// the active-signer convenience wrapper is therefore gated with it (the
+// non-demo build fails closed in `upload_keys` before any signing happens).
+#[cfg(feature = "demo-crypto")]
 pub(crate) fn sign_keys_upload_batch(
     device_id: &str,
     one_time_keys: &BTreeMap<String, Value>,
@@ -93,7 +97,20 @@ fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -
 }
 
 impl CokretApi {
+    /// Upload one-time / fallback prekeys to `/_cokret/self/keys/upload`.
+    ///
+    /// The one-time-key MATERIAL produced here is a fixed placeholder
+    /// (`key:"yougen-one-time"`), NOT a real curve25519 prekey, so it is
+    /// gated behind the `demo-crypto` feature alongside the other
+    /// dev-placeholder entry points. A real production keys/upload must
+    /// source one-time keys from the device key store (not yet wired); the
+    /// non-`demo-crypto` build therefore fails closed before any wire byte
+    /// leaves the device — mirroring `send_to_device` /
+    /// `device-lifecycle.md §8.1` (one-time keys MUST be real curve25519
+    /// prekeys redeemable via `keys/claim`).
+    #[cfg(feature = "demo-crypto")]
     pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
+        self.ensure_demo_crypto_fallback_allowed("keys/upload placeholder one-time key material")?;
         let mut one_time_keys = BTreeMap::new();
         one_time_keys.insert(
             "signed_curve25519:yougen-otk-1".to_owned(),
@@ -112,6 +129,14 @@ impl CokretApi {
             device_signature,
         };
         self.post_json("_cokret/self/keys/upload", &body).await
+    }
+
+    #[cfg(not(feature = "demo-crypto"))]
+    pub async fn upload_keys(&self, _device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
+        anyhow::bail!(
+            "keys/upload ships placeholder one-time key material and requires the `demo-crypto` build feature; \
+             a production upload must source real curve25519 prekeys from the device key store"
+        )
     }
 
     pub async fn claim_keys(

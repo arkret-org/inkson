@@ -62,7 +62,7 @@ pub fn agents_enabled() -> bool {
 // ─────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AgentPermissionPreset {
+pub enum AgentGrantPreset {
     /// `read_only` — agent subscribes/reads selected objects.
     ReadOnly,
     /// `draft_only` — agent proposes controller-private drafts.
@@ -77,8 +77,8 @@ pub enum AgentPermissionPreset {
     Organizer,
 }
 
-impl AgentPermissionPreset {
-    pub const ALL: [AgentPermissionPreset; 5] = [
+impl AgentGrantPreset {
+    pub const ALL: [AgentGrantPreset; 5] = [
         Self::ReadOnly,
         Self::DraftOnly,
         Self::ReplyAsAgent,
@@ -178,7 +178,7 @@ pub fn is_pairing_request_expired(expires_at: &str, now: &str) -> bool {
 /// call from the selected presets. The widest implied key scope wins:
 /// `Realm` ⊃ `Limited`. Returns `None` when no preset is selected so the
 /// provision body omits `requested_scope` and soland picks its default.
-pub fn requested_scope_for_presets(presets: &[AgentPermissionPreset]) -> Option<AgentKeyScope> {
+pub fn requested_scope_for_presets(presets: &[AgentGrantPreset]) -> Option<AgentKeyScope> {
     let mut widest: Option<AgentKeyScope> = None;
     for preset in presets {
         let scope = preset.key_scope();
@@ -202,7 +202,7 @@ pub fn requested_scope_for_presets(presets: &[AgentPermissionPreset]) -> Option<
 /// §4.10 so the high-risk executor path cannot run without controller
 /// approval.
 pub fn expand_preset_grant(
-    preset: AgentPermissionPreset,
+    preset: AgentGrantPreset,
     agent_principal_id: &str,
     realm_id: Option<&str>,
     expires_at: &str,
@@ -226,7 +226,7 @@ pub fn expand_preset_grant(
         "expires_at": expires_at,
         "effective_after_first_authorized_key": true,
     });
-    if preset == AgentPermissionPreset::ActOnBehalf {
+    if preset == AgentGrantPreset::ActOnBehalf {
         grant["constraints"] = json!([
             {
                 "constraint_type": "claim_based",
