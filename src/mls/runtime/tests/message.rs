@@ -933,15 +933,17 @@ fn realm_key_share_sender_signature_round_trips() {
             .is_some(),
         "an active signer must attach a real sender_device_signature"
     );
-    assert!(verify_realm_key_share_sender_signature(&payload));
+    // SEC-02: with no cached directory record (None sender principal → Miss),
+    // verification falls back to the self-asserted embedded key.
+    assert!(verify_realm_key_share_sender_signature(&payload, None));
 
     // Tamper with the covered body → signature must no longer verify.
     let mut tampered = payload.clone();
     tampered.ciphertext = Some("dGFtcGVyZWQ".to_owned());
-    assert!(!verify_realm_key_share_sender_signature(&tampered));
+    assert!(!verify_realm_key_share_sender_signature(&tampered, None));
 
-    // An empty signature object is tolerated (best-effort, HPKE seal gates).
+    // An empty signature object is tolerated on the Miss path (HPKE seal gates).
     let mut unsigned = payload.clone();
     unsigned.sender_device_signature = json!({});
-    assert!(verify_realm_key_share_sender_signature(&unsigned));
+    assert!(verify_realm_key_share_sender_signature(&unsigned, None));
 }

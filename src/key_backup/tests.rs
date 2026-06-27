@@ -366,6 +366,29 @@ fn key_backup_validator_rejects_cross_domain_item_mix() {
 }
 
 #[test]
+fn key_backup_validator_rejects_recipient_method_aad_mismatch() {
+    // SEC-04: the AAD's recipient_method binding must agree with the envelope's
+    // encryption.recipient_method. Swapping the method after sealing (without
+    // recomputing the AAD) MUST be rejected.
+    let root = test_root();
+    let mut body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
+    // Sanity: as-built (passphrase_kdf) it validates and its AAD pins the method.
+    validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage))
+        .expect("freshly built recovery vault backup validates");
+    assert_eq!(
+        body["domain_separation"]["aead_aad"]["recipient_method"],
+        json!("passphrase_kdf"),
+        "AAD must bind the recipient_method"
+    );
+    // Tamper the AAD's recipient_method so it disagrees with
+    // encryption.recipient_method → the SEC-04 cross-check must reject it.
+    body["domain_separation"]["aead_aad"]["recipient_method"] = json!("recovery_public_key");
+    let err = validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage))
+        .expect_err("recipient_method/AAD mismatch must be rejected");
+    assert!(err.contains("recipient_method"), "{err}");
+}
+
+#[test]
 fn key_backup_validator_rejects_missing_domain_separation() {
     let root = test_root();
     let mut body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();

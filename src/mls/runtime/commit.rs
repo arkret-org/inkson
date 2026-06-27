@@ -56,7 +56,10 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
+    // local snapshot can't silently fork the group from an outdated epoch.
+    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let commit_envelope = group
         .self_update_commit()
@@ -106,7 +109,10 @@ pub fn build_mls_remove_commit_for_effective_scope(
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let target = cokret_sdk::Did::new(target_principal_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
+    // local snapshot can't silently fork the group from an outdated epoch.
+    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let remove = group
         .remove_member_by_principal(&target)
@@ -175,7 +181,10 @@ pub fn build_add_member_commit_for_effective_scope(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
+    // local snapshot can't silently fork the group from an outdated epoch.
+    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let add = group
         .add_member(member_key_package)
@@ -226,7 +235,10 @@ pub fn build_add_members_commit_for_effective_scope(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
+    // local snapshot can't silently fork the group from an outdated epoch.
+    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let add = group
         .add_members(member_key_packages)
@@ -377,7 +389,10 @@ pub fn build_idle_self_update_commit(
     }
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
+    // local snapshot can't silently fork the group from an outdated epoch.
+    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let commit_envelope = group
         .self_update_commit()

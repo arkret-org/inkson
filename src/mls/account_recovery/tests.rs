@@ -229,6 +229,7 @@ fn preferred_account_secret_requires_recovery_public_key() {
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         1,
+        None,
     )
     .unwrap();
     let payload = serde_json::json!({ "backups": [passphrase_wrapped.clone(), hpke.clone()] });
@@ -405,6 +406,7 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
+        None,
     )
     .unwrap();
 
@@ -422,6 +424,7 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
         ACTOR,
         DEVICE,
         &recovery_sk,
+        None,
     )
     .unwrap();
 
@@ -452,9 +455,94 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
             ACTOR,
             DEVICE,
             &other_sk,
+            None,
         )
         .is_err(),
         "wrong recovery key must fail"
+    );
+}
+
+#[test]
+fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
+    use super::backup_body::open_mls_account_secret_recovery_public_key_backup;
+
+    let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+    // SEC-05: build a backup bound to policy (P1, v3).
+    let body = build_mls_account_secret_recovery_public_key_backup(
+        BACKUP_ID,
+        ACTOR,
+        DEVICE,
+        &recovery_pk,
+        "did:web:alice.example#recovery",
+        ACCOUNT_SECRET,
+        1,
+        Some(("ck:recovery_policy:P1", 3)),
+    )
+    .unwrap();
+
+    // Matching policy → opens.
+    let (secret, _version) = open_mls_account_secret_recovery_public_key_backup(
+        &recovery_sk,
+        &body,
+        Some(("ck:recovery_policy:P1", 3)),
+    )
+    .unwrap();
+    assert_eq!(secret, ACCOUNT_SECRET);
+
+    // Stale policy version → rejected before import.
+    assert!(
+        open_mls_account_secret_recovery_public_key_backup(
+            &recovery_sk,
+            &body,
+            Some(("ck:recovery_policy:P1", 2)),
+        )
+        .is_err(),
+        "old policy version must be rejected"
+    );
+
+    // Different policy id → rejected.
+    assert!(
+        open_mls_account_secret_recovery_public_key_backup(
+            &recovery_sk,
+            &body,
+            Some(("ck:recovery_policy:P2", 3)),
+        )
+        .is_err(),
+        "different policy id must be rejected"
+    );
+
+    // No expected policy supplied → check skipped (legacy / offline path).
+    assert!(
+        open_mls_account_secret_recovery_public_key_backup(&recovery_sk, &body, None).is_ok()
+    );
+}
+
+#[test]
+fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected() {
+    use super::backup_body::open_mls_account_secret_recovery_public_key_backup;
+
+    let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+    // Backup built WITHOUT a policy ref.
+    let body = build_mls_account_secret_recovery_public_key_backup(
+        BACKUP_ID,
+        ACTOR,
+        DEVICE,
+        &recovery_pk,
+        "did:web:alice.example#recovery",
+        ACCOUNT_SECRET,
+        1,
+        None,
+    )
+    .unwrap();
+    // SEC-05: with an expected policy and no ref on the envelope → fail closed.
+    assert!(
+        open_mls_account_secret_recovery_public_key_backup(
+            &recovery_sk,
+            &body,
+            Some(("ck:recovery_policy:P1", 3)),
+        )
+        .is_err(),
+        "missing recovery_policy_ref must fail closed when a policy is expected"
     );
 }
 

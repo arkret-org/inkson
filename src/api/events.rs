@@ -1,10 +1,68 @@
 use super::*;
 
+/// COR-07: hard upper bound on event-query pages walked per backfill call, so a
+/// hostile / buggy server that keeps `has_more=true` (or never advances the
+/// cursor) cannot turn pagination into an unbounded loop. 100 pages × 100 events
+/// = 10k events is well past any realm a client backfills in one shot.
+const MAX_EVENTS_QUERY_PAGES: usize = 100;
+
 impl CokretApi {
-    /// Query durable events through the current `/_cokret/self/events` surface.
-    pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillView> {
-        let outcome: cokret_sdk::EventsQueryOutcome =
+    /// COR-07: walk EVERY page of `/_cokret/self/events` for `realm_id` until
+    /// `has_more == false`, instead of returning only the first 100 events.
+    ///
+    /// Pagination follows `next_cursor` via `after=`. Two hardening guards keep a
+    /// malicious server from hanging the client: a page-count ceiling
+    /// ([`MAX_EVENTS_QUERY_PAGES`]) and a strict cursor-progress check (the
+    /// server MUST advance `next_cursor`; a repeated / empty cursor while
+    /// `has_more` is still true is rejected rather than looped on).
+    async fn events_query_all_pages(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<cokret_sdk::EventsQueryOutcome> {
+        let mut combined: cokret_sdk::EventsQueryOutcome =
             self.get_json(&events_query_path(realm_id)).await?;
+        let mut pages = 1usize;
+        let mut last_cursor: Option<String> = None;
+        while combined.has_more {
+            let Some(next) = combined
+                .next_cursor
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .map(ToOwned::to_owned)
+            else {
+                anyhow::bail!(
+                    "events query for realm {realm_id} reported has_more but no next_cursor"
+                );
+            };
+            // Strict forward progress: refuse to re-fetch the same cursor.
+            if last_cursor.as_deref() == Some(next.as_str()) {
+                anyhow::bail!(
+                    "events query for realm {realm_id} did not advance next_cursor ({next}); aborting to avoid a pagination loop"
+                );
+            }
+            if pages >= MAX_EVENTS_QUERY_PAGES {
+                anyhow::bail!(
+                    "events query for realm {realm_id} exceeded {MAX_EVENTS_QUERY_PAGES} pages; aborting"
+                );
+            }
+            let page: cokret_sdk::EventsQueryOutcome = self
+                .get_json(&events_query_path_after(realm_id, &next))
+                .await?;
+            combined.events.extend(page.events);
+            combined.has_more = page.has_more;
+            combined.next_cursor = page.next_cursor;
+            combined.range_completeness = page.range_completeness;
+            last_cursor = Some(next);
+            pages += 1;
+        }
+        Ok(combined)
+    }
+
+    /// Query durable events through the current `/_cokret/self/events` surface,
+    /// following pagination to completion (COR-07).
+    pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillView> {
+        let outcome = self.events_query_all_pages(realm_id).await?;
         Ok(outcome.into())
     }
 
@@ -12,8 +70,9 @@ impl CokretApi {
         &self,
         realm_id: &str,
     ) -> anyhow::Result<Option<cokret_sdk::EventId>> {
-        let outcome: cokret_sdk::EventsQueryOutcome =
-            self.get_json(&events_query_path(realm_id)).await?;
+        // COR-07: the MLS genesis event may sit past the first page; paginate so
+        // it is never silently judged "absent" because of front-page noise.
+        let outcome = self.events_query_all_pages(realm_id).await?;
         Ok(mls_genesis_event_id_from_events(&outcome, realm_id))
     }
 

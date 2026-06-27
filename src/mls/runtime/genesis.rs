@@ -152,6 +152,8 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     }
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
+    // COR-04: genesis path — the snapshot is asserted to be epoch 0 just above, so
+    // a Seal-view floor would be meaningless; floor 0 is intentional.
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::Genesis(format!("restore epoch-0 snapshot: {err}")))?;
     let ratchet_tree = group

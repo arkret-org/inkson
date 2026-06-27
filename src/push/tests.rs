@@ -259,10 +259,29 @@ fn vapid_key_decoder_accepts_url_safe_base64() {
 #[test]
 fn vapid_key_decoder_accepts_padded_standard_base64() {
     use base64::Engine;
-    let bytes: Vec<u8> = (0..32u8).collect();
+    // A valid 65-byte uncompressed P-256 point, encoded as padded standard
+    // base64 (the non-URL-safe fallback path).
+    let mut bytes = vec![0x04u8];
+    bytes.extend(std::iter::repeat_n(0x11, 32));
+    bytes.extend(std::iter::repeat_n(0x22, 32));
     let standard = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let decoded = decode_vapid_application_server_key(&standard).expect("decode");
     assert_eq!(decoded, bytes);
+}
+
+#[test]
+fn vapid_key_decoder_rejects_wrong_length_and_non_uncompressed() {
+    use base64::Engine;
+    // COR-10: a 32-byte blob is valid base64 but the wrong length for a
+    // P-256 public key — it MUST be rejected, not passed to the browser.
+    let thirty_two: Vec<u8> = (0..32u8).collect();
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&thirty_two);
+    assert!(decode_vapid_application_server_key(&encoded).is_err());
+    // Correct length but compressed-point prefix (0x02) → rejected.
+    let mut compressed = vec![0x02u8];
+    compressed.extend(std::iter::repeat_n(0x33, 64));
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&compressed);
+    assert!(decode_vapid_application_server_key(&encoded).is_err());
 }
 
 #[test]

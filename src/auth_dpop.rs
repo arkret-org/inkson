@@ -179,7 +179,7 @@ impl DpopHandle {
                     "soft logout restore request digest: {error}"
                 ))
             })?;
-        let challenge = soft_logout_refresh_challenge(self.jkt())?;
+        let challenge = soft_logout_refresh_challenge()?;
         let issued_at = Utc::now();
         let expires_at = issued_at + chrono::Duration::seconds(60);
         let claims = SoftLogoutDidProofClaims {
@@ -247,17 +247,19 @@ fn soft_logout_restore_request_canonical_digest(
     .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))
 }
 
-fn soft_logout_refresh_challenge(jkt: &str) -> Result<String, AuthDpopError> {
+/// SEC-08: build the soft-logout refresh challenge from a pure 128-bit random
+/// nonce + millisecond timestamp. The jkt is intentionally NOT mixed in: it adds
+/// no entropy (it is predictable to the peer) and the holder-key binding is
+/// already carried by the signed [`SoftLogoutDidProofClaims`] payload (which
+/// embeds this challenge), so the challenge itself must stay opaque-random.
+fn soft_logout_refresh_challenge() -> Result<String, AuthDpopError> {
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce).map_err(|err| AuthDpopError::Rng(err.to_string()))?;
     Ok(format!(
         "sg-refresh-{}-{}",
         Utc::now().timestamp_millis(),
         URL_SAFE_NO_PAD.encode(nonce)
-    )
-    .chars()
-    .chain(jkt.chars().take(8))
-    .collect())
+    ))
 }
 
 fn sign_detached_jws_eddsa_with_kid(

@@ -254,6 +254,11 @@ pub const HPKE_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
 /// canonical_json of the envelope identity tuple. Both sealer and opener
 /// reconstruct this byte-identically from the envelope fields.
 fn recovery_public_key_info(body: &Value) -> anyhow::Result<Vec<u8>> {
+    // SEC-04: anchor the HPKE `info` to the envelope's `recipient_method` and the
+    // recipient key it is sealed to (`recipient_key_ref`), so the HPKE context is
+    // bound to the recipient interpretation as well as the AEAD AAD. Both sealer
+    // and opener reconstruct this byte-identically from the stored envelope.
+    let encryption = body.get("encryption");
     let info = json!({
         "backup_id": body.get("backup_id").cloned().unwrap_or(Value::Null),
         "series_id": body.get("series_id").cloned().unwrap_or(Value::Null),
@@ -262,6 +267,14 @@ fn recovery_public_key_info(body: &Value) -> anyhow::Result<Vec<u8>> {
         "backup_class": body.get("backup_class").cloned().unwrap_or(Value::Null),
         "backup_version": body.get("backup_version").cloned().unwrap_or(Value::Null),
         "created_at": body.get("created_at").cloned().unwrap_or(Value::Null),
+        "recipient_method": encryption
+            .and_then(|encryption| encryption.get("recipient_method"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        "recipient_key_ref": encryption
+            .and_then(|encryption| encryption.get("recipient_key_ref"))
+            .cloned()
+            .unwrap_or(Value::Null),
     });
     crate::canonical::canonical_json_bytes(&info)
 }

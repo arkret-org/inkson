@@ -284,6 +284,29 @@ fn validate_domain_separation(body: &Value, class: KeyBackupClass) -> Result<(),
     if aad.get("device_id").and_then(Value::as_str) != Some(expected_device) {
         return Err("domain_separation.aead_aad.device_id mismatch".to_owned());
     }
+    // SEC-04: the recipient-method binding in the AAD MUST agree with the
+    // envelope's `encryption.recipient_method` / `recipient_key_ref`, so a
+    // ciphertext can never be reinterpreted under a different recipient method.
+    let encryption = body.get("encryption");
+    let expected_method = encryption
+        .and_then(|encryption| encryption.get("recipient_method"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    if aad.get("recipient_method").unwrap_or(&Value::Null) != &expected_method {
+        return Err("domain_separation.aead_aad.recipient_method mismatch".to_owned());
+    }
+    let expected_key_ref = encryption
+        .and_then(|encryption| encryption.get("recipient_key_ref"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if aad
+        .get("recipient_key_ref")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        != expected_key_ref
+    {
+        return Err("domain_separation.aead_aad.recipient_key_ref mismatch".to_owned());
+    }
     let expected_item_types = body
         .get("contents")
         .and_then(Value::as_array)

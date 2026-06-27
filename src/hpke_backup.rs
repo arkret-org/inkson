@@ -182,13 +182,16 @@ pub fn hpke_open(
     aad: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>> {
-    let privkey = x25519_32(recipient_private_key, "recovery HPKE private key")?;
+    let mut privkey = Zeroizing::new(x25519_32(recipient_private_key, "recovery HPKE private key")?);
     let enc_arr = x25519_32(enc, "hpke enc (encapsulated key)")?;
     if ciphertext.len() < XNONCE_LEN {
         return Err(anyhow!("hpke ciphertext shorter than nonce"));
     }
 
-    let recipient_secret = StaticSecret::from(privkey);
+    // SEC-06: build the StaticSecret from the wrapped copy, then drop the raw
+    // array via Zeroizing (StaticSecret itself zeroizes on drop).
+    let recipient_secret = StaticSecret::from(*privkey);
+    privkey.zeroize();
     let recipient_pub = *X25519PublicKey::from(&recipient_secret).as_bytes();
     let ephemeral_public = X25519PublicKey::from(enc_arr);
     let shared = recipient_secret.diffie_hellman(&ephemeral_public);

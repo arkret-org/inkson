@@ -76,6 +76,8 @@ pub fn reaction_routing_tag_v1(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
+    // COR-04: read-only exporter read for the routing tag — floor 0 is intentional
+    // (no commit, no ratchet advance, no snapshot mutation).
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let exporter = group
@@ -114,7 +116,10 @@ pub fn encrypt_reaction_with_device_snapshot(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+    // COR-04: reaction send may force an epoch commit; bind it to the Seal-view
+    // epoch floor so a stale local snapshot can't seal a reaction on a forked ratchet.
+    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
 
     // SEC-08 (§2.9) — fail-closed AAD policy: this path always builds a
@@ -130,7 +135,9 @@ pub fn encrypt_reaction_with_device_snapshot(
     // the epoch once it has outlived the cap, bounding within-epoch reaction
     // frequency to a ≤1h window. The forced `ck.mls.commit` is surfaced to the
     // caller (X14 persist-on-accept) rather than persisted optimistically.
-    let now = chrono::Utc::now();
+    // COR-08: use the injectable clock (same source as `snapshot.epoch_started_at`)
+    // so the §2.9 1h epoch-lifetime comparison is not split across two clock sources.
+    let now = crate::clock::now_utc();
     let forced_commit = if should_force_epoch_advance(
         is_minimal_metadata,
         snapshot.epoch_started_at,

@@ -103,17 +103,24 @@ pub fn MlsUnlockPrompt(
         spawn(async move {
             let fetch_actor = actor.clone();
             let fetch_device = device.clone();
+            // SEC-05: fetch the restore payload AND the actor's currently-accepted
+            // recovery policy in the same authed session, so the HPKE account-secret
+            // backup's `recovery_policy_ref` can be verified before import.
             let payload_result = with_authed_api(&base, session, |api| async move {
-                crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
-                    &api,
-                    &fetch_actor,
-                    &fetch_device,
-                )
-                .await
+                let payload =
+                    crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+                        &api,
+                        &fetch_actor,
+                        &fetch_device,
+                    )
+                    .await?;
+                let active_policy =
+                    crate::recovery_strand::fetch_active_recovery_policy(&api).await?;
+                Ok::<_, anyhow::Error>((payload, active_policy))
             })
             .await;
             let result = match payload_result {
-                Ok(payload) => {
+                Ok((payload, active_policy)) => {
                     let history_count =
                         crate::mls::account_recovery::select_mls_history_backups(&payload).len();
                     try_set_status(
@@ -132,6 +139,9 @@ pub fn MlsUnlockPrompt(
                             crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
                                 .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
                                 .and_then(|(recovery_private_key, _)| {
+                                    let expected_policy = active_policy.as_ref().map(|policy| {
+                                        (policy.policy_id.as_str(), policy.policy_version)
+                                    });
                                     crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
                                         &payload,
                                         &mut store,
@@ -139,6 +149,7 @@ pub fn MlsUnlockPrompt(
                                         &actor,
                                         &device,
                                         &recovery_private_key,
+                                        expected_policy,
                                     )
                                 })
                                 .map_err(ApiCallError::Failed)

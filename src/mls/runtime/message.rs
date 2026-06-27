@@ -86,6 +86,10 @@ pub fn decrypt_application_payload(
         return try_history_decrypt_standalone(state_store, realm_id, payload);
     };
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    // COR-04: read/decrypt path — floor 0 is intentional. The live receive ratchet
+    // and the tier-3 history fallback legitimately read PRE-join / older epochs, so
+    // an epoch-floor reject here would break decryption of granted history. No
+    // ratchet advance / persist happens on this path.
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     let plaintext = match group.decrypt_payload(payload) {
         Ok(plaintext) => plaintext,
@@ -186,6 +190,9 @@ pub fn derive_and_retain_realm_history_secret(
 ) -> Option<(u64, Vec<u8>)> {
     let snapshot = state_store.mls_snapshot_for(realm_id)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    // COR-04: read-only export of the CURRENT epoch's history secret — floor 0 is
+    // intentional (no ratchet advance / persist; OpenMLS only exports the epoch the
+    // snapshot already holds, so a Seal-view floor would add no safety here).
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     let epoch = snapshot.epoch;
     let history_secret = group.derive_and_retain_history_secret(realm_id).ok()?;
@@ -260,16 +267,24 @@ pub fn ingest_realm_key_share(
     if payload.recipient_device_id.as_deref().map(str::trim) != Some(device_id.trim()) {
         return 0;
     }
-    // Best-effort sender-device authentication (device-lifecycle.md §13): when
-    // the share carries a populated `sender_device_signature`, verify it over
-    // `sender_signing_input()` and reject on mismatch. An empty / absent
-    // signature object is tolerated (legacy provider, or no signer installed at
-    // share time) — the per-secret HPKE seal still gates confidentiality and
-    // integrity, so we do not fail closed on a missing signature.
-    if !verify_realm_key_share_sender_signature(&payload) {
+    // SEC-02 / device-lifecycle.md §13: sender-device authentication. When the
+    // share carries a populated `sender_device_signature`, verify it over
+    // `sender_signing_input()`. The verifying key is bound to the sender's
+    // device-directory record (`(sender_principal_id, sender_device_id)`) when
+    // that record is cached: the self-asserted `signer_public_key_multibase` MUST
+    // byte-equal the directory key, and a revoked / absent device (NegativeHit)
+    // is rejected outright. When no directory record is cached (Miss — keys not
+    // prefetched) we fall back to the self-asserted key, since the per-secret
+    // HPKE seal still gates confidentiality/integrity. An empty / absent
+    // signature is tolerated (legacy provider) only on the Miss path.
+    let sender_principal_id = realm_key_share_sender_principal_id(share_envelope);
+    if !verify_realm_key_share_sender_signature(
+        &payload,
+        sender_principal_id.as_deref(),
+    ) {
         tracing::debug!(
             %realm_id,
-            "reject ck.realm_key.share: sender_device_signature present but invalid"
+            "reject ck.realm_key.share: sender_device_signature failed device-bound verification"
         );
         return 0;
     }
@@ -310,36 +325,76 @@ pub fn ingest_realm_key_share(
     installed
 }
 
-/// Best-effort verification of a `ck.realm_key.share` payload's
-/// `sender_device_signature` (device-lifecycle.md §13).
+/// Extract the sender's principal DID from a `ck.realm_key.share` to-device
+/// envelope so [`verify_realm_key_share_sender_signature`] can bind the signing
+/// key to the sender's device-directory record. To-device / event envelopes
+/// expose the sender under one of these top-level keys.
+fn realm_key_share_sender_principal_id(envelope: &serde_json::Value) -> Option<String> {
+    ["sender_principal_id", "sender", "actor_id", "sender_actor_id"]
+        .iter()
+        .find_map(|key| {
+            envelope
+                .get(*key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+/// Verify a `ck.realm_key.share` payload's `sender_device_signature`
+/// (device-lifecycle.md §13), binding the verifying key to the sender's device
+/// directory record when available (SEC-02).
 ///
-/// Returns `true` when the signature is absent / an empty object (legacy
-/// provider, or no signer installed at share time — tolerated because the
-/// per-secret HPKE seal already gates integrity), OR when a populated
-/// signature object verifies over [`cokret_sdk::RealmKeySharePayload::sender_signing_input`].
-/// Returns `false` only when a populated signature object is present but fails
-/// to verify (malformed, wrong key, or tampered body).
-///
-/// The verifying key is taken from the signature object's
-/// `signer_public_key_multibase` (self-asserted by the provider). This binds
-/// the share body to *some* Ed25519 key the provider controls; a stronger
-/// binding of that key to `sender_device_id` requires DID resolution and is a
-/// follow-up — for now the HPKE seal remains the confidentiality/integrity
-/// gate and this signature is an additional best-effort authenticity check.
+/// Trust resolution for `(sender_principal_id, payload.sender_device_id)`:
+/// - **Directory Hit**: the self-asserted `signer_public_key_multibase` MUST
+///   byte-equal the directory's authoritative key (which itself required a full
+///   cross-signing / service-attested trust chain to be cached). A populated
+///   signature is REQUIRED and MUST verify; an empty signature is rejected.
+/// - **Directory NegativeHit** (revoked / absent / no signing key): rejected.
+/// - **Directory Miss** (key not prefetched) or **no sender principal**: fall
+///   back to the prior self-asserted-key behaviour — a populated signature must
+///   verify under its own embedded key, an empty signature is tolerated. The
+///   per-secret HPKE seal remains the confidentiality/integrity gate on this
+///   path, so this stays a strict improvement rather than a new hard failure.
 pub(crate) fn verify_realm_key_share_sender_signature(
     payload: &cokret_sdk::RealmKeySharePayload,
+    sender_principal_id: Option<&str>,
 ) -> bool {
     use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 
     let sig_obj = &payload.sender_device_signature;
-    // Empty / absent signature object → tolerated (best-effort).
     let is_empty = sig_obj.is_null()
         || sig_obj
             .as_object()
             .is_some_and(|map| map.is_empty() || !map.contains_key("signature"));
-    if is_empty {
-        return true;
+
+    // Resolve the sender device's authoritative directory key (sync, cache-only).
+    let directory_key = sender_principal_id.and_then(|principal| {
+        match crate::device_directory::cached_device_signing_key(
+            principal,
+            payload.sender_device_id.trim(),
+        ) {
+            crate::device_directory::CacheLookup::Hit(material) => {
+                Some(DirectoryVerdict::Key(material))
+            }
+            crate::device_directory::CacheLookup::NegativeHit => Some(DirectoryVerdict::Revoked),
+            crate::device_directory::CacheLookup::Miss => None,
+        }
+    });
+
+    // Fail closed on a revoked / absent sender device.
+    if matches!(directory_key, Some(DirectoryVerdict::Revoked)) {
+        return false;
     }
+
+    if is_empty {
+        // An empty signature is acceptable ONLY when we hold no positive
+        // directory binding for the sender device. A directory-Hit sender MUST
+        // sign the share.
+        return !matches!(directory_key, Some(DirectoryVerdict::Key(_)));
+    }
+
     let Some(sig_b64) = sig_obj.get("signature").and_then(serde_json::Value::as_str) else {
         return false;
     };
@@ -349,13 +404,23 @@ pub(crate) fn verify_realm_key_share_sender_signature(
     else {
         return false;
     };
+    let Ok(pubkey_bytes) = cokret_sdk::decode_ed25519_multibase(pubkey_multibase) else {
+        return false;
+    };
+    // SEC-02: when a directory key is cached, the self-asserted signer key MUST
+    // match it byte-for-byte — otherwise an attacker could self-sign with any key.
+    if let Some(DirectoryVerdict::Key(material)) = &directory_key {
+        let Ok(directory_bytes) = material.ed25519_bytes() else {
+            return false;
+        };
+        if directory_bytes.as_slice() != pubkey_bytes.as_slice() {
+            return false;
+        }
+    }
     let Ok(sig_bytes) = cokret_sdk::base64url_decode(sig_b64.as_bytes()) else {
         return false;
     };
     let Ok(signature) = Signature::from_slice(&sig_bytes) else {
-        return false;
-    };
-    let Ok(pubkey_bytes) = cokret_sdk::decode_ed25519_multibase(pubkey_multibase) else {
         return false;
     };
     let Ok(verifying_key) = VerifyingKey::from_bytes(&pubkey_bytes) else {
@@ -363,6 +428,15 @@ pub(crate) fn verify_realm_key_share_sender_signature(
     };
     let signing_input = payload.sender_signing_input();
     verifying_key.verify(&signing_input, &signature).is_ok()
+}
+
+/// Outcome of a synchronous device-directory lookup for the realm-key-share
+/// sender device.
+enum DirectoryVerdict {
+    /// A trusted authoritative verify key is cached.
+    Key(cokret_sdk::signatures::PublicKeyMaterial),
+    /// The sender device is revoked / absent / has no signing key.
+    Revoked,
 }
 
 /// Read-only: list the principal DIDs currently in this Realm's local MLS
@@ -379,6 +453,8 @@ pub fn mls_group_member_principal_ids_for_realm(
 ) -> Option<Vec<String>> {
     let snapshot = state_store.mls_snapshot_for(realm_id)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    // COR-04: read-only roster introspection — floor 0 is intentional (does NOT
+    // advance or persist any chain; just reads the local snapshot's member list).
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     Some(
         group
@@ -945,7 +1021,11 @@ pub fn encrypt_values_with_device_snapshot(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+    // COR-04: send/encrypt under the Seal-view epoch floor so encrypting from a
+    // stale local snapshot (below the Seal lattice) is rejected as OutdatedSnapshot
+    // rather than producing ciphertext on a forked ratchet.
+    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let should_commit = should_force_epoch_advance(
         state_store.realm_projection_is_minimal_metadata(realm_id),
@@ -1049,7 +1129,11 @@ pub fn encrypt_message_with_device_snapshot(
     assert_minimal_metadata_aad(&aad_visibility_of(&aad), is_minimal_metadata)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+    // COR-04: send/encrypt under the Seal-view epoch floor so encrypting from a
+    // stale local snapshot (below the Seal lattice) is rejected as OutdatedSnapshot
+    // rather than producing ciphertext on a forked ratchet.
+    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let should_commit = should_force_epoch_advance(
         is_minimal_metadata,

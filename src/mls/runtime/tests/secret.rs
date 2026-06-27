@@ -176,3 +176,50 @@ fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
         rotated.ciphertext_hex
     );
 }
+
+#[test]
+fn account_secret_rotation_skips_undecryptable_realm_and_records_failure() {
+    // COR-12: one realm snapshot that cannot be decrypted with the previous
+    // secret (corrupt / format-drifted) MUST NOT block the rotation of the
+    // other realms; it is skipped and recorded in `failed_realms`.
+    use std::collections::BTreeMap;
+
+    let actor = "did:web:alice.example";
+    let device = "ck:device:01904100-0000-7000-8000-000000000001";
+    let good_realm = "ck:realm:01904100-0000-7000-8000-00000000000a";
+    let bad_realm = "ck:realm:01904100-0000-7000-8000-00000000000b";
+    let old_secret = "old-account-secret";
+    let store = MemorySecureKeyStore::new();
+    store_account_mls_secret_version(&store, actor, 1, old_secret).unwrap();
+
+    // good_realm: wrapped under the previous secret (decryptable).
+    let good = crate::mls::persistence::encrypt_state(
+        good_realm,
+        "group-good",
+        3,
+        b"good opaque state",
+        old_secret,
+        b"salt-good",
+    );
+    // bad_realm: wrapped under a DIFFERENT secret → won't decrypt with old_secret.
+    let bad = crate::mls::persistence::encrypt_state(
+        bad_realm,
+        "group-bad",
+        4,
+        b"bad opaque state",
+        "some-other-secret",
+        b"salt-bad",
+    );
+    let snapshots = BTreeMap::from([
+        (good_realm.to_owned(), good),
+        (bad_realm.to_owned(), bad),
+    ]);
+
+    let rotation = prepare_account_mls_secret_rotation(&store, actor, device, &snapshots).unwrap();
+
+    // Good realm rotated; bad realm skipped + recorded.
+    assert!(rotation.rewrapped_snapshots.contains_key(good_realm));
+    assert!(!rotation.rewrapped_snapshots.contains_key(bad_realm));
+    assert_eq!(rotation.failed_realms.len(), 1);
+    assert_eq!(rotation.failed_realms[0].0, bad_realm);
+}

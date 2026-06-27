@@ -89,22 +89,26 @@ fn apns_token_slot() -> &'static Mutex<Option<String>> {
 fn set_token(slot: &Mutex<Option<String>>, token: impl Into<String>) {
     let token = token.into();
     let value = (!token.trim().is_empty()).then(|| token.trim().to_owned());
-    if let Ok(mut guard) = slot.lock() {
-        *guard = value;
-    }
+    // COR-11: recover the inner data on lock poisoning rather than silently
+    // no-op'ing. The critical section never panics and never `.await`s, so the
+    // guarded `Option` is always consistent; treating a poisoned lock as fatal
+    // would silently disable push-token bridging with no log trail.
+    *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = value;
 }
 
 fn clear_token(slot: &Mutex<Option<String>>) {
-    if let Ok(mut guard) = slot.lock() {
-        *guard = None;
-    }
+    *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 }
 
 // Consumed only by the native (`not(wasm32)`) provider-token path
 // below; the wasm build subscribes via the service worker instead.
 #[cfg(not(target_arch = "wasm32"))]
 fn read_token(slot: &Mutex<Option<String>>) -> Option<String> {
-    slot.lock().ok().and_then(|guard| guard.clone())
+    // COR-11: recover the inner data on poisoning instead of degrading to `None`,
+    // which would silently break push-token reads after an unrelated panic.
+    slot.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
 /// Bridge a real Firebase Cloud Messaging registration token into the Rust
@@ -247,19 +251,32 @@ pub fn decode_vapid_application_server_key(value: &str) -> anyhow::Result<Vec<u8
     }
     // Try URL-safe (the spec form) first, then standard as a fallback so
     // a deploy that copy-pasted from a non-URL-safe tool still works.
-    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(trimmed) {
-        return Ok(bytes);
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(trimmed)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(trimmed))
+        .or_else(|_| base64::engine::general_purpose::STANDARD.decode(trimmed))
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(trimmed))
+        .map_err(|_| {
+            anyhow::anyhow!("VAPID applicationServerKey is not valid base64 / base64url")
+        })?;
+    // COR-10: a VAPID applicationServerKey is a P-256 public key in uncompressed
+    // SEC1 form — 65 bytes (`0x04 || X(32) || Y(32)`). Reject anything else up
+    // front so a malformed describe surfaces a clear error here instead of an
+    // opaque browser promise rejection (and so `bytes.len() as u32` can never
+    // truncate on 32-bit wasm).
+    if bytes.len() != 65 {
+        anyhow::bail!(
+            "VAPID applicationServerKey must be a 65-byte uncompressed P-256 point, got {} bytes",
+            bytes.len()
+        );
     }
-    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE.decode(trimmed) {
-        return Ok(bytes);
+    if bytes[0] != 0x04 {
+        anyhow::bail!(
+            "VAPID applicationServerKey must start with 0x04 (uncompressed SEC1 point), got 0x{:02x}",
+            bytes[0]
+        );
     }
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(trimmed) {
-        return Ok(bytes);
-    }
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD_NO_PAD.decode(trimmed) {
-        return Ok(bytes);
-    }
-    anyhow::bail!("VAPID applicationServerKey is not valid base64 / base64url")
+    Ok(bytes)
 }
 
 #[cfg(target_arch = "wasm32")]

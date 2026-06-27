@@ -352,6 +352,17 @@ pub(crate) fn events_query_path(realm_id: &str) -> String {
     )
 }
 
+/// COR-07: a single page of the events query, continuing from `after`
+/// (`next_cursor` of the previous page). Without the cursor parameter the
+/// caller only ever sees the first 100 events and silently truncates.
+pub(crate) fn events_query_path_after(realm_id: &str, after: &str) -> String {
+    format!(
+        "_cokret/self/events?realms={}&limit=100&after={}",
+        query_component(realm_id),
+        query_component(after)
+    )
+}
+
 // Consumed only by the native (`not(wasm32)`) `events_subscribe_ndjson`
 // streaming reader; the wasm build has no streaming subscribe path yet.
 #[cfg(not(target_arch = "wasm32"))]

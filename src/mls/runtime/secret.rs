@@ -56,6 +56,11 @@ pub struct AccountMlsSecretRotation {
     pub new_version: u32,
     pub new_secret: String,
     pub rewrapped_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// COR-12: realms whose snapshot could not be decrypted with the previous
+    /// secret (corrupt / format-drifted local data) and were therefore SKIPPED
+    /// instead of aborting the whole rotation. `(realm_id, error)` pairs so the
+    /// caller can surface a partial-success report. Empty on a clean rotation.
+    pub failed_realms: Vec<(String, String)>,
 }
 
 /// Account-scoped storage key for a specific MLS snapshot-secret version.
@@ -412,16 +417,26 @@ pub fn prepare_account_mls_secret_rotation(
     }
     let new_secret = generate_account_mls_secret().map_err(MlsRuntimeError::DeviceSecret)?;
     let mut rewrapped_snapshots = BTreeMap::new();
+    let mut failed_realms = Vec::new();
     for (realm_id, snapshot) in snapshots {
-        let plaintext = crate::mls::persistence::decrypt_envelope(
-            snapshot,
-            &previous_secret.secret,
-        )
-        .map_err(|err| {
-            MlsRuntimeError::SnapshotRestore(format!(
-                "could not decrypt MLS snapshot for {realm_id} before account-secret rotation: {err}"
-            ))
-        })?;
+        // COR-12: one corrupt / format-drifted realm snapshot MUST NOT block the
+        // rotation of every other realm (and the recovery / re-wrap flows that
+        // depend on it). Record the failure and skip, mirroring the welcome-apply
+        // path's "per-item failure does not abort the batch" model. The secret
+        // still rotates for all decryptable realms.
+        let plaintext =
+            match crate::mls::persistence::decrypt_envelope(snapshot, &previous_secret.secret) {
+                Ok(plaintext) => plaintext,
+                Err(err) => {
+                    tracing::warn!(
+                        %realm_id,
+                        error = %err,
+                        "skip realm during account-secret rotation: snapshot did not decrypt with previous secret"
+                    );
+                    failed_realms.push((realm_id.clone(), err.to_string()));
+                    continue;
+                }
+            };
         let mut salt = [0u8; 16];
         getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
         // Re-wrapping does not advance the epoch — carry the epoch-start clock
@@ -442,6 +457,7 @@ pub fn prepare_account_mls_secret_rotation(
         new_version,
         new_secret,
         rewrapped_snapshots,
+        failed_realms,
     })
 }
 

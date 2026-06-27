@@ -162,28 +162,69 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
     }
 }
 
+/// COR-05: read/connect timeout for the (untrusted) push-gateway describe
+/// fetchers. Mirrors `mls::mimi_client`'s 10s cap so a slow / half-open / stalled
+/// gateway can't hang push registration indefinitely.
+#[cfg(not(target_arch = "wasm32"))]
+const PUSH_DESCRIBE_TIMEOUT_SECS: u64 = 10;
+
+/// COR-06: hard cap on an untrusted describe response body before
+/// deserialization, so a hostile gateway can't trigger OOM (wasm single-page
+/// memory is small). 1 MiB is far above any legitimate describe manifest.
+const PUSH_DESCRIBE_MAX_BODY_BYTES: usize = 1024 * 1024;
+
+/// Build a reqwest client with the describe read timeout applied. On wasm32
+/// `ClientBuilder::timeout` is unavailable (no system clock); the browser fetch
+/// layer enforces its own timeouts.
+fn push_describe_client() -> anyhow::Result<reqwest::Client> {
+    let builder = reqwest::Client::builder();
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder.timeout(std::time::Duration::from_secs(PUSH_DESCRIBE_TIMEOUT_SECS));
+    builder
+        .build()
+        .map_err(|err| anyhow::anyhow!("push describe client build: {err}"))
+}
+
+/// Read the response body with a hard size ceiling, then JSON-decode it.
+/// Fails closed (explicit error) when the body exceeds
+/// [`PUSH_DESCRIBE_MAX_BODY_BYTES`] instead of buffering unboundedly.
+async fn read_capped_json<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+    what: &str,
+) -> anyhow::Result<T> {
+    let bytes = response.bytes().await?;
+    if bytes.len() > PUSH_DESCRIBE_MAX_BODY_BYTES {
+        anyhow::bail!(
+            "{what} describe body {} bytes exceeds {PUSH_DESCRIBE_MAX_BODY_BYTES} byte limit",
+            bytes.len()
+        );
+    }
+    serde_json::from_slice(&bytes)
+        .map_err(|err| anyhow::anyhow!("{what} describe decode failed: {err}"))
+}
+
 pub async fn describe_push_gateway_bridge(
     push_gateway_url: &str,
 ) -> anyhow::Result<PushBridgeDescribeOutcome> {
     let describe_url = floria_push_bridge_describe_url(push_gateway_url)?;
-    let response = reqwest::Client::new().get(&describe_url).send().await?;
+    let response = push_describe_client()?.get(&describe_url).send().await?;
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("push gateway bridge describe returned HTTP {status}");
     }
-    Ok(response.json().await?)
+    read_capped_json(response, "push gateway bridge").await
 }
 
 pub async fn describe_push_gateway_integration(
     push_gateway_url: &str,
 ) -> anyhow::Result<PushGatewayIntegrationDescribeOutcome> {
     let describe_url = floria_push_integration_describe_url(push_gateway_url)?;
-    let response = reqwest::Client::new().get(&describe_url).send().await?;
+    let response = push_describe_client()?.get(&describe_url).send().await?;
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("push gateway integration describe returned HTTP {status}");
     }
-    Ok(response.json().await?)
+    read_capped_json(response, "push gateway integration").await
 }
 
 pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeOutcome) -> String {

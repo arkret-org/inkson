@@ -266,13 +266,21 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
     actor_id: &str,
     device_id: &str,
     recovery_private_key: &[u8],
+    // SEC-05: the actor's currently-accepted recovery policy. When supplied the
+    // HPKE account-secret backup's `recovery_policy_ref` MUST match it before the
+    // secret is imported; pass `None` only where the caller cannot resolve the
+    // policy (legacy / offline path).
+    expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> Result<RestoreReport> {
     let _ = device_id;
     let mut report = RestoreReport::default();
     let secret_body = select_mls_account_secret_recovery_public_key_backup(list_payload)
         .ok_or_else(|| anyhow!("no recovery_public_key account-secret backup on server"))?;
-    let (secret, version) =
-        open_mls_account_secret_recovery_public_key_backup(recovery_private_key, &secret_body)?;
+    let (secret, version) = open_mls_account_secret_recovery_public_key_backup(
+        recovery_private_key,
+        &secret_body,
+        expected_recovery_policy_ref,
+    )?;
     crate::mls::runtime::replace_account_mls_secret_version(
         secure_store,
         actor_id,

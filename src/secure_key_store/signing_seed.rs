@@ -104,7 +104,14 @@ fn signing_seed_key_for(scope: Option<&str>) -> String {
 /// Decoded signing seed (32 bytes) plus the `did:key` the seed encodes.
 /// Returned by [`load_signing_seed`] / [`ensure_signing_seed`] so callers
 /// can stand up an `Ed25519DetachedJwsSigner` without re-deriving the DID.
-#[derive(Clone)]
+///
+/// SEC-06: `ZeroizeOnDrop` wipes the in-memory 32-byte seed when a loaded
+/// material value is dropped, so the high-value "one-key-many-uses" device
+/// signing seed does not linger in freed heap / stack after a load. Callers that
+/// copy `seed` out by value (`[u8;32]` is `Copy`) still leave their own copies —
+/// this is defense-in-depth on the canonical container, not a guarantee over
+/// every derived copy.
+#[derive(Clone, zeroize::ZeroizeOnDrop)]
 pub struct SigningSeedMaterial {
     pub seed: [u8; 32],
     /// `did:key:z<multibase>` encoded local signing public key. This is

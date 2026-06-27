@@ -213,6 +213,7 @@ pub fn is_mls_private_plaintext_backup(body: &Value) -> bool {
 /// secret HPKE-sealed to the actor's recovery public key. ANY device (holding
 /// only the public key) can build/upload this; a fresh device opens it with the
 /// recovery PRIVATE key — no passphrase prompt (key-management.md §7.5.2).
+#[allow(clippy::too_many_arguments)]
 pub fn build_mls_account_secret_recovery_public_key_backup(
     backup_id: &str,
     actor_id: &str,
@@ -221,6 +222,13 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
     recovery_key_ref: &str,
     account_secret: &str,
     account_secret_version: u32,
+    // SEC-05: the actor's currently-accepted recovery policy `(policy_id,
+    // policy_version)`. When present it is written into the envelope's
+    // `recovery_policy_ref` and the fresh-device restore path cross-checks it
+    // against the live accepted policy before importing the secret, so a
+    // compromised server can't replay an old-policy / non-frontier account-secret
+    // backup sealed to the same recovery public key.
+    recovery_policy_ref: Option<(&str, u64)>,
 ) -> Result<Value> {
     crate::key_backup::build_recovery_public_key_backup_body(
         backup_id,
@@ -237,18 +245,58 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
             ..Default::default()
         },
         account_secret.as_bytes(),
-        // secret_storage class — recovery_policy_ref is an optional hint; omitted
-        // here (the MLS account-secret recovery strand doesn't bind a policy ref).
-        None,
+        recovery_policy_ref,
     )
+}
+
+/// SEC-05: verify a `recovery_public_key` account-secret backup envelope's
+/// `recovery_policy_ref` against the actor's currently-accepted policy before it
+/// is opened. Fails closed (key-management.md §7.5.2/§7.7) when an expected
+/// policy is supplied but the envelope's ref is absent or does not match, so a
+/// compromised server cannot replay a backup minted under an old policy /
+/// non-current frontier. With `None` expected policy the check is skipped.
+pub fn ensure_recovery_public_key_backup_policy_matches(
+    body: &Value,
+    expected_recovery_policy_ref: Option<(&str, u64)>,
+) -> Result<()> {
+    let Some((expected_id, expected_version)) = expected_recovery_policy_ref else {
+        return Ok(());
+    };
+    let policy_ref = body.get("recovery_policy_ref").ok_or_else(|| {
+        anyhow!(
+            "recovery_public_key account-secret backup carries no recovery_policy_ref; \
+             refusing to import against accepted policy {expected_id} v{expected_version}"
+        )
+    })?;
+    let actual_id = policy_ref
+        .get("policy_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let actual_version = policy_ref
+        .get("policy_version")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    if actual_id != expected_id || actual_version != expected_version {
+        return Err(anyhow!(
+            "recovery_public_key account-secret backup recovery_policy_ref ({actual_id} v{actual_version}) \
+             does not match accepted policy ({expected_id} v{expected_version})"
+        ));
+    }
+    Ok(())
 }
 
 /// Open the HPKE `recovery_public_key` account-secret backup with the recovery
 /// private key, returning `(secret, version)`.
+///
+/// SEC-05: when `expected_recovery_policy_ref` is supplied the envelope's
+/// `recovery_policy_ref` MUST match the accepted policy (validated BEFORE the
+/// HPKE open) or the import is rejected.
 pub fn open_mls_account_secret_recovery_public_key_backup(
     recovery_private_key: &[u8],
     body: &Value,
+    expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> Result<(String, u32)> {
+    ensure_recovery_public_key_backup_policy_matches(body, expected_recovery_policy_ref)?;
     let bytes =
         crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, body)?;
     let secret = String::from_utf8(bytes)

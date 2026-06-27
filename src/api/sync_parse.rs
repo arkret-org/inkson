@@ -13,6 +13,20 @@ pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_ACCOUNT_SUBSCRIBE_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
+/// COR-09: upper bound on a server-supplied control-frame `reconnect_after_ms`.
+/// Mirrors the HTTP `Retry-After` ceiling (`MAX_RETRY_DELAY` = 60s) so the
+/// clamp lives at the SDK→outcome boundary and does NOT depend on every
+/// downstream consumer remembering to `.min(..)` the raw value. A malicious
+/// server can therefore never "park" a reconnect for an arbitrarily long delay.
+const MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 60_000;
+
+/// Clamp a control-frame reconnect delay (or substitute the default when the
+/// frame omitted one) to [`MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS`].
+fn clamp_reconnect_after_ms(raw: Option<u64>) -> u64 {
+    raw.unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
+        .min(MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
+}
+
 #[cfg(test)]
 pub(crate) fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOutcome> {
     match parse_account_subscribe_snapshot_outcome(bytes)? {
@@ -64,9 +78,7 @@ impl AccountSubscribeFolder {
             cokret_sdk::AccountSubscribeFrameKind::ResyncRequired
             | cokret_sdk::AccountSubscribeFrameKind::Unauthorized => {
                 self.done = Some(AccountSubscribeSnapshotResult::ReconnectAfter {
-                    reconnect_after_ms: frame
-                        .reconnect_after_ms()
-                        .unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS),
+                    reconnect_after_ms: clamp_reconnect_after_ms(frame.reconnect_after_ms()),
                     reason: frame.reason,
                     reset_cursor: frame.kind
                         == cokret_sdk::AccountSubscribeFrameKind::ResyncRequired,
@@ -76,9 +88,7 @@ impl AccountSubscribeFolder {
             cokret_sdk::AccountSubscribeFrameKind::Dropped => {
                 if self.merged.is_none() {
                     self.done = Some(AccountSubscribeSnapshotResult::ReconnectAfter {
-                        reconnect_after_ms: frame
-                            .reconnect_after_ms()
-                            .unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS),
+                        reconnect_after_ms: clamp_reconnect_after_ms(frame.reconnect_after_ms()),
                         reason: frame.reason,
                         reset_cursor: false,
                     });
@@ -270,5 +280,35 @@ fn merge_realm_delta_value(current: &mut Value, incoming: Value) {
             continue;
         }
         current_map.insert(key, value);
+    }
+}
+
+#[cfg(test)]
+mod cor09_tests {
+    use super::{
+        DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS, MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS,
+        clamp_reconnect_after_ms,
+    };
+
+    #[test]
+    fn clamp_caps_oversized_server_value() {
+        // COR-09: a hostile server value is clamped to the ceiling.
+        assert_eq!(
+            clamp_reconnect_after_ms(Some(u64::MAX)),
+            MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS
+        );
+    }
+
+    #[test]
+    fn clamp_passes_through_reasonable_value() {
+        assert_eq!(clamp_reconnect_after_ms(Some(2_000)), 2_000);
+    }
+
+    #[test]
+    fn clamp_substitutes_default_when_absent() {
+        assert_eq!(
+            clamp_reconnect_after_ms(None),
+            DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS
+        );
     }
 }

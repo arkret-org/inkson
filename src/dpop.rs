@@ -71,6 +71,14 @@ pub struct DpopClaims {
     pub htu: String,
     /// Issued-at, Unix seconds.
     pub iat: i64,
+    /// SEC-03: expiry, Unix seconds. A client-asserted upper bound on the
+    /// proof's validity window so an intercepted DPoP proof has a bounded
+    /// replay window even before the server's `jti` cache evicts it. Mirrors
+    /// the 60s TTL the soft-logout refresh proof path already sets. Optional
+    /// on the wire (skipped when absent) so a server that ignores `exp` and a
+    /// minimal proof both stay valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exp: Option<i64>,
     /// Unique per-proof nonce. Callers should generate a 128-bit
     /// random value and base64url-no-pad encode it.
     pub jti: String,
@@ -181,15 +189,22 @@ pub fn fresh_dpop_claims(
     // (see `recovery_crypto`); stay consistent so audit logging
     // / RNG-feature flags don't have to special-case DPoP.
     fill(&mut bytes).map_err(|err| DpopError::Rng(err.to_string()))?;
+    let iat = chrono::Utc::now().timestamp();
     Ok(DpopClaims {
         htm: htm.into(),
         htu: htu.into(),
-        iat: chrono::Utc::now().timestamp(),
+        iat,
+        // SEC-03: short, client-asserted lifetime. 60s matches the soft-logout
+        // refresh proof window and is comfortably above realistic clock skew.
+        exp: Some(iat + DPOP_PROOF_TTL_SECONDS),
         jti: URL_SAFE_NO_PAD.encode(bytes),
         nonce,
         ath: None,
     })
 }
+
+/// SEC-03: client-asserted TTL for freshly minted DPoP proofs.
+const DPOP_PROOF_TTL_SECONDS: i64 = 60;
 
 #[cfg(test)]
 mod tests {
@@ -207,6 +222,7 @@ mod tests {
             htm: "POST".to_owned(),
             htu: "https://soland.example/_cokret/gate/account/session-grants".to_owned(),
             iat: 1_716_000_000,
+            exp: Some(1_716_000_060),
             jti: "fixed-nonce-1234".to_owned(),
             nonce: None,
             ath: None,
@@ -339,6 +355,26 @@ mod tests {
         // without padding).
         assert_eq!(claims.jti.len(), 22);
         assert!(claims.ath.is_none());
+        // SEC-03: a fresh proof carries a short exp (iat + 60s).
+        assert_eq!(claims.exp, Some(claims.iat + 60));
+    }
+
+    #[test]
+    fn exp_serializes_when_present_and_omitted_when_none() {
+        let key = signing_key_with_seed(0x42);
+        let proof = build_dpop_proof_ed25519(&key, &fixed_claims()).unwrap();
+        let payload_b64 = proof.split('.').nth(1).unwrap();
+        let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).unwrap();
+        assert_eq!(payload["exp"], 1_716_000_060);
+
+        let mut claims = fixed_claims();
+        claims.exp = None;
+        let proof = build_dpop_proof_ed25519(&key, &claims).unwrap();
+        let payload_b64 = proof.split('.').nth(1).unwrap();
+        let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).unwrap();
+        assert!(payload.get("exp").is_none());
     }
 
     #[test]

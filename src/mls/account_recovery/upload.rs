@@ -307,6 +307,16 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
             None => None,
         };
 
+    // SEC-05: stamp the actor's currently-accepted recovery policy into the
+    // backup's `recovery_policy_ref` so a fresh-device restore can verify it
+    // against the live policy and reject an old-policy / non-frontier replay.
+    let active_policy = crate::recovery_strand::fetch_active_recovery_policy(api)
+        .await
+        .map_err(|err| anyhow!("fetch active recovery policy for backup binding: {err}"))?;
+    let recovery_policy_ref = active_policy
+        .as_ref()
+        .map(|policy| (policy.policy_id.as_str(), policy.policy_version));
+
     let account_backup_id = fresh_backup_id();
     let recovery_key_ref = format!("{actor_id}#recovery");
     let mut account_body = build_mls_account_secret_recovery_public_key_backup(
@@ -317,6 +327,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         &recovery_key_ref,
         &stored.secret,
         stored.version,
+        recovery_policy_ref,
     )?;
     apply_next_series(previous_account_backup.as_ref(), &mut account_body)?;
     api.put_key_backup(&account_backup_id, account_body)
