@@ -231,8 +231,14 @@ pub fn LoginPanel(
                         if !handle.trim().is_empty() {
                             handle
                         } else {
+                            // Display-only: never show the raw DID in the button
+                            // label — a full `did:webvh:<scid>:…` string is
+                            // unbreakable and would blow the button (and the
+                            // whole auth card) past its width. Fall back to a
+                            // compact protocol id. The canonical DID stays in
+                            // `account_did`/storage for every real call.
                             crate::app::personal_handle_from_account_handle(&known_account)
-                                .unwrap_or_else(|| known_account.clone())
+                                .unwrap_or_else(|| short_protocol_id(&known_account))
                         }
                     };
                     rsx! {
