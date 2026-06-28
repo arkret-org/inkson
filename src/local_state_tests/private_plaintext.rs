@@ -187,8 +187,22 @@ fn private_data_store_encrypts_and_persists() {
     assert!(store.load_private_data(account_key, "missing").is_none());
     assert_eq!(store.private_data_keys().len(), 2);
 
-    // Verify data is encrypted on disk
-    let raw = std::fs::read_to_string(&path).unwrap();
+    // Verify data is encrypted on disk. With per-account isolation the active
+    // blob persists to a sibling `<stem>.account.<sanitized>.json` file (the
+    // root `path` now only holds the small index). Signed out, the namespace is
+    // the anonymous sentinel; its filename segment is URL-safe-base64 of the
+    // namespace, matching `sanitize_did_for_filename`.
+    let account_file = {
+        use base64::Engine as _;
+        let sanitized =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("anonymous".as_bytes());
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        let ext = path.extension().unwrap().to_str().unwrap();
+        path.parent()
+            .unwrap()
+            .join(format!("{stem}.account.{sanitized}.{ext}"))
+    };
+    let raw = std::fs::read_to_string(&account_file).unwrap();
     assert!(!raw.contains("dark"));
     assert!(!raw.contains("party_parrot"));
 

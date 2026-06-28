@@ -1,45 +1,116 @@
 use super::*;
 
 impl LocalStateStore {
-    /// Read-only view of the root index. Mirrors [`Self::load`]: once the store
-    /// has reconciled with persistence `self.root` is authoritative; before
-    /// that a fresh store reads (and migrates) the index off the backing store
-    /// so `&self` getters reflect the persisted state without a `&mut` load.
-    fn effective_root(&self) -> RootIndex {
-        if self.loaded.get() {
-            self.root.clone()
-        } else {
-            self.load_persisted_root()
-        }
-    }
-
     /// The currently-active account DID (the foreground account whose entry
     /// `cached` mirrors), or `None` when signed out / before any account has
-    /// been adopted on this browser.
+    /// been adopted on this browser. Read through storage so every clone agrees.
     pub fn active_account_did(&self) -> Option<String> {
-        self.effective_root().active_did
+        self.read_root().active_did
     }
 
     /// Every account DID with a persisted per-account entry on this browser.
     pub fn known_account_dids(&self) -> Vec<String> {
-        self.effective_root().known_dids
+        self.read_root().known_dids
     }
 
     /// Read a cross-account UI device preference (theme/locale/...), shared by
     /// every account on this browser. `None` when unset.
     pub fn device_pref(&self, key: &str) -> Option<String> {
-        self.effective_root().device_prefs.values.get(key).cloned()
+        self.read_root().device_prefs.values.get(key).cloned()
     }
 
     /// Set a cross-account UI device preference. Lives in the root index, not
-    /// any account entry.
+    /// any account entry; written through storage so it is visible to every
+    /// clone immediately.
     pub fn set_device_pref(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        let key = key.into();
+        let value = value.into();
+        self.mutate_root(|root| {
+            root.device_prefs.values.insert(key, value);
+        });
+    }
+
+    /// Record the active account's primary personal handle (e.g. `david`). The
+    /// per-account entry is the single source of truth for the account
+    /// selector's display label.
+    pub fn set_primary_handle(&mut self, handle: &str) {
         self.ensure_cached_loaded();
-        self.root
-            .device_prefs
-            .values
-            .insert(key.into(), value.into());
+        let handle = handle.trim();
+        if self.cached.primary_handle == handle {
+            return;
+        }
+        self.cached.primary_handle = handle.to_owned();
         let _ = self.flush();
+    }
+
+    /// Read a SPECIFIC account's persisted primary handle by DID, without making
+    /// that account active. Returns `None` for the active account's in-memory
+    /// value too (prefers the live `cached` copy when `did` is active so an
+    /// unflushed set is observed). Empty string is normalised to `None`.
+    pub fn primary_handle_for_did(&self, did: &str) -> Option<String> {
+        let did = did.trim();
+        if did.is_empty() {
+            return None;
+        }
+        let handle = if self.loaded.get() && self.read_root().active_did.as_deref() == Some(did) {
+            self.cached.primary_handle.clone()
+        } else {
+            self.read_account_state(did)
+                .map(|state| state.primary_handle)
+                .unwrap_or_default()
+        };
+        (!handle.trim().is_empty()).then_some(handle)
+    }
+
+    /// Register `did` as a known account in the selector index (idempotent).
+    /// Does not change the active account. The account's `device_id` /
+    /// `server_url` for the selector come from its persisted `session_grant`
+    /// (written by the login state persistence), so they need not be passed here.
+    pub fn register_known_account(&mut self, did: &str) {
+        let did = did.trim();
+        if did.is_empty() {
+            return;
+        }
+        self.mutate_root(|root| root.note_known_did(did));
+    }
+
+    /// Enumerate the accounts known on this browser for the signed-out account
+    /// selector: each account's DID, its display handle (when resolved), and the
+    /// `(device_id, server_url)` it last signed in with (read from that
+    /// account's own persisted entry — never the active account's). The handle
+    /// is always preferred for display; callers must never render the raw DID.
+    pub fn known_accounts(&self) -> Vec<KnownAccount> {
+        let root = self.read_root();
+        let active = root.active_did.clone();
+        root.known_dids
+            .iter()
+            .map(|did| {
+                // Read the account's own entry; prefer the live `cached` copy
+                // for the active account so an unflushed login is reflected.
+                let state = if self.loaded.get() && active.as_deref() == Some(did.as_str()) {
+                    Some(self.cached.clone())
+                } else {
+                    self.read_account_state(did)
+                };
+                let (handle, device_id, server_url) = match state {
+                    Some(state) => {
+                        let grant = state.session_grant.as_ref();
+                        (
+                            state.primary_handle,
+                            grant.map(|g| g.device_id.clone()).unwrap_or_default(),
+                            grant.map(|g| g.principal_server_url.clone()).unwrap_or_default(),
+                        )
+                    }
+                    None => (String::new(), String::new(), String::new()),
+                };
+                KnownAccount {
+                    did: did.clone(),
+                    handle,
+                    device_id,
+                    server_url,
+                }
+            })
+            .collect()
     }
 
     /// Wipe every account-scoped projection field of the ACTIVE account while
@@ -83,8 +154,14 @@ impl LocalStateStore {
     /// This is the per-account replacement for the old
     /// `stamp_account_scope_owner` / `adopt_account_scope` wipe dance: account
     /// isolation is now structural (one key per account), so switching is just
-    /// re-pointing `root.active_did` and swapping `cached` for the target
-    /// account's persisted entry — never wiping another account's data.
+    /// re-pointing the persisted `active_did` and swapping `cached` for the
+    /// target account's persisted entry — never wiping another account's data.
+    ///
+    /// Ordering matters for correctness across clones: `mutate_root` lands the
+    /// new `active_did` in storage FIRST, then `cached` is hydrated from the
+    /// target entry, then `flush()` persists `cached` — at which point
+    /// `effective_account_key` reads back the just-written `active_did`, so the
+    /// blob lands under the right `…account.<did>` key.
     ///
     /// Returns `true` when the active account actually changed.
     pub fn switch_active_account(&mut self, actor: &str) -> bool {
@@ -93,19 +170,25 @@ impl LocalStateStore {
         if actor.is_empty() {
             return false;
         }
-        if self.root.active_did.as_deref() == Some(actor) {
+        let current_active = self.read_root().active_did;
+        if current_active.as_deref() == Some(actor) {
             // Already active — just make sure it's recorded as known.
-            self.root.note_known_did(actor);
+            self.mutate_root(|root| root.note_known_did(actor));
             return false;
         }
         // Persist the outgoing account's entry before swapping so nothing is
-        // lost (its own key, never another account's).
+        // lost. The outgoing entry is selected by the CURRENT (pre-switch)
+        // `active_did`, so flush while that still points at the old account.
         let _ = self.flush();
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
-        self.root.active_did = Some(actor.to_owned());
-        self.root.note_known_did(actor);
+        // Land the new active pointer in shared storage first.
+        self.mutate_root(|root| {
+            root.active_did = Some(actor.to_owned());
+            root.note_known_did(actor);
+        });
         // Load the target account's own entry (default for a brand-new account).
         self.cached = self.read_account_state(actor).unwrap_or_default();
+        // Flush `cached` under the now-active account's key.
         let _ = self.flush();
         true
     }
@@ -120,10 +203,10 @@ impl LocalStateStore {
         if actor.is_empty() {
             return;
         }
-        if self.root.active_did.as_deref() == Some(actor) {
-            if !self.root.known_dids.iter().any(|known| known == actor) {
-                self.root.note_known_did(actor);
-                let _ = self.flush();
+        let root = self.read_root();
+        if root.active_did.as_deref() == Some(actor) {
+            if !root.known_dids.iter().any(|known| known == actor) {
+                self.mutate_root(|root| root.note_known_did(actor));
             }
             return;
         }
@@ -152,13 +235,18 @@ impl LocalStateStore {
             return;
         }
         self.delete_account_state(actor);
-        self.root.forget_known_did(actor);
-        if self.root.active_did.as_deref() == Some(actor) {
-            self.root.active_did = None;
+        let was_active = self.read_root().active_did.as_deref() == Some(actor);
+        self.mutate_root(|root| {
+            root.forget_known_did(actor);
+            if root.active_did.as_deref() == Some(actor) {
+                root.active_did = None;
+            }
+        });
+        if was_active {
             *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
             self.cached = ClientLocalState::default();
+            let _ = self.flush();
         }
-        let _ = self.flush();
     }
 
     /// Pre-DID login kickoff: record the freshly-minted `device_id` (+ optional
@@ -166,25 +254,27 @@ impl LocalStateStore {
     /// process-global pending namespace so the bootstrap wrap_seed / secrets
     /// land under `pending.<device_id>` until the principal DID resolves.
     pub fn begin_pending_login(&mut self, device_id: &str, dpop_jkt: Option<&str>) {
-        self.ensure_cached_loaded();
         let device_id = device_id.trim();
         if device_id.is_empty() {
             return;
         }
         crate::secure_key_store::set_pending_login_device_id(Some(device_id));
-        self.root.pending_login = Some(PendingLogin {
+        let pending = PendingLogin {
             device_id: device_id.to_owned(),
             dpop_jkt: dpop_jkt
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
-        });
-        let _ = self.flush();
+        };
+        self.mutate_root(|root| root.pending_login = Some(pending));
     }
 
-    /// The in-flight pre-DID login material, if any.
+    /// The in-flight pre-DID login material, if any. Read through storage so a
+    /// clone that did not itself start the sign-in still observes the pending
+    /// device material (the root cause of the login race was reading a stale
+    /// per-clone copy here).
     pub fn pending_login(&self) -> Option<PendingLogin> {
-        self.root.pending_login.clone()
+        self.read_root().pending_login
     }
 
     /// Adopt the pending pre-DID device material onto the resolved principal
@@ -207,11 +297,13 @@ impl LocalStateStore {
         if did.is_empty() {
             return false;
         }
-        let is_returning_account = self.root.known_dids.iter().any(|known| known == did)
+        let is_returning_account = self.read_root().known_dids.iter().any(|known| known == did)
             || self.read_account_state(did).is_some();
-        // Clear pending namespace pin before the seed-scope adopt re-homes it.
+        // Clear pending namespace pin before the seed-scope adopt re-homes it,
+        // and clear the persisted `pending_login` (shared through storage, not a
+        // per-clone field) so no stale clone resurrects it on a later flush.
         crate::secure_key_store::set_pending_login_device_id(None);
-        self.root.pending_login = None;
+        self.mutate_root(|root| root.pending_login = None);
         self.switch_active_account(did);
         !is_returning_account
     }

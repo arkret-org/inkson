@@ -182,12 +182,18 @@ pub fn RouterView() -> Element {
         .unwrap_or_else(|| "system".to_owned());
     // Rehydrate the persisted primary handle for the booted account so the
     // signed-out "Continue as" button identifies the account by handle on a
-    // fresh load, instead of falling back to the raw DID.
+    // fresh load, instead of falling back to the raw DID. Reads the per-account
+    // entry by DID (not the active account), so it works on the re-login screen
+    // regardless of which account is currently active.
     let initial_account_primary_handle = initial_state_store
-        .load_private_data(
-            &initial_config.account_did,
-            &account_primary_handle_storage_key(&initial_config.account_did),
-        )
+        .primary_handle_for_did(&initial_config.account_did)
+        .filter(|handle| !handle.trim().is_empty())
+        .or_else(|| {
+            initial_state_store.load_private_data(
+                &initial_config.account_did,
+                &account_primary_handle_storage_key(&initial_config.account_did),
+            )
+        })
         .unwrap_or_default();
     let config_store = use_signal(LocalConfigStore::default);
     let mut state_store = use_signal(LocalStateStore::default);

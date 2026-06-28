@@ -93,13 +93,19 @@ mod to_device_raw;
 pub struct LocalStateStore {
     /// The ACTIVE account's full state. Every existing read/write method
     /// operates on `cached` unchanged — they simply act on whichever account
-    /// `root.active_did` selects. Loaded from `account_state_key(active_did)`
-    /// (or default when signed out) by [`Self::ensure_cached_loaded`].
+    /// the persisted root index's `active_did` selects. Loaded from
+    /// `account_state_key(active_did)` (or default when signed out) by
+    /// [`Self::ensure_cached_loaded`].
+    ///
+    /// NOTE: the root index is deliberately NOT a struct field. `LocalStateStore`
+    /// is `#[derive(Clone)]` and held in a widely-cloned `Signal<_>`; a cached
+    /// `root` field would diverge per clone (one clone adopting an account while
+    /// a stale clone's later flush rewrites the index back), which is exactly the
+    /// "login leaves active_did = null / pending_login uncleared" race. Instead
+    /// the root index is the small localStorage/root-file blob itself — read
+    /// through [`Self::read_root`] and updated atomically through
+    /// [`Self::mutate_root`] so every clone observes one shared source of truth.
     cached: ClientLocalState,
-    /// The small cold-written root index: active account pointer, cross-account
-    /// device prefs, in-flight pending-login device material, and the known-DID
-    /// set. Persisted to [`LOCAL_STATE_STORAGE_KEY`] (the root file on native).
-    root: RootIndex,
     /// Perf: whether `cached` has been reconciled with the persistence layer at
     /// least once. Before this flag existed, an empty/default account (where
     /// `cached == ClientLocalState::default()`) re-read the backing store (disk
@@ -267,7 +273,6 @@ impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
             cached: ClientLocalState::default(),
-            root: RootIndex::default(),
             loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
@@ -429,7 +434,6 @@ impl LocalStateStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: ClientLocalState::default(),
-            root: RootIndex::default(),
             loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
@@ -473,6 +477,28 @@ impl LocalStateStore {
         match self.path.parent() {
             Some(parent) => parent.join(file_name),
             None => PathBuf::from(file_name),
+        }
+    }
+
+    /// The single source of truth for the root index: ALWAYS read through from
+    /// the backing store (it is small — a sync localStorage read on wasm, a tiny
+    /// file on native — so this is cheap). There is no per-clone cache to go
+    /// stale, so every `LocalStateStore` clone in the `Signal<_>` observes the
+    /// same `active_did` / `pending_login` / `known_dids`.
+    fn read_root(&self) -> RootIndex {
+        self.load_persisted_root()
+    }
+
+    /// Atomic read-modify-write of the root index. Reads the current persisted
+    /// index, applies `f`, and writes the result straight back — no intermediate
+    /// in-memory `self.root` to diverge across clones. Must NOT trigger anything
+    /// that re-reads/re-writes the root (no `flush`) to avoid re-entrancy.
+    fn mutate_root(&self, f: impl FnOnce(&mut RootIndex)) {
+        let mut root = self.load_persisted_root();
+        f(&mut root);
+        if let Err(error) = self.write_root(&root) {
+            tracing::error!(%error, "persist root index failed");
+            self.record_persist_result(&Err(error));
         }
     }
 
@@ -594,11 +620,12 @@ impl LocalStateStore {
     /// The account namespace the active blob persists under: the active DID
     /// when signed in, else the reserved anonymous sentinel so pre-login local
     /// state still has a durable home. This is a *storage* detail only — the
-    /// root index `active_did` stays `None` while signed out.
+    /// root index `active_did` stays `None` while signed out. Reads the root
+    /// through storage (no per-clone cache) so the flush hot path always writes
+    /// the `…account.<did>` key the most recently adopted account selected.
     fn effective_account_key(&self) -> String {
-        self.root
+        self.read_root()
             .active_did
-            .clone()
             .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned())
     }
 
@@ -607,12 +634,7 @@ impl LocalStateStore {
     /// (migrated) root index, then reads that entry. `None` when the entry is
     /// absent.
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
-        let root = self.load_persisted_root();
-        let key = root
-            .active_did
-            .clone()
-            .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned());
-        self.read_account_state(&key)
+        self.read_account_state(&self.effective_account_key())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -734,18 +756,20 @@ impl LocalStateStore {
         Ok(())
     }
 
-    /// Persist the active account's `state` to its own entry and the root
-    /// index. The hot path only touches the active account's key; the index is
-    /// small and only changes on account switch / pending adoption, but is
-    /// cheap enough to co-write so `known_dids`/`active_did` stay in sync.
-    /// When signed out (`active_did` is `None`) only the index is written.
+    /// Persist the active account's `state` to its own entry. The hot path
+    /// (every flush) ONLY touches the active account's `…account.<did>` key and
+    /// deliberately does NOT rewrite the root index: the index is the shared
+    /// source of truth owned by [`Self::mutate_root`], and co-writing a
+    /// per-clone copy of it here is exactly what let a stale clone clobber a
+    /// freshly-adopted `active_did` back to null. The active DID is resolved by
+    /// reading the index through ([`Self::effective_account_key`]), so a flush
+    /// always lands in whatever account the latest adoption selected.
     fn write_persisted_state(&self, state: &ClientLocalState) -> anyhow::Result<()> {
         // Active DID when signed in, else the anonymous sentinel so pre-login
         // local state (drafts, scratch) is durable rather than memory-only.
-        self.write_account_state(&self.effective_account_key(), state)?;
         // YOU-02-003 note: the per-account split keeps each account's blob well
         // under the localStorage quota the single global blob used to risk.
-        self.write_root(&self.root)
+        self.write_account_state(&self.effective_account_key(), state)
     }
 
     fn ensure_cached_loaded(&mut self) {
@@ -755,9 +779,9 @@ impl LocalStateStore {
         if self.loaded.get() {
             return;
         }
-        // Always reconcile the root index (cheap, drives `active_did`) so a
-        // store constructed fresh sees the persisted active account + prefs.
-        self.root = self.load_persisted_root();
+        // The root index is read through storage on demand (no `self.root`
+        // field), so `effective_account_key` already reflects the persisted
+        // active account; just hydrate `cached` from that account's entry.
         if self.cached == ClientLocalState::default()
             && let Some(state) = self.read_account_state(&self.effective_account_key())
         {

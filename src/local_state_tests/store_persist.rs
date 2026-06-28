@@ -602,6 +602,158 @@ fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
 }
 
 #[test]
+fn primary_handle_is_per_account_and_readable_by_did() {
+    let path = temp_state_path("primary-handle");
+    let mut store = LocalStateStore::with_path(path);
+
+    store.adopt_account_scope("did:webvh:zA:alice.example");
+    store.set_primary_handle("alice");
+    store.adopt_account_scope("did:webvh:zB:david.example");
+    store.set_primary_handle("david");
+
+    // Each account's handle is readable BY DID without making it active.
+    assert_eq!(
+        store.primary_handle_for_did("did:webvh:zA:alice.example").as_deref(),
+        Some("alice")
+    );
+    assert_eq!(
+        store.primary_handle_for_did("did:webvh:zB:david.example").as_deref(),
+        Some("david")
+    );
+    // Unknown / empty → None.
+    assert!(store.primary_handle_for_did("did:webvh:zC:nobody.example").is_none());
+    assert!(store.primary_handle_for_did("").is_none());
+}
+
+#[test]
+fn known_accounts_lists_each_account_with_its_handle_and_device() {
+    let path = temp_state_path("known-accounts");
+    let mut store = LocalStateStore::with_path(path);
+
+    store.register_known_account("did:webvh:zA:alice.example");
+    store.adopt_account_scope("did:webvh:zA:alice.example");
+    store.set_primary_handle("alice");
+    store.set_session_grant(Some(PersistedSessionGrant {
+        grant_jwt: "alice.grant".to_owned(),
+        session_private_key_pem: "pem".to_owned(),
+        grant_id: "g-alice".to_owned(),
+        audience: "https://alice.example/api".to_owned(),
+        principal_id: "did:webvh:zA:alice.example".to_owned(),
+        device_id: "ck:device:alice-1".to_owned(),
+        principal_server_url: "https://alice.example".to_owned(),
+        grant_expires_at: None,
+        stored_at: chrono::Utc::now(),
+    }));
+
+    store.register_known_account("did:webvh:zB:david.example");
+    store.adopt_account_scope("did:webvh:zB:david.example");
+    store.set_primary_handle("david");
+
+    let accounts = store.known_accounts();
+    assert_eq!(accounts.len(), 2);
+    let alice = accounts
+        .iter()
+        .find(|account| account.did == "did:webvh:zA:alice.example")
+        .expect("alice present");
+    assert_eq!(alice.handle, "alice");
+    // device_id / server_url come from alice's OWN persisted grant, read by DID
+    // (not the active account, which is currently david).
+    assert_eq!(alice.device_id, "ck:device:alice-1");
+    assert_eq!(alice.server_url, "https://alice.example");
+    let david = accounts
+        .iter()
+        .find(|account| account.did == "did:webvh:zB:david.example")
+        .expect("david present");
+    assert_eq!(david.handle, "david");
+}
+
+#[test]
+fn account_entry_without_primary_handle_field_loads() {
+    // Backward-compat: an account entry written before `primary_handle` existed
+    // must still deserialize (serde default → empty handle).
+    let path = temp_state_path("legacy-account-entry");
+    let did = "did:webvh:zLegacy:user.example";
+    let store = LocalStateStore::with_path(path.clone());
+    // Hand-write the account entry file WITHOUT the primary_handle field.
+    let account_file = {
+        use base64::Engine as _;
+        let sanitized = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(did.as_bytes());
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        let ext = path.extension().unwrap().to_str().unwrap();
+        path.parent()
+            .unwrap()
+            .join(format!("{stem}.account.{sanitized}.{ext}"))
+    };
+    // Serialize a full entry, then strip the `primary_handle` field to mimic a
+    // pre-field on-disk blob (the other fields must still be present so the
+    // entry parses; `#[serde(default)]` only fills the absent handle).
+    let mut entry = serde_json::to_value(ClientLocalState {
+        sync_cursor: Some("sx:legacy".to_owned()),
+        ..ClientLocalState::default()
+    })
+    .unwrap();
+    entry.as_object_mut().unwrap().remove("primary_handle");
+    assert!(
+        entry.get("primary_handle").is_none(),
+        "primary_handle stripped to mimic legacy blob"
+    );
+    std::fs::write(&account_file, serde_json::to_vec_pretty(&entry).unwrap()).unwrap();
+    // Reading the legacy entry's handle by DID succeeds with no handle.
+    assert!(store.primary_handle_for_did(did).is_none());
+    // And the entry is otherwise loadable.
+    let mut store = store;
+    store.adopt_account_scope(did);
+    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:legacy"));
+}
+
+#[test]
+fn root_index_is_shared_across_clones_not_cached_per_clone() {
+    // Regression: `LocalStateStore` is `#[derive(Clone)]` and held in a
+    // widely-cloned `Signal<_>`. The root index (active_did / pending_login /
+    // known_dids) MUST be read through the backing store, never cached per
+    // clone, or a clone that didn't start the sign-in reads a stale empty root
+    // (login takes the wrong branch) and a stale clone's later flush clobbers a
+    // freshly-adopted active_did back to null.
+    let path = temp_state_path("root-shared-clones");
+    let mut a = LocalStateStore::with_path(path.clone());
+    let b = a.clone();
+
+    // `a` starts a pending sign-in...
+    a.begin_pending_login("ck:device:clone-race-1", Some("jkt-1"));
+    // ...and `b` (a different clone) must observe it through storage.
+    let pending = b.pending_login().expect("clone b sees pending login");
+    assert_eq!(pending.device_id, "ck:device:clone-race-1");
+
+    // `b` adopts onto a resolved DID...
+    let mut b = b;
+    let is_new = b.adopt_pending_login("did:web:clone.example");
+    assert!(is_new, "an unknown DID adopts as a new account");
+
+    // ...and `a` (the clone that started the flow) must observe the adopted
+    // active account and the cleared pending — cross-clone consistency, no
+    // stale-clone overwrite.
+    assert_eq!(
+        a.active_account_did().as_deref(),
+        Some("did:web:clone.example"),
+        "clone a sees the adopted active account"
+    );
+    assert!(
+        a.pending_login().is_none(),
+        "clone a sees pending cleared, not a stale per-clone copy"
+    );
+
+    // A later flush on the stale clone must NOT rewrite the root index back to
+    // null (write_persisted_state no longer co-writes the root).
+    a.save_draft("ck:realm:demo", "scratch");
+    let reader = LocalStateStore::with_path(path);
+    assert_eq!(
+        reader.active_account_did().as_deref(),
+        Some("did:web:clone.example"),
+        "active_did survives a stale-clone flush"
+    );
+}
+
+#[test]
 fn adopt_pending_login_keeps_pending_device_for_new_account() {
     let path = temp_state_path("pending-new");
     let mut store = LocalStateStore::with_path(path);

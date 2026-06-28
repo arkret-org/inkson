@@ -770,6 +770,34 @@ pub struct ClientLocalState {
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]
     pub member_handle_cache: BTreeMap<String, MemberHandleCacheEntry>,
+    /// This account's primary personal handle (e.g. `david`), resolved at login
+    /// from the account viewer. Persisted per-account so the signed-out
+    /// re-login screen's account selector can label each known account by its
+    /// handle (never the raw DID) — read by DID via
+    /// [`LocalStateStore::primary_handle_for_did`] without making the account
+    /// active. `#[serde(default)]` keeps pre-existing account entries (written
+    /// before this field) loadable.
+    #[serde(default)]
+    pub primary_handle: String,
+}
+
+/// One row for the signed-out account selector (Google-style "choose an
+/// account" list). Built from the [`RootIndex`] `known_dids` joined with each
+/// account's own persisted entry. The `handle` is the display label (callers
+/// MUST prefer it and never render the raw `did`); `device_id` / `server_url`
+/// are the values that account last signed in with, so a reuse-login targets
+/// that exact device + server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownAccount {
+    /// Canonical account DID. Used as the actor hint + per-account key; never
+    /// shown raw in the UI.
+    pub did: String,
+    /// Resolved primary personal handle (e.g. `david`), or empty when unknown.
+    pub handle: String,
+    /// The `device_id` this account last signed in with on this browser.
+    pub device_id: String,
+    /// The principal-server URL this account last signed in against.
+    pub server_url: String,
 }
 
 /// Cross-account UI device preferences — the ONLY part of local state shared
@@ -995,6 +1023,7 @@ impl Default for ClientLocalState {
             dpop_device_key: None,
             member_identity_events: BTreeMap::new(),
             member_handle_cache: BTreeMap::new(),
+            primary_handle: String::new(),
         }
     }
 }
