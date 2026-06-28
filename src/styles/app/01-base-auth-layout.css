@@ -15,46 +15,6 @@ button, input, textarea, select { font: inherit; }
 .auth-form input { width: 100%; box-sizing: border-box; border: 1px solid #c2d0c3; border-radius: 6px; padding: 11px 12px; background: #fff; color: #142018; }
 [data-theme="dark"] .auth-form input { border-color: #3a4b63; background: #111827; color: #e5edf7; }
 .auth-primary, .auth-secondary { width: 100%; max-width: 100%; margin-top: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ── Google-style account chooser (signed-out re-login, ≥2 accounts) ── */
-/* Collapsed split button + a dropdown panel that scrolls when there are
-   many accounts. Positioning anchor for the absolute panel below. */
-.auth-account-chooser { position: relative; margin-top: 4px; z-index: 21; }
-/* Split button: left half = continue primary account, right half = ▾ toggle. */
-.auth-account-split { display: flex; align-items: stretch; gap: 1px; min-width: 0; }
-.auth-account-split-main { margin-top: 0; flex: 1 1 auto; min-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.auth-account-split-toggle { margin-top: 0; flex: 0 0 44px; width: 44px; min-width: 44px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-top-left-radius: 0; border-bottom-left-radius: 0; }
-.auth-account-split-toggle svg { width: 18px; height: 18px; }
-
-/* Click-away backdrop: a transparent full-viewport layer behind the panel. */
-.auth-account-backdrop { position: fixed; inset: 0; z-index: 20; background: transparent; }
-
-/* Dropdown panel: IN-FLOW under the split button so the card grows to contain
-   it (an absolute overlay was being clipped by an ancestor). The chooser's
-   `z-index` keeps the whole control above the click-outside backdrop. */
-.auth-account-panel {
-    position: static; margin-top: 6px;
-    display: flex; flex-direction: column;
-    border: 1px solid #c2d0c3; border-radius: 10px; background: #fff;
-    box-shadow: 0 12px 28px rgba(20, 32, 24, 0.18); overflow: hidden;
-}
-[data-theme="dark"] .auth-account-panel { border-color: #3a4b63; background: #0f1623; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5); }
-/* Scrollable account list: cap height so a long list scrolls, not overflows. */
-.auth-account-scroll { list-style: none; margin: 0; padding: 4px; max-height: 240px; overflow-y: auto; overscroll-behavior: contain; }
-.auth-account-row { min-width: 0; }
-.auth-account-row-button,
-.auth-account-different {
-    width: 100%; max-width: 100%; min-width: 0; margin-top: 0;
-    display: flex; align-items: center; gap: 8px; justify-content: flex-start;
-    text-align: start; padding: 8px 12px; border-radius: 8px;
-}
-.auth-account-row-button.active { background: rgba(100, 116, 139, 0.12); }
-.auth-account-different { border-top: 1px solid #e2e8e3; border-radius: 0; }
-[data-theme="dark"] .auth-account-different { border-top-color: #2a3650; }
-.auth-account-avatar { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; background: rgba(100, 116, 139, 0.18); color: #142018; }
-.auth-account-avatar.add { font-weight: 600; }
-[data-theme="dark"] .auth-account-avatar { color: #e5edf7; }
-.auth-account-handle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auth-status { color: #64748b; font-size: 13px; overflow-wrap: anywhere; }
 .auth-restore { gap: 16px; }
 .auth-restore-indicator { width: 100%; height: 4px; border-radius: 999px; overflow: hidden; background: rgba(100, 116, 139, 0.18); }
@@ -247,4 +207,3 @@ a.primary, a.secondary { line-height: 1.5; }
 .tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .tab { border: 1px solid #cbd5df; border-radius: 6px 6px 0 0; padding: 8px 16px; cursor: pointer; background: #e7edf3; }
 .tab.active { background: white; border-bottom-color: white; font-weight: 600; }
-

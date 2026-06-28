@@ -180,11 +180,11 @@ pub fn RouterView() -> Element {
         .load_private_data(&initial_config.account_did, "theme")
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
         .unwrap_or_else(|| "system".to_owned());
-    // Rehydrate the persisted primary handle for the booted account so the
-    // signed-out "Continue as" button identifies the account by handle on a
-    // fresh load, instead of falling back to the raw DID. Reads the per-account
-    // entry by DID (not the active account), so it works on the re-login screen
-    // regardless of which account is currently active.
+    // Rehydrate the persisted primary handle for the booted account so any
+    // signed-out diagnostics can identify the account by handle on a fresh
+    // load, instead of falling back to the raw DID. Reads the per-account entry
+    // by DID (not the active account), so it works regardless of which account
+    // is currently active.
     let initial_account_primary_handle = initial_state_store
         .primary_handle_for_did(&initial_config.account_did)
         .filter(|handle| !handle.trim().is_empty())
@@ -4790,14 +4790,11 @@ pub fn RouterView() -> Element {
                                                 // it ends the session (grant + token cleared
                                                 // below) but deliberately KEEPS this account's
                                                 // device key (the account-scoped DPoP record /
-                                                // signing seed) and persisted `account_did`, so
-                                                // the login screen offers "Continue as <account>"
-                                                // and re-authentication reuses the SAME device —
-                                                // no key rotation, no MLS re-admission. Wiping the
-                                                // device (true rotation / "remove this device") is
-                                                // reserved for a separate explicit action; it must
-                                                // clear the account-scoped seed, not just this
-                                                // in-memory record.
+                                                // signing seed) and persisted `account_did`.
+                                                // Wiping the device (true rotation / "remove this
+                                                // device") is reserved for a separate explicit
+                                                // action; it must clear the account-scoped seed,
+                                                // not just this in-memory record.
                                                 let _ = crate::coauth::clear_persisted_oidc_scaffold();
                                                 // Wipe the in-memory UI signals too so the
                                                 // sidebar can't paint a frame of stale
