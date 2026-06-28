@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cokret_sdk::models::{
-    AgentKeyScope, AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
-    AgentProvisionRequestBody,
+    AgentGrantAttachRequestBody, AgentParticipation, AgentParticipationEntry,
+    AgentParticipationScope, AgentProvisionRequestBody,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -16,6 +16,9 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
+use crate::views::agents::{
+    AgentGrantPreset, agent_pair_url, expand_preset_grant, requested_scope_for_presets,
+};
 use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, display_name_for_did, handle_display_from_did,
     short_protocol_id,
@@ -43,9 +46,9 @@ enum AgentMentionPolicy {
 impl AgentMentionPolicy {
     fn label(self) -> &'static str {
         match self {
-            Self::Allowed => "普通成员可 @",
-            Self::OwnerOnly => "仅主人 @",
-            Self::Unknown => "@ 权限未知",
+            Self::Allowed => "Members can @",
+            Self::OwnerOnly => "Controller only",
+            Self::Unknown => "@ policy unknown",
         }
     }
 
@@ -191,6 +194,10 @@ struct AgentProvisionSummary {
     pairing_request_id: String,
     pairing_code: Option<String>,
     expires_at: String,
+    pair_url: String,
+    attached_grants: usize,
+    grant_errors: Vec<String>,
+    grant_expires_at: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1034,6 +1041,48 @@ fn agent_invite_target(agent_principal_id: &str, service_did: &str) -> String {
         agent_principal_id.trim(),
         service_did.trim()
     )
+}
+
+fn member_agent_default_presets() -> Vec<AgentGrantPreset> {
+    vec![AgentGrantPreset::ReadOnly, AgentGrantPreset::DraftOnly]
+}
+
+fn member_agent_grant_expires_at(now: chrono::DateTime<chrono::Utc>) -> String {
+    (now + chrono::Duration::days(30)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+fn copy_text_to_clipboard(text: &str) {
+    let Ok(encoded) = serde_json::to_string(text) else {
+        return;
+    };
+    let script = format!(
+        r#"(async () => {{
+    const text = {encoded};
+    if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(text);
+        return true;
+    }}
+    const node = document.createElement("textarea");
+    node.value = text;
+    node.setAttribute("readonly", "");
+    node.style.position = "fixed";
+    node.style.left = "-9999px";
+    document.body.appendChild(node);
+    node.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(node);
+    return copied;
+}})()"#
+    );
+    let _ = document::eval(&script);
+}
+
+fn open_url_in_new_tab(url: &str) {
+    let Ok(encoded) = serde_json::to_string(url) else {
+        return;
+    };
+    let script = format!("window.open({encoded}, \"_blank\", \"noopener,noreferrer\");");
+    let _ = document::eval(&script);
 }
 
 fn member_avatar_initial_from_value(value: &str) -> String {
@@ -2512,6 +2561,7 @@ pub fn RealmMembersPanel(
     let mut self_agent_settings_open = use_signal(|| false);
     let mut new_agent_display_name = use_signal(|| "my-personal-agent".to_owned());
     let mut new_agent_slug = use_signal(|| "summary".to_owned());
+    let mut new_agent_presets = use_signal(member_agent_default_presets);
     let mut new_agent_pairing = use_signal(|| Option::<AgentProvisionSummary>::None);
     let block_confirm_did = use_signal(|| Option::<String>::None);
     let mut permissions = use_signal(RealmMemberCapabilities::default);
@@ -3530,7 +3580,7 @@ pub fn RealmMembersPanel(
                                         div { class: "member-self-agent-settings-head",
                                             div {
                                                 div { class: "entity-title", "My AI agents in this Realm" }
-                                                div { class: "muted", "Set whether ordinary Realm members can @ your agents, or add one of your agents to this Realm." }
+                                                div { class: "muted", "Create Realm-scoped grants, pair runtime keys, and control who can @ your agents." }
                                             }
                                             span { class: "badge", "{self_owned_agent_rows.len()} total" }
                                         }
@@ -3557,12 +3607,45 @@ pub fn RealmMembersPanel(
                                                     }
                                                 }
                                             }
+                                            div { class: "member-agent-preset-list", "data-testid": "member-agent-preset-list",
+                                                for preset in AgentGrantPreset::ALL {
+                                                    {
+                                                        let preset_on = new_agent_presets.read().contains(&preset);
+                                                        rsx! {
+                                                            label {
+                                                                class: "member-agent-preset-row",
+                                                                "data-testid": "member-agent-preset-row",
+                                                                "data-preset": preset.preset_name(),
+                                                                Checkbox {
+                                                                    "data-testid": "member-agent-preset-checkbox",
+                                                                    checked: if preset_on { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                    on_checked_change: move |state: CheckboxState| {
+                                                                        let mut current = new_agent_presets.write();
+                                                                        if bool::from(state) {
+                                                                            if !current.contains(&preset) {
+                                                                                current.push(preset);
+                                                                            }
+                                                                        } else {
+                                                                            current.retain(|item| *item != preset);
+                                                                        }
+                                                                    },
+                                                                }
+                                                                span {
+                                                                    strong { "{preset.label()}" }
+                                                                    span { class: "muted", "{preset.help()}" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             div { class: "actions member-agent-create-actions",
                                                 Button {
-                                                    variant: ButtonVariant::Secondary,
+                                                    variant: ButtonVariant::Primary,
                                                     "data-testid": "member-agent-create-button",
                                                     onclick: {
                                                         let base = base_url.clone();
+                                                        let selected_realm_for_create = selected_realm_id.clone();
                                                         move |_| {
                                                             let display = new_agent_display_name().trim().to_owned();
                                                             if display.is_empty() {
@@ -3570,19 +3653,26 @@ pub fn RealmMembersPanel(
                                                                 return;
                                                             }
                                                             let slug = new_agent_slug().trim().to_owned();
+                                                            let presets = new_agent_presets.read().clone();
+                                                            if presets.is_empty() {
+                                                                status_msg.set("select at least one agent permission preset".to_owned());
+                                                                return;
+                                                            }
+                                                            let realm_for_grants = selected_realm_for_create.clone();
+                                                            let grant_expires_at = member_agent_grant_expires_at(chrono::Utc::now());
                                                             let body = AgentProvisionRequestBody {
                                                                 display_name: Some(display.clone()),
                                                                 agent_slug: if slug.is_empty() { None } else { Some(slug) },
-                                                                requested_scope: Some(AgentKeyScope::Limited),
+                                                                requested_scope: requested_scope_for_presets(&presets),
                                                                 accountability: Value::Null,
                                                                 pairing_ttl_ms: None,
                                                             };
                                                             let base = base.clone();
                                                             let api_token = token();
                                                             spawn(async move {
-                                                                match crate::views::helpers::with_authed_api(
+                                                                let outcome = match crate::views::helpers::with_authed_api(
                                                                     &base,
-                                                                    api_token,
+                                                                    api_token.clone(),
                                                                     move |api| {
                                                                         let body = body.clone();
                                                                         async move { api.agent_provision(&body).await }
@@ -3590,33 +3680,86 @@ pub fn RealmMembersPanel(
                                                                 )
                                                                 .await
                                                                 {
-                                                                    Ok(outcome) => {
-                                                                        let agent_id = outcome.agent_principal_id.to_string();
-                                                                        new_agent_pairing.set(Some(AgentProvisionSummary {
-                                                                            agent_principal_id: agent_id.clone(),
-                                                                            pairing_request_id: outcome.pairing_request_id.clone(),
-                                                                            pairing_code: outcome.pairing_code.clone(),
-                                                                            expires_at: outcome.expires_at.to_rfc3339(),
-                                                                        }));
-                                                                        owned_agents_refresh_nonce.set(owned_agents_refresh_nonce() + 1);
+                                                                    Ok(outcome) => outcome,
+                                                                    Err(err) => {
                                                                         status_msg.set(format!(
-                                                                            "created AI agent {}",
-                                                                            short_protocol_id(&agent_id)
-                                                                        ));
-                                                                    }
-                                                                    Err(err) => status_msg.set(format!(
                                                                         "agent create failed: {}",
                                                                         err.display()
-                                                                    )),
+                                                                        ));
+                                                                        return;
+                                                                    }
+                                                                };
+                                                                let agent_id = outcome.agent_principal_id.to_string();
+                                                                let mut attached_grants = 0usize;
+                                                                let mut grant_errors = Vec::<String>::new();
+                                                                for preset in presets.iter() {
+                                                                    let grant = expand_preset_grant(
+                                                                        *preset,
+                                                                        &agent_id,
+                                                                        Some(&realm_for_grants),
+                                                                        &grant_expires_at,
+                                                                    );
+                                                                    let attach_body = AgentGrantAttachRequestBody { grant };
+                                                                    let agent_id_for_call = agent_id.clone();
+                                                                    match crate::views::helpers::with_authed_api(
+                                                                        &base,
+                                                                        api_token.clone(),
+                                                                        move |api| {
+                                                                            let body = attach_body.clone();
+                                                                            let id = agent_id_for_call.clone();
+                                                                            async move { api.agent_grant_attach(&id, &body).await }
+                                                                        },
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(_) => attached_grants += 1,
+                                                                        Err(err) => grant_errors.push(format!(
+                                                                            "{}: {}",
+                                                                            preset.preset_name(),
+                                                                            err.display()
+                                                                        )),
+                                                                    }
+                                                                }
+                                                                let pair_url = agent_pair_url(&base, &outcome.pairing_request_id);
+                                                                let expires_at = outcome.expires_at.to_rfc3339();
+                                                                new_agent_pairing.set(Some(AgentProvisionSummary {
+                                                                    agent_principal_id: agent_id.clone(),
+                                                                    pairing_request_id: outcome.pairing_request_id.clone(),
+                                                                    pairing_code: outcome.pairing_code.clone(),
+                                                                    expires_at,
+                                                                    pair_url,
+                                                                    attached_grants,
+                                                                    grant_errors: grant_errors.clone(),
+                                                                    grant_expires_at: grant_expires_at.clone(),
+                                                                }));
+                                                                owned_agents_refresh_nonce.set(owned_agents_refresh_nonce() + 1);
+                                                                if grant_errors.is_empty() {
+                                                                    status_msg.set(format!(
+                                                                        "created AI agent {} with {} Realm grant(s)",
+                                                                        short_protocol_id(&agent_id),
+                                                                        attached_grants
+                                                                    ));
+                                                                } else {
+                                                                    status_msg.set(format!(
+                                                                        "created AI agent {}; {} grant(s) attached, errors: {}",
+                                                                        short_protocol_id(&agent_id),
+                                                                        attached_grants,
+                                                                        grant_errors.join("; ")
+                                                                    ));
                                                                 }
                                                             });
                                                         }
                                                     },
-                                                    "Create AI agent"
+                                                    "Create and authorize"
                                                 }
                                             }
                                             if let Some(pairing) = new_agent_pairing() {
                                                 div { class: "member-agent-pairing", "data-testid": "member-agent-pairing",
+                                                    div { class: "member-agent-pairing-head",
+                                                        span { "Pair runtime" }
+                                                        span { class: "badge amber", "pending_runtime_key" }
+                                                    }
+                                                    div { class: "muted", "Runtime pairing must finish before the attached grants can be used." }
                                                     div { class: "member-profile-line",
                                                         span { class: "member-profile-label", "Agent" }
                                                         span { class: "mono", title: "{pairing.agent_principal_id}", "{short_protocol_id(&pairing.agent_principal_id)}" }
@@ -3635,6 +3778,46 @@ pub fn RealmMembersPanel(
                                                         span { class: "member-profile-label", "Expires" }
                                                         span { "{pairing.expires_at}" }
                                                     }
+                                                    div { class: "member-profile-line",
+                                                        span { class: "member-profile-label", "Grants" }
+                                                        span { "{pairing.attached_grants} attached until {pairing.grant_expires_at}" }
+                                                    }
+                                                    if !pairing.grant_errors.is_empty() {
+                                                        div { class: "member-agent-grant-errors", "data-testid": "member-agent-grant-errors",
+                                                            for error in pairing.grant_errors.clone() {
+                                                                div { "{error}" }
+                                                            }
+                                                        }
+                                                    }
+                                                    div { class: "member-agent-pairing-url mono", title: "{pairing.pair_url}", "data-testid": "member-agent-pairing-url", "{pairing.pair_url}" }
+                                                    div { class: "actions member-agent-create-actions",
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
+                                                            "data-testid": "member-agent-pairing-open",
+                                                            onclick: {
+                                                                let pair_url = pairing.pair_url.clone();
+                                                                move |_| open_url_in_new_tab(&pair_url)
+                                                            },
+                                                            "Open pairing page"
+                                                        }
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
+                                                            "data-testid": "member-agent-pairing-copy-link",
+                                                            onclick: {
+                                                                let pair_url = pairing.pair_url.clone();
+                                                                move |_| copy_text_to_clipboard(&pair_url)
+                                                            },
+                                                            "Copy link"
+                                                        }
+                                                        if let Some(code) = pairing.pairing_code.clone() {
+                                                            Button {
+                                                                variant: ButtonVariant::Secondary,
+                                                                "data-testid": "member-agent-pairing-copy-code",
+                                                                onclick: move |_| copy_text_to_clipboard(&code),
+                                                                "Copy code"
+                                                            }
+                                                        }
+                                                    }
                                                     if can_invite {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
@@ -3652,7 +3835,7 @@ pub fn RealmMembersPanel(
                                                                     invite_modal_open.set(true);
                                                                 }
                                                             },
-                                                            "Add to Realm"
+                                                            "Invite to Realm"
                                                         }
                                                     }
                                                 }
@@ -3782,7 +3965,7 @@ pub fn RealmMembersPanel(
                                                                                     invite_modal_open.set(true);
                                                                                 }
                                                                             },
-                                                                            "Add to Realm"
+                                                                            "Invite to Realm"
                                                                         }
                                                                     } else {
                                                                         span { class: "badge", "not in Realm" }
@@ -3896,6 +4079,8 @@ pub fn RealmMembersPanel(
 
 #[cfg(test)]
 mod tests {
+    use cokret_sdk::models::AgentKeyScope;
+
     use super::*;
 
     fn member(id: &str) -> MemberProfile {
@@ -4409,5 +4594,53 @@ mod tests {
         ];
         let candidates = provider_candidates_from_inbox(&inbox, "ck:realm:abc", SELF_DID);
         assert_eq!(candidates.len(), 1);
+    }
+
+    #[test]
+    fn member_agent_default_presets_are_conservative() {
+        let presets = member_agent_default_presets();
+
+        assert_eq!(
+            presets,
+            vec![AgentGrantPreset::ReadOnly, AgentGrantPreset::DraftOnly]
+        );
+        assert_eq!(
+            requested_scope_for_presets(&presets),
+            Some(AgentKeyScope::Limited)
+        );
+    }
+
+    #[test]
+    fn member_agent_grant_expiry_is_independent_from_pairing_window() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-06-29T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        assert_eq!(member_agent_grant_expires_at(now), "2026-07-29T00:00:00Z");
+    }
+
+    #[test]
+    fn mention_state_uses_realm_participation_entry() {
+        let realm = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        let realm_id = cokret_sdk::RealmId::new(realm.to_owned()).unwrap();
+        let entry = AgentParticipationEntry {
+            scope: AgentParticipationScope::Realm { realm_id },
+            selection: AgentParticipation {
+                reply: true,
+                accept_third_party_mention: true,
+                act_on_behalf: false,
+            },
+            ceiling: AgentParticipation::ALL,
+            effective: AgentParticipation {
+                reply: true,
+                accept_third_party_mention: true,
+                act_on_behalf: false,
+            },
+        };
+
+        let (policy, selection) = mention_state_from_entries(&[entry], realm);
+
+        assert_eq!(policy, AgentMentionPolicy::Allowed);
+        assert!(selection.accept_third_party_mention);
     }
 }
