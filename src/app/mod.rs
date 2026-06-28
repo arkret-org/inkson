@@ -180,6 +180,15 @@ pub fn RouterView() -> Element {
         .load_private_data(&initial_config.account_did, "theme")
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
         .unwrap_or_else(|| "system".to_owned());
+    // Rehydrate the persisted primary handle for the booted account so the
+    // signed-out "Continue as" button identifies the account by handle on a
+    // fresh load, instead of falling back to the raw DID.
+    let initial_account_primary_handle = initial_state_store
+        .load_private_data(
+            &initial_config.account_did,
+            &account_primary_handle_storage_key(&initial_config.account_did),
+        )
+        .unwrap_or_default();
     let config_store = use_signal(LocalConfigStore::default);
     let mut state_store = use_signal(LocalStateStore::default);
     // Move-into-signal initialisers. Each `use_signal(...)` runs once on
@@ -442,10 +451,39 @@ pub fn RouterView() -> Element {
     let mut server_menu_open = use_signal(|| false);
     let mut account_menu_open = use_signal(|| false);
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
-    let mut account_primary_handle = use_signal(String::new);
+    let mut account_primary_handle = use_signal(move || initial_account_primary_handle);
     let mut personal_handles = use_signal(Vec::<String>::new);
     let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
+    // Persist the resolved primary handle per account (every code path that
+    // updates `account_primary_handle` — login completion, account_me refresh,
+    // directory lookup — flows through this one effect). Keyed by the current
+    // account DID so a different account never reads a stale handle. Only
+    // non-empty values are written: the transient empty resets on server /
+    // account switch must not wipe a still-valid persisted handle. `peek`
+    // (not `read`) compares the stored value so this effect does not subscribe
+    // to the whole state store and re-fire on unrelated writes.
+    {
+        let account_did_for_handle = account_did;
+        let mut state_store_for_handle = state_store;
+        use_effect(move || {
+            let handle = account_primary_handle();
+            let account = account_did_for_handle();
+            if handle.trim().is_empty() || account.trim().is_empty() {
+                return;
+            }
+            let storage_key = account_primary_handle_storage_key(&account);
+            let already = state_store_for_handle
+                .peek()
+                .load_private_data(&account, &storage_key);
+            if already.as_deref() == Some(handle.as_str()) {
+                return;
+            }
+            state_store_for_handle
+                .write()
+                .save_private_data(&account, storage_key, handle);
+        });
+    }
     let contact_handles_lookup_key = use_signal(String::new);
     let contact_handles_fetching = use_signal(BTreeSet::<String>::new);
     let mut global_query = use_signal(String::new);
