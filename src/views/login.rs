@@ -11,7 +11,9 @@ use crate::coauth::{
     restore_oidc_scaffold,
 };
 use crate::components::UiIcon;
-use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
+use crate::config::{
+    LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
+};
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
@@ -72,6 +74,8 @@ pub fn LoginPanel(
     // by default; the ▾ toggle opens the scrollable panel; selecting a row,
     // clicking the panel's backdrop, or pressing Esc closes it.
     let mut account_chooser_open = use_signal(|| false);
+    let principal_server_options =
+        principal_server_options_for(&base_url(), &config_store.read().load().principal_servers);
 
     use_future(move || async move {
         if !auto_capture_callback || callback_started() {
@@ -314,6 +318,8 @@ pub fn LoginPanel(
                     id: "login-server-url-input",
                     "data-testid": "login-server-url",
                     "aria-label": "Principal server URL",
+                    "list": "login-principal-server-options",
+                    autocomplete: "url",
                     value: "{base_url}",
                     disabled: is_busy(),
                     oninput: move |event: FormEvent| {
@@ -322,6 +328,17 @@ pub fn LoginPanel(
                         token.set(String::new());
                         persist_config(config_store, value, account_did(), device_id(), String::new());
                     },
+                }
+                datalist {
+                    id: "login-principal-server-options",
+                    "data-testid": "login-principal-server-options",
+                    for option_url in principal_server_options.iter() {
+                        option {
+                            key: "{option_url}",
+                            value: "{option_url}",
+                            "{option_url}"
+                        }
+                    }
                 }
 
                 {

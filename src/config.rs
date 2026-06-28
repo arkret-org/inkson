@@ -11,6 +11,7 @@ use url::Url;
 use crate::operation::uuid_v7;
 
 const DEFAULT_SERVER_URL: &str = "https://local.host";
+const DEFAULT_PRINCIPAL_SERVERS: &[&str] = &[DEFAULT_SERVER_URL];
 const LOCAL_PROXY_SERVER_URL: &str = "https://local.host";
 const LOCAL_PROXY_SERVER_PORT: u16 = 8787;
 const DEFAULT_ACCOUNT_DID: &str = "";
@@ -25,6 +26,8 @@ const PROFILES_STORAGE_KEY: &str = "yougen.profiles.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub server_url: String,
+    #[serde(default = "default_principal_servers")]
+    pub principal_servers: Vec<String>,
     pub account_did: String,
     pub device_id: String,
     pub session_credential: String,
@@ -34,6 +37,7 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             server_url: DEFAULT_SERVER_URL.to_owned(),
+            principal_servers: default_principal_servers(),
             account_did: DEFAULT_ACCOUNT_DID.to_owned(),
             device_id: new_device_id(),
             session_credential: String::new(),
@@ -50,6 +54,7 @@ impl ClientConfig {
     ) -> Self {
         Self {
             server_url: server_url.into(),
+            principal_servers: default_principal_servers(),
             account_did: account_did.into(),
             device_id: device_id.into(),
             session_credential: session_credential.into(),
@@ -59,6 +64,7 @@ impl ClientConfig {
 
     fn normalized(mut self) -> Self {
         self.server_url = normalize_server_url(&self.server_url);
+        self.principal_servers = normalize_principal_server_presets(&self.principal_servers);
         let current = self.device_id.trim().to_owned();
         if is_valid_device_id(&current) {
             self.device_id = current;
@@ -69,6 +75,64 @@ impl ClientConfig {
         self.session_credential.clear();
         self
     }
+}
+
+fn default_principal_servers() -> Vec<String> {
+    DEFAULT_PRINCIPAL_SERVERS
+        .iter()
+        .map(|server| normalize_server_url(server))
+        .collect()
+}
+
+pub fn server_url_key(server_url: &str) -> String {
+    normalize_server_url(server_url)
+        .trim()
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+}
+
+pub fn same_server_url(left: &str, right: &str) -> bool {
+    server_url_key(left) == server_url_key(right)
+}
+
+fn push_unique_principal_server(options: &mut Vec<String>, server_url: &str) {
+    let normalized = normalize_server_url(server_url);
+    if normalized.trim().is_empty()
+        || options
+            .iter()
+            .any(|existing| same_server_url(existing, &normalized))
+    {
+        return;
+    }
+    options.push(normalized);
+}
+
+pub fn normalize_principal_server_presets(principal_servers: &[String]) -> Vec<String> {
+    let mut options = Vec::<String>::new();
+    for server_url in principal_servers {
+        push_unique_principal_server(&mut options, server_url);
+    }
+    if options.is_empty() {
+        for server_url in DEFAULT_PRINCIPAL_SERVERS {
+            push_unique_principal_server(&mut options, server_url);
+        }
+    }
+    options
+}
+
+pub fn principal_server_options_for(
+    current_server_url: &str,
+    configured_principal_servers: &[String],
+) -> Vec<String> {
+    let mut options = Vec::<String>::new();
+    push_unique_principal_server(&mut options, current_server_url);
+    for server_url in configured_principal_servers {
+        push_unique_principal_server(&mut options, server_url);
+    }
+    for server_url in DEFAULT_PRINCIPAL_SERVERS {
+        push_unique_principal_server(&mut options, server_url);
+    }
+    options
 }
 
 /// CKP-0007 P3B.4 — multi-account profile primitive. A profile is the
@@ -575,8 +639,33 @@ impl LocalConfigStore {
     }
 
     pub fn save(&mut self, config: ClientConfig) {
+        let mut config = config.normalized();
+        self.preserve_principal_servers_for_runtime_save(&mut config);
         self.cached = Some(config);
         let _ = self.flush();
+    }
+
+    fn preserve_principal_servers_for_runtime_save(&self, config: &mut ClientConfig) {
+        if normalize_principal_server_presets(&config.principal_servers)
+            != default_principal_servers()
+        {
+            return;
+        }
+
+        let existing = self
+            .cached
+            .as_ref()
+            .map(|cached| cached.principal_servers.clone())
+            .or_else(|| {
+                self.read_persisted_config()
+                    .map(|persisted| persisted.principal_servers)
+            })
+            .map(|servers| normalize_principal_server_presets(&servers))
+            .unwrap_or_else(default_principal_servers);
+
+        if existing != default_principal_servers() {
+            config.principal_servers = existing;
+        }
     }
 
     pub fn flush(&self) -> anyhow::Result<()> {
@@ -760,6 +849,7 @@ mod tests {
     fn default_config_matches_dev_server_bootstrap() {
         let config = ClientConfig::default();
         assert_eq!(config.server_url, "https://local.host");
+        assert_eq!(config.principal_servers, vec!["https://local.host"]);
         assert!(config.account_did.is_empty());
         assert!(config.device_id.starts_with("ck:device:"));
         assert!(is_valid_device_id(&config.device_id));
@@ -873,6 +963,73 @@ mod tests {
         assert_eq!(
             ClientConfig::from_fields("http://localhost:8787", "", new_device_id(), "").server_url,
             "https://local.host"
+        );
+    }
+
+    #[test]
+    fn client_config_reads_legacy_json_without_principal_servers() {
+        let config: ClientConfig = serde_json::from_str(
+            r#"{
+                "server_url": "https://legacy.example",
+                "account_did": "",
+                "device_id": "ck:device:01964137-0000-7000-8000-000000000003",
+                "session_credential": ""
+            }"#,
+        )
+        .expect("legacy config");
+
+        assert_eq!(config.principal_servers, vec!["https://local.host"]);
+    }
+
+    #[test]
+    fn principal_server_options_merge_current_configured_and_default() {
+        let configured = vec![
+            "https://prod.example/".to_owned(),
+            "http://127.0.0.1:8787/".to_owned(),
+            "https://prod.example".to_owned(),
+        ];
+
+        assert_eq!(
+            principal_server_options_for("https://custom.example", &configured),
+            vec![
+                "https://custom.example".to_owned(),
+                "https://prod.example/".to_owned(),
+                "https://local.host".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn runtime_config_save_preserves_configured_principal_servers() {
+        let path = temp_config_path("principal-server-presets");
+        let seeded = ClientConfig {
+            server_url: "https://local.host".to_owned(),
+            principal_servers: vec![
+                "https://prod.example".to_owned(),
+                "https://stage.example".to_owned(),
+            ],
+            account_did: String::new(),
+            device_id: "ck:device:01964137-0000-7000-8000-000000000004".to_owned(),
+            session_credential: String::new(),
+        };
+        let writer = LocalConfigStore::with_path(path.clone());
+        writer.write_config_blob(&seeded).expect("seed config");
+
+        let mut updater = LocalConfigStore::with_path(path.clone());
+        updater.save_fields(
+            "https://stage.example".to_owned(),
+            "did:web:stage.example:users:alice".to_owned(),
+            "ck:device:01964137-0000-7000-8000-000000000005".to_owned(),
+            String::new(),
+        );
+
+        let reader = LocalConfigStore::with_path(path);
+        assert_eq!(
+            reader.load().principal_servers,
+            vec![
+                "https://prod.example".to_owned(),
+                "https://stage.example".to_owned(),
+            ]
         );
     }
 

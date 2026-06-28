@@ -103,6 +103,22 @@ Platform notes:
 - iOS/mobile builds use the Dioxus mobile renderer. Device builds require the platform toolchain (`dx`, Xcode/iOS signing on macOS for iOS, platform SDKs for other mobile targets). Treat loopback URLs as emulator-local; use a LAN or tunneled server URL when testing against a desktop server process.
 - All platforms use the same typed API client, bounded retry/backoff policy, Cokret error envelope decoding, and encrypted-payload preservation path.
 
+Principal server presets can be added to the local config file with `principal_servers`. The login screen shows these values as selectable suggestions while still accepting a custom URL:
+
+```json
+{
+  "server_url": "https://local.host",
+  "principal_servers": [
+    "https://local.host",
+    "https://stage.example",
+    "https://prod.example"
+  ],
+  "account_did": "",
+  "device_id": "ck:device:01964137-0000-7000-8000-000000000000",
+  "session_credential": ""
+}
+```
+
 The Rust crate also runs normal verification:
 
 ```powershell

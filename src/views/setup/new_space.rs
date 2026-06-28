@@ -455,7 +455,7 @@ pub(super) fn NewSpaceSection(
                 div { class: "event new-space-summary",
                     div { class: "event-head",
                         span { "Outcome" }
-                        span { "spec realm-and-space.md §3" }
+                        span { "Space create" }
                     }
                     div { class: "setup-summary-row",
                         strong { "Created Space" }

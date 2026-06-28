@@ -87,21 +87,16 @@ pub(super) const HISTORY_VISIBILITY_OPTIONS: [(&str, &str, &str); 5] = [
 // Spec realm-and-space.md §2.3 — `encryption_profile` enum on the
 // Realm create event. `create-locked`, so this choice is permanent for
 // the lifetime of the Realm.
-pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 3] = [
+pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 2] = [
     (
         "mls_rfc9420",
-        "MLS (metadata + content E2EE)",
-        "Recommended. Metadata and content use e2ee_required floors backed by MLS.",
+        "Encrypted",
+        "Recommended. Metadata and content use MLS E2EE.",
     ),
     (
         "none",
         "No encryption",
-        "Plaintext content visible to the server. Use for public / broadcast Realms where confidentiality is not required.",
-    ),
-    (
-        "external",
-        "External provider",
-        "Encryption is delegated to a federated provider declared in policy. Pick this only if you know what you're doing.",
+        "Plaintext is visible to the server. Use only for public Realms.",
     ),
 ];
 

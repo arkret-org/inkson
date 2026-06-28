@@ -2540,7 +2540,8 @@ pub fn RouterView() -> Element {
     let sidebar_is_collapsed = sidebar_collapsed();
     let sidebar_is_resizing = sidebar_resizing();
     let server_menu_is_open = server_menu_open();
-    let server_options = server_options_for(&base_url());
+    let configured_principal_servers = config_store.read().load().principal_servers;
+    let server_options = server_options_for(&base_url(), &configured_principal_servers);
     let sidebar_style = format!("--sidebar-w: {:.0}px;", sidebar_width());
     let theme_is_night = theme_renders_as_night(&active_theme, system_theme_is_night());
     // The shell's `data-theme` carries the *raw* chosen mode

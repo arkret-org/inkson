@@ -335,15 +335,12 @@ pub(super) fn RealmsSection(
                                     }
                                 }
                             }
-                            // Spec realm-and-space.md §2.3:
-                            // encryption_profile + security_class are
-                            // create-locked Realm fields. Surface
-                            // both here so the user makes the choice
-                            // intentionally — there's no edit later.
+                            // These create-locked Realm fields are shown here so the user
+                            // makes the permanent choice intentionally.
                             div { class: "metric directory-axis-card",
-                                strong { "Encryption profile" }
+                                strong { "Encryption" }
                                 div { class: "workflow-form setup-field",
-                                    label { "How is content protected at rest and in transit?" }
+                                    label { "Protection" }
                                     Select::<String> {
                                         "data-testid": "realm-encryption-profile-input",
                                         value: Some(realm_encryption_profile_selected.into()),
@@ -364,20 +361,8 @@ pub(super) fn RealmsSection(
                                     div { class: "muted",
                                         "{ENCRYPTION_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == encryption_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Encryption profile is not set.\")}"
                                     }
-                                    if crate::api::encryption_profile_uses_recommended_floor(&encryption_profile_value) {
-                                        div { class: "muted",
-                                            "Recommended floor: metadata_encryption_floor=e2ee_required and content_encryption_floor=e2ee_required."
-                                        }
-                                    } else {
-                                        div { class: "inline-warn", "data-testid": "realm-encryption-floor-warning",
-                                            span { class: "body",
-                                                strong { "Encryption floor is below the recommended mode." }
-                                                " Use MLS if this Realm may hold private metadata or content."
-                                            }
-                                        }
-                                    }
                                     div { class: "muted",
-                                        "Locked at creation — encryption_profile cannot be changed afterwards (spec realm-and-space.md §2.3)."
+                                        "Locked after creation."
                                     }
                                 }
                             }
@@ -448,7 +433,7 @@ pub(super) fn RealmsSection(
                                         }
                                         if federation_policy_open_forbidden {
                                             div { class: "muted",
-                                                "high_assurance requires federation_policy ∈ {{restricted, closed, quarantine}} (spec realm-and-space.md §2.3)."
+                                                "High assurance allows only restricted, closed, or quarantine federation."
                                             }
                                         }
                                     }

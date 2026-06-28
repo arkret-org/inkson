@@ -102,32 +102,18 @@ pub(super) fn account_handles_display(handles: &[String], fallback: &str) -> Str
 }
 
 pub(crate) fn server_key(server_url: &str) -> String {
-    normalize_server_url(server_url)
-        .trim()
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
+    crate::config::server_url_key(server_url)
 }
 
 pub(super) fn same_server_url(left: &str, right: &str) -> bool {
-    server_key(left) == server_key(right)
+    crate::config::same_server_url(left, right)
 }
 
-pub(super) fn server_options_for(current_server_url: &str) -> Vec<String> {
-    let mut options: Vec<String> = Vec::new();
-    for url in [
-        normalize_server_url(current_server_url),
-        normalize_server_url("https://local.host/"),
-    ] {
-        if url.is_empty()
-            || options
-                .iter()
-                .any(|existing| same_server_url(existing, &url))
-        {
-            continue;
-        }
-        options.push(url);
-    }
-    options
+pub(super) fn server_options_for(
+    current_server_url: &str,
+    configured_principal_servers: &[String],
+) -> Vec<String> {
+    crate::config::principal_server_options_for(current_server_url, configured_principal_servers)
 }
 
 #[derive(Clone, Copy)]
