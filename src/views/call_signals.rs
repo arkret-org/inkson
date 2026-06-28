@@ -545,21 +545,21 @@ pub fn decide_route(
     }
 
     // Multi-device stop-ring: if THIS device is still ringing for the call
-    // but has NOT answered, an inbound `answer` / `reject{answered_elsewhere}`
+    // but has NOT answered, an inbound `answer` / `reject{call_already_answered}`
     // / `hangup` means another device (or the caller) resolved the ring.
     let still_ringing_here = state.ringing_call.as_deref() == Some(decoded.call_id.as_str())
         && !state.ringing_answered_here;
     if still_ringing_here {
-        let answered_elsewhere = decoded.signal_type == "answer"
+        let call_already_answered = decoded.signal_type == "answer"
             || decoded.signal_type == "hangup"
             || (decoded.signal_type == "reject"
                 && decoded
                     .data
                     .get("reason")
                     .and_then(Value::as_str)
-                    .map(|r| r == "answered_elsewhere")
+                    .map(|r| r == "call_already_answered")
                     .unwrap_or(false));
-        if answered_elsewhere {
+        if call_already_answered {
             return RouteDecision::ClearRing;
         }
     }

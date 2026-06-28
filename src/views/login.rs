@@ -10,9 +10,9 @@ use crate::coauth::{
     extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
     restore_oidc_scaffold,
 };
+use crate::components::UiIcon;
 use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
-use crate::components::UiIcon;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
 use crate::ui::input::Input;
@@ -219,8 +219,7 @@ pub fn LoginPanel(
         spawn(async move {
             if !reuse {
                 #[cfg(target_arch = "wasm32")]
-                let _ =
-                    crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await;
+                let _ = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await;
                 let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
                 if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
                     secure_store.as_ref(),
@@ -238,7 +237,12 @@ pub fn LoginPanel(
                     .write()
                     .begin_pending_login(device.trim(), None);
             }
-            match start_oidc_strand(&principal, device.trim()).await {
+            let login_hint = if reuse {
+                login_hint_for_known_account(&actor, &account_primary_handle())
+            } else {
+                String::new()
+            };
+            match start_oidc_strand(&principal, device.trim(), &login_hint, &actor).await {
                 Ok(()) => {
                     persist_config(config_store, principal, actor, device, String::new());
                 }
@@ -257,40 +261,42 @@ pub fn LoginPanel(
     // reusing the `device_id` it last signed in with), so the reuse login uses
     // that account's own device + key (per-account isolation preserved). Falls
     // back to a fresh device id when the chosen account has none persisted yet.
-    let launch_sign_in_for = move |did: String, account_device_id: String, server: String| {
-        let did = did.trim().to_owned();
-        if did.is_empty() {
-            return;
-        }
-        let mut state_store = state_store;
-        let principal = if server.trim().is_empty() {
-            base_url()
-        } else {
-            normalize_server_url(&server)
-        };
-        // `normalize_device_id` mints a fresh id when the account has none yet.
-        let device = normalize_device_id(&account_device_id);
-        // Make the chosen account active so the boot-pinned device-seed scope
-        // and per-account entry resolve to IT for this sign-in.
-        crate::secure_key_store::set_active_device_seed_scope(Some(&did));
-        state_store.write().switch_active_account(&did);
-        base_url.set(principal.clone());
-        account_did.set(did.clone());
-        device_id.set(device.clone());
-        is_busy.set(true);
-        auth_status.set("Opening server sign-in...".to_owned());
-        spawn(async move {
-            match start_oidc_strand(&principal, device.trim()).await {
-                Ok(()) => {
-                    persist_config(config_store, principal, did, device, String::new());
-                }
-                Err(error) => {
-                    is_busy.set(false);
-                    auth_status.set(error);
-                }
+    let launch_sign_in_for =
+        move |did: String, account_handle: String, account_device_id: String, server: String| {
+            let did = did.trim().to_owned();
+            if did.is_empty() {
+                return;
             }
-        });
-    };
+            let mut state_store = state_store;
+            let principal = if server.trim().is_empty() {
+                base_url()
+            } else {
+                normalize_server_url(&server)
+            };
+            // `normalize_device_id` mints a fresh id when the account has none yet.
+            let device = normalize_device_id(&account_device_id);
+            let login_hint = login_hint_for_known_account(&did, &account_handle);
+            // Make the chosen account active so the boot-pinned device-seed scope
+            // and per-account entry resolve to IT for this sign-in.
+            crate::secure_key_store::set_active_device_seed_scope(Some(&did));
+            state_store.write().switch_active_account(&did);
+            base_url.set(principal.clone());
+            account_did.set(did.clone());
+            device_id.set(device.clone());
+            is_busy.set(true);
+            auth_status.set("Opening server sign-in...".to_owned());
+            spawn(async move {
+                match start_oidc_strand(&principal, device.trim(), &login_hint, &did).await {
+                    Ok(()) => {
+                        persist_config(config_store, principal, did, device, String::new());
+                    }
+                    Err(error) => {
+                        is_busy.set(false);
+                        auth_status.set(error);
+                    }
+                }
+            });
+        };
 
     rsx! {
         Card { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": "Login",
@@ -394,7 +400,7 @@ pub fn LoginPanel(
                                         disabled: is_busy(),
                                         onclick: move |_| {
                                             let mut go = launch_sign_in_for;
-                                            go(row_did.clone(), row_device.clone(), row_server.clone());
+                                            go(row_did.clone(), account.handle.clone(), row_device.clone(), row_server.clone());
                                         },
                                         if is_busy() { "Working..." } else { "Continue as {account_label}" }
                                     }
@@ -430,7 +436,7 @@ pub fn LoginPanel(
                                                 disabled: is_busy(),
                                                 onclick: move |_| {
                                                     let mut go = launch_sign_in_for;
-                                                    go(primary_did.clone(), primary_device.clone(), primary_server.clone());
+                                                    go(primary_did.clone(), primary.handle.clone(), primary_device.clone(), primary_server.clone());
                                                 },
                                                 if is_busy() { "Working..." } else { "Continue as {primary_label}" }
                                             }
@@ -487,7 +493,7 @@ pub fn LoginPanel(
                                                                         onclick: move |_| {
                                                                             account_chooser_open.set(false);
                                                                             let mut go = launch_sign_in_for;
-                                                                            go(row_did.clone(), row_device.clone(), row_server.clone());
+                                                                            go(row_did.clone(), account.handle.clone(), row_device.clone(), row_server.clone());
                                                                         },
                                                                         span { class: "auth-account-avatar", "{initial}" }
                                                                         span { class: "auth-account-handle", "{account_label}" }
@@ -646,9 +652,22 @@ fn compute_session_status(
     }
 }
 
+fn login_hint_for_known_account(did: &str, handle: &str) -> String {
+    if let Some(parsed) = crate::identity_handle::parse_user_handle(handle) {
+        return parsed.localpart;
+    }
+
+    crate::views::helpers::handle_display_from_did(did)
+        .and_then(|display| crate::identity_handle::parse_user_handle(&display))
+        .map(|parsed| parsed.localpart)
+        .unwrap_or_default()
+}
+
 pub(crate) async fn start_oidc_strand(
     principal_server_url: &str,
     device_id: &str,
+    login_hint: &str,
+    principal_actor_id: &str,
 ) -> Result<(), String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
     // Server's root `/_cokret/describe` (service-surface §2.5.1).
@@ -675,7 +694,7 @@ pub(crate) async fn start_oidc_strand(
         &discovery,
         &method,
         &redirect_uri,
-        "",
+        login_hint,
         device_id,
         &resolver.principal_audience,
     )
@@ -685,7 +704,7 @@ pub(crate) async fn start_oidc_strand(
         &bundle,
         &resolver.gate_account_base,
         principal_server_url,
-        "",
+        principal_actor_id,
         device_id,
         &discovery.issuer,
     );
@@ -926,10 +945,7 @@ fn session_grant_info_from_outcome(
         .grant_id
         .as_ref()
         .map(|value| value.as_str().to_owned());
-    let session_public_key = outcome
-        .session_public_key
-        .clone()
-        .unwrap_or_default();
+    let session_public_key = outcome.session_public_key.clone().unwrap_or_default();
     let audience = outcome.audience.clone();
     let session_private_key_pem = dpop_handle
         .session_signing_key_pkcs8_pem()
@@ -1025,6 +1041,37 @@ mod tests {
         );
         // Token without grant (dev-login style) is also signed-in.
         assert_eq!(compute_session_status("dev.token", None), "signed-in");
+    }
+
+    #[test]
+    fn known_account_login_hint_prefers_handle_localpart() {
+        assert_eq!(
+            login_hint_for_known_account(
+                "did:webvh:zLocal:local.host:users:ignored",
+                "chris:local.host",
+            ),
+            "chris"
+        );
+        assert_eq!(
+            login_hint_for_known_account(
+                "did:webvh:zLocal:local.host:users:ignored",
+                "@Chris:Local.Host",
+            ),
+            "chris"
+        );
+    }
+
+    #[test]
+    fn known_account_login_hint_falls_back_to_materialized_did() {
+        assert_eq!(
+            login_hint_for_known_account("did:web:local.host:users:chris", ""),
+            "chris"
+        );
+        assert_eq!(
+            login_hint_for_known_account("did:webvh:zLocal:local.host:users:chris", "  "),
+            "chris"
+        );
+        assert_eq!(login_hint_for_known_account("did:key:zUnknown", ""), "");
     }
 
     #[test]

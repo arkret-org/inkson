@@ -706,7 +706,7 @@ pub fn CallPanel(
                                                     }
                                                     // Multi-device: the first device to
                                                     // emit `answer` wins; the rest stop
-                                                    // ringing on `answered_elsewhere`.
+                                                    // ringing on `call_already_answered`.
                                                     let _ = emit_signal(
                                                         &base,
                                                         &api_token,

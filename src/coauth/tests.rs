@@ -423,6 +423,28 @@ fn authorize_url_forces_reauthentication() {
     );
 }
 
+#[test]
+fn authorize_url_carries_login_hint_when_known_account_selected() {
+    let bundle = build_oidc_authorize_scaffold(
+        &test_discovery(),
+        &test_oidc_method(),
+        "https://app.example/auth/callback",
+        "chris",
+        "device-known-account",
+        "https://principal.example/api",
+    )
+    .unwrap();
+    let parsed = Url::parse(&bundle.authorize_url).unwrap();
+    assert_eq!(
+        parsed
+            .query_pairs()
+            .find(|(key, _)| key == "login_hint")
+            .unwrap()
+            .1,
+        "chris"
+    );
+}
+
 /// The authorize URL MUST request `openid`, the method scopes, and the
 /// stable device-binding scope (prevents cursor_integrity_invalid drift).
 #[test]
