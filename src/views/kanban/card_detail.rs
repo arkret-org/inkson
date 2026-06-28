@@ -491,10 +491,24 @@ pub(super) fn projection_synthesis_revision(
     state_store: &LocalStateStore,
     author_context: Option<CardAuthorDisplayContext<'_>>,
 ) -> CardSynthesisRevision {
-    let actor_id = if card.updated_by.trim().is_empty() {
-        card.created_by.trim().to_owned()
+    // This is the PROJECTION FALLBACK: a synthesis entry from the card's current
+    // decrypted state that could NOT be tied to a specific authoring operation
+    // (typically a co-author's entry synced to this device without its raw
+    // `ck.strand.update` op, or whose decrypted body didn't match the replay).
+    // The card-level `updated_by` is only the LATEST editor, so attributing
+    // every such entry to it mis-labels other authors' entries as the last
+    // editor — the cross-member "张冠李戴" attribution bug. Only attribute when
+    // the card is unambiguously single-author; otherwise leave it unattributed
+    // so the UI shows "Unknown author" rather than a confidently-wrong name.
+    let created = card.created_by.trim();
+    let updated = card.updated_by.trim();
+    let actor_id = if updated.is_empty() {
+        created.to_owned()
+    } else if created.is_empty() || created == updated {
+        updated.to_owned()
     } else {
-        card.updated_by.trim().to_owned()
+        // Multi-author card, no per-entry provenance: do not guess.
+        String::new()
     };
     let timestamp = if !card.updated_at.trim().is_empty() {
         card.updated_at.clone()

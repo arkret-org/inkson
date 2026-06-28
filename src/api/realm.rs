@@ -391,6 +391,12 @@ impl CokretApi {
                 json!(history_visibility),
             )?,
         ];
+        if let Some(policy) = recommended_history_sharing_policy_for_visibility(history_visibility)
+        {
+            events.push(build_realm_history_sharing_policy_event(
+                realm_id, actor_id, policy,
+            )?);
+        }
         if let Some(join_policy) = join_policy {
             let mut policy_components = if preserve_recommended_encryption_floor {
                 recommended_realm_policy_components_value()

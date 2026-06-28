@@ -214,6 +214,13 @@ pub fn build_realm_bootstrap_events(
         EventKind::RealmHistoryVisibility,
         json!(history_visibility),
     )?);
+    if let Some(policy) =
+        recommended_history_sharing_policy_for_profile(encryption_profile, history_visibility)
+    {
+        events.push(build_realm_history_sharing_policy_event(
+            realm_id, actor_id, policy,
+        )?);
+    }
     events.push(build_realm_state_event(
         realm_id,
         actor_id,
@@ -235,6 +242,40 @@ pub fn build_realm_bootstrap_events(
         }
     }
     Ok(events)
+}
+
+fn recommended_history_sharing_policy_for_profile(
+    encryption_profile: &str,
+    history_visibility: &str,
+) -> Option<Value> {
+    let encrypted = encryption_profile.trim() == RECOMMENDED_REALM_ENCRYPTION_PROFILE;
+    if !encrypted {
+        return None;
+    }
+    recommended_history_sharing_policy_for_visibility(history_visibility)
+}
+
+pub(crate) fn recommended_history_sharing_policy_for_visibility(
+    history_visibility: &str,
+) -> Option<Value> {
+    let pre_join_visible = matches!(
+        history_visibility.trim().to_ascii_lowercase().as_str(),
+        "world_readable" | "shared" | "invited"
+    );
+    if !pre_join_visible {
+        return None;
+    }
+    Some(json!({
+        "version": 1,
+        "default_key_share": "event_time_visibility",
+        "pre_join_history": "allow_if_visibility_allows",
+        "allowed_key_sources": ["verified_member_device"],
+        "allowed_receiver_states": ["active_member"],
+        "audit": {
+            "share_audit_event_required": false,
+            "access_audit_required": false
+        }
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]

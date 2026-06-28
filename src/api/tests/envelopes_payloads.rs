@@ -210,6 +210,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "ck.realm.policy_components",
             "ck.realm.join_rule",
             "ck.realm.history_visibility",
+            "ck.realm.history_sharing_policy",
             "ck.realm.discovery",
             "ck.realm.plaintext_visible_services",
             "ck.member.state",
@@ -265,9 +266,9 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // signer attaches the detached JWS proof at submit time.
     assert!(create.proofs.is_empty());
 
-    // Bootstrap order: create, encryption floor policy,
-    // join_rule, history_visibility, discovery, plaintext_visible,
-    // member-invite.
+    // Bootstrap order: create, encryption floor policy, join_rule,
+    // history_visibility, history_sharing_policy, discovery,
+    // plaintext_visible, member-invite.
     assert_eq!(
         events[1].content["value"]["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
@@ -279,13 +280,36 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[1].content["value"]["policy_revision"], 1);
     assert_eq!(events[2].content["value"], "invite");
     assert_eq!(events[3].content["value"], "shared");
-    assert_eq!(events[4].content["value"], "listed");
     assert_eq!(
-        events[5].content["services"][0]["service_did"],
+        events[4].content["value"]["default_key_share"],
+        "event_time_visibility"
+    );
+    assert_eq!(
+        events[4].content["value"]["pre_join_history"],
+        "allow_if_visibility_allows"
+    );
+    assert_eq!(
+        events[4].content["value"]["allowed_key_sources"],
+        json!(["verified_member_device"])
+    );
+    assert_eq!(
+        events[4].content["value"]["allowed_receiver_states"],
+        json!(["active_member"])
+    );
+    assert_eq!(
+        events[4].content["value"]["audit"],
+        json!({
+            "share_audit_event_required": false,
+            "access_audit_required": false
+        })
+    );
+    assert_eq!(events[5].content["value"], "listed");
+    assert_eq!(
+        events[6].content["services"][0]["service_did"],
         "did:web:server.example"
     );
     assert_eq!(
-        events[5].content["services"][0]["data_classes"],
+        events[6].content["services"][0]["data_classes"],
         json!([
             "message_content",
             "full_text_index",
@@ -293,7 +317,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "inbox_preview",
         ])
     );
-    assert_eq!(events[6].content["membership"], "invite");
+    assert_eq!(events[7].content["membership"], "invite");
 }
 
 #[test]
@@ -320,6 +344,27 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     assert_eq!(envelope.content["object"]["encryption_profile"], "none");
     assert!(envelope.content["object"]["content_encryption_floor"].is_null());
     assert!(envelope.content["object"]["metadata_encryption_floor"].is_null());
+}
+
+#[test]
+fn default_history_sharing_policy_matches_prejoin_visibility() {
+    let shared = recommended_history_sharing_policy_for_visibility("shared")
+        .expect("shared visibility should install a key sharing policy");
+    assert_eq!(shared["default_key_share"], "event_time_visibility");
+    assert_eq!(shared["pre_join_history"], "allow_if_visibility_allows");
+    assert_eq!(
+        shared["allowed_key_sources"],
+        json!(["verified_member_device"])
+    );
+    assert_eq!(shared["allowed_receiver_states"], json!(["active_member"]));
+    assert_eq!(
+        shared["audit"],
+        json!({
+            "share_audit_event_required": false,
+            "access_audit_required": false
+        })
+    );
+    assert!(recommended_history_sharing_policy_for_visibility("joined").is_none());
 }
 
 /// Regression: every genesis bootstrap envelope must produce the SAME
@@ -555,7 +600,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
 fn device_message_envelope_matches_schema_v1() {
     let envelope = build_device_message_envelope(
         "did:web:alice.example",
-        "device-aaaa-1111",
+        "ck:device:01904100-0000-7000-8000-0000000000aa",
         "ck.key.verification.request",
         "2026-04-26T00:10:00Z",
         json!({
@@ -570,7 +615,7 @@ fn device_message_envelope_matches_schema_v1() {
         json!({
             "messages": {
                 "did:web:alice.example": {
-                    "device-aaaa-1111": {
+                    "ck:device:01904100-0000-7000-8000-0000000000aa": {
                         "kind": "ck.key.verification.request",
                         "expires_at": "2026-04-26T00:10:00Z",
                         "content": {
@@ -592,14 +637,14 @@ fn device_message_envelope_matches_schema_v1() {
 fn device_message_envelope_accepts_minimal_content() {
     let envelope = build_device_message_envelope(
         "did:web:bob.example",
-        "device-bbbb-2222",
+        "ck:device:01904100-0000-7000-8000-0000000000bb",
         "ck.key.verification.done",
         "2026-04-26T00:10:00Z",
         json!({"transaction_id": "verify-done-001"}),
     )
     .expect("device message envelope builds");
     let envelope = serde_json::to_value(envelope).expect("device message envelope serializes");
-    let inner = &envelope["messages"]["did:web:bob.example"]["device-bbbb-2222"];
+    let inner = &envelope["messages"]["did:web:bob.example"]["ck:device:01904100-0000-7000-8000-0000000000bb"];
     assert_eq!(inner["kind"], "ck.key.verification.done");
     assert_eq!(inner["expires_at"], "2026-04-26T00:10:00Z");
     assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
