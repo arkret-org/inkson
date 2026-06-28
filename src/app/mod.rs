@@ -179,7 +179,7 @@ pub fn RouterView() -> Element {
     let initial_theme = initial_state_store
         .load_private_data(&initial_config.account_did, "theme")
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
-        .unwrap_or_else(|| "system".to_owned());
+        .unwrap_or_else(|| "night".to_owned());
     // Rehydrate the persisted primary handle for the booted account so any
     // signed-out diagnostics can identify the account by handle on a fresh
     // load, instead of falling back to the raw DID. Reads the per-account entry

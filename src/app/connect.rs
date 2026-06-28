@@ -8,9 +8,9 @@ use crate::api::is_terminal_session_grant_error;
 /// base/actor/device from their signals (so it always targets the active
 /// session), then either adopts the current grant JWT or rotates the grant.
 /// On success it writes the current credential into the `token` signal and
-/// persisted config and returns it. Only a terminal refresh-endpoint grant
-/// error invalidates the active session; missing local refresh material is
-/// reported without clearing the token.
+/// persisted config and returns it. When the 401 recovery path has no refresh
+/// material left, the stale live credential is invalidated instead of being
+/// kept around for the next reload.
 ///
 /// Concurrency is handled by `crate::session`: callers coalesce onto one
 /// in-flight invocation, so this never runs twice in parallel for a single
@@ -104,7 +104,8 @@ pub(super) async fn refresh_session_credential_for_active_context(
         }
         crate::session_refresh::RefreshOutcome::NoGrant => {
             let reason = "no session grant is available".to_owned();
-            crate::session::CurrentSessionRefresh::SignInRequired { reason }
+            crate::session::invalidate_current_session(reason.clone());
+            crate::session::CurrentSessionRefresh::LoginRequired { reason }
         }
         crate::session_refresh::RefreshOutcome::Transient { reason } => {
             crate::session::CurrentSessionRefresh::RetryLater { reason }
@@ -120,6 +121,16 @@ pub(super) async fn refresh_session_credential_for_active_context(
             }
         }
     }
+}
+
+fn invalidate_bootstrap_session(
+    reason: impl Into<String>,
+    mut session_boot_state: Signal<SessionBootState>,
+    mut sync_bootstrap_complete: Signal<bool>,
+) {
+    crate::session::invalidate_current_session(reason);
+    session_boot_state.set(SessionBootState::Unauthenticated);
+    sync_bootstrap_complete.set(true);
 }
 
 #[derive(Clone, Copy)]
@@ -533,8 +544,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 // Resolve the canonical actor DID from the account viewer. Three
                 // outcomes:
                 //   1. Ok with non-empty DID -> use it as canonical_actor.
-                //   2. Err that looks like auth expiry -> try the shared session refresh path. Only
-                //      terminal refresh/grant errors invalidate the active session.
+                //   2. Err that looks like auth expiry -> try the shared session refresh path. If
+                //      the refreshed credential is still rejected, clear the stale session instead
+                //      of booting the shell with a bearer token the server will never accept.
                 //   3. Anything else (Ok with empty DID, transient 5xx, parse error, network
                 //      failure) -> fall back to the locally stored actor, log a diagnostic to
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
@@ -582,38 +594,40 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         last_error.set(Some(format!("account_me: {retry_error}")));
                                         actor.clone()
                                     }
-                                    Err(retry_error)
-                                        if is_terminal_session_grant_error(&retry_error) =>
-                                    {
-                                        crate::session::invalidate_current_session(
-                                            "session grant is no longer active",
+                                    Err(retry_error) if is_auth_expired_error(&retry_error) => {
+                                        invalidate_bootstrap_session(
+                                            format!(
+                                                "account_me rejected refreshed session: {retry_error}"
+                                            ),
+                                            session_boot_state,
+                                            sync_bootstrap_complete,
                                         );
-                                        sync_bootstrap_complete.set(true);
                                         return;
                                     }
                                     Err(retry_error) => {
-                                        status.set("Session refresh pending; retrying".to_owned());
-                                        network_state.set("reconnecting".to_owned());
-                                        last_error.set(Some(format!(
-                                            "account_me after session refresh: {retry_error}"
-                                        )));
+                                        last_error.set(Some(format!("account_me: {retry_error}")));
                                         actor.clone()
                                     }
                                 }
                             }
                             crate::session::CurrentSessionRefresh::SignInRequired { reason }
                             | crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                                last_error.set(Some(reason));
-                                sync_bootstrap_complete.set(true);
+                                invalidate_bootstrap_session(
+                                    reason,
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
                                 return;
                             }
                             crate::session::CurrentSessionRefresh::RetryLater { reason } => {
-                                status.set("Session refresh pending; retrying".to_owned());
-                                network_state.set("reconnecting".to_owned());
-                                last_error.set(Some(format!(
-                                    "auth_expired: session refresh pending: {reason}; account_me: {error}"
-                                )));
-                                actor.clone()
+                                invalidate_bootstrap_session(
+                                    format!(
+                                        "account_me rejected current session and refresh could not complete: {reason}; account_me: {error}"
+                                    ),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
+                                return;
                             }
                         }
                     }
@@ -731,6 +745,16 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         account_has_other_devices.set(has_other);
                                         needs_device_authorization.set(needs_authorization);
                                     }
+                                    Err(retry_error) if is_auth_expired_error(&retry_error) => {
+                                        invalidate_bootstrap_session(
+                                            format!(
+                                                "device authorization rejected refreshed session: {retry_error}"
+                                            ),
+                                            session_boot_state,
+                                            sync_bootstrap_complete,
+                                        );
+                                        return;
+                                    }
                                     Err(retry_error) => {
                                         tracing::warn!(
                                             ?retry_error,
@@ -742,18 +766,22 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             }
                             crate::session::CurrentSessionRefresh::SignInRequired { reason }
                             | crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                                tracing::warn!(
-                                    %reason,
-                                    "device authorization check ended because session refresh requires login"
+                                invalidate_bootstrap_session(
+                                    reason,
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
                                 );
-                                needs_device_authorization.set(false);
+                                return;
                             }
                             crate::session::CurrentSessionRefresh::RetryLater { reason } => {
-                                tracing::warn!(
-                                    %reason,
-                                    "device authorization check deferred while session refresh is pending"
+                                invalidate_bootstrap_session(
+                                    format!(
+                                        "device authorization rejected current session and refresh could not complete: {reason}"
+                                    ),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
                                 );
-                                needs_device_authorization.set(true);
+                                return;
                             }
                         }
                         device_authorization_check_complete.set(true);
@@ -803,19 +831,34 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 authed.account_subscribe_snapshot(None).await
                             }
                             crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                                Err(anyhow::anyhow!(
-                                    "session refresh cannot continue locally: {reason}; sync: {error}"
-                                ))
+                                invalidate_bootstrap_session(
+                                    format!(
+                                        "session refresh cannot continue locally: {reason}; sync: {error}"
+                                    ),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
+                                return;
                             }
                             crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                                Err(anyhow::anyhow!(
-                                    "session refresh requires login: {reason}; sync: {error}"
-                                ))
+                                invalidate_bootstrap_session(
+                                    format!(
+                                        "session refresh requires login: {reason}; sync: {error}"
+                                    ),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
+                                return;
                             }
                             crate::session::CurrentSessionRefresh::RetryLater { reason } => {
-                                Err(anyhow::anyhow!(
-                                    "auth_expired: session refresh pending: {reason}; sync: {error}"
-                                ))
+                                invalidate_bootstrap_session(
+                                    format!(
+                                        "sync rejected current session and refresh could not complete: {reason}; sync: {error}"
+                                    ),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
+                                return;
                             }
                         }
                     }
@@ -1222,6 +1265,14 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         sync_bootstrap_complete.set(true);
                         return;
                     }
+                    Err(error) if is_auth_expired_error(&error) => {
+                        invalidate_bootstrap_session(
+                            format!("sync rejected refreshed session: {error}"),
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
+                        return;
+                    }
                     Err(error) => {
                         // Sync failed — the `realm_tree_nodes` Signal already
                         // reflects what's in the local store via the
@@ -1284,19 +1335,34 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 authed.events_describe().await
                             }
                             crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                                Err(anyhow::anyhow!(
-                                    "session refresh cannot continue locally: {reason}; events_describe: {error}"
-                                ))
+                                invalidate_bootstrap_session(
+                                    format!(
+                                        "session refresh cannot continue locally: {reason}; events_describe: {error}"
+                                    ),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
+                                return;
                             }
                             crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                                Err(anyhow::anyhow!(
-                                    "session refresh requires login: {reason}; events_describe: {error}"
-                                ))
+                                invalidate_bootstrap_session(
+                                    format!(
+                                        "session refresh requires login: {reason}; events_describe: {error}"
+                                    ),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
+                                return;
                             }
                             crate::session::CurrentSessionRefresh::RetryLater { reason } => {
-                                Err(anyhow::anyhow!(
-                                    "auth_expired: session refresh pending: {reason}; events_describe: {error}"
-                                ))
+                                invalidate_bootstrap_session(
+                                    format!(
+                                        "events_describe rejected current session and refresh could not complete: {reason}; events_describe: {error}"
+                                    ),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
+                                return;
                             }
                         }
                     }
@@ -1317,6 +1383,14 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         );
                         session_boot_state.set(SessionBootState::Unauthenticated);
                         sync_bootstrap_complete.set(true);
+                        return;
+                    }
+                    Err(error) if is_auth_expired_error(&error) => {
+                        invalidate_bootstrap_session(
+                            format!("events_describe rejected refreshed session: {error}"),
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
                         return;
                     }
                     Err(error) => {

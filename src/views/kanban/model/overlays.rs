@@ -210,6 +210,17 @@ pub(crate) fn raw_operation_kind_matches(payload: &Value, expected: &str) -> boo
         == Some(expected)
 }
 
+pub(crate) fn raw_operation_strand_update_target_id(payload: &Value) -> Option<String> {
+    if !raw_operation_kind_matches(payload, "ck.strand.update")
+        || !raw_operation_allows_overlay(payload)
+    {
+        return None;
+    }
+    let body = payload.get("body").or_else(|| payload.get("payload"))?;
+    json_path_string(Some(body), &["strand_id"])
+        .or_else(|| json_path_string(Some(body), &["target_ref"]))
+}
+
 #[cfg(test)]
 pub(crate) fn local_operation_state_for_target(
     raw_operations: &[RawOperationRecord],
@@ -425,17 +436,8 @@ pub(crate) fn local_card_update_from_raw_operation(
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Option<LocalCardUpdate> {
     let payload = &record.payload;
-    let kind = json_path_string(Some(payload), &["kind"])
-        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "ck.strand.update" {
-        return None;
-    }
-    if !raw_operation_allows_overlay(payload) {
-        return None;
-    }
+    let strand_id = raw_operation_strand_update_target_id(payload)?;
     let body = payload.get("body").or_else(|| payload.get("payload"))?;
-    let strand_id = json_path_string(Some(body), &["strand_id"])
-        .or_else(|| json_path_string(Some(body), &["target_ref"]))?;
     let patch = body.get("patch")?.as_object()?;
 
     fn extract_set_unset(op: &Value) -> Option<Option<String>> {

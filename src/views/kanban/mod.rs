@@ -3300,7 +3300,10 @@ pub fn KanbanPanel(
                         "card-detail-action-menu"
                     };
                     let summary_text = card_summary_text(&card.description);
-                    let synthesis_entries = {
+                    let synthesis_entries_needed = active_detail_tab
+                        == CardDetailContentTab::Synthesis
+                        || (editing_card_detail() && card_edit_scope() == CardEditScope::Synthesis);
+                    let synthesis_entries = if synthesis_entries_needed {
                         let store = state_store.read();
                         let snapshot = store.load();
                         let projection = snapshot.realm_tree_projections.get(&selected_realm_id);
@@ -3327,6 +3330,8 @@ pub fn KanbanPanel(
                             Some(author_context),
                             Some(&decrypt_ctx),
                         )
+                    } else {
+                        Vec::<CardSynthesisTrackEntry>::new()
                     };
                     let overlay_navigator = navigator;
                     let overlay_board_route = board_route_after_close.clone();

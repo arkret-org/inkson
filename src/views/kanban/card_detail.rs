@@ -673,11 +673,16 @@ pub(super) fn card_synthesis_track_entries_with_author_context_and_decrypt(
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<CardSynthesisTrackEntry> {
     let mut grouped = std::collections::BTreeMap::<String, Vec<CardSynthesisRevision>>::new();
+    let target_strand_id = card.id.trim();
     let mut ordered = raw_operations
         .iter()
+        .filter(|record| {
+            raw_operation_strand_update_target_id(&record.payload).as_deref()
+                == Some(target_strand_id)
+        })
         .filter_map(|record| {
             let update = local_card_update_from_raw_operation(record, decrypt_ctx)?;
-            (update.strand_id == card.id).then_some((record, update))
+            Some((record, update))
         })
         .collect::<Vec<_>>();
     ordered.sort_by(|(left_record, _), (right_record, _)| {

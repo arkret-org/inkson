@@ -120,12 +120,10 @@ pub(super) fn auth_surface_for_route(
 ) -> AuthSurface {
     if matches!(route, Route::AuthCallback) {
         AuthSurface::Callback
-    } else if matches!(boot_state, SessionBootState::Restoring) && has_session {
+    } else if has_session {
         AuthSurface::AppShell
     } else if boot_state.is_pending() {
         AuthSurface::Restoring
-    } else if has_session {
-        AuthSurface::AppShell
     } else {
         AuthSurface::Login
     }

@@ -670,10 +670,10 @@ fn auth_surface_hides_login_while_session_is_restoring() {
 }
 
 #[test]
-fn auth_surface_waits_while_live_session_is_checking() {
+fn auth_surface_shows_shell_while_live_session_is_checking() {
     assert_eq!(
         auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking),
-        AuthSurface::Restoring
+        AuthSurface::AppShell
     );
 }
 
