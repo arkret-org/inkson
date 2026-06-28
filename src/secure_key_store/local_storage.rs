@@ -91,9 +91,15 @@ impl LocalStorageSecureKeyStore {
             .ok_or_else(|| SecureKeyStoreError::Unsupported("window.localStorage not available"))
     }
 
+    /// The wrap_seed key — `yougen.secret.<namespace>.wrap_seed.v1`. The
+    /// namespace is GLOBAL (the bare `service_name`); see
+    /// [`super::wrap_seed_namespace`] for why it must stay constant across a
+    /// sign-in. Per-account device-key isolation is at the entry-key level, not
+    /// the wrapping key.
     pub(super) fn wrapping_seed_key(service_name: &str) -> String {
+        let namespace = super::wrap_seed_namespace(service_name);
         format!(
-            "yougen.secret.{service_name}{}",
+            "yougen.secret.{namespace}{}",
             Self::WRAPPING_KEY_STORAGE_KEY_SUFFIX
         )
     }

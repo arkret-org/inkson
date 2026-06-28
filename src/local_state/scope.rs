@@ -1,36 +1,72 @@
 use super::*;
 
 impl LocalStateStore {
-    /// Wipe every account-scoped projection field while keeping
-    /// device-level state (`local_identity`, `push_registration`,
-    /// `telemetry_log`) and the active session grant. Called on logout, when the principal DID
-    /// changes between logins, or when the user switches servers —
-    /// anything that means the cached *projection* no longer
-    /// represents the current viewer.
+    /// Read-only view of the root index. Mirrors [`Self::load`]: once the store
+    /// has reconciled with persistence `self.root` is authoritative; before
+    /// that a fresh store reads (and migrates) the index off the backing store
+    /// so `&self` getters reflect the persisted state without a `&mut` load.
+    fn effective_root(&self) -> RootIndex {
+        if self.loaded.get() {
+            self.root.clone()
+        } else {
+            self.load_persisted_root()
+        }
+    }
+
+    /// The currently-active account DID (the foreground account whose entry
+    /// `cached` mirrors), or `None` when signed out / before any account has
+    /// been adopted on this browser.
+    pub fn active_account_did(&self) -> Option<String> {
+        self.effective_root().active_did
+    }
+
+    /// Every account DID with a persisted per-account entry on this browser.
+    pub fn known_account_dids(&self) -> Vec<String> {
+        self.effective_root().known_dids
+    }
+
+    /// Read a cross-account UI device preference (theme/locale/...), shared by
+    /// every account on this browser. `None` when unset.
+    pub fn device_pref(&self, key: &str) -> Option<String> {
+        self.effective_root().device_prefs.values.get(key).cloned()
+    }
+
+    /// Set a cross-account UI device preference. Lives in the root index, not
+    /// any account entry.
+    pub fn set_device_pref(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.ensure_cached_loaded();
+        self.root
+            .device_prefs
+            .values
+            .insert(key.into(), value.into());
+        let _ = self.flush();
+    }
+
+    /// Wipe every account-scoped projection field of the ACTIVE account while
+    /// keeping that account's own device-level state (`local_identity`,
+    /// `push_registration`, `telemetry_log`, `dpop_device_key`) and session
+    /// grant. Called on a same-account server switch or soft cache reset —
+    /// anything that means the cached *projection* is stale but the account
+    /// itself is unchanged.
     ///
-    /// The session grant is deliberately preserved here because the
-    /// caller usually has its own opinion: a fresh-login strand has just
-    /// written the new account's grant, while a `logout` strand follows up
-    /// with explicit `set_session_grant(None)` of its own. Bundling the grant
-    /// clear into this helper would have made the account-change-during-connect path racy.
+    /// With per-account isolation the preserved device fields belong to THIS
+    /// account's own entry (no cross-account bleed), so keeping them is safe and
+    /// keeps a re-sync on the same server/account cheap. Switching to a
+    /// *different* account goes through [`Self::switch_active_account`], not
+    /// this helper.
     ///
-    /// Pairs with [`Self::retain_realm_tree_projections`] which only handles
-    /// the steady-state sync reconcile case.
+    /// The session grant is deliberately preserved here because the caller
+    /// usually has its own opinion (a fresh-login strand has just written the
+    /// grant; a logout strand follows up with explicit `set_session_grant(None)`).
     pub fn clear_account_scoped(&mut self) {
         self.ensure_cached_loaded();
         let preserved_identity = self.cached.local_identity.clone();
         let preserved_push = self.cached.push_registration.clone();
         let preserved_telemetry = std::mem::take(&mut self.cached.telemetry_log);
         let preserved_grant = self.cached.session_grant.clone();
-        // G3.Y0 — the DPoP device key is device-level state, same
-        // semantics as `local_identity`. Preserved across the
-        // soft-logout / account-change paths so a re-authentication on
-        // this device keeps `cnf.jkt` stable; only the hard-logout strand
-        // (`clear_device_scoped`) wipes it.
         let preserved_dpop = self.cached.dpop_device_key.clone();
         // YOU-02-004: the MLS receive-chain overlay is account-scoped state —
-        // wipe it with the rest so a stale decrypt write-back can't resurrect
-        // the previous account's MLS snapshots through a later flush merge.
+        // wipe it so a stale decrypt write-back can't resurrect old snapshots.
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         self.cached = ClientLocalState {
             local_identity: preserved_identity,
@@ -43,54 +79,141 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Stamp the current account-scope owner without wiping anything.
-    /// Used by paths that have already validated the actor (e.g. the
-    /// connect bootstrap's account viewer probe) and just need to record
-    /// who the account-scoped state now belongs to so a later
-    /// [`adopt_account_scope`](Self::adopt_account_scope) recognises it.
+    /// Make `actor` the active account, loading its own per-account entry.
+    /// This is the per-account replacement for the old
+    /// `stamp_account_scope_owner` / `adopt_account_scope` wipe dance: account
+    /// isolation is now structural (one key per account), so switching is just
+    /// re-pointing `root.active_did` and swapping `cached` for the target
+    /// account's persisted entry — never wiping another account's data.
+    ///
+    /// Returns `true` when the active account actually changed.
+    pub fn switch_active_account(&mut self, actor: &str) -> bool {
+        self.ensure_cached_loaded();
+        let actor = actor.trim();
+        if actor.is_empty() {
+            return false;
+        }
+        if self.root.active_did.as_deref() == Some(actor) {
+            // Already active — just make sure it's recorded as known.
+            self.root.note_known_did(actor);
+            return false;
+        }
+        // Persist the outgoing account's entry before swapping so nothing is
+        // lost (its own key, never another account's).
+        let _ = self.flush();
+        *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
+        self.root.active_did = Some(actor.to_owned());
+        self.root.note_known_did(actor);
+        // Load the target account's own entry (default for a brand-new account).
+        self.cached = self.read_account_state(actor).unwrap_or_default();
+        let _ = self.flush();
+        true
+    }
+
+    /// Record `actor` as the active account without wiping anything. Used by
+    /// paths that have validated the actor (e.g. the connect bootstrap's
+    /// account-viewer probe) and just need the active pointer + known-DID set
+    /// updated. When the active account is unchanged this is a cheap no-op.
     pub fn stamp_account_scope_owner(&mut self, actor: &str) {
         self.ensure_cached_loaded();
         let actor = actor.trim();
-        let next = (!actor.is_empty()).then(|| actor.to_owned());
-        if self.cached.account_scope_owner == next {
+        if actor.is_empty() {
             return;
         }
-        self.cached.account_scope_owner = next;
+        if self.root.active_did.as_deref() == Some(actor) {
+            if !self.root.known_dids.iter().any(|known| known == actor) {
+                self.root.note_known_did(actor);
+                let _ = self.flush();
+            }
+            return;
+        }
+        self.switch_active_account(actor);
+    }
+
+    /// Adopt the account-scope for `actor`. With per-account isolation this is
+    /// [`Self::switch_active_account`]: returning to a different account loads
+    /// that account's own independent state (its grant, cursor, projections,
+    /// device key), so a previous identity's revoked grant / foreign cursor can
+    /// never leak — they live in a separate key entirely.
+    ///
+    /// Returns `true` when the active account changed.
+    pub fn adopt_account_scope(&mut self, actor: &str) -> bool {
+        self.switch_active_account(actor)
+    }
+
+    /// Purge a single account's persisted state: its `…account.<did>` entry,
+    /// its secure-store wrap_seed namespace (wasm), and its `known_dids` entry.
+    /// Cross-account [`DevicePrefs`] and every other account are untouched. When
+    /// the purged account was active, the active pointer is cleared.
+    pub fn forget_account(&mut self, actor: &str) {
+        self.ensure_cached_loaded();
+        let actor = actor.trim();
+        if actor.is_empty() {
+            return;
+        }
+        self.delete_account_state(actor);
+        self.root.forget_known_did(actor);
+        if self.root.active_did.as_deref() == Some(actor) {
+            self.root.active_did = None;
+            *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
+            self.cached = ClientLocalState::default();
+        }
         let _ = self.flush();
     }
 
-    /// Adopt the account-scope for `actor`. When the persisted scope
-    /// belongs to a *different* — or unknown — actor, every account-scoped
-    /// record is wiped first: sync cursor, projections, drafts, **and the
-    /// session grant** (which `clear_account_scoped` alone
-    /// preserves — wrong across an identity change). Device-level state
-    /// (local identity, push registration, DPoP key) is preserved.
-    ///
-    /// This is the single guard that stops a previous identity's *revoked*
-    /// session grant or *foreign-principal* sync cursor from bleeding into
-    /// a freshly established session — the root of the `cursor_integrity_invalid`
-    /// / `session grant is not active: revoked` cascade. Call it whenever a
-    /// session is (re-)established for `actor` (login, and the connect
-    /// bootstrap once the canonical actor is known).
-    ///
-    /// Returns `true` when a wipe happened.
-    pub fn adopt_account_scope(&mut self, actor: &str) -> bool {
+    /// Pre-DID login kickoff: record the freshly-minted `device_id` (+ optional
+    /// holder `jkt`) into the root index `pending_login` and pin the
+    /// process-global pending namespace so the bootstrap wrap_seed / secrets
+    /// land under `pending.<device_id>` until the principal DID resolves.
+    pub fn begin_pending_login(&mut self, device_id: &str, dpop_jkt: Option<&str>) {
         self.ensure_cached_loaded();
-        let actor = actor.trim();
-        let owner_matches = self
-            .cached
-            .account_scope_owner
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|owner| !owner.is_empty() && owner == actor);
-        if owner_matches {
+        let device_id = device_id.trim();
+        if device_id.is_empty() {
+            return;
+        }
+        crate::secure_key_store::set_pending_login_device_id(Some(device_id));
+        self.root.pending_login = Some(PendingLogin {
+            device_id: device_id.to_owned(),
+            dpop_jkt: dpop_jkt
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+        });
+        let _ = self.flush();
+    }
+
+    /// The in-flight pre-DID login material, if any.
+    pub fn pending_login(&self) -> Option<PendingLogin> {
+        self.root.pending_login.clone()
+    }
+
+    /// Adopt the pending pre-DID device material onto the resolved principal
+    /// `did` (session grant has returned the DID). Two outcomes:
+    ///
+    /// * `did` already has a persisted entry (a returning account on this
+    ///   browser) → DISCARD the pending device material; the returning account
+    ///   keeps its own stable `device_id` + key (`cnf.jkt` stays stable).
+    ///   Returns `false` (not a new account).
+    /// * `did` is new on this browser → keep the pending device material as the
+    ///   new account's device. Returns `true` (new account).
+    ///
+    /// Either way the pending entry is cleared and `did` becomes active. The
+    /// secure-store device seed re-homing itself is handled by
+    /// `adopt_device_seed_scope_on_login`; this drives the root-index side and
+    /// the active-account switch.
+    pub fn adopt_pending_login(&mut self, did: &str) -> bool {
+        self.ensure_cached_loaded();
+        let did = did.trim();
+        if did.is_empty() {
             return false;
         }
-        self.clear_account_scoped();
-        self.cached.session_grant = None;
-        self.cached.account_scope_owner = (!actor.is_empty()).then(|| actor.to_owned());
-        let _ = self.flush();
-        true
+        let is_returning_account = self.root.known_dids.iter().any(|known| known == did)
+            || self.read_account_state(did).is_some();
+        // Clear pending namespace pin before the seed-scope adopt re-homes it.
+        crate::secure_key_store::set_pending_login_device_id(None);
+        self.root.pending_login = None;
+        self.switch_active_account(did);
+        !is_returning_account
     }
 
     /// G3.Y0 — hard logout: wipe everything `clear_account_scoped`

@@ -67,8 +67,9 @@ pub use platform::IosKeychainSecureKeyStore;
 pub use signing_seed::{
     SIGNING_SEED_KEY, SigningSeedMaterial, account_scoped_device_key, active_device_seed_scope,
     adopt_device_seed_scope_on_login, ensure_signing_seed, ensure_signing_seed_scoped,
-    load_signing_seed, load_signing_seed_scoped, reset_device_seed_scope_for_signin,
-    set_active_device_seed_scope, store_signing_seed, store_signing_seed_scoped,
+    load_signing_seed, load_signing_seed_scoped, pending_login_device_id,
+    reset_device_seed_scope_for_signin, set_active_device_seed_scope, set_pending_login_device_id,
+    store_signing_seed, store_signing_seed_scoped, wrap_seed_namespace,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -292,6 +293,37 @@ pub trait SecureKeyStore: Send + Sync {
     /// Human-readable backend identifier (e.g. `"keyring"`,
     /// `"memory"`). Surfaced in diagnostic UI.
     fn backend_name(&self) -> &'static str;
+}
+
+/// wasm-only: one-time migration of the legacy global wrap_seed
+/// (`yougen.secret.yougen.wrap_seed.v1`) into an account DID's namespace
+/// (`yougen.secret.<did>.wrap_seed.v1`). The wrap_seed is now namespaced by the
+/// active account scope (see [`signing_seed::wrap_seed_namespace`]); copying the
+/// historical global seed under the migrated owner's namespace keeps any
+/// secrets that owner wrapped under the old shared key decryptable. Best-effort
+/// and idempotent: no-op when the source is absent or the destination exists.
+#[cfg(target_arch = "wasm32")]
+pub fn migrate_global_wrap_seed_to_namespace(owner_did: &str) {
+    let owner_did = owner_did.trim();
+    if owner_did.is_empty() {
+        return;
+    }
+    let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) else {
+        return;
+    };
+    let suffix = ".wrap_seed.v1";
+    let source_key = format!("yougen.secret.yougen{suffix}");
+    let dest_key = format!("yougen.secret.{owner_did}{suffix}");
+    if source_key == dest_key {
+        return;
+    }
+    // Don't clobber an existing per-account seed.
+    if matches!(storage.get_item(&dest_key), Ok(Some(_))) {
+        return;
+    }
+    if let Ok(Some(seed)) = storage.get_item(&source_key) {
+        let _ = storage.set_item(&dest_key, &seed);
+    }
 }
 
 /// Pick the most secure backend available at compile time.

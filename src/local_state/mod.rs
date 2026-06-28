@@ -15,8 +15,34 @@ use serde_json::{Value, json};
 
 use crate::notification_rules::WatchLevel;
 
+/// Root-index storage key. Per-account `ClientLocalState` entries live under
+/// the sibling key `account_state_key(did)`. The `.v1` suffix is preserved
+/// across the per-account refactor — only the *shape* stored under this key
+/// changed (old: a single global `ClientLocalState`; new: a small [`RootIndex`]
+/// that points at per-account entries). Read-time migration upgrades any blob
+/// still in the old shape.
 #[cfg(target_arch = "wasm32")]
 const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
+
+/// Reserved namespace for the pre-login (signed-out) account entry. Local state
+/// exists before any DID is known — drafts, UI scratch, the boot-time device
+/// material the secure store mirrors — and must survive a reload. The root
+/// index keeps `active_did = None` while signed out (per the spec), but the
+/// blob still has a home under this stable sentinel entry instead of being held
+/// only in memory. The first real login switches the active account to the
+/// resolved DID; this anonymous entry is left untouched (it is not a real
+/// account and never appears in `known_dids`).
+const ANONYMOUS_ACCOUNT_NAMESPACE: &str = "anonymous";
+
+/// Per-account `ClientLocalState` storage key. The DID is appended verbatim;
+/// on wasm (localStorage) any DID character is a valid key, so no sanitisation
+/// is needed. The native backend derives sibling *files* instead (see
+/// [`LocalStateStore::account_state_path`]) and sanitises filesystem-hostile
+/// characters there.
+#[cfg(target_arch = "wasm32")]
+fn account_state_key(did: &str) -> String {
+    format!("{LOCAL_STATE_STORAGE_KEY}.account.{did}")
+}
 
 /// YOU-02-003: hard cap on the persisted `raw_operations` audit log. Each
 /// user write appends one record and the whole `ClientLocalState` blob is
@@ -65,7 +91,15 @@ mod to_device_raw;
 
 #[derive(Clone, Debug)]
 pub struct LocalStateStore {
+    /// The ACTIVE account's full state. Every existing read/write method
+    /// operates on `cached` unchanged — they simply act on whichever account
+    /// `root.active_did` selects. Loaded from `account_state_key(active_did)`
+    /// (or default when signed out) by [`Self::ensure_cached_loaded`].
     cached: ClientLocalState,
+    /// The small cold-written root index: active account pointer, cross-account
+    /// device prefs, in-flight pending-login device material, and the known-DID
+    /// set. Persisted to [`LOCAL_STATE_STORAGE_KEY`] (the root file on native).
+    root: RootIndex,
     /// Perf: whether `cached` has been reconciled with the persistence layer at
     /// least once. Before this flag existed, an empty/default account (where
     /// `cached == ClientLocalState::default()`) re-read the backing store (disk
@@ -233,6 +267,7 @@ impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
             cached: ClientLocalState::default(),
+            root: RootIndex::default(),
             loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
@@ -394,6 +429,7 @@ impl LocalStateStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: ClientLocalState::default(),
+            root: RootIndex::default(),
             loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
@@ -404,26 +440,196 @@ impl LocalStateStore {
         }
     }
 
+    // ── Account-aware persistence (per-account isolation) ────────────────
+    //
+    // The storage layout is a small root index at [`LOCAL_STATE_STORAGE_KEY`]
+    // plus one full `ClientLocalState` per account at `account_state_key(did)`
+    // (native: sibling files via `account_state_path`). The only persistence
+    // functions that touch a storage key are the three below; the ~hundreds of
+    // `cached`-based read/write methods are untouched — they act on whichever
+    // account `root.active_did` selects.
+    //
+    // `read_persisted_state` returns the ACTIVE account's state (its callers
+    // only want the state); `load_persisted_root` reads + migrates the index;
+    // `write_persisted_state` writes the active account's entry and the index.
+
     #[cfg(not(target_arch = "wasm32"))]
-    fn read_persisted_state(&self) -> Option<ClientLocalState> {
+    fn account_state_path(&self, did: &str) -> PathBuf {
+        // Sibling file with the stem suffixed by `.account.<sanitized_did>`.
+        // DID syntax (`did:webvh:…`) contains `:` which is filesystem-hostile
+        // on Windows, so sanitise to a stable token.
+        let sanitized = sanitize_did_for_filename(did);
+        let stem = self
+            .path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("state");
+        let ext = self
+            .path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("json");
+        let file_name = format!("{stem}.account.{sanitized}.{ext}");
+        match self.path.parent() {
+            Some(parent) => parent.join(file_name),
+            None => PathBuf::from(file_name),
+        }
+    }
+
+    /// Read + migrate the root index. On the old single-blob shape (a
+    /// `ClientLocalState` parked at the root key with no `known_dids`) this
+    /// rewrites the root key into a [`RootIndex`] and moves the blob into the
+    /// owner's `account.<did>` entry (read-time, one-time, key name unchanged).
+    /// Returns the resolved index (default when nothing is persisted yet).
+    fn load_persisted_root(&self) -> RootIndex {
+        let Some(raw) = self.read_root_raw() else {
+            return RootIndex::default();
+        };
+        // Discriminator: the new index always serializes a `known_dids` array;
+        // the old `ClientLocalState` never had that field.
+        let is_new_shape = serde_json::from_str::<Value>(&raw)
+            .ok()
+            .and_then(|value| {
+                value
+                    .as_object()
+                    .map(|object| object.contains_key("known_dids"))
+            })
+            .unwrap_or(false);
+        if is_new_shape {
+            match serde_json::from_str::<RootIndex>(&raw) {
+                Ok(root) => return root,
+                Err(error) => {
+                    tracing::error!(%error, "root index unreadable; starting from default");
+                    *self.lock_persist_health() = Some(format!(
+                        "local state root index was unreadable ({error}); started from defaults"
+                    ));
+                    return RootIndex::default();
+                }
+            }
+        }
+        // Old shape (or corrupt): try to migrate a single global blob.
+        self.migrate_old_blob_to_root(&raw)
+    }
+
+    /// One-time migration of the legacy single-blob `ClientLocalState`.
+    /// `account_scope_owner` (if present) becomes the active/known account and
+    /// the whole blob is written to its `account.<did>` entry; the root key is
+    /// rewritten as a [`RootIndex`]. A blob that doesn't parse as the old shape
+    /// is treated as corrupt: preserved and reset to a default index.
+    fn migrate_old_blob_to_root(&self, raw: &str) -> RootIndex {
+        let old = match serde_json::from_str::<ClientLocalState>(raw) {
+            Ok(old) => old,
+            Err(error) => {
+                self.preserve_corrupt_root(raw, &error.to_string());
+                return RootIndex::default();
+            }
+        };
+        // The legacy blob no longer carries `account_scope_owner` as a typed
+        // field (it was removed with this refactor), so recover the owner from
+        // the raw JSON to decide where the blob lands.
+        let owner = serde_json::from_str::<Value>(raw)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("account_scope_owner")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|owner| !owner.is_empty())
+                    .map(ToOwned::to_owned)
+            });
+        let mut root = RootIndex::default();
+        if let Some(owner) = owner {
+            // Move the blob into the owner's account entry, then rewrite root.
+            if let Err(error) = self.write_account_state(&owner, &old) {
+                tracing::error!(%error, "migrate: writing owner account entry failed");
+            }
+            root.active_did = Some(owner.clone());
+            root.note_known_did(&owner);
+            // The wrap_seed stays GLOBAL (service namespace), so the owner's
+            // previously-stored secrets remain under the same wrapping key and
+            // need no migration. (Per-account isolation is at the entry-key
+            // level, not the wrap_seed.)
+        }
+        let _ = self.write_root(&root);
+        root
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_root_raw(&self) -> Option<String> {
         let bytes = fs::read(&self.path).ok()?;
+        String::from_utf8(bytes).ok()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn read_root_raw(&self) -> Option<String> {
+        browser_storage().and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn preserve_corrupt_root(&self, _raw: &str, error: &str) {
+        // YOU-02-002: a corrupt / truncated root file MUST NOT be silently reset.
+        let corrupt_path = self.path.with_extension("corrupt");
+        let _ = fs::rename(&self.path, &corrupt_path);
+        let message = format!(
+            "local state at {} was unreadable ({error}); preserved a copy at {} and started from defaults",
+            self.path.display(),
+            corrupt_path.display()
+        );
+        tracing::error!(error, "corrupt local state preserved, not silently reset");
+        *self.lock_persist_health() = Some(message);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn preserve_corrupt_root(&self, raw: &str, error: &str) {
+        if let Some(storage) = browser_storage() {
+            let _ = storage.set_item(&format!("{LOCAL_STATE_STORAGE_KEY}.corrupt"), raw);
+        }
+        let message = format!(
+            "local state in localStorage was unreadable ({error}); preserved a copy and started from defaults"
+        );
+        tracing::error!(error, "corrupt local state preserved, not silently reset");
+        *self.lock_persist_health() = Some(message);
+    }
+
+    /// The account namespace the active blob persists under: the active DID
+    /// when signed in, else the reserved anonymous sentinel so pre-login local
+    /// state still has a durable home. This is a *storage* detail only — the
+    /// root index `active_did` stays `None` while signed out.
+    fn effective_account_key(&self) -> String {
+        self.root
+            .active_did
+            .clone()
+            .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned())
+    }
+
+    /// Read the ACTIVE account's `ClientLocalState`. Resolves the namespace
+    /// (active DID, or the anonymous sentinel when signed out) from the
+    /// (migrated) root index, then reads that entry. `None` when the entry is
+    /// absent.
+    fn read_persisted_state(&self) -> Option<ClientLocalState> {
+        let root = self.load_persisted_root();
+        let key = root
+            .active_did
+            .clone()
+            .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned());
+        self.read_account_state(&key)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_account_state(&self, did: &str) -> Option<ClientLocalState> {
+        let path = self.account_state_path(did);
+        let bytes = fs::read(&path).ok()?;
         match serde_json::from_slice::<ClientLocalState>(&bytes) {
             Ok(state) => Some(state),
             Err(error) => {
-                // YOU-02-002: a corrupt / truncated state.json (e.g. a crash
-                // mid-write before atomic rename landed) MUST NOT be silently
-                // reset to a blank account — that loses every MLS snapshot and
-                // the plaintext sidecar. Preserve the bad file for forensics
-                // and latch a health error so the UI can warn before the user
-                // overwrites it.
-                let corrupt_path = self.path.with_extension("corrupt");
-                let _ = fs::rename(&self.path, &corrupt_path);
+                let corrupt_path = path.with_extension("corrupt");
+                let _ = fs::rename(&path, &corrupt_path);
                 let message = format!(
-                    "local state at {} was unreadable ({error}); preserved a copy at {} and started from defaults",
-                    self.path.display(),
+                    "account state at {} was unreadable ({error}); preserved a copy at {} and started from defaults",
+                    path.display(),
                     corrupt_path.display()
                 );
-                tracing::error!(%error, "corrupt local state preserved, not silently reset");
+                tracing::error!(%error, "corrupt account state preserved, not silently reset");
                 *self.lock_persist_health() = Some(message);
                 None
             }
@@ -431,21 +637,19 @@ impl LocalStateStore {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn read_persisted_state(&self) -> Option<ClientLocalState> {
-        let json = browser_storage()
-            .and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())?;
+    fn read_account_state(&self, did: &str) -> Option<ClientLocalState> {
+        let key = account_state_key(did);
+        let json = browser_storage().and_then(|storage| storage.get_item(&key).ok().flatten())?;
         match serde_json::from_str::<ClientLocalState>(&json) {
             Ok(state) => Some(state),
             Err(error) => {
-                // YOU-02-002: preserve the corrupt blob under a sibling key
-                // rather than silently dropping it back to defaults.
                 if let Some(storage) = browser_storage() {
-                    let _ = storage.set_item(&format!("{LOCAL_STATE_STORAGE_KEY}.corrupt"), &json);
+                    let _ = storage.set_item(&format!("{key}.corrupt"), &json);
                 }
                 let message = format!(
-                    "local state in localStorage was unreadable ({error}); preserved a copy and started from defaults"
+                    "account state in localStorage was unreadable ({error}); preserved a copy and started from defaults"
                 );
-                tracing::error!(%error, "corrupt local state preserved, not silently reset");
+                tracing::error!(%error, "corrupt account state preserved, not silently reset");
                 *self.lock_persist_health() = Some(message);
                 None
             }
@@ -453,16 +657,62 @@ impl LocalStateStore {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn write_persisted_state(&self, state: &ClientLocalState) -> anyhow::Result<()> {
+    fn write_account_state(&self, did: &str, state: &ClientLocalState) -> anyhow::Result<()> {
+        use std::io::Write;
+
+        let path = self.account_state_path(did);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let bytes = serde_json::to_vec_pretty(state)?;
+        let tmp_path = path.with_extension("json.tmp");
+        {
+            let mut tmp = fs::File::create(&tmp_path)?;
+            tmp.write_all(&bytes)?;
+            tmp.sync_all()?;
+        }
+        fs::rename(&tmp_path, &path)?;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn write_account_state(&self, did: &str, state: &ClientLocalState) -> anyhow::Result<()> {
+        let Some(storage) = browser_storage() else {
+            return Ok(());
+        };
+        storage
+            .set_item(&account_state_key(did), &serde_json::to_string(state)?)
+            .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
+        Ok(())
+    }
+
+    /// Delete a single account's persisted entry. Best-effort (a missing entry
+    /// is fine). Native: removes the sibling file. wasm: removes the
+    /// localStorage key and its corrupt sidecar.
+    fn delete_account_state(&self, did: &str) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = self.account_state_path(did);
+            let _ = fs::remove_file(&path);
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(storage) = browser_storage() {
+                let key = account_state_key(did);
+                let _ = storage.remove_item(&key);
+                let _ = storage.remove_item(&format!("{key}.corrupt"));
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_root(&self, root: &RootIndex) -> anyhow::Result<()> {
         use std::io::Write;
 
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let bytes = serde_json::to_vec_pretty(state)?;
-        // YOU-02-002: atomic write — serialize to a sibling temp file, fsync,
-        // then rename over the target. A crash mid-write leaves either the old
-        // complete file or the temp file, never a truncated state.json.
+        let bytes = serde_json::to_vec_pretty(root)?;
         let tmp_path = self.path.with_extension("json.tmp");
         {
             let mut tmp = fs::File::create(&tmp_path)?;
@@ -474,20 +724,28 @@ impl LocalStateStore {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn write_persisted_state(&self, state: &ClientLocalState) -> anyhow::Result<()> {
+    fn write_root(&self, root: &RootIndex) -> anyhow::Result<()> {
         let Some(storage) = browser_storage() else {
             return Ok(());
         };
         storage
-            .set_item(LOCAL_STATE_STORAGE_KEY, &serde_json::to_string(state)?)
-            .map_err(|error| {
-                // YOU-02-003: most commonly a QuotaExceededError once the
-                // single-key blob outgrows ~5 MB. Surfaced via the health
-                // latch by the caller (`flush`/`batch`) so the UI can warn
-                // instead of failing forever in silence.
-                anyhow::anyhow!("localStorage write failed: {error:?}")
-            })?;
+            .set_item(LOCAL_STATE_STORAGE_KEY, &serde_json::to_string(root)?)
+            .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
         Ok(())
+    }
+
+    /// Persist the active account's `state` to its own entry and the root
+    /// index. The hot path only touches the active account's key; the index is
+    /// small and only changes on account switch / pending adoption, but is
+    /// cheap enough to co-write so `known_dids`/`active_did` stay in sync.
+    /// When signed out (`active_did` is `None`) only the index is written.
+    fn write_persisted_state(&self, state: &ClientLocalState) -> anyhow::Result<()> {
+        // Active DID when signed in, else the anonymous sentinel so pre-login
+        // local state (drafts, scratch) is durable rather than memory-only.
+        self.write_account_state(&self.effective_account_key(), state)?;
+        // YOU-02-003 note: the per-account split keeps each account's blob well
+        // under the localStorage quota the single global blob used to risk.
+        self.write_root(&self.root)
     }
 
     fn ensure_cached_loaded(&mut self) {
@@ -497,13 +755,26 @@ impl LocalStateStore {
         if self.loaded.get() {
             return;
         }
+        // Always reconcile the root index (cheap, drives `active_did`) so a
+        // store constructed fresh sees the persisted active account + prefs.
+        self.root = self.load_persisted_root();
         if self.cached == ClientLocalState::default()
-            && let Some(state) = self.read_persisted_state()
+            && let Some(state) = self.read_account_state(&self.effective_account_key())
         {
             self.cached = state;
         }
         self.loaded.set(true);
     }
+}
+
+/// Sanitise a DID into a filesystem-safe filename segment for the native
+/// per-account state file. URL-safe-base64 of the DID bytes keeps it stable,
+/// reversible-free (we never need to decode it), and free of `:`/`/` which are
+/// hostile on Windows. Matches the per-account secure-store scoping convention.
+#[cfg(not(target_arch = "wasm32"))]
+fn sanitize_did_for_filename(did: &str) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(did.as_bytes())
 }
 
 #[cfg(test)]

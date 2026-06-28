@@ -480,18 +480,19 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
 }
 
 #[test]
-fn adopt_account_scope_resets_grant_and_cursor_on_identity_change() {
+fn adopt_account_scope_isolates_accounts_per_did() {
     let path = temp_state_path("adopt-account-scope");
     let mut store = LocalStateStore::with_path(path);
 
-    // Establish alice's scope with a grant + cursor + projection.
+    // Establish alice as the active account with a grant + cursor + projection.
     assert!(
         store.adopt_account_scope("did:web:alice.example"),
-        "first adopt (owner None) stamps and reports a reset"
+        "first adopt (no active account) switches and reports a change"
     );
-    let identity = store
-        .ensure_local_identity()
-        .expect("ensure_local_identity should succeed in plaintext mode");
+    assert_eq!(
+        store.active_account_did().as_deref(),
+        Some("did:web:alice.example")
+    );
     store.save_sync_cursor("sx:alice");
     store.save_realm_tree_projection("ck:space:a", serde_json::json!({}));
     store.set_session_grant(Some(PersistedSessionGrant {
@@ -506,33 +507,162 @@ fn adopt_account_scope_resets_grant_and_cursor_on_identity_change() {
         stored_at: chrono::Utc::now(),
     }));
 
-    // Re-adopting the same actor is a no-op and keeps state.
+    // Re-adopting the same actor is a no-op and keeps alice's state.
     assert!(!store.adopt_account_scope("did:web:alice.example"));
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
     assert!(store.load().session_grant.is_some());
 
-    // A different identity wipes the previous scope — including the
-    // (possibly revoked) grant and the foreign-principal cursor — so
-    // they can't leak into bob's session.
+    // Switching to a different identity loads bob's OWN (empty) entry — alice's
+    // grant/cursor/projection live in a separate key and can never leak into
+    // bob's session.
     assert!(store.adopt_account_scope("did:web:bob.example"));
     let state = store.load();
-    assert!(state.sync_cursor.is_none(), "stale cursor must be wiped");
+    assert!(
+        state.sync_cursor.is_none(),
+        "bob's fresh entry has no cursor"
+    );
     assert!(
         state.realm_tree_projections.is_empty(),
-        "projections must be wiped"
+        "bob's fresh entry has no projections"
     );
     assert!(
         state.session_grant.is_none(),
-        "previous identity's grant must be wiped, not preserved"
+        "alice's grant must not appear in bob's entry"
     );
     assert_eq!(
-        state.account_scope_owner.as_deref(),
+        store.active_account_did().as_deref(),
         Some("did:web:bob.example"),
-        "owner is stamped to the new identity"
+        "active account points at the new identity"
     );
-    // Device-level identity survives the account-scope swap.
+
+    // Both accounts are tracked, and switching back to alice restores her own
+    // independent state — structural per-account isolation, not a wipe.
+    let mut known = store.known_account_dids();
+    known.sort();
+    assert_eq!(known, vec!["did:web:alice.example", "did:web:bob.example"]);
+    assert!(store.adopt_account_scope("did:web:alice.example"));
+    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
+    assert!(
+        store.load().session_grant.is_some(),
+        "alice's grant survives a round-trip through bob"
+    );
+}
+
+#[test]
+fn per_account_entries_persist_independently_across_store_instances() {
+    let path = temp_state_path("per-account-persist");
+    {
+        let mut store = LocalStateStore::with_path(path.clone());
+        store.adopt_account_scope("did:web:alice.example");
+        store.save_sync_cursor("sx:alice");
+        store.adopt_account_scope("did:web:bob.example");
+        store.save_sync_cursor("sx:bob");
+        // Bob is the active account at flush time.
+    }
+    // A fresh store reloads the persisted active account (bob) + index.
+    let reader = LocalStateStore::with_path(path.clone());
     assert_eq!(
-        state.local_identity.as_ref().unwrap().did_key,
-        identity.local_signing_did,
+        reader.active_account_did().as_deref(),
+        Some("did:web:bob.example")
+    );
+    assert_eq!(reader.load().sync_cursor.as_deref(), Some("sx:bob"));
+    // Switching back to alice reads alice's OWN persisted entry, untouched.
+    let mut reader = reader;
+    reader.adopt_account_scope("did:web:alice.example");
+    assert_eq!(reader.load().sync_cursor.as_deref(), Some("sx:alice"));
+}
+
+#[test]
+fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
+    let path = temp_state_path("forget-account");
+    let mut store = LocalStateStore::with_path(path);
+    store.set_device_pref("theme", "night");
+    store.adopt_account_scope("did:web:alice.example");
+    store.save_sync_cursor("sx:alice");
+    store.adopt_account_scope("did:web:bob.example");
+    store.save_sync_cursor("sx:bob");
+
+    store.forget_account("did:web:bob.example");
+    assert!(
+        !store
+            .known_account_dids()
+            .iter()
+            .any(|did| did == "did:web:bob.example"),
+        "purged account leaves known_dids"
+    );
+    assert!(
+        store.active_account_did().is_none(),
+        "purging the active account clears the active pointer"
+    );
+    // Cross-account device prefs are untouched by purging an account.
+    assert_eq!(store.device_pref("theme").as_deref(), Some("night"));
+    // Alice's entry is intact.
+    store.adopt_account_scope("did:web:alice.example");
+    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
+}
+
+#[test]
+fn adopt_pending_login_keeps_pending_device_for_new_account() {
+    let path = temp_state_path("pending-new");
+    let mut store = LocalStateStore::with_path(path);
+    store.begin_pending_login("ck:device:new-1", Some("jkt-new"));
+    assert!(store.pending_login().is_some());
+
+    // A DID never seen on this browser is a NEW account → keep pending device.
+    let is_new = store.adopt_pending_login("did:web:newcomer.example");
+    assert!(is_new, "an unknown DID adopts as a new account");
+    assert!(store.pending_login().is_none(), "pending is cleared");
+    assert_eq!(
+        store.active_account_did().as_deref(),
+        Some("did:web:newcomer.example")
+    );
+}
+
+#[test]
+fn adopt_pending_login_discards_pending_for_returning_account() {
+    let path = temp_state_path("pending-returning");
+    let mut store = LocalStateStore::with_path(path);
+    // Alice already has a persisted entry on this browser.
+    store.adopt_account_scope("did:web:alice.example");
+    store.save_sync_cursor("sx:alice");
+    // Sign out, then a fresh sign-in kicks off pending device material.
+    store.begin_pending_login("ck:device:fresh-2", Some("jkt-fresh"));
+    let is_new = store.adopt_pending_login("did:web:alice.example");
+    assert!(!is_new, "a returning DID is not a new account");
+    assert!(store.pending_login().is_none());
+    // Alice's own entry (with her cursor) is restored, not replaced.
+    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
+}
+
+#[test]
+fn legacy_single_blob_migrates_to_root_index_and_account_entry() {
+    let path = temp_state_path("legacy-migrate");
+    // Hand-write a legacy global blob: a `ClientLocalState` at the root key
+    // with an `account_scope_owner`, exactly the pre-refactor shape.
+    let owner = "did:web:legacy.example";
+    let mut legacy = serde_json::to_value(ClientLocalState {
+        sync_cursor: Some("sx:legacy".to_owned()),
+        ..ClientLocalState::default()
+    })
+    .unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .insert("account_scope_owner".to_owned(), serde_json::json!(owner));
+    std::fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+    // First load runs the read-time migration.
+    let store = LocalStateStore::with_path(path.clone());
+    assert_eq!(store.active_account_did().as_deref(), Some(owner));
+    assert!(store.known_account_dids().iter().any(|did| did == owner));
+    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:legacy"));
+
+    // The root key now holds a RootIndex (has `known_dids`), not a ClientLocalState.
+    let raw = std::fs::read_to_string(&path).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(value.get("known_dids").is_some(), "root is now an index");
+    assert!(
+        value.get("sync_cursor").is_none(),
+        "the blob moved out of the root key"
     );
 }

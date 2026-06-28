@@ -770,18 +770,81 @@ pub struct ClientLocalState {
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]
     pub member_handle_cache: BTreeMap<String, MemberHandleCacheEntry>,
-    /// Actor DID that the currently-persisted account-scoped state
-    /// (sync cursor, realm-tree projections, session grant, …)
-    /// belongs to. Stamped by [`LocalStateStore::adopt_account_scope`]
-    /// whenever a session is established. When a new session's actor
-    /// disagrees with this owner, every account-scoped record is wiped
-    /// before the new session adopts the scope — this is what stops a
-    /// previous identity's revoked grant or foreign-principal sync
-    /// cursor from leaking into the new session (`cursor_integrity_invalid`
-    /// / `session grant is not active: revoked`). `None` until the first
-    /// stamp.
+}
+
+/// Cross-account UI device preferences — the ONLY part of local state shared
+/// between accounts on the same browser/install. Lives in the [`RootIndex`],
+/// never under a per-account entry, so toggling a theme on one account is
+/// observed by every account but carries no identity/account/key material.
+///
+/// Kept deliberately minimal: today yougen still persists theme/locale through
+/// the per-account `private_data` channel, so this map is reserved for prefs
+/// that are explicitly routed here. Free-form string KV so adding a pref
+/// doesn't churn the on-disk schema.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevicePrefs {
+    /// Free-form UI preference KV (e.g. `theme`, `locale`). Cross-account.
     #[serde(default)]
-    pub account_scope_owner: Option<String>,
+    pub values: BTreeMap<String, String>,
+}
+
+/// The pre-DID device material minted at login kickoff, before the principal
+/// DID is known (the authorize request needs a `device_id`). Adopted into the
+/// resolved account's entry — or discarded in favour of a returning account's
+/// own device — once `account_me` resolves the DID. Cleared after adoption.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingLogin {
+    /// Freshly-minted device id carried in the authorize request.
+    pub device_id: String,
+    /// RFC 7638 thumbprint of the freshly-minted DPoP holder key. Diagnostic
+    /// mirror of the key whose private seed lives under the
+    /// `pending.<device_id>` secure-store namespace.
+    #[serde(default)]
+    pub dpop_jkt: Option<String>,
+}
+
+/// Small, cold-written root index that replaces the former single global
+/// `ClientLocalState` blob. Each account's full [`ClientLocalState`] lives in
+/// its own sibling key (`yougen.local_state.v1.account.<did>`); this index only
+/// records which account is active, the cross-account [`DevicePrefs`], any
+/// in-flight [`PendingLogin`] device material, and the set of known account
+/// DIDs (for enumeration / cleanup). Hot per-write flushes touch only the
+/// active account's key, never this index.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootIndex {
+    /// The currently-foreground account DID, or `None` when signed out / before
+    /// any account has been adopted on this browser.
+    #[serde(default)]
+    pub active_did: Option<String>,
+    /// Cross-account UI device preferences (the only shared part).
+    #[serde(default)]
+    pub device_prefs: DevicePrefs,
+    /// Pre-DID device material minted at login kickoff; `None` outside an
+    /// in-flight interactive sign-in.
+    #[serde(default)]
+    pub pending_login: Option<PendingLogin>,
+    /// Every account DID with a persisted `…account.<did>` entry, for
+    /// enumeration and cleanup. The active account is always a member.
+    #[serde(default)]
+    pub known_dids: Vec<String>,
+}
+
+impl RootIndex {
+    /// Record `did` as a known account (idempotent), keeping the vector sorted
+    /// and deduplicated so enumeration order is stable across flushes.
+    pub fn note_known_did(&mut self, did: &str) {
+        let did = did.trim();
+        if did.is_empty() || self.known_dids.iter().any(|known| known == did) {
+            return;
+        }
+        self.known_dids.push(did.to_owned());
+        self.known_dids.sort();
+    }
+
+    /// Forget a known account DID (used when an account's entry is purged).
+    pub fn forget_known_did(&mut self, did: &str) {
+        self.known_dids.retain(|known| known != did);
+    }
 }
 
 /// G3.Y0 — persisted shape of the per-device DPoP signing key. The
@@ -932,7 +995,6 @@ impl Default for ClientLocalState {
             dpop_device_key: None,
             member_identity_events: BTreeMap::new(),
             member_handle_cache: BTreeMap::new(),
-            account_scope_owner: None,
         }
     }
 }

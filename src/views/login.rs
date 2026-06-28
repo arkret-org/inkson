@@ -95,18 +95,25 @@ pub fn LoginPanel(
                 };
                 {
                     let mut store = state_store_write.write();
-                    // Adopt the account-scope for the signed-in actor. If the
-                    // browser still holds a *different* identity's scope, this
-                    // wipes its grant + OIDC bundle + sync cursor + projections
-                    // — the guard that stops a stale/revoked grant or a
-                    // foreign-principal cursor from leaking into this session.
-                    let wiped = store.adopt_account_scope(&completed.actor);
+                    // Adopt the signed-in actor as the active account. With
+                    // per-account isolation this loads that account's own
+                    // independent entry (its grant/cursor/projections/device
+                    // key) — a previous identity's revoked grant or foreign
+                    // cursor lives in a separate key and can never leak in.
+                    // When a pre-DID `pending_login` is in flight this also
+                    // discards-or-migrates the pending device material based on
+                    // whether the resolved account is returning or new.
+                    let switched = if store.pending_login().is_some() {
+                        store.adopt_pending_login(&completed.actor)
+                    } else {
+                        store.adopt_account_scope(&completed.actor)
+                    };
                     // Same actor but a different principal server: the cached
                     // projections/cursor are scoped to the old server and are
                     // meaningless here, so reset them too. The fresh grant for
                     // THIS server is persisted by `persist_completed_login_state`
                     // immediately below, so clearing here does not strand it.
-                    if server_changed && !wiped {
+                    if server_changed && !switched {
                         store.clear_account_scoped();
                         store.set_session_grant(None);
                     }
@@ -185,6 +192,13 @@ pub fn LoginPanel(
                 // Drop the cached DPoP record so the device key is rebuilt from
                 // the freshly-scoped bootstrap seed.
                 reset_state_store.write().set_dpop_device_key(None);
+                // Pre-DID: record the freshly-minted device id as the pending
+                // login so the bootstrap wrap_seed / secrets land under the
+                // `pending.<device_id>` namespace until the principal DID
+                // resolves and `adopt_pending_login` re-homes them.
+                reset_state_store
+                    .write()
+                    .begin_pending_login(device.trim(), None);
             }
             match start_oidc_strand(&principal, device.trim()).await {
                 Ok(()) => {

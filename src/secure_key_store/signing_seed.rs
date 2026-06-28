@@ -74,6 +74,54 @@ pub fn active_device_seed_scope() -> Option<String> {
         .and_then(|guard| guard.clone())
 }
 
+/// Process-global pending-login device id. During the pre-DID phase of an
+/// interactive sign-in the wrap_seed (and any pending secrets) live under the
+/// `pending.<device_id>` namespace; once the principal DID resolves, that
+/// material is adopted/migrated under the DID namespace. `None` outside an
+/// in-flight pending sign-in.
+static PENDING_LOGIN_DEVICE_ID: RwLock<Option<String>> = RwLock::new(None);
+
+/// Set (or clear with `None`) the pending-login device id used to namespace the
+/// pre-DID wrap_seed and pending secrets.
+pub fn set_pending_login_device_id(device_id: Option<&str>) {
+    let normalized = device_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if let Ok(mut guard) = PENDING_LOGIN_DEVICE_ID.write() {
+        *guard = normalized;
+    }
+}
+
+/// The current pending-login device id, if a pre-DID sign-in is in flight.
+pub fn pending_login_device_id() -> Option<String> {
+    PENDING_LOGIN_DEVICE_ID
+        .read()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+/// Wrap_seed namespace for the AEAD secure store — intentionally GLOBAL (the
+/// bare `service_name`), NOT per-account.
+///
+/// Per-account device-key isolation is provided by the ENTRY keys
+/// (`signing_seed_key_for(scope)` / [`account_scoped_device_key`]): account A's
+/// device-key material lives under a different localStorage entry than account
+/// B's, so they never read each other's. The wrap_seed is only the at-rest
+/// wrapping key for the store on this one browser; sharing it across the
+/// browser's own accounts leaks nothing the user can't already read.
+///
+/// It MUST stay constant across a sign-in: [`adopt_device_seed_scope_on_login`]
+/// re-homes the bootstrap signing seed to the account scope and only THEN flips
+/// `ACTIVE_DEVICE_SEED_SCOPE`. If the wrap_seed namespace tracked that scope, the
+/// account-scope seed would be wrapped under the pre-flip namespace but read back
+/// under the post-flip one — an undecryptable mismatch that silently drops the
+/// device key (regenerating it with a fresh `jkt` that no longer matches the
+/// just-issued grant). Keeping it global avoids that write/read skew entirely.
+pub fn wrap_seed_namespace(service_name: &str) -> String {
+    service_name.to_owned()
+}
+
 /// Append the active per-account scope to a secure-store key `base`, for
 /// device-key material that must be isolated per account alongside the signing
 /// seed — notably the cached DPoP device-key record (which embeds the same seed
