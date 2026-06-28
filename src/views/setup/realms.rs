@@ -549,10 +549,10 @@ pub(super) fn RealmsSection(
                                     "data-testid": "seed-members-input",
                                     value: "{seed_members_value}",
                                     rows: "4",
-                                    placeholder: "alice:example.com\nbob:example.com",
+                                    placeholder: "did:webvh:<scid>:alice.example\ndid:webvh:<scid>:bob.example",
                                     oninput: move |event: FormEvent| seed_members.set(event.value())
                                 }
-                                div { class: "muted", "One handle (user:domain.com) or DID per line, or comma-separated." }
+                                div { class: "muted", "One DID per line, or comma-separated. Handle invites require directory resolution." }
                             }
                             div { class: "setup-field setup-field-span-2",
                                 label { "Seed preview" }

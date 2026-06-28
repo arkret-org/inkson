@@ -351,8 +351,10 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         "sha256",
         "ck:trust_domain:server.example",
         // an invitee exercises the `ck.member.state` `from: null → invite`
-        // transition (LatticeOp.from carries an explicit null).
-        &["bob:example.com".to_owned()],
+        // transition (LatticeOp.from carries an explicit null). Bootstrap
+        // accepts only authoritative DID input; handle strings require
+        // Directory-resolved invite/address evidence.
+        &["did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
     )
@@ -375,8 +377,8 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
 }
 
 #[test]
-fn realm_bootstrap_handle_seed_materializes_user_and_principal_server_dids() {
-    let events = build_realm_bootstrap_events(
+fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
+    let err = build_realm_bootstrap_events(
         "ck:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "Engineering",
@@ -394,31 +396,10 @@ fn realm_bootstrap_handle_seed_materializes_user_and_principal_server_dids() {
         &[],
         None,
     )
-    .unwrap();
-    let member = events
-        .iter()
-        .find(|event| event.kind.as_str() == "ck.member.state")
-        .expect("member state invite");
-
-    assert_eq!(member.content["actor_id"], "did:web:example.com:users:bob");
-    // `membership_payload` is additionalProperties:false with NO `handle`
-    // property — the member identity is carried by `actor_id`, and handle
-    // evidence lives on the signed HandleClaim / roster path. The prior
-    // `handle` field was an illegal property soland's schema rejected.
-    assert!(member.content.get("handle").is_none());
-    assert_eq!(
-        member.content["delivery_binding"]["recipient_service_did"],
-        "did:web:example.com"
-    );
-    assert_eq!(
-        member.content["delivery_binding"]["recipient_service_type"],
-        "principal_server"
-    );
-    assert_eq!(member.content["delivery_binding"]["binding_scope"], "realm");
+    .expect_err("handle seed members require Directory-resolved evidence");
     assert!(
-        member.content["delivery_binding"]["service_acceptance_ref"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("ck:event:"))
+        err.to_string()
+            .contains("handle bootstrap requires a Directory-resolved invite address")
     );
 }
 

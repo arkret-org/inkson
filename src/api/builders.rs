@@ -12,10 +12,9 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
-use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::operation::{
     Effect, EventKind, EventRequirements, LatticeOp, LatticeOpType, OperationBuilder, Precondition,
-    Predicate, PredicateOp, trim_realm_id, uuid_v7,
+    Predicate, PredicateOp, trim_realm_id,
 };
 
 /// RFC3339 timestamp in the canonical wire form soland's
@@ -100,11 +99,9 @@ fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RealmBootstrapMember {
     pub(crate) actor_id: String,
-    // NOTE: the parsed handle is intentionally NOT stored on the membership
-    // event — `membership_payload` is additionalProperties:false with no
-    // `handle` property. Handle evidence belongs on the signed HandleClaim /
-    // roster path, not the durable membership event. The handle is still used
-    // transiently to derive `delivery_binding.recipient_service_did`.
+    // Bootstrap membership accepts only already-authoritative DID input.
+    // Handle evidence belongs on signed HandleClaim / Directory resolution
+    // paths, not on a locally synthesized membership event.
     delivery_binding: Option<Value>,
 }
 
@@ -113,22 +110,6 @@ impl RealmBootstrapMember {
         Self {
             actor_id: did.trim().to_owned(),
             delivery_binding: None,
-        }
-    }
-
-    fn from_handle(handle: ParsedUserHandle) -> Self {
-        let resolved_at = event_timestamp();
-        Self {
-            actor_id: handle.subject_did,
-            delivery_binding: Some(json!({
-                "recipient_service_did": handle.principal_server_did,
-                "recipient_service_type": "principal_server",
-                "binding_scope": "realm",
-                "binding_source": "invite",
-                "delivery_modes": ["events", "sync", "to_device", "push", "key_packages"],
-                "resolved_at": resolved_at,
-                "service_acceptance_ref": format!("ck:event:{}", uuid_v7()),
-            })),
         }
     }
 }
@@ -141,11 +122,8 @@ fn parse_realm_bootstrap_member(input: &str) -> anyhow::Result<RealmBootstrapMem
     if trimmed.starts_with("did:") {
         return Ok(RealmBootstrapMember::from_did(trimmed));
     }
-    if let Some(handle) = parse_user_handle(trimmed) {
-        return Ok(RealmBootstrapMember::from_handle(handle));
-    }
     Err(anyhow::anyhow!(
-        "seed member must be a DID or handle like alice:example.com"
+        "seed member must be a DID; handle bootstrap requires a Directory-resolved invite address"
     ))
 }
 
