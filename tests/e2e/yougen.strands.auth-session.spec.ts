@@ -57,6 +57,11 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
   await page.goto("/login", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("login-panel")).toBeVisible();
   await expect(page.getByTestId("login-server-url")).toHaveValue("https://local.host");
+  await expect(page.getByTestId("login-server-url")).toHaveAttribute("list", "login-principal-server-options");
+  await expect(page.locator("datalist#login-principal-server-options option").first()).toHaveAttribute(
+    "value",
+    "https://local.host",
+  );
   await expect(page.getByTestId("login-account-hint")).toHaveCount(0);
   await expect(page.getByTestId("start-server-login-button")).toBeVisible();
 

@@ -10,7 +10,6 @@ use crate::coauth::{
     extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
     restore_oidc_scaffold,
 };
-use crate::components::UiIcon;
 use crate::config::{
     LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
 };
@@ -70,10 +69,8 @@ pub fn LoginPanel(
     let mut is_busy = use_signal(|| auto_capture_callback);
     let mut callback_started = use_signal(|| false);
     let mut state_store_write = state_store;
-    // Account-chooser dropdown open/close state (≥2 known accounts). Collapsed
-    // by default; the ▾ toggle opens the scrollable panel; selecting a row,
-    // clicking the panel's backdrop, or pressing Esc closes it.
-    let mut account_chooser_open = use_signal(|| false);
+    // Principal Server presets come from local config, with the current value
+    // and the local development default merged in for the datalist.
     let principal_server_options =
         principal_server_options_for(&base_url(), &config_store.read().load().principal_servers);
 
@@ -194,62 +191,42 @@ pub fn LoginPanel(
                 auth_status.set("Signed in".to_owned());
                 on_login.call(());
             }
-            Err(error) => auth_status.set(error),
+            Err(error) => auth_status.set(discard_failed_oidc_callback(error)),
         }
         is_busy.set(false);
     });
 
-    // Shared interactive sign-in launcher. `reuse=true` re-authenticates the
-    // already-known account: its `device_id` and persisted account scope are
-    // kept, so the OIDC callback (a fresh wasm instance) re-pins this account's
-    // device seed via the boot hook and reuses the SAME device — no key
-    // rotation, no MLS re-admission. `reuse=false` mints a fresh device for a
-    // new/different account and resets the bootstrap seed scope so the new
-    // device key is never the previous account's. Captures only `Copy` signals,
-    // so the closure is itself `Copy` and can drive multiple buttons.
-    let launch_sign_in = move |reuse: bool| {
+    // Account selection belongs to the Account Authority. Yougen only chooses
+    // the Principal Server and starts a fresh pending login; the callback adopts
+    // the DID returned by coauth as the authoritative account.
+    let launch_sign_in = move || {
         let principal = base_url();
-        let persisted_actor = account_did();
-        let reuse = reuse && !persisted_actor.trim().is_empty();
-        let (device, actor) = if reuse {
-            (normalize_device_id(&device_id()), persisted_actor)
-        } else {
-            (crate::config::new_device_id(), String::new())
-        };
+        let device = crate::config::new_device_id();
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
         is_busy.set(true);
         auth_status.set("Opening server sign-in...".to_owned());
         spawn(async move {
-            if !reuse {
-                #[cfg(target_arch = "wasm32")]
-                let _ = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await;
-                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
-                    secure_store.as_ref(),
-                ) {
-                    tracing::warn!(%error, "reset device seed scope for sign-in failed");
-                }
-                // Drop the cached DPoP record so the device key is rebuilt from
-                // the freshly-scoped bootstrap seed.
-                reset_state_store.write().set_dpop_device_key(None);
-                // Pre-DID: record the freshly-minted device id as the pending
-                // login so the bootstrap wrap_seed / secrets land under the
-                // `pending.<device_id>` namespace until the principal DID
-                // resolves and `adopt_pending_login` re-homes them.
-                reset_state_store
-                    .write()
-                    .begin_pending_login(device.trim(), None);
+            #[cfg(target_arch = "wasm32")]
+            let _ = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await;
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            if let Err(error) =
+                crate::secure_key_store::reset_device_seed_scope_for_signin(secure_store.as_ref())
+            {
+                tracing::warn!(%error, "reset device seed scope for sign-in failed");
             }
-            let login_hint = if reuse {
-                login_hint_for_known_account(&actor, &account_primary_handle())
-            } else {
-                String::new()
-            };
-            match start_oidc_strand(&principal, device.trim(), &login_hint, &actor).await {
-                Ok(()) => {
-                    persist_config(config_store, principal, actor, device, String::new());
-                }
+            // Drop the cached DPoP record so the device key is rebuilt from
+            // the freshly-scoped bootstrap seed.
+            reset_state_store.write().set_dpop_device_key(None);
+            // Pre-DID: record the freshly-minted device id as the pending
+            // login so the bootstrap wrap_seed / secrets land under the
+            // `pending.<device_id>` namespace until the principal DID
+            // resolves and `adopt_pending_login` re-homes them.
+            reset_state_store
+                .write()
+                .begin_pending_login(device.trim(), None);
+            match start_oidc_strand(&principal, device.trim(), "", "").await {
+                Ok(()) => {}
                 Err(error) => {
                     is_busy.set(false);
                     auth_status.set(error);
@@ -257,50 +234,6 @@ pub fn LoginPanel(
             }
         });
     };
-
-    // Re-login launcher targeting a SPECIFIC known account (account-selector
-    // row click). Unlike `launch_sign_in(true)` — which reuses the single
-    // active `account_did()`/`device_id()` — this re-points the active account
-    // to the chosen DID first (pinning its per-account device-seed scope and
-    // reusing the `device_id` it last signed in with), so the reuse login uses
-    // that account's own device + key (per-account isolation preserved). Falls
-    // back to a fresh device id when the chosen account has none persisted yet.
-    let launch_sign_in_for =
-        move |did: String, account_handle: String, account_device_id: String, server: String| {
-            let did = did.trim().to_owned();
-            if did.is_empty() {
-                return;
-            }
-            let mut state_store = state_store;
-            let principal = if server.trim().is_empty() {
-                base_url()
-            } else {
-                normalize_server_url(&server)
-            };
-            // `normalize_device_id` mints a fresh id when the account has none yet.
-            let device = normalize_device_id(&account_device_id);
-            let login_hint = login_hint_for_known_account(&did, &account_handle);
-            // Make the chosen account active so the boot-pinned device-seed scope
-            // and per-account entry resolve to IT for this sign-in.
-            crate::secure_key_store::set_active_device_seed_scope(Some(&did));
-            state_store.write().switch_active_account(&did);
-            base_url.set(principal.clone());
-            account_did.set(did.clone());
-            device_id.set(device.clone());
-            is_busy.set(true);
-            auth_status.set("Opening server sign-in...".to_owned());
-            spawn(async move {
-                match start_oidc_strand(&principal, device.trim(), &login_hint, &did).await {
-                    Ok(()) => {
-                        persist_config(config_store, principal, did, device, String::new());
-                    }
-                    Err(error) => {
-                        is_busy.set(false);
-                        auth_status.set(error);
-                    }
-                }
-            });
-        };
 
     rsx! {
         Card { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": "Login",
@@ -341,205 +274,13 @@ pub fn LoginPanel(
                     }
                 }
 
-                {
-                    // Google-style account selector. Source of truth for the
-                    // known accounts on this browser is the per-account state
-                    // index (`known_accounts()` joins the root `known_dids` with
-                    // each account's own persisted handle / device_id /
-                    // server_url). Each row is labelled by handle (never the raw
-                    // DID) and reuse-logs into that exact account's device.
-                    let active_did = account_did().trim().to_owned();
-                    let mut accounts = state_store_write.read().known_accounts();
-                    // Make sure the currently-known active account is present
-                    // even before it lands in `known_dids` (defensive).
-                    if !active_did.is_empty()
-                        && !accounts.iter().any(|account| account.did == active_did)
-                    {
-                        accounts.push(crate::local_state::KnownAccount {
-                            did: active_did.clone(),
-                            handle: account_primary_handle(),
-                            device_id: device_id(),
-                            server_url: base_url(),
-                        });
-                    }
-                    // Display label for a known account: handle first, else a
-                    // compact protocol id — NEVER the full `did:webvh:…` string
-                    // (it is unbreakable and would blow the card width). The
-                    // canonical DID stays in storage for every real call.
-                    let label_for = |account: &crate::local_state::KnownAccount| -> String {
-                        let handle = account.handle.trim();
-                        if !handle.is_empty() {
-                            handle.to_owned()
-                        } else {
-                            crate::app::personal_handle_from_account_handle(&account.did)
-                                .unwrap_or_else(|| short_protocol_id(&account.did))
-                        }
-                    };
-                    let avatar_initial = |label: &str| -> String {
-                        label
-                            .chars()
-                            .next()
-                            .map(|c| c.to_uppercase().to_string())
-                            .unwrap_or_else(|| "?".to_owned())
-                    };
-                    // For ≥2 accounts the collapsed main button targets the most
-                    // recently used account: the one matching the current
-                    // `account_did()`, else the first in `known_accounts()`.
-                    let primary_index = accounts
-                        .iter()
-                        .position(|account| account.did == active_did)
-                        .unwrap_or(0);
-                    rsx! {
-                        if accounts.is_empty() {
-                            // First sign-in on this browser: always a fresh device.
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                class: "auth-primary",
-                                "data-testid": "start-server-login-button",
-                                disabled: is_busy(),
-                                onclick: move |_| { let mut go = launch_sign_in; go(false); },
-                                if is_busy() { "Working..." } else { "Continue" }
-                            }
-                        } else if accounts.len() == 1 {
-                            // Single known account → keep the compact one-button
-                            // form ("Continue as <handle>") + "different account".
-                            {
-                                let account = accounts[0].clone();
-                                let account_label = label_for(&account);
-                                let row_did = account.did.clone();
-                                let row_device = account.device_id.clone();
-                                let row_server = account.server_url.clone();
-                                rsx! {
-                                    Button {
-                                        variant: ButtonVariant::Primary,
-                                        class: "auth-primary",
-                                        "data-testid": "start-server-login-button",
-                                        disabled: is_busy(),
-                                        onclick: move |_| {
-                                            let mut go = launch_sign_in_for;
-                                            go(row_did.clone(), account.handle.clone(), row_device.clone(), row_server.clone());
-                                        },
-                                        if is_busy() { "Working..." } else { "Continue as {account_label}" }
-                                    }
-                                }
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                class: "auth-secondary",
-                                "data-testid": "start-different-account-login-button",
-                                disabled: is_busy(),
-                                onclick: move |_| { let mut go = launch_sign_in; go(false); },
-                                "Use a different account"
-                            }
-                        } else {
-                            // ≥2 known accounts → collapsed split button: left
-                            // half continues the primary (most-recent) account,
-                            // the ▾ toggle opens a scrollable dropdown of all
-                            // accounts. Default collapsed; no flat list.
-                            {
-                                let primary = accounts[primary_index].clone();
-                                let primary_label = label_for(&primary);
-                                let primary_did = primary.did.clone();
-                                let primary_device = primary.device_id.clone();
-                                let primary_server = primary.server_url.clone();
-                                let is_open = account_chooser_open();
-                                rsx! {
-                                    div { class: "auth-account-chooser",
-                                        div { class: "auth-account-split",
-                                            Button {
-                                                variant: ButtonVariant::Primary,
-                                                class: "auth-primary auth-account-split-main",
-                                                "data-testid": "start-server-login-button",
-                                                disabled: is_busy(),
-                                                onclick: move |_| {
-                                                    let mut go = launch_sign_in_for;
-                                                    go(primary_did.clone(), primary.handle.clone(), primary_device.clone(), primary_server.clone());
-                                                },
-                                                if is_busy() { "Working..." } else { "Continue as {primary_label}" }
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Primary,
-                                                class: "auth-primary auth-account-split-toggle",
-                                                "data-testid": "account-chooser-toggle",
-                                                "aria-haspopup": "menu",
-                                                "aria-expanded": if is_open { "true" } else { "false" },
-                                                "aria-label": "Choose a different account",
-                                                disabled: is_busy(),
-                                                onclick: move |_| account_chooser_open.toggle(),
-                                                UiIcon { name: if is_open { "chevron-up" } else { "chevron-down" } }
-                                            }
-                                        }
-                                        if is_open {
-                                            // Invisible full-screen backdrop: a click
-                                            // anywhere outside the panel closes it.
-                                            div {
-                                                class: "auth-account-backdrop",
-                                                "data-testid": "account-chooser-backdrop",
-                                                onclick: move |_| account_chooser_open.set(false),
-                                            }
-                                            div {
-                                                class: "auth-account-panel",
-                                                "data-testid": "account-chooser-panel",
-                                                role: "menu",
-                                                tabindex: "-1",
-                                                onkeydown: move |event: KeyboardEvent| {
-                                                    if event.key().to_string() == "Escape" {
-                                                        account_chooser_open.set(false);
-                                                    }
-                                                },
-                                                ul { class: "auth-account-scroll",
-                                                    for account in accounts.iter() {
-                                                        {
-                                                            let account = account.clone();
-                                                            let account_label = label_for(&account);
-                                                            let initial = avatar_initial(&account_label);
-                                                            let row_did = account.did.clone();
-                                                            let row_device = account.device_id.clone();
-                                                            let row_server = account.server_url.clone();
-                                                            let is_active = account.did == active_did;
-                                                            rsx! {
-                                                                li {
-                                                                    key: "{account.did}",
-                                                                    class: "auth-account-row",
-                                                                    "data-testid": "account-chooser-row",
-                                                                    Button {
-                                                                        variant: ButtonVariant::Ghost,
-                                                                        class: if is_active { "auth-account-row-button active" } else { "auth-account-row-button" },
-                                                                        "aria-label": "Continue as {account_label}",
-                                                                        disabled: is_busy(),
-                                                                        onclick: move |_| {
-                                                                            account_chooser_open.set(false);
-                                                                            let mut go = launch_sign_in_for;
-                                                                            go(row_did.clone(), account.handle.clone(), row_device.clone(), row_server.clone());
-                                                                        },
-                                                                        span { class: "auth-account-avatar", "{initial}" }
-                                                                        span { class: "auth-account-handle", "{account_label}" }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Ghost,
-                                                    class: "auth-account-different",
-                                                    "data-testid": "start-different-account-login-button",
-                                                    disabled: is_busy(),
-                                                    onclick: move |_| {
-                                                        account_chooser_open.set(false);
-                                                        let mut go = launch_sign_in;
-                                                        go(false);
-                                                    },
-                                                    span { class: "auth-account-avatar add", "+" }
-                                                    span { class: "auth-account-handle", "Use a different account" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Button {
+                    variant: ButtonVariant::Primary,
+                    class: "auth-primary",
+                    "data-testid": "start-server-login-button",
+                    disabled: is_busy(),
+                    onclick: move |_| { let mut go = launch_sign_in; go(); },
+                    if is_busy() { "Working..." } else { "Continue" }
                 }
 
                 if !auth_status().is_empty() {
@@ -669,15 +410,14 @@ fn compute_session_status(
     }
 }
 
-fn login_hint_for_known_account(did: &str, handle: &str) -> String {
-    if let Some(parsed) = crate::identity_handle::parse_user_handle(handle) {
-        return parsed.localpart;
+fn discard_failed_oidc_callback(error: String) -> String {
+    if let Err(clear_error) = clear_persisted_oidc_scaffold() {
+        tracing::warn!(%clear_error, "clear failed OIDC scaffold failed");
     }
-
-    crate::views::helpers::handle_display_from_did(did)
-        .and_then(|display| crate::identity_handle::parse_user_handle(&display))
-        .map(|parsed| parsed.localpart)
-        .unwrap_or_default()
+    if error.contains("principal binding mismatch") {
+        return "The account signed in at the Account Authority does not match the selected account. Use a different account, or sign in to the selected account again.".to_owned();
+    }
+    format!("{error} Start sign-in again.")
 }
 
 pub(crate) async fn start_oidc_strand(
@@ -1061,34 +801,21 @@ mod tests {
     }
 
     #[test]
-    fn known_account_login_hint_prefers_handle_localpart() {
+    fn failed_callback_prompts_fresh_sign_in() {
         assert_eq!(
-            login_hint_for_known_account(
-                "did:webvh:zLocal:local.host:users:ignored",
-                "chris:local.host",
-            ),
-            "chris"
-        );
-        assert_eq!(
-            login_hint_for_known_account(
-                "did:webvh:zLocal:local.host:users:ignored",
-                "@Chris:Local.Host",
-            ),
-            "chris"
+            discard_failed_oidc_callback("Account Authority session-grant issue failed".to_owned()),
+            "Account Authority session-grant issue failed Start sign-in again."
         );
     }
 
     #[test]
-    fn known_account_login_hint_falls_back_to_materialized_did() {
+    fn principal_binding_mismatch_gets_specific_login_guidance() {
         assert_eq!(
-            login_hint_for_known_account("did:web:local.host:users:chris", ""),
-            "chris"
+            discard_failed_oidc_callback(
+                "Account Authority session-grant issue failed: reason_code=proof_invalid; principal binding mismatch: the request principal_id does not match the authenticated user".to_owned()
+            ),
+            "The account signed in at the Account Authority does not match the selected account. Use a different account, or sign in to the selected account again."
         );
-        assert_eq!(
-            login_hint_for_known_account("did:webvh:zLocal:local.host:users:chris", "  "),
-            "chris"
-        );
-        assert_eq!(login_hint_for_known_account("did:key:zUnknown", ""), "");
     }
 
     #[test]

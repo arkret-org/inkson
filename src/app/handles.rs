@@ -78,9 +78,9 @@ pub(crate) fn personal_handle_from_account_handle(account_handle: &str) -> Optio
 
 /// Private-data dictionary key (scoped per account DID) under which the
 /// account's resolved primary handle is persisted. Recording the handle lets
-/// a signed-out reload identify the account by its **handle** in the
-/// "Continue as" button instead of falling back to the raw DID, which is the
-/// canonical id kept in `account_did`/config for every protocol call.
+/// signed-out diagnostics identify the account by its **handle** instead of
+/// falling back to the raw DID, which is the canonical id kept in
+/// `account_did`/config for every protocol call.
 ///
 /// The DID is folded into the dictionary key — not just the XOR account key —
 /// so two accounts on the same browser never share one slot (a wrong-key

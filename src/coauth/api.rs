@@ -413,7 +413,19 @@ impl CoauthApi {
         if let Some(proof) = dpop_proof.filter(|proof| !proof.trim().is_empty()) {
             request = request.header("DPoP", proof);
         }
-        Ok(request.send().await?.error_for_status()?.json().await?)
+        let response = request.send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+        if !status.is_success() {
+            let code = error_envelope_code(&text);
+            anyhow::bail!(
+                "account authority request failed: status={} code={} body={}",
+                status.as_u16(),
+                code.as_deref().unwrap_or("<none>"),
+                text.chars().take(1024).collect::<String>(),
+            );
+        }
+        Ok(serde_json::from_str(&text)?)
     }
 
     pub fn endpoint_url(&self, path: &str) -> anyhow::Result<String> {

@@ -279,10 +279,8 @@ pub fn adopt_device_seed_scope_on_login(
     // A present bootstrap seed is the freshly-minted device bound to the
     // session grant just issued during this sign-in; it becomes this account's
     // device key, OVERWRITING any prior one (the prior key is not bound to the
-    // live grant, so a "different account" sign-in that resolves back to the
-    // same principal must adopt the new key, not the stale one). The re-auth
-    // ("Continue as X") path generates no bootstrap seed — it reads the
-    // account-scoped seed directly — so there is nothing to overwrite.
+    // live grant, so a sign-in that resolves back to the same principal must
+    // adopt the new key, not the stale one).
     if let Some(material) = load_signing_seed_scoped(store, None)? {
         store_signing_seed_scoped(store, Some(account), &material.seed)?;
         delete_signing_seed_scoped(store, None)?;
