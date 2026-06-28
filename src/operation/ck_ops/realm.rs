@@ -7,7 +7,9 @@ use cokret_sdk::models::{
 };
 use serde_json::json;
 
-use super::{OperationBuilder, did_id, object_patch_payload_value, patch_from_value, realm_id_value};
+use super::{
+    OperationBuilder, did_id, object_patch_payload_value, patch_from_value, realm_id_value,
+};
 
 /// Build a `ck.space.archive` operation against a container Space. The
 /// Space transitions from `Active` to `Archived`; reversible via
@@ -165,9 +167,7 @@ pub fn realm_organization_statement(
     // the UI an immediate, deterministic error.
     match (status, &revokes_statement_id) {
         (RealmOrganizationStatus::Revoked, None) => {
-            anyhow::bail!(
-                "ck.realm.organization revoked status requires revokes_statement_id"
-            );
+            anyhow::bail!("ck.realm.organization revoked status requires revokes_statement_id");
         }
         (RealmOrganizationStatus::Active, Some(_)) => {
             anyhow::bail!(

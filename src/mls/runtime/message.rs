@@ -278,10 +278,7 @@ pub fn ingest_realm_key_share(
     // HPKE seal still gates confidentiality/integrity. An empty / absent
     // signature is tolerated (legacy provider) only on the Miss path.
     let sender_principal_id = realm_key_share_sender_principal_id(share_envelope);
-    if !verify_realm_key_share_sender_signature(
-        &payload,
-        sender_principal_id.as_deref(),
-    ) {
+    if !verify_realm_key_share_sender_signature(&payload, sender_principal_id.as_deref()) {
         tracing::debug!(
             %realm_id,
             "reject ck.realm_key.share: sender_device_signature failed device-bound verification"
@@ -330,16 +327,21 @@ pub fn ingest_realm_key_share(
 /// key to the sender's device-directory record. To-device / event envelopes
 /// expose the sender under one of these top-level keys.
 fn realm_key_share_sender_principal_id(envelope: &serde_json::Value) -> Option<String> {
-    ["sender_principal_id", "sender", "actor_id", "sender_actor_id"]
-        .iter()
-        .find_map(|key| {
-            envelope
-                .get(*key)
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+    [
+        "sender_principal_id",
+        "sender",
+        "actor_id",
+        "sender_actor_id",
+    ]
+    .iter()
+    .find_map(|key| {
+        envelope
+            .get(*key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 /// Verify a `ck.realm_key.share` payload's `sender_device_signature`
@@ -347,16 +349,15 @@ fn realm_key_share_sender_principal_id(envelope: &serde_json::Value) -> Option<S
 /// directory record when available (SEC-02).
 ///
 /// Trust resolution for `(sender_principal_id, payload.sender_device_id)`:
-/// - **Directory Hit**: the self-asserted `signer_public_key_multibase` MUST
-///   byte-equal the directory's authoritative key (which itself required a full
-///   cross-signing / service-attested trust chain to be cached). A populated
-///   signature is REQUIRED and MUST verify; an empty signature is rejected.
+/// - **Directory Hit**: the self-asserted `signer_public_key_multibase` MUST byte-equal the
+///   directory's authoritative key (which itself required a full cross-signing / service-attested
+///   trust chain to be cached). A populated signature is REQUIRED and MUST verify; an empty
+///   signature is rejected.
 /// - **Directory NegativeHit** (revoked / absent / no signing key): rejected.
-/// - **Directory Miss** (key not prefetched) or **no sender principal**: fall
-///   back to the prior self-asserted-key behaviour — a populated signature must
-///   verify under its own embedded key, an empty signature is tolerated. The
-///   per-secret HPKE seal remains the confidentiality/integrity gate on this
-///   path, so this stays a strict improvement rather than a new hard failure.
+/// - **Directory Miss** (key not prefetched) or **no sender principal**: fall back to the prior
+///   self-asserted-key behaviour — a populated signature must verify under its own embedded key, an
+///   empty signature is tolerated. The per-secret HPKE seal remains the confidentiality/integrity
+///   gate on this path, so this stays a strict improvement rather than a new hard failure.
 pub(crate) fn verify_realm_key_share_sender_signature(
     payload: &cokret_sdk::RealmKeySharePayload,
     sender_principal_id: Option<&str>,
@@ -625,22 +626,20 @@ fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<&'
 /// `sign_welcome_claim_envelope` 是发送端)。
 ///
 /// fail-closed 语义:
-/// - 当 `welcome_value` 携带 `claim_envelope` 时,签名 **必须** 验证通过;形态非法、
-///   验签 key 解析不到、或签名不匹配,一律 `Err(reason)` → 调用方 `record_failure`
-///   并拒绝该 Welcome(绝不放行未验签者把本设备拉入群)。
-/// - 验签 key **经 `device_directory` 解析**(同步缓存,bootstrap 已经
-///   `prefetch_device_keys` 预热),绝不取自 envelope 自述的 `kid`/`requester_did`。
-/// - `ssk_generation` 分支(发送端用 cross-signing self-signing key 签名)在客户端
-///   当前 **无法可靠解析远端 actor 的 SSK 公钥**(`device_directory` 只解析设备
-///   signing key,SSK 公钥需要 actor 的 cross-signing publish + DID 锚定,本同步
-///   接收路径无该输入),按纪律对该分支同样 fail-closed(宁可拒绝)。
+/// - 当 `welcome_value` 携带 `claim_envelope` 时,签名 **必须** 验证通过;形态非法、 验签 key
+///   解析不到、或签名不匹配,一律 `Err(reason)` → 调用方 `record_failure` 并拒绝该
+///   Welcome(绝不放行未验签者把本设备拉入群)。
+/// - 验签 key **经 `device_directory` 解析**(同步缓存,bootstrap 已经 `prefetch_device_keys`
+///   预热),绝不取自 envelope 自述的 `kid`/`requester_did`。
+/// - `ssk_generation` 分支(发送端用 cross-signing self-signing key 签名)在客户端 当前
+///   **无法可靠解析远端 actor 的 SSK 公钥**(`device_directory` 只解析设备 signing key,SSK 公钥需要
+///   actor 的 cross-signing publish + DID 锚定,本同步 接收路径无该输入),按纪律对该分支同样
+///   fail-closed(宁可拒绝)。
 ///
 /// 返回 `Ok(())` 仅当:(a) `welcome_value` 不含 `claim_envelope`(降维后的纯
 /// routing+ciphertext Welcome,无可验之物——governance_binding 闸门与服务端
 /// admin gate 兜底),或 (b) 携带且经目录解析的设备签名验证通过。
-fn verify_welcome_claim_envelope_signer(
-    welcome_value: &serde_json::Value,
-) -> Result<(), String> {
+fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Result<(), String> {
     use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 
     let Some(claim_value) = welcome_value.get("claim_envelope") else {
@@ -649,9 +648,8 @@ fn verify_welcome_claim_envelope_signer(
         // (2) 强制;服务端 admission admin gate 是额外一层。
         return Ok(());
     };
-    let envelope: cokret_sdk::MlsWelcomeClaimEnvelope =
-        serde_json::from_value(claim_value.clone())
-            .map_err(|err| format!("claim_envelope decode: {err}"))?;
+    let envelope: cokret_sdk::MlsWelcomeClaimEnvelope = serde_json::from_value(claim_value.clone())
+        .map_err(|err| format!("claim_envelope decode: {err}"))?;
     // 形态校验:kid/sig 非空、alg ∈ {EdDSA, Ed25519}。
     envelope
         .validate_signature_shape()
@@ -883,31 +881,40 @@ pub fn apply_welcome_messages_with_device_snapshot(
                         }
                     }
                 }
-                Ok(None) => match cokret_sdk::CokretMlsIdentity::new_basic(
-                    principal_did.clone(),
-                    device_id_typed.clone(),
-                ) {
-                    Ok(identity) => identity,
-                    Err(err) => {
-                        outcome.record_failure(format!("identity: {err:?}"));
-                        continue;
-                    }
-                },
+                Ok(None) => {
+                    // The Welcome names a KeyPackage we have no stored private
+                    // identity state for. A fresh `new_basic` identity can NEVER
+                    // hold that KeyPackage's init key, so `join_from_welcome`
+                    // would fail with `NoMatchingKeyPackage`. Fail closed with a
+                    // diagnosable message instead of silently retrying with an
+                    // identity that cannot work. (mls-welcome-debug)
+                    tracing::warn!(
+                        target: "mls_admission",
+                        realm = %crate::views::helpers::short_protocol_id(realm_id),
+                        actor = %crate::views::helpers::short_protocol_id(actor_id),
+                        device = %crate::views::helpers::short_protocol_id(device_id),
+                        key_package_id = %crate::views::helpers::short_protocol_id(key_package_id),
+                        "welcome apply: no local KeyPackage identity state for the Welcome's key_package_id — the published KeyPackage's private init key is missing from this device's secure store (cannot decrypt Welcome)"
+                    );
+                    outcome.record_failure(format!(
+                        "no local KeyPackage identity state for welcome key_package_id={key_package_id}"
+                    ));
+                    continue;
+                }
                 Err(err) => {
                     outcome.record_failure(format!("load KeyPackage identity state: {err}"));
                     continue;
                 }
             },
-            None => match cokret_sdk::CokretMlsIdentity::new_basic(
-                principal_did.clone(),
-                device_id_typed.clone(),
-            ) {
-                Ok(identity) => identity,
-                Err(err) => {
-                    outcome.record_failure(format!("identity: {err:?}"));
-                    continue;
-                }
-            },
+            None => {
+                tracing::warn!(
+                    target: "mls_admission",
+                    realm = %crate::views::helpers::short_protocol_id(realm_id),
+                    "welcome apply: Welcome carries no key_package_id — cannot select the KeyPackage private state to decrypt it"
+                );
+                outcome.record_failure("welcome carries no key_package_id".to_owned());
+                continue;
+            }
         };
         let group = match cokret_sdk::CokretMlsGroup::join_from_welcome(identity, &welcome) {
             Ok(group) => group,

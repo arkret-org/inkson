@@ -678,6 +678,14 @@ fn auth_surface_waits_while_live_session_is_checking() {
 }
 
 #[test]
+fn auth_surface_shows_shell_when_restoring_has_live_session() {
+    assert_eq!(
+        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Restoring),
+        AuthSurface::AppShell
+    );
+}
+
+#[test]
 fn auth_surface_routes_authenticated_login_to_app_shell() {
     assert_eq!(
         auth_surface_for_route(&Route::Login, true, SessionBootState::Authenticated),

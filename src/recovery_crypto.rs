@@ -303,7 +303,9 @@ pub fn open_vault(
     let root = derive_vault_kek_with_salt(passphrase, &salt)?;
 
     // Wrong-passphrase fail-fast via key_commitment before any AEAD work.
-    if !key_commitment.is_empty() && vault_key_commitment(&root, ctx.backup_class)? != key_commitment {
+    if !key_commitment.is_empty()
+        && vault_key_commitment(&root, ctx.backup_class)? != key_commitment
+    {
         return Err(anyhow!(
             "vault decrypt failed: key_commitment mismatch (wrong passphrase)"
         ));

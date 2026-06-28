@@ -210,10 +210,7 @@ fn account_secret_rotation_skips_undecryptable_realm_and_records_failure() {
         "some-other-secret",
         b"salt-bad",
     );
-    let snapshots = BTreeMap::from([
-        (good_realm.to_owned(), good),
-        (bad_realm.to_owned(), bad),
-    ]);
+    let snapshots = BTreeMap::from([(good_realm.to_owned(), good), (bad_realm.to_owned(), bad)]);
 
     let rotation = prepare_account_mls_secret_rotation(&store, actor, device, &snapshots).unwrap();
 

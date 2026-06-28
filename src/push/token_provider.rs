@@ -93,11 +93,15 @@ fn set_token(slot: &Mutex<Option<String>>, token: impl Into<String>) {
     // no-op'ing. The critical section never panics and never `.await`s, so the
     // guarded `Option` is always consistent; treating a poisoned lock as fatal
     // would silently disable push-token bridging with no log trail.
-    *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+    *slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
 }
 
 fn clear_token(slot: &Mutex<Option<String>>) {
-    *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    *slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 }
 
 // Consumed only by the native (`not(wasm32)`) provider-token path

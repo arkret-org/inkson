@@ -613,15 +613,23 @@ fn primary_handle_is_per_account_and_readable_by_did() {
 
     // Each account's handle is readable BY DID without making it active.
     assert_eq!(
-        store.primary_handle_for_did("did:webvh:zA:alice.example").as_deref(),
+        store
+            .primary_handle_for_did("did:webvh:zA:alice.example")
+            .as_deref(),
         Some("alice")
     );
     assert_eq!(
-        store.primary_handle_for_did("did:webvh:zB:david.example").as_deref(),
+        store
+            .primary_handle_for_did("did:webvh:zB:david.example")
+            .as_deref(),
         Some("david")
     );
     // Unknown / empty → None.
-    assert!(store.primary_handle_for_did("did:webvh:zC:nobody.example").is_none());
+    assert!(
+        store
+            .primary_handle_for_did("did:webvh:zC:nobody.example")
+            .is_none()
+    );
     assert!(store.primary_handle_for_did("").is_none());
 }
 

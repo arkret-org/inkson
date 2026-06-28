@@ -79,11 +79,26 @@ pub(super) fn rehydrated_session_credential_for_active_config(
     account_did: &str,
     device_id: &str,
 ) -> Option<String> {
-    if config.session_credential.trim().is_empty()
-        || normalize_server_url(&config.server_url) != normalize_server_url(base_url)
-        || config.account_did.trim() != account_did.trim()
-        || config.device_id.trim() != device_id.trim()
-    {
+    let cred_empty = config.session_credential.trim().is_empty();
+    let server_mismatch =
+        normalize_server_url(&config.server_url) != normalize_server_url(base_url);
+    let account_mismatch = config.account_did.trim() != account_did.trim();
+    let device_mismatch = config.device_id.trim() != device_id.trim();
+    if cred_empty || server_mismatch || account_mismatch || device_mismatch {
+        tracing::warn!(
+            target: "secure_store",
+            cred_empty,
+            server_mismatch,
+            account_mismatch,
+            device_mismatch,
+            stored_server = %config.server_url,
+            want_server = %base_url,
+            stored_account = %config.account_did,
+            want_account = %account_did,
+            stored_device = %config.device_id,
+            want_device = %device_id,
+            "rehydrate session credential: returning None (cannot restore session → stuck Restoring)"
+        );
         None
     } else {
         Some(config.session_credential.clone())
@@ -105,6 +120,8 @@ pub(super) fn auth_surface_for_route(
 ) -> AuthSurface {
     if matches!(route, Route::AuthCallback) {
         AuthSurface::Callback
+    } else if matches!(boot_state, SessionBootState::Restoring) && has_session {
+        AuthSurface::AppShell
     } else if boot_state.is_pending() {
         AuthSurface::Restoring
     } else if has_session {
@@ -162,15 +179,33 @@ pub(super) fn inject_test_session_grant(
     device_id: &str,
 ) -> Option<String> {
     if !crate::secure_key_store::wasm_allow_localstorage_secrets() {
+        tracing::warn!(
+            target: "mls_admission",
+            "test session injection skipped: allow_localstorage_secrets flag not set"
+        );
         return None;
     }
-    let raw = web_sys::window()
+    let raw = match web_sys::window()
         .and_then(|window| window.local_storage().ok().flatten())
-        .and_then(|storage| storage.get_item(TEST_SESSION_INJECTION_KEY).ok().flatten())?;
+        .and_then(|storage| storage.get_item(TEST_SESSION_INJECTION_KEY).ok().flatten())
+    {
+        Some(raw) => raw,
+        None => {
+            tracing::warn!(
+                target: "mls_admission",
+                "test session injection skipped: no {TEST_SESSION_INJECTION_KEY} in localStorage"
+            );
+            return None;
+        }
+    };
     let parsed: Value = serde_json::from_str(&raw).ok()?;
     let grant_jwt = parsed.get("grant_jwt")?.as_str()?.to_owned();
     let dpop_seed_b64url = parsed.get("dpop_seed_b64url")?.as_str()?.to_owned();
     if grant_jwt.trim().is_empty() || dpop_seed_b64url.trim().is_empty() {
+        tracing::warn!(
+            target: "mls_admission",
+            "test session injection skipped: empty grant_jwt or dpop_seed"
+        );
         return None;
     }
     let grant_id = parsed
@@ -228,6 +263,11 @@ pub(super) fn inject_test_session_grant(
         grant_expires_at: Some(now + chrono::Duration::hours(8)),
         stored_at: now,
     };
+    tracing::warn!(
+        target: "mls_admission",
+        device = %device_id,
+        "test session injection: session grant installed"
+    );
     state_store.write().set_session_grant(Some(grant));
     // Mirror the grant into the persisted config credential slot so a re-render /
     // reload rehydrates the same session instead of bouncing to /login.

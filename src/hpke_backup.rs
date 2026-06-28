@@ -160,7 +160,13 @@ pub fn hpke_seal(
     let mut nonce = [0u8; XNONCE_LEN];
     getrandom::fill(&mut nonce).map_err(|err| anyhow!("hpke nonce rng: {err}"))?;
     let aead_ct = cipher
-        .encrypt(XNonce::from_slice(&nonce), Payload { msg: plaintext, aad })
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| anyhow!("hpke aead seal failed"))?;
 
     let mut ciphertext = Vec::with_capacity(XNONCE_LEN + aead_ct.len());
@@ -182,7 +188,10 @@ pub fn hpke_open(
     aad: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>> {
-    let mut privkey = Zeroizing::new(x25519_32(recipient_private_key, "recovery HPKE private key")?);
+    let mut privkey = Zeroizing::new(x25519_32(
+        recipient_private_key,
+        "recovery HPKE private key",
+    )?);
     let enc_arr = x25519_32(enc, "hpke enc (encapsulated key)")?;
     if ciphertext.len() < XNONCE_LEN {
         return Err(anyhow!("hpke ciphertext shorter than nonce"));

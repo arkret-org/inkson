@@ -1165,7 +1165,10 @@ mod tests {
         // Footnote refs/backrefs point in-page; they must not be hijacked
         // into a new tab.
         let html = markdown_to_safe_html("text with a footnote[^1]\n\n[^1]: the note");
-        assert!(html.contains("href=\"#"), "expected a fragment anchor: {html}");
+        assert!(
+            html.contains("href=\"#"),
+            "expected a fragment anchor: {html}"
+        );
         // No fragment anchor should carry target="_blank".
         for piece in html.split("<a ").skip(1) {
             if piece.starts_with("href=\"#") {

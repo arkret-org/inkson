@@ -49,7 +49,6 @@ pub mod mls_unlock;
 pub mod recovery_key_setup_prompt;
 // YOU-02-008: the P3B.5 `offline_pending_badge` component was removed
 // together with the unwired offline-queue modules (see `src/lib.rs`).
-pub mod visibility_pill;
 /// G3.Y3 — global policy-deny toast / banner. Mounted once near the
 /// app shell so any view inherits the 403 surface without needing to
 /// thread its own error UI.
@@ -68,6 +67,7 @@ pub mod theme_switcher;
 /// P3B.6 — `NeedsVerificationBadge` (red, message-card) +
 /// `RealmClassBadge` (Principal / Collaboration, switcher).
 pub mod verify_badges;
+pub mod visibility_pill;
 pub mod write_state;
 
 pub use account_switcher::AccountSwitcher;
@@ -100,9 +100,6 @@ pub(crate) use mls_history_backup::{
     schedule_mls_history_backup_after_commit, upload_mls_history_backup_now,
 };
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
-pub use visibility_pill::{
-    Discoverability, HistoryVisibility, JoinRule, VisibilityPill, VisibilityPillRow,
-};
 pub use policy_deny_banner::{
     POLICY_DENY_AUTODISMISS_MS, PolicyDenyBanner, PolicyDenyEvent, is_policy_deny_code,
     push_policy_deny, take_policy_deny,
@@ -121,6 +118,9 @@ pub use theme_switcher::{ThemeMode, ThemeSwitcher};
 pub use verify_badges::{
     NeedsVerificationBadge, RealmClass, RealmClassBadge, TrustCacheBadge, TrustCacheState,
     trust_cache_state,
+};
+pub use visibility_pill::{
+    Discoverability, HistoryVisibility, JoinRule, VisibilityPill, VisibilityPillRow,
 };
 pub use write_state::{WriteState, WriteStateExplainer, WriteStateIcon, WriteStatePill};
 

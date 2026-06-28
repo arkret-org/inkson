@@ -135,9 +135,7 @@ pub(super) fn kanban_mls_commit_policy_root(
     realm_id: &str,
     circle_id: Option<&str>,
 ) -> Result<cokret_sdk::Hash, String> {
-    if let Some(stored) =
-        state_store.genesis_policy_root_for_effective_scope(realm_id, circle_id)
-    {
+    if let Some(stored) = state_store.genesis_policy_root_for_effective_scope(realm_id, circle_id) {
         return cokret_sdk::Hash::new(stored)
             .map_err(|err| format!("stored MLS genesis policy_root invalid: {err:?}"));
     }

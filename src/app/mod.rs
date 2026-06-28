@@ -309,12 +309,28 @@ pub fn RouterView() -> Element {
         let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let mut token_for_secure_upgrade = token;
         use_future(move || async move {
+            tracing::warn!(target: "secure_store", "secure store upgrade: invoking upgrade_wasm_secure_key_store_async");
             match crate::secure_key_store::upgrade_wasm_secure_key_store_async("yougen").await {
                 Ok(Some(secure_store)) => {
+                    tracing::warn!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     let loaded_config = config_store_for_secure_upgrade
                         .read()
                         .load_with_secure_store(secure_store.as_ref());
                     let held_token = token_for_secure_upgrade.peek().trim().to_owned();
+                    {
+                        let grant_present = state_store_for_secure_upgrade
+                            .read()
+                            .session_grant()
+                            .map(|g| !g.grant_jwt.trim().is_empty())
+                            .unwrap_or(false);
+                        tracing::warn!(
+                            target: "secure_store",
+                            held_token_empty = held_token.is_empty(),
+                            config_credential_present = !loaded_config.session_credential.trim().is_empty(),
+                            local_state_session_grant_present = grant_present,
+                            "secure store upgrade: post-upgrade credential sources (held_token from memory, config.session_credential, local_state.session_grant)"
+                        );
+                    }
                     if held_token.is_empty() {
                         if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
                             &loaded_config,
@@ -322,6 +338,7 @@ pub fn RouterView() -> Element {
                             &account_did_for_secure_upgrade(),
                             &device_id_for_secure_upgrade(),
                         ) {
+                            tracing::warn!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
                             token_for_secure_upgrade.set(rehydrated);
                         }
                     } else {
@@ -384,11 +401,17 @@ pub fn RouterView() -> Element {
                         }
                     }
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    tracing::warn!(
+                        target: "secure_store",
+                        "secure store upgrade: Ok(None) — IndexedDB/SubtleCrypto reported UNAVAILABLE; staying on disabled localStorage tier; ALL account secrets and session credentials WILL fail (this is the Restoring-session hang root)"
+                    );
+                }
                 Err(error) => {
-                    tracing::warn!(?error, "IndexedDB secure-key-store upgrade failed");
+                    tracing::warn!(target: "secure_store", ?error, "secure store upgrade: Err — IndexedDB secure-key-store upgrade failed");
                 }
             }
+            tracing::warn!(target: "secure_store", "secure store upgrade: settled, marking secure_store_bootstrap_ready=true");
             secure_store_ready_for_upgrade.set(true);
         });
     }
@@ -604,6 +627,10 @@ pub fn RouterView() -> Element {
     // Admin-side counterpart of the Welcome bootstrap: serialize admission
     // reconciliation so per-sync retries cannot overlap and double-admit.
     let mls_admission_reconcile_in_flight = use_signal(|| false);
+    // Throttle key for the admission pre-filter diagnostic: only emit a WARN
+    // when the (realm, blocking-reason) pair changes, so a genuinely stuck
+    // admin gets ONE visible line per cause instead of one per sync tick.
+    let mls_admission_diag_last = use_signal(String::new);
     // History sharing (encryption-and-audit.md): single-flight guard for the
     // to-device `ck.realm_key.share` ingest + `ck.realm_key.request` provider
     // response pass, so per-sync retries cannot overlap.
@@ -985,12 +1012,14 @@ pub fn RouterView() -> Element {
         {
             bootstrap_pending.set(false);
             sync_bootstrap_complete.set(false);
-            session_boot_state.set(session_boot_state_from_bootstrap_material(
+            let bootstrap_state = session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
                 &account_did(),
                 secure_store_ready,
-            ));
+            );
+            tracing::warn!(target: "session_boot", ?bootstrap_state, secure_store_ready, "bootstrap: branch A (will call connect) — setting boot_state from material");
+            session_boot_state.set(bootstrap_state);
             connect(
                 base,
                 account_did(),
@@ -1028,12 +1057,25 @@ pub fn RouterView() -> Element {
                 },
             );
         } else if !base.trim().is_empty() {
-            session_boot_state.set(session_boot_state_from_bootstrap_material(
+            let bootstrap_state = session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
                 &account_did(),
                 secure_store_ready,
-            ));
+            );
+            // Idempotent: branch B runs on EVERY render (it never clears
+            // `bootstrap_pending`, since it is waiting for the async secure-store
+            // upgrade to flip `secure_store_ready`). Re-`set`ting the signal to
+            // the value it already holds still notifies subscribers, which
+            // re-renders RouterView, which re-enters this block — a synchronous
+            // render loop that starves the very upgrade future we are waiting on
+            // (it never gets an event-loop turn to drive its IndexedDB awaits).
+            // Only `set` on an actual change so the loop quiesces and the future
+            // can run.
+            if *session_boot_state.peek() != bootstrap_state {
+                tracing::warn!(target: "session_boot", ?bootstrap_state, secure_store_ready, "bootstrap: branch B (waiting on secure store) — boot_state changed, setting");
+                session_boot_state.set(bootstrap_state);
+            }
         }
     }
 
@@ -1759,6 +1801,7 @@ pub fn RouterView() -> Element {
         let admit_sync_cursor = sync_cursor;
         let mut admit_in_flight = mls_admission_reconcile_in_flight;
         let mut admit_last_error = last_error;
+        let mut admit_diag_last = mls_admission_diag_last;
         let secure_store_ready_for_admit = secure_store_bootstrap_ready;
         use_effect(move || {
             if !secure_store_ready_for_admit() || !admit_route_uses_realm_context {
@@ -1788,18 +1831,41 @@ pub fn RouterView() -> Element {
             // Re-fire on every sync round so a late-published KeyPackage is
             // retried; cheap pre-filter avoids work when there is nothing to do.
             let _ = admit_sync_cursor();
-            let admit_capable_with_others = {
+            let (has_snapshot, other_joined, is_mls, joined_sig) = {
                 let store = admit_state_store.read();
-                store.mls_snapshot_for(&realm_id).is_some()
-                    && crate::views::realm_admin::joined_member_signature_for_realm(
-                        &store, &realm_id,
-                    )
+                let joined_sig =
+                    crate::views::realm_admin::joined_member_signature_for_realm(&store, &realm_id);
+                let other_joined = joined_sig
                     .split(',')
                     .map(str::trim)
                     .filter(|did| !did.is_empty())
-                    .any(|did| did != actor.trim())
+                    .any(|did| did != actor.trim());
+                (
+                    store.mls_snapshot_for(&realm_id).is_some(),
+                    other_joined,
+                    store.realm_projection_is_mls_encrypted(&realm_id),
+                    joined_sig,
+                )
             };
-            if !admit_capable_with_others {
+            if !(has_snapshot && other_joined) {
+                // Make a stuck admin observable: an encrypted Realm with an
+                // invitee waiting for a Welcome but the admin never admitting is
+                // exactly this branch. wasm tracing is capped at WARN, so INFO/
+                // DEBUG here would be invisible — emit a throttled WARN naming
+                // the blocking cause. (mls-admission-debug)
+                if is_mls {
+                    let diag = format!(
+                        "realm={realm_id} has_snapshot={has_snapshot} other_joined={other_joined} joined_sig=[{joined_sig}]"
+                    );
+                    if admit_diag_last() != diag {
+                        admit_diag_last.set(diag.clone());
+                        tracing::warn!(
+                            target: "mls_admission",
+                            %diag,
+                            "admission pre-filter blocked: admin not yet admit-capable for this encrypted Realm"
+                        );
+                    }
+                }
                 return;
             }
             if admit_in_flight() {
@@ -1822,10 +1888,19 @@ pub fn RouterView() -> Element {
                 admit_in_flight.set(false);
                 match outcome {
                     Ok(admitted) if admitted > 0 => {
-                        tracing::info!(admitted, "admitted joined members into MLS group");
+                        tracing::warn!(
+                            target: "mls_admission",
+                            admitted,
+                            "admitted joined members into MLS group"
+                        );
                     }
                     Ok(_) => {}
                     Err(error) => {
+                        tracing::warn!(
+                            target: "mls_admission",
+                            ?error,
+                            "MLS admission reconcile failed"
+                        );
                         admit_last_error.set(Some(format!("MLS admission reconcile: {error:?}")));
                     }
                 }
@@ -2306,9 +2381,7 @@ pub fn RouterView() -> Element {
     if let (Some(realm_id), Some(surface)) = (routed_realm_id.as_deref(), resolved_realm_surface)
         && matches!(
             &route,
-            Route::KanbanRealm { .. }
-                | Route::KanbanBoard { .. }
-                | Route::KanbanBoardTask { .. }
+            Route::KanbanRealm { .. } | Route::KanbanBoard { .. } | Route::KanbanBoardTask { .. }
         )
     {
         let stored_surface =
@@ -2525,28 +2598,29 @@ pub fn RouterView() -> Element {
             ""
         }
     );
-    if !matches!(auth_surface, AuthSurface::AppShell) {
-        let auth_class = format!(
-            "auth-shell{}",
-            if active_direction == TextDirection::Rtl {
-                " rtl"
-            } else {
-                ""
-            }
-        );
-        let login_navigator = navigator;
-        let callback_navigator = navigator;
-        let mut login_bootstrap_pending = bootstrap_pending;
-        let mut callback_bootstrap_pending = bootstrap_pending;
-        let mut login_session_boot_state = session_boot_state;
-        let mut callback_session_boot_state = session_boot_state;
-
-        return rsx! {
-            style { "{DXC_THEME}" }
-            style { "{STYLE}" }
-            style { "{DESIGN_STYLE}" }
-            style { "{APP_OVERRIDES}" }
-            document::Title { "{document_title}" }
+    // Unified single-root render: the auth surface (Restoring / Login /
+    // Callback) and the full app shell are rendered from ONE `rsx!` template
+    // below, branched by an inner `if/else`. Returning two *different* root
+    // templates from separate `return rsx!{…}` sites made Dioxus skip the
+    // root-template swap (the freshly-rendered AppShell tree was computed but
+    // never committed, leaving the stale auth-card DOM on screen — the
+    // invitee "stuck on Restoring session" bug). A single template with a
+    // dynamic if/else node reconciles reliably.
+    let auth_class = format!(
+        "auth-shell{}",
+        if active_direction == TextDirection::Rtl {
+            " rtl"
+        } else {
+            ""
+        }
+    );
+    let login_navigator = navigator;
+    let callback_navigator = navigator;
+    let mut login_bootstrap_pending = bootstrap_pending;
+    let mut callback_bootstrap_pending = bootstrap_pending;
+    let mut login_session_boot_state = session_boot_state;
+    let mut callback_session_boot_state = session_boot_state;
+    let auth_shell_node = rsx! {
             main {
                 class: auth_class,
                 "dir": direction_attr,
@@ -2622,8 +2696,7 @@ pub fn RouterView() -> Element {
                 }
                 Outlet::<Route> {}
             }
-        };
-    }
+    };
 
     let content_route = if matches!(&route, Route::Login) && has_session {
         Route::Dashboard
@@ -2681,6 +2754,7 @@ pub fn RouterView() -> Element {
         style { "{DESIGN_STYLE}" }
         style { "{APP_OVERRIDES}" }
         document::Title { "{document_title}" }
+        if matches!(auth_surface, AuthSurface::AppShell) {
         div {
             class: shell_class,
             style: "{sidebar_style}",
@@ -5282,6 +5356,9 @@ pub fn RouterView() -> Element {
             crate::components::shortcut_help::ShortcutHelpOverlay {
                 visible: shortcut_help_open,
             }
+        }
+        } else {
+            {auth_shell_node}
         }
     }
 }

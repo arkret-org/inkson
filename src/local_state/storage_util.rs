@@ -233,9 +233,10 @@ pub(crate) fn store_identity_record_in_secure_store(
 pub(crate) fn load_dpop_device_key_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
-    let Some(json) = secure_store.get_secret(&crate::secure_key_store::account_scoped_device_key(
-        LocalStateStore::SECURE_DPOP_DEVICE_KEY,
-    ))?
+    let Some(json) =
+        secure_store.get_secret(&crate::secure_key_store::account_scoped_device_key(
+            LocalStateStore::SECURE_DPOP_DEVICE_KEY,
+        ))?
     else {
         return Ok(None);
     };

@@ -553,16 +553,14 @@ impl LocalStateStore {
         // The legacy blob no longer carries `account_scope_owner` as a typed
         // field (it was removed with this refactor), so recover the owner from
         // the raw JSON to decide where the blob lands.
-        let owner = serde_json::from_str::<Value>(raw)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("account_scope_owner")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|owner| !owner.is_empty())
-                    .map(ToOwned::to_owned)
-            });
+        let owner = serde_json::from_str::<Value>(raw).ok().and_then(|value| {
+            value
+                .get("account_scope_owner")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|owner| !owner.is_empty())
+                .map(ToOwned::to_owned)
+        });
         let mut root = RootIndex::default();
         if let Some(owner) = owner {
             // Move the blob into the owner's account entry, then rewrite root.
@@ -588,7 +586,8 @@ impl LocalStateStore {
 
     #[cfg(target_arch = "wasm32")]
     fn read_root_raw(&self) -> Option<String> {
-        browser_storage().and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())
+        browser_storage()
+            .and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())
     }
 
     #[cfg(not(target_arch = "wasm32"))]

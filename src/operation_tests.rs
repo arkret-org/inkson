@@ -1181,8 +1181,7 @@ mod realm_organization_builder_tests {
     #[test]
     fn non_delegated_role_with_delegation_ref_is_rejected() {
         let mut auth = direct_org_auth();
-        auth.delegation_ref =
-            Some("ck:grant:01904100-0000-7000-8000-000000000001".to_owned());
+        auth.delegation_ref = Some("ck:grant:01904100-0000-7000-8000-000000000001".to_owned());
         let error = ck_ops::realm_organization_statement(
             REALM_ID,
             ACTOR,

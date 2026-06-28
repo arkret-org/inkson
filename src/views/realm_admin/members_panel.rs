@@ -2201,7 +2201,21 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             &device_id,
         ) {
             Some(dids) => dids.into_iter().collect(),
-            None => return Ok(0),
+            None => {
+                // No local group roster: either no snapshot, the device
+                // snapshot secret could not be loaded, or the envelope failed
+                // to decrypt. Any of these silently aborts admission — surface
+                // it at WARN (wasm tracing is capped at WARN). (mls-admission-debug)
+                tracing::warn!(
+                    target: "mls_admission",
+                    realm = %short_protocol_id(&realm_id),
+                    actor = %short_protocol_id(&actor_id),
+                    device = %short_protocol_id(&device_id),
+                    has_snapshot = state_store.read().mls_snapshot_for(&realm_id).is_some(),
+                    "admission aborted: cannot read local MLS group roster (snapshot/secret/decrypt) — no member can be admitted"
+                );
+                return Ok(0);
+            }
         }
     };
     // Joined Realm members not yet represented in the MLS group, excluding self.
@@ -2220,6 +2234,17 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     if pending.is_empty() {
         return Ok(0);
     }
+    tracing::warn!(
+        target: "mls_admission",
+        realm = %short_protocol_id(&realm_id),
+        pending = %pending
+            .iter()
+            .map(|d| short_protocol_id(d))
+            .collect::<Vec<_>>()
+            .join(","),
+        group_members = group_member_dids.len(),
+        "admission reconcile: attempting to admit joined members not yet in MLS group"
+    );
     let mut admitted = 0_usize;
     for invitee_did in pending {
         match submit_mls_admission_for_invitee(
@@ -2232,16 +2257,36 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         )
         .await
         {
-            Ok(Some(_)) => admitted += 1,
-            Ok(None) => {}
-            // Most commonly the invitee has not published a KeyPackage yet —
-            // expected, and retried on the next sync — so stay at debug level.
+            Ok(Some(epoch)) => {
+                admitted += 1;
+                tracing::warn!(
+                    target: "mls_admission",
+                    realm = %short_protocol_id(&realm_id),
+                    invitee = %short_protocol_id(&invitee_did),
+                    epoch,
+                    "admission succeeded: Welcome produced for invitee"
+                );
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    target: "mls_admission",
+                    realm = %short_protocol_id(&realm_id),
+                    invitee = %short_protocol_id(&invitee_did),
+                    "admission no-op: realm not MLS-admittable from this device"
+                );
+            }
+            // A non-fatal failure (most commonly: invitee has not published a
+            // KeyPackage yet) is retried on the next sync. Previously logged at
+            // DEBUG, which wasm tracing silences — the invisible swallow is why
+            // a permanently-stuck invitee produced no observable signal. Surface
+            // the actual error at WARN. (mls-admission-debug)
             Err(error) => {
-                tracing::debug!(
+                tracing::warn!(
+                    target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
                     invitee = %short_protocol_id(&invitee_did),
                     %error,
-                    "MLS admission deferred (will retry on next sync)"
+                    "admission deferred: claim/commit/welcome step failed (will retry on next sync)"
                 );
             }
         }

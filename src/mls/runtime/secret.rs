@@ -23,7 +23,13 @@ const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "yougen.mls_key_package.iden
 // and republish a last-resort KeyPackage, self-healing members that were stuck
 // "pending invite" because their only KeyPackage had been consumed by an
 // admission whose Welcome was never applied.
-const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "yougen.mls_key_package.publish_marker.v2";
+// v3: bumped so every device re-publishes its last-resort KeyPackage after the
+// SDK fix that adds the `LastResort` leaf capability. KeyPackages minted by the
+// pre-fix SDK are self-inconsistent (carry the `last_resort` extension without
+// declaring `ExtensionType::LastResort`), so an admin `Add` of them fails with
+// `UnsupportedExtension` and admission stalls. The bump invalidates the stale
+// publish marker so the corrected KeyPackage is re-published on next boot.
+const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "yougen.mls_key_package.publish_marker.v3";
 /// Per-(actor, device) X25519 keypair used to receive HPKE-sealed
 /// `history_secret`s in a `ck.realm_key.share`. This device advertises the
 /// public half as `recipient_hpke_public_key` in a `ck.realm_key.request` and
@@ -424,19 +430,21 @@ pub fn prepare_account_mls_secret_rotation(
         // depend on it). Record the failure and skip, mirroring the welcome-apply
         // path's "per-item failure does not abort the batch" model. The secret
         // still rotates for all decryptable realms.
-        let plaintext =
-            match crate::mls::persistence::decrypt_envelope(snapshot, &previous_secret.secret) {
-                Ok(plaintext) => plaintext,
-                Err(err) => {
-                    tracing::warn!(
-                        %realm_id,
-                        error = %err,
-                        "skip realm during account-secret rotation: snapshot did not decrypt with previous secret"
-                    );
-                    failed_realms.push((realm_id.clone(), err.to_string()));
-                    continue;
-                }
-            };
+        let plaintext = match crate::mls::persistence::decrypt_envelope(
+            snapshot,
+            &previous_secret.secret,
+        ) {
+            Ok(plaintext) => plaintext,
+            Err(err) => {
+                tracing::warn!(
+                    %realm_id,
+                    error = %err,
+                    "skip realm during account-secret rotation: snapshot did not decrypt with previous secret"
+                );
+                failed_realms.push((realm_id.clone(), err.to_string()));
+                continue;
+            }
+        };
         let mut salt = [0u8; 16];
         getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
         // Re-wrapping does not advance the epoch — carry the epoch-start clock

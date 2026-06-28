@@ -98,7 +98,9 @@ impl LocalStateStore {
                         (
                             state.primary_handle,
                             grant.map(|g| g.device_id.clone()).unwrap_or_default(),
-                            grant.map(|g| g.principal_server_url.clone()).unwrap_or_default(),
+                            grant
+                                .map(|g| g.principal_server_url.clone())
+                                .unwrap_or_default(),
                         )
                     }
                     None => (String::new(), String::new(), String::new()),
@@ -280,12 +282,11 @@ impl LocalStateStore {
     /// Adopt the pending pre-DID device material onto the resolved principal
     /// `did` (session grant has returned the DID). Two outcomes:
     ///
-    /// * `did` already has a persisted entry (a returning account on this
-    ///   browser) → DISCARD the pending device material; the returning account
-    ///   keeps its own stable `device_id` + key (`cnf.jkt` stays stable).
-    ///   Returns `false` (not a new account).
-    /// * `did` is new on this browser → keep the pending device material as the
-    ///   new account's device. Returns `true` (new account).
+    /// * `did` already has a persisted entry (a returning account on this browser) → DISCARD the
+    ///   pending device material; the returning account keeps its own stable `device_id` + key
+    ///   (`cnf.jkt` stays stable). Returns `false` (not a new account).
+    /// * `did` is new on this browser → keep the pending device material as the new account's
+    ///   device. Returns `true` (new account).
     ///
     /// Either way the pending entry is cleared and `did` becomes active. The
     /// secure-store device seed re-homing itself is handled by
@@ -372,11 +373,9 @@ impl LocalStateStore {
                 Some(public_record)
             }
             None => {
-                secure_store.delete_secret(
-                    &crate::secure_key_store::account_scoped_device_key(
-                        Self::SECURE_DPOP_DEVICE_KEY,
-                    ),
-                )?;
+                secure_store.delete_secret(&crate::secure_key_store::account_scoped_device_key(
+                    Self::SECURE_DPOP_DEVICE_KEY,
+                ))?;
                 None
             }
         };

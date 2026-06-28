@@ -1,3 +1,6 @@
+use std::future::Future;
+use std::time::Duration;
+
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -10,6 +13,8 @@ use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::views::helpers::{ApiCallError, with_authed_api};
 
+const MLS_UNLOCK_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+
 // Recovery tasks can finish after the prompt scope is gone; dropped signals panic on `set()`.
 fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
     if let Ok(mut slot) = signal.try_write() {
@@ -20,6 +25,18 @@ fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
 fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
     if let Ok(mut slot) = status.try_write() {
         *slot = value.into();
+    }
+}
+
+async fn mls_unlock_fetch_with_timeout<T, F>(future: F) -> Result<T, ApiCallError>
+where
+    F: Future<Output = Result<T, ApiCallError>>,
+{
+    tokio::select! {
+        result = future => result,
+        _ = crate::api::sleep_for(MLS_UNLOCK_FETCH_TIMEOUT) => Err(ApiCallError::Failed(anyhow::anyhow!(
+            "MLS unlock timed out while fetching recovery material"
+        ))),
     }
 }
 
@@ -41,7 +58,6 @@ pub fn MlsUnlockPrompt(
     needs_mls_unlock: Signal<bool>,
     restore_payload_cache: Signal<Option<serde_json::Value>>,
 ) -> Element {
-    let _ = restore_payload_cache;
     let mut passphrase = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -98,31 +114,46 @@ pub fn MlsUnlockPrompt(
         let device = device_id();
         let mut state_store = state_store;
         let needs_mls_unlock = needs_mls_unlock;
+        let restore_payload_cache = restore_payload_cache;
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
+            tracing::warn!(
+                target: "mls_unlock",
+                %actor,
+                %device,
+                "MLS unlock: starting recovery-material fetch"
+            );
             let fetch_actor = actor.clone();
             let fetch_device = device.clone();
             // SEC-05: fetch the restore payload AND the actor's currently-accepted
             // recovery policy in the same authed session, so the HPKE account-secret
             // backup's `recovery_policy_ref` can be verified before import.
-            let payload_result = with_authed_api(&base, session, |api| async move {
-                let payload =
-                    crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
-                        &api,
-                        &fetch_actor,
-                        &fetch_device,
-                    )
-                    .await?;
-                let active_policy =
-                    crate::recovery_strand::fetch_active_recovery_policy(&api).await?;
-                Ok::<_, anyhow::Error>((payload, active_policy))
-            })
-            .await;
+            let payload_result =
+                mls_unlock_fetch_with_timeout(with_authed_api(&base, session, |api| async move {
+                    let payload =
+                        crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+                            &api,
+                            &fetch_actor,
+                            &fetch_device,
+                        )
+                        .await?;
+                    let active_policy =
+                        crate::recovery_strand::fetch_active_recovery_policy(&api).await?;
+                    Ok::<_, anyhow::Error>((payload, active_policy))
+                }))
+                .await;
             let result = match payload_result {
                 Ok((payload, active_policy)) => {
                     let history_count =
                         crate::mls::account_recovery::select_mls_history_backups(&payload).len();
+                    try_set_signal(restore_payload_cache, Some(payload.clone()));
+                    tracing::warn!(
+                        target: "mls_unlock",
+                        history_count,
+                        has_active_policy = active_policy.is_some(),
+                        "MLS unlock: recovery material fetched"
+                    );
                     try_set_status(
                         status,
                         format!(
@@ -136,7 +167,12 @@ pub fn MlsUnlockPrompt(
                     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
                     match state_store.try_write() {
                         Ok(mut store) => {
-                            crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
+                            tracing::warn!(
+                                target: "mls_unlock",
+                                history_count,
+                                "MLS unlock: starting local restore"
+                            );
+                            let restore_result = crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
                                 .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
                                 .and_then(|(recovery_private_key, _)| {
                                     let expected_policy = active_policy.as_ref().map(|policy| {
@@ -149,10 +185,16 @@ pub fn MlsUnlockPrompt(
                                         &actor,
                                         &device,
                                         &recovery_private_key,
-                                        expected_policy,
-                                    )
+                                            expected_policy,
+                                        )
                                 })
-                                .map_err(ApiCallError::Failed)
+                                .map_err(ApiCallError::Failed);
+                            tracing::warn!(
+                                target: "mls_unlock",
+                                success = restore_result.is_ok(),
+                                "MLS unlock: local restore finished"
+                            );
+                            restore_result
                         }
                         Err(_) => Err(ApiCallError::Failed(anyhow::anyhow!(
                             "recovery prompt closed before restore completed"

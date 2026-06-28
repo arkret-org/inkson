@@ -384,6 +384,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(false);
         account_has_other_devices.set(false);
+        tracing::warn!(target: "session_boot", token_empty = token().trim().is_empty(), "connect: starting bootstrap connect (sets Checking/Restoring; only reaches Authenticated at end)");
         session_boot_state.set(if token().trim().is_empty() {
             SessionBootState::Restoring
         } else {
@@ -1213,9 +1214,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         sync_cursor.set(sync.cursor);
                     }
                     Err(error) if is_terminal_session_grant_error(&error) => {
+                        tracing::warn!(target: "session_boot", ?error, "connect: SYNC returned terminal session-grant error → invalidate_current_session + early return (boot_state stays pending = stuck 'Restoring session')");
                         crate::session::invalidate_current_session(
                             "session grant is no longer active",
                         );
+                        session_boot_state.set(SessionBootState::Unauthenticated);
                         sync_bootstrap_complete.set(true);
                         return;
                     }
@@ -1260,8 +1263,12 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut session_credential,
                     &mut authed,
                 );
+                tracing::warn!(target: "session_boot", "connect: post-sync, about to await events_describe() (if no 'events_describe returned' line follows, THIS await is the hang)");
                 let events_result = match authed.events_describe().await {
-                    Ok(events) => Ok(events),
+                    Ok(events) => {
+                        tracing::warn!(target: "session_boot", "connect: events_describe returned Ok");
+                        Ok(events)
+                    }
                     Err(error) if is_auth_expired_error(&error) => {
                         match crate::session::refresh_current_session().await {
                             crate::session::CurrentSessionRefresh::Credential(refreshed) => {
@@ -1304,9 +1311,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         }
                     }
                     Err(error) if is_terminal_session_grant_error(&error) => {
+                        tracing::warn!(target: "session_boot", ?error, "connect: events_describe returned terminal session-grant error → invalidate_current_session + early return (boot_state stays pending = stuck 'Restoring session')");
                         crate::session::invalidate_current_session(
                             "session grant is no longer active",
                         );
+                        session_boot_state.set(SessionBootState::Unauthenticated);
                         sync_bootstrap_complete.set(true);
                         return;
                     }
@@ -1333,6 +1342,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 );
             }
         }
+        tracing::warn!(target: "session_boot", token_empty = token().trim().is_empty(), "connect: reached END of bootstrap — setting boot_state = Authenticated (token present) / Unauthenticated (empty)");
         session_boot_state.set(if token().trim().is_empty() {
             SessionBootState::Unauthenticated
         } else {

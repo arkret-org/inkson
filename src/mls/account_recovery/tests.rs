@@ -512,9 +512,7 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
     );
 
     // No expected policy supplied → check skipped (legacy / offline path).
-    assert!(
-        open_mls_account_secret_recovery_public_key_backup(&recovery_sk, &body, None).is_ok()
-    );
+    assert!(open_mls_account_secret_recovery_public_key_backup(&recovery_sk, &body, None).is_ok());
 }
 
 #[test]
