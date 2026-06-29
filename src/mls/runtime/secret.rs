@@ -267,6 +267,30 @@ pub fn store_mls_key_package_identity_state(
     store.store_secret(&key, &URL_SAFE_NO_PAD.encode(serialized_state))
 }
 
+/// Durable variant of [`store_mls_key_package_identity_state`]: resolves only
+/// after the init private key is committed to the backing store. The KeyPackage
+/// publish path MUST use this (not the fire-and-forget sync store) before
+/// advertising the KeyPackage to the server, otherwise an unload/reload race can
+/// drop the IndexedDB-only init key and leave the published KeyPackage's Welcome
+/// permanently undecryptable.
+pub async fn store_mls_key_package_identity_state_durable(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    key_package_id: &str,
+    serialized_state: &[u8],
+) -> Result<(), SecureKeyStoreError> {
+    if serialized_state.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "MLS KeyPackage identity state must not be empty".to_owned(),
+        ));
+    }
+    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    store
+        .store_secret_durable(&key, &URL_SAFE_NO_PAD.encode(serialized_state))
+        .await
+}
+
 pub fn load_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
     actor_id: &str,

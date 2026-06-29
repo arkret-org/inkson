@@ -309,7 +309,7 @@ pub fn RouterView() -> Element {
         let config_store_for_secure_upgrade = config_store;
         let base_url_for_secure_upgrade = base_url;
         let account_did_for_secure_upgrade = account_did;
-        let device_id_for_secure_upgrade = device_id;
+        let mut device_id_for_secure_upgrade = device_id;
         let mut state_store_for_secure_upgrade = state_store;
         let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let mut token_for_secure_upgrade = token;
@@ -403,6 +403,63 @@ pub fn RouterView() -> Element {
                         }
                         Err(error) => {
                             tracing::warn!(?error, "IndexedDB signer bootstrap failed");
+                        }
+                    }
+                    // Pin the stable, account-scoped `device_id` from the secure
+                    // store as the authoritative source BEFORE the bootstrap
+                    // `connect()` (gated on `secure_store_bootstrap_ready` below)
+                    // publishes an MLS KeyPackage. The `config.json` blob's
+                    // `device_id` is only a mirror: when the blob is not recovered
+                    // at early boot, `LocalConfigStore::load()` falls back to a
+                    // freshly-minted phantom `device_id`. An MLS KeyPackage
+                    // published under a phantom strands its retained private init
+                    // key (which is device-scoped in the secure store via
+                    // `mls_key_package_identity_state_key`), so the to-device
+                    // Welcome can never be decrypted ("no local KeyPackage identity
+                    // state"). Resolving from the seed-paired secure-store entry
+                    // makes `device_id` exactly as stable as the signing seed
+                    // across reloads and re-logins of the same account.
+                    {
+                        let store = secure_store.as_ref();
+                        let current = device_id_for_secure_upgrade.peek().trim().to_owned();
+                        let resolved = match crate::secure_key_store::load_device_id(store) {
+                            Ok(Some(existing)) => Some(existing),
+                            Ok(None) => {
+                                let chosen = if crate::config::is_valid_device_id(&current) {
+                                    current.clone()
+                                } else {
+                                    crate::config::new_device_id()
+                                };
+                                match crate::secure_key_store::store_device_id(store, &chosen) {
+                                    Ok(()) => Some(chosen),
+                                    Err(error) => {
+                                        tracing::warn!(target: "secure_store", ?error, "persist stable device_id failed");
+                                        None
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                tracing::warn!(target: "secure_store", ?error, "load stable device_id failed");
+                                None
+                            }
+                        };
+                        if let Some(resolved) = resolved
+                            && resolved != current
+                        {
+                            tracing::warn!(
+                                target: "secure_store",
+                                stale = %current,
+                                stable = %resolved,
+                                "pinning stable device_id from secure store (config blob value was phantom/stale)"
+                            );
+                            device_id_for_secure_upgrade.set(resolved.clone());
+                            persist_config(
+                                config_store_for_secure_upgrade,
+                                base_url_for_secure_upgrade(),
+                                account_did_for_secure_upgrade(),
+                                resolved,
+                                token_for_secure_upgrade.peek().trim().to_owned(),
+                            );
                         }
                     }
                 }

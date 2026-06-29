@@ -128,6 +128,12 @@ url = {workspace = true}
 x25519-dalek = {workspace = true,features = ["static_secrets"]}
 zeroize = {workspace = true,features = ["derive"]}
 
+# Build-time only: stamps `YOUGEN_BUILD_ID` (local build time + git short hash)
+# so the running wasm can print which bundle the browser loaded — the
+# definitive stale-cached-wasm check. Build deps do not affect the wasm binary.
+[build-dependencies]
+chrono = {workspace = true}
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # T5.2 (2026-05-20): `signer` feature enabled so `event_signer` can pull
 # in `cokret_sdk::signatures::Ed25519DetachedJwsSigner` for the

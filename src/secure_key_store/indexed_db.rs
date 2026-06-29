@@ -278,17 +278,43 @@ impl IndexedDbSecureKeyStore {
         if let Some(existing) =
             Self::idb_get_value(db, Self::OBJECT_STORE_KEYS, Self::WRAPPING_KEY_PRIMARY).await?
         {
+            // DECISIVE DIAGNOSTIC: if the wrapping key persists across reloads we
+            // hit this branch every time after first install, and encrypted
+            // entries stay decryptable. If instead we keep falling through to the
+            // "derived fresh" branch below on every reload, the persisted
+            // `primary` CryptoKey is NOT surviving the IndexedDB round-trip — that
+            // is the wrapping-key instability that orphans the MLS init key.
+            tracing::warn!(target: "secure_store", "wrapping key: LOADED existing primary (stable across reloads)");
             return Ok(existing);
         }
+        tracing::warn!(target: "secure_store", "wrapping key: DERIVED FRESH primary (no existing found — if this fires on EVERY reload, the key is not persisting and all prior entries are orphaned)");
         let key = Self::derive_fresh_wrapping_key(service_name).await?;
-        Self::idb_put_value(
+        // Atomic store-if-absent (`add`, NOT `put`). A second store that
+        // initialises concurrently may have derived and persisted its own
+        // random-salt wrapping key while we were deriving ours; a blind `put`
+        // would OVERWRITE it, orphaning every entry that store already encrypted
+        // (the next load decrypts them with the wrong key → `OperationError` →
+        // the secret silently vanishes, e.g. the MLS KeyPackage init key →
+        // "no local KeyPackage identity state"). `add` fails when "primary"
+        // already exists, so the first writer wins and every instance converges
+        // on the one wrapping key.
+        match Self::idb_add_value(
             db,
             Self::OBJECT_STORE_KEYS,
             Self::WRAPPING_KEY_PRIMARY,
             &key,
         )
-        .await?;
-        Ok(key)
+        .await
+        {
+            Ok(()) => Ok(key),
+            Err(_) => Self::idb_get_value(db, Self::OBJECT_STORE_KEYS, Self::WRAPPING_KEY_PRIMARY)
+                .await?
+                .ok_or_else(|| {
+                    SecureKeyStoreError::Backend(
+                        "wrapping key add lost the race but primary is still absent".to_owned(),
+                    )
+                }),
+        }
     }
 
     async fn derive_fresh_wrapping_key(
@@ -389,6 +415,7 @@ impl IndexedDbSecureKeyStore {
     ) -> Result<HashMap<String, String>, SecureKeyStoreError> {
         let entries = Self::idb_all_entries(db, Self::OBJECT_STORE_ENTRIES).await?;
         let mut out = HashMap::with_capacity(entries.len());
+        let mut orphaned = Vec::new();
         for (key_name, wrapped_bytes) in entries {
             match Self::subtle_decrypt(crypto_key, &wrapped_bytes).await {
                 Ok(plain) => {
@@ -398,8 +425,27 @@ impl IndexedDbSecureKeyStore {
                 }
                 Err(err) => {
                     tracing::warn!(?err, key=%key_name, "indexedDB entry decrypt failed");
+                    orphaned.push(key_name);
                 }
             }
+        }
+        // Self-heal. If the wrapping key decrypted at least one entry it IS the
+        // valid key, so the failures are entries a transient second store
+        // encrypted under a different random-salt key before this one won — now
+        // permanently undecryptable ghosts. Purge them so their values
+        // re-bootstrap cleanly (DPoP repaired from the signing seed, the MLS
+        // KeyPackage republished with a fresh init key) instead of staying dead
+        // and forcing "no local KeyPackage identity state" forever. Guard on
+        // `!out.is_empty()`: if EVERYTHING failed the loaded key itself is wrong
+        // (not the entries), so keep them rather than wipe the whole store.
+        if !out.is_empty() && !orphaned.is_empty() {
+            for key_name in &orphaned {
+                let _ = Self::idb_delete_value(db, Self::OBJECT_STORE_ENTRIES, key_name).await;
+            }
+            tracing::warn!(
+                count = orphaned.len(),
+                "secure store: purged orphaned (undecryptable) entries to self-heal a past wrapping-key mismatch"
+            );
         }
         Ok(out)
     }
@@ -448,6 +494,32 @@ impl IndexedDbSecureKeyStore {
         Self::idb_request_result(&request)
             .await
             .map_err(|err| SecureKeyStoreError::Backend(format!("put awaited: {err:?}")))?;
+        Ok(())
+    }
+
+    /// `add` (insert-if-absent) variant of [`idb_put_value`]. Rejects with a
+    /// `ConstraintError` when `key` already exists, which callers use for atomic
+    /// first-writer-wins semantics (IndexedDB serialises the readwrite
+    /// transactions, so exactly one concurrent `add` for the same key succeeds).
+    async fn idb_add_value(
+        db: &web_sys::IdbDatabase,
+        store: &str,
+        key: &str,
+        value: &wasm_bindgen::JsValue,
+    ) -> Result<(), SecureKeyStoreError> {
+        use wasm_bindgen::JsValue;
+        let tx = db
+            .transaction_with_str_and_mode(store, web_sys::IdbTransactionMode::Readwrite)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("tx open rw: {err:?}")))?;
+        let obj_store = tx
+            .object_store(store)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("objectStore: {err:?}")))?;
+        let request = obj_store
+            .add_with_key(value, &JsValue::from_str(key))
+            .map_err(|err| SecureKeyStoreError::Backend(format!("add: {err:?}")))?;
+        Self::idb_request_result(&request)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("add awaited: {err:?}")))?;
         Ok(())
     }
 
@@ -751,6 +823,29 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         Ok(())
     }
 
+    fn store_secret_durable<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>,
+    > {
+        // Update the in-memory cache synchronously (same as `store_secret`) so
+        // concurrent reads in this session observe the value immediately.
+        if let Ok(mut guard) = self.cache.lock() {
+            guard.insert(key.to_owned(), value.to_owned());
+        }
+        Box::pin(async move {
+            // AWAIT the real IndexedDB put: unlike `store_secret`'s
+            // fire-and-forget `spawn_local`, this resolves only after the value
+            // is durably committed, closing the unload-race window. Used by
+            // callers that must guarantee durability before a remote party
+            // depends on the secret (e.g. the MLS KeyPackage init key before the
+            // KeyPackage is advertised to the server).
+            Self::persist_entry_value(&self.db.0, &self.crypto_key.0, key, value).await
+        })
+    }
+
     fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
         let guard = self
             .cache
@@ -820,6 +915,17 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
 pub async fn upgrade_wasm_secure_key_store_async(
     service_name: &str,
 ) -> Result<Option<Arc<dyn SecureKeyStore>>, SecureKeyStoreError> {
+    // Idempotent: if the upgraded IndexedDB store is already installed, return
+    // it instead of building a SECOND one. A second `new_async` re-runs
+    // `load_or_derive_wrapping_key`, and a mistimed derive would overwrite the
+    // persisted `primary` wrapping key with a fresh random-salt one — orphaning
+    // every entry the first store encrypted (decrypt fails with `OperationError`
+    // on the next load, silently dropping secrets like the MLS KeyPackage init
+    // key). `ensure_wasm_secure_key_store_ready` guards its own call site, but
+    // `upgrade_*` is also invoked directly (app boot), so it must guard too.
+    if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
+        return Ok(Some(store.clone()));
+    }
     // Probe for SubtleCrypto first — older browsers / file:// origins
     // expose `crypto` but not `crypto.subtle`. We can't reasonably
     // recover from a missing SubtleCrypto, so return `Ok(None)` and

@@ -67,9 +67,10 @@ pub use platform::IosKeychainSecureKeyStore;
 pub use signing_seed::{
     SIGNING_SEED_KEY, SigningSeedMaterial, account_scoped_device_key, active_device_seed_scope,
     adopt_device_seed_scope_on_login, ensure_signing_seed, ensure_signing_seed_scoped,
-    load_signing_seed, load_signing_seed_scoped, pending_login_device_id,
-    reset_device_seed_scope_for_signin, set_active_device_seed_scope, set_pending_login_device_id,
-    store_signing_seed, store_signing_seed_scoped, wrap_seed_namespace,
+    load_device_id, load_device_id_scoped, load_signing_seed, load_signing_seed_scoped,
+    pending_login_device_id, reset_device_seed_scope_for_signin, set_active_device_seed_scope,
+    set_pending_login_device_id, store_device_id, store_device_id_scoped, store_signing_seed,
+    store_signing_seed_scoped, wrap_seed_namespace,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -423,6 +424,35 @@ pub trait SecureKeyStore: Send + Sync {
     /// Persist `value` under `key`. Overwrites silently when the key
     /// already exists.
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError>;
+
+    /// Persist `value` under `key` and resolve ONLY after it is durably
+    /// committed to the backing store.
+    ///
+    /// [`store_secret`](Self::store_secret) is allowed to return as soon as the
+    /// value is in the in-memory cache and schedule the durable write
+    /// asynchronously (the wasm IndexedDB tier does exactly this — see
+    /// `IndexedDbSecureKeyStore::store_secret`). That fire-and-forget write can
+    /// lose a page-unload / reload race, which is catastrophic for material a
+    /// remote party will immediately depend on — notably the MLS KeyPackage
+    /// init private key: once the KeyPackage is advertised to the server and an
+    /// admin claims it, the Welcome can only be decrypted with that init key, so
+    /// it MUST be durable BEFORE the KeyPackage is published. Callers in that
+    /// position `await` this method instead of calling `store_secret`.
+    ///
+    /// The default implementation delegates to the synchronous
+    /// [`store_secret`](Self::store_secret), which is already durable for the
+    /// synchronous backends (OS keychain, `localStorage`). The wasm IndexedDB
+    /// tier overrides it to `await` the actual put.
+    fn store_secret_durable<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>,
+    > {
+        let result = self.store_secret(key, value);
+        Box::pin(async move { result })
+    }
 
     /// Load the secret associated with `key`. Returns `Ok(None)` when
     /// the key is absent (vs `Err(NotFound)` — we collapse "not present"

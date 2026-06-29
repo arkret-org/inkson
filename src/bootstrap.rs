@@ -510,22 +510,31 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     let private_state = identity
         .export_private_state()
         .map_err(|error| format!("export MLS KeyPackage identity state: {error}"))?;
-    crate::mls::runtime::store_mls_key_package_identity_state(
+    // Durably persist the init private key BEFORE the KeyPackage is advertised
+    // to the server (below). The init key lives IndexedDB-only with no
+    // localStorage mirror, and the plain sync store is fire-and-forget — an
+    // unload/reload race would drop it and leave every Welcome addressed to this
+    // KeyPackage permanently undecryptable ("no local KeyPackage identity
+    // state"). Awaiting the durable write closes that gap: once the server holds
+    // the KeyPackage, the local init key is guaranteed on disk.
+    crate::mls::runtime::store_mls_key_package_identity_state_durable(
         secure_store.as_ref(),
         &actor_id,
         &device_id,
         &key_package_id,
         &private_state,
     )
+    .await
     .map_err(|error| format!("store MLS KeyPackage identity state: {error}"))?;
     if key_package_ref != key_package_id {
-        crate::mls::runtime::store_mls_key_package_identity_state(
+        crate::mls::runtime::store_mls_key_package_identity_state_durable(
             secure_store.as_ref(),
             &actor_id,
             &device_id,
             &key_package_ref,
             &private_state,
         )
+        .await
         .map_err(|error| format!("store MLS KeyPackage identity ref state: {error}"))?;
     }
 
