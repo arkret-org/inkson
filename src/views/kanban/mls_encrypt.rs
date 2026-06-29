@@ -5,7 +5,7 @@ use super::model::*;
 use super::{
     apply_card_detail_draft, card_detail_activity_summary, card_detail_update_patch,
     collect_encryptable_private_patch_values, kanban_plaintext_block_reason,
-    replace_private_patch_values, set_card_state_in_columns,
+    replace_private_patch_values,
 };
 use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 use crate::operation::{trim_realm_id, uuid_v7};
@@ -671,7 +671,6 @@ pub(super) fn dispatch_card_detail_update(
     scope_security_encrypted: Option<bool>,
     synthesis_entry_id: Option<String>,
     synthesis_revision_body: Option<String>,
-    mut columns: Signal<Vec<KanbanColumn>>,
     mut selected_card: Signal<Option<KanbanCard>>,
     mut state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
@@ -745,26 +744,12 @@ pub(super) fn dispatch_card_detail_update(
         return false;
     }
 
+    // Optimistic detail-panel feedback: apply the draft to the open card.
+    // The board itself re-renders from the appended `ck.strand.update` op
+    // below — `columns` is a `use_memo` over `raw_operations`, folded by
+    // `overlay_local_card_update_records`, so there is no direct signal write.
     let mut updated_card = current.clone();
-    let mut found = false;
-    {
-        let mut cols = columns.write();
-        for col in cols.iter_mut() {
-            if let Some(card) = col.cards.iter_mut().find(|card| card.id == current.id) {
-                apply_card_detail_draft(card, &draft);
-                updated_card = card.clone();
-                found = true;
-                break;
-            }
-        }
-    }
-    if !found {
-        board_status.set(format!(
-            "internal: card {} not in board state",
-            short_protocol_id(&current.id)
-        ));
-        return false;
-    }
+    apply_card_detail_draft(&mut updated_card, &draft);
     selected_card.set(Some(updated_card));
 
     let operation_id = sdk_event_local_operation_id(&op).to_owned();
@@ -841,7 +826,6 @@ pub(super) fn dispatch_card_detail_update(
                             None,
                             Some(err_text.clone()),
                         );
-                        set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
                         let selected = selected_card.read().clone();
                         if let Some(mut card) = selected
                             && card.id == strand_id
@@ -906,7 +890,6 @@ pub(super) fn dispatch_card_detail_update(
                         None,
                         Some(err_text.clone()),
                     );
-                    set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
                     let selected = selected_card.read().clone();
                     if let Some(mut card) = selected
                         && card.id == strand_id
@@ -931,7 +914,6 @@ pub(super) fn dispatch_card_detail_update(
                     Some(resp.event_id.clone()),
                     None,
                 );
-                set_card_state_in_columns(&mut columns, &strand_id, CardState::Accepted);
                 let selected = selected_card.read().clone();
                 if let Some(mut card) = selected
                     && card.id == strand_id
@@ -975,7 +957,6 @@ pub(super) fn dispatch_card_detail_update(
                     None,
                     Some(err.display().to_string()),
                 );
-                set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
                 let selected = selected_card.read().clone();
                 if let Some(mut card) = selected
                     && card.id == strand_id

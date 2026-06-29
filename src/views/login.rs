@@ -187,12 +187,31 @@ pub fn LoginPanel(
         is_busy.set(false);
     });
 
-    // Account selection belongs to the Account Authority. Yougen only chooses
-    // the Principal Server and starts a fresh pending login; the callback adopts
-    // the DID returned by coauth as the authoritative account.
-    let launch_sign_in = move || {
+    // Account selection belongs to the Account Authority. Yougen chooses the
+    // Principal Server and either re-authenticates a returning account on its
+    // OWN stable device (`reuse = true`) or starts a fresh pending login that
+    // mints a brand-new device for a first/other account (`reuse = false`); the
+    // callback adopts the DID returned by coauth as the authoritative account.
+    //
+    // Why the reuse branch exists: a `device_id` MUST be stable across
+    // re-authentication (crypto-media/device-lifecycle.md §4 — "每个设备 MUST 有
+    // 稳定 device_id"; §3.2 — a per-token/per-session device identity "会让该值在
+    // 每次 token 轮换时漂移，静默破坏所有按 (principal, device) 绑定的不变量").
+    // Minting a fresh device on every sign-in churns the protocol device_id, so
+    // each re-login publishes a new MLS KeyPackage under a new device and strands
+    // the to-device MLS Welcome addressed to the prior device — exactly the
+    // "Waiting for a Welcome message" dead-end for an invited member who simply
+    // signed in again.
+    let launch_sign_in = move |reuse: bool| {
         let principal = base_url();
-        let device = crate::config::new_device_id();
+        // Reuse: keep this account's persisted stable device_id + device key.
+        // Fresh: mint a brand-new device and forward no actor hint so the
+        // callback adopts whatever account the OIDC flow resolves to.
+        let (device, actor_hint) = if reuse {
+            (device_id(), account_did())
+        } else {
+            (crate::config::new_device_id(), String::new())
+        };
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
         is_busy.set(true);
@@ -200,23 +219,38 @@ pub fn LoginPanel(
         spawn(async move {
             #[cfg(target_arch = "wasm32")]
             let _ = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await;
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-            if let Err(error) =
-                crate::secure_key_store::reset_device_seed_scope_for_signin(secure_store.as_ref())
-            {
-                tracing::warn!(%error, "reset device seed scope for sign-in failed");
+            if reuse {
+                // Pin the active device-seed scope to the returning account so
+                // `ensure_device_key` (in `finish_oidc_callback`) loads that
+                // account's existing device key — the same `cnf.jkt` it has
+                // always used — instead of minting a bootstrap key. No
+                // `begin_pending_login`: the device already belongs to this
+                // account, so there is nothing to re-home, and
+                // `adopt_device_seed_scope_on_login` finds no bootstrap seed to
+                // overwrite the stable one with.
+                let scope = actor_hint.trim();
+                crate::secure_key_store::set_active_device_seed_scope(
+                    (!scope.is_empty()).then_some(scope),
+                );
+            } else {
+                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
+                    secure_store.as_ref(),
+                ) {
+                    tracing::warn!(%error, "reset device seed scope for sign-in failed");
+                }
+                // Drop the cached DPoP record so the device key is rebuilt from
+                // the freshly-scoped bootstrap seed.
+                reset_state_store.write().set_dpop_device_key(None);
+                // Pre-DID: record the freshly-minted device id as the pending
+                // login so the bootstrap wrap_seed / secrets land under the
+                // `pending.<device_id>` namespace until the principal DID
+                // resolves and `adopt_pending_login` re-homes them.
+                reset_state_store
+                    .write()
+                    .begin_pending_login(device.trim(), None);
             }
-            // Drop the cached DPoP record so the device key is rebuilt from
-            // the freshly-scoped bootstrap seed.
-            reset_state_store.write().set_dpop_device_key(None);
-            // Pre-DID: record the freshly-minted device id as the pending
-            // login so the bootstrap wrap_seed / secrets land under the
-            // `pending.<device_id>` namespace until the principal DID
-            // resolves and `adopt_pending_login` re-homes them.
-            reset_state_store
-                .write()
-                .begin_pending_login(device.trim(), None);
-            match start_oidc_strand(&principal, device.trim(), "", "").await {
+            match start_oidc_strand(&principal, device.trim(), "", actor_hint.trim()).await {
                 Ok(()) => {}
                 Err(error) => {
                     is_busy.set(false);
@@ -265,13 +299,57 @@ pub fn LoginPanel(
                     }
                 }
 
-                Button {
-                    variant: ButtonVariant::Primary,
-                    class: "auth-primary",
-                    "data-testid": "start-server-login-button",
-                    disabled: is_busy(),
-                    onclick: move |_| { let mut go = launch_sign_in; go(); },
-                    if is_busy() { "Working..." } else { "Continue" }
+                {
+                    // A returning account is one already persisted on this
+                    // browser: its DID is known AND it carries a valid stable
+                    // `device_id`. Its primary action re-authenticates on that
+                    // SAME device (reuse = true) so the protocol device_id never
+                    // drifts; an explicit secondary action signs a different /
+                    // first account in on a fresh device (reuse = false).
+                    let returning_actor = account_did();
+                    let returning_device = device_id();
+                    let has_returning_account = returning_account_can_reuse_device(
+                        &returning_actor,
+                        &returning_device,
+                    );
+                    let returning_label = if has_returning_account {
+                        display_name_for_did(&state_store_write.read(), &returning_actor)
+                    } else {
+                        String::new()
+                    };
+                    rsx! {
+                        if has_returning_account {
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                class: "auth-primary",
+                                "data-testid": "start-server-login-button",
+                                disabled: is_busy(),
+                                onclick: move |_| { let mut go = launch_sign_in; go(true); },
+                                if is_busy() {
+                                    "Working..."
+                                } else {
+                                    "Continue as {returning_label}"
+                                }
+                            }
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                class: "ghost",
+                                "data-testid": "use-different-account-button",
+                                disabled: is_busy(),
+                                onclick: move |_| { let mut go = launch_sign_in; go(false); },
+                                "Use a different account"
+                            }
+                        } else {
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                class: "auth-primary",
+                                "data-testid": "start-server-login-button",
+                                disabled: is_busy(),
+                                onclick: move |_| { let mut go = launch_sign_in; go(false); },
+                                if is_busy() { "Working..." } else { "Continue" }
+                            }
+                        }
+                    }
                 }
 
                 if !auth_status().is_empty() {
@@ -372,6 +450,18 @@ pub fn LoginPanel(
             }
         }
     }
+}
+
+/// Whether a sign-in for a known/returning account on this browser may
+/// re-authenticate on that account's OWN persisted device, instead of minting a
+/// fresh one. Both halves of the stable identity must be present: a non-empty
+/// account DID AND a syntactically valid `device_id` (`ck:device:<uuid>`). When
+/// either is missing the browser has no stable device to reuse, so the sign-in
+/// MUST take the fresh path. Reusing keeps the protocol `device_id` stable
+/// across re-authentication, which is what keeps to-device MLS Welcomes routable
+/// (crypto-media/device-lifecycle.md §4).
+fn returning_account_can_reuse_device(account_did: &str, device_id: &str) -> bool {
+    !account_did.trim().is_empty() && crate::config::is_valid_device_id(device_id.trim())
 }
 
 fn persist_completed_login_state(
@@ -763,6 +853,30 @@ mod tests {
             grant_expires_at: Some(now + chrono::Duration::seconds(3600)),
             stored_at: now,
         }
+    }
+
+    #[test]
+    fn returning_account_reuses_device_only_with_did_and_valid_device_id() {
+        let valid_device = "ck:device:01964137-0000-7000-8000-000000000001";
+        // Both present → reuse the stable device.
+        assert!(returning_account_can_reuse_device(
+            "did:web:bob.example",
+            valid_device
+        ));
+        // No persisted account → fresh sign-in (mint a device).
+        assert!(!returning_account_can_reuse_device("", valid_device));
+        assert!(!returning_account_can_reuse_device("   ", valid_device));
+        // Account known but no valid stable device_id → fresh sign-in.
+        assert!(!returning_account_can_reuse_device("did:web:bob.example", ""));
+        assert!(!returning_account_can_reuse_device(
+            "did:web:bob.example",
+            "not-a-device-id"
+        ));
+        // Surrounding whitespace is trimmed before the validity check.
+        assert!(returning_account_can_reuse_device(
+            "  did:web:bob.example  ",
+            &format!("  {valid_device}  ")
+        ));
     }
 
     #[test]

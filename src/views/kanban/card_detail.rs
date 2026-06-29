@@ -218,7 +218,6 @@ pub(super) fn save_card_detail_edit(
     mut editing_card_detail: Signal<bool>,
     mut card_detail_actions_open: Signal<bool>,
     mut card_detail_edit_status: Signal<String>,
-    columns: Signal<Vec<KanbanColumn>>,
     selected_card: Signal<Option<KanbanCard>>,
     state_store: Signal<LocalStateStore>,
     board_status: Signal<String>,
@@ -250,7 +249,6 @@ pub(super) fn save_card_detail_edit(
         scope_security_encrypted,
         synthesis_target_id,
         synthesis_revision,
-        columns,
         selected_card,
         state_store,
         board_status,
@@ -320,7 +318,6 @@ pub(super) fn save_card_due_edit(
     scope_security_encrypted: Option<bool>,
     mut due_picker_open: Signal<bool>,
     mut due_edit_status: Signal<String>,
-    columns: Signal<Vec<KanbanColumn>>,
     selected_card: Signal<Option<KanbanCard>>,
     state_store: Signal<LocalStateStore>,
     board_status: Signal<String>,
@@ -339,7 +336,6 @@ pub(super) fn save_card_due_edit(
         scope_security_encrypted,
         None,
         None,
-        columns,
         selected_card,
         state_store,
         board_status,
@@ -371,7 +367,6 @@ pub(super) fn save_card_calendar_edit(
     mut editing_card_detail: Signal<bool>,
     mut card_detail_actions_open: Signal<bool>,
     mut card_detail_edit_status: Signal<String>,
-    columns: Signal<Vec<KanbanColumn>>,
     selected_card: Signal<Option<KanbanCard>>,
     state_store: Signal<LocalStateStore>,
     board_status: Signal<String>,
@@ -390,7 +385,6 @@ pub(super) fn save_card_calendar_edit(
         scope_security_encrypted,
         None,
         None,
-        columns,
         selected_card,
         state_store,
         board_status,
@@ -482,30 +476,6 @@ pub(super) fn dispatch_calendar_rsvp(
             }
         }
     });
-}
-
-/// Merge the persisted (capped) local raw-operation log with the freshly
-/// backfilled strand event history before building the synthesis track.
-///
-/// Each `ck.strand.update` event in the backfill carries the authoritative
-/// per-event `actor_id`, so feeding them through the same builder lets
-/// historical revisions recover their true author instead of falling back to
-/// "Unknown author" (see `card_history_operations` in the kanban panel). On an
-/// `operation_id` collision the history copy wins (it is the synced,
-/// author-stamped envelope); local-only operations — e.g. a just-queued
-/// optimistic edit not yet reflected in server history — are preserved.
-pub(super) fn merge_history_raw_operations(
-    local: &[RawOperationRecord],
-    history: &[RawOperationRecord],
-) -> Vec<RawOperationRecord> {
-    let mut seen = std::collections::BTreeSet::<String>::new();
-    let mut merged = Vec::with_capacity(local.len() + history.len());
-    for record in history.iter().chain(local.iter()) {
-        if seen.insert(record.operation_id.clone()) {
-            merged.push(record.clone());
-        }
-    }
-    merged
 }
 
 pub(super) fn projection_synthesis_revision(

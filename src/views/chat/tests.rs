@@ -711,6 +711,80 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
 }
 
 #[test]
+fn message_operations_from_events_folds_create_and_renders_local_first() {
+    // Discussion local-first: a canonical `ck.message.create` from the realm
+    // timeline folds into a `raw_operations` record (full event payload,
+    // dedup id = event_id) that `chat_messages_from_local_state_with_sidecar`
+    // renders WITHOUT any backfill — the event-sourced replacement for the
+    // per-open realm refetch.
+    let create = json!({
+        "event_id": "ck:event:msg-1",
+        "kind": "ck.message.create",
+        "actor_id": "did:web:bob.example",
+        "realm_id": "ck:realm:r1",
+        "created_at": "2026-05-22T10:00:00Z",
+        "strand_id": "ck:strand:topic",
+        "message_id": "ck:message:m1",
+        "body": "hello from bob"
+    });
+    // A non-message timeline event (e.g. a poll close) MUST be ignored.
+    let poll = json!({
+        "event_id": "ck:event:poll-1",
+        "kind": "ck.content.poll.close",
+        "realm_id": "ck:realm:r1",
+        "strand_id": "ck:strand:topic"
+    });
+
+    let records = message_operations_from_events("ck:realm:r1", &[create.clone(), poll]);
+    assert_eq!(records.len(), 1, "only the message-create event is folded");
+    assert_eq!(records[0].operation_id, "ck:event:msg-1");
+    assert_eq!(records[0].realm_id.as_deref(), Some("ck:realm:r1"));
+    assert_eq!(records[0].payload, create, "full event stored for proof/ciphertext");
+
+    let state = ClientLocalState {
+        raw_operations: records,
+        ..ClientLocalState::default()
+    };
+    let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].strand_id, "ck:strand:topic");
+    assert_eq!(messages[0].sender, "did:web:bob.example");
+    assert_eq!(messages[0].body, "hello from bob");
+}
+
+#[test]
+fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
+    // The server folds a redaction into a tombstone form reusing the same
+    // `ck.message.create` kind + `event_id`. Both fold to the SAME
+    // `operation_id`, so `upsert_raw_operation` replaces the create with the
+    // tombstone and the local-first render shows the redacted marker.
+    let create = json!({
+        "event_id": "ck:event:msg-2",
+        "kind": "ck.message.create",
+        "actor_id": "did:web:bob.example",
+        "realm_id": "ck:realm:r1",
+        "created_at": "2026-05-22T10:00:00Z",
+        "strand_id": "ck:strand:topic",
+        "message_id": "ck:message:m2",
+        "body": "secret"
+    });
+    let tombstone = json!({
+        "event_id": "ck:event:msg-2",
+        "kind": "ck.message.create",
+        "actor_id": "did:web:bob.example",
+        "realm_id": "ck:realm:r1",
+        "created_at": "2026-05-22T10:05:00Z",
+        "strand_id": "ck:strand:topic",
+        "message_id": "ck:message:m2",
+        "redacted": true
+    });
+
+    let create_record = message_operations_from_events("ck:realm:r1", &[create]);
+    let tombstone_record = message_operations_from_events("ck:realm:r1", &[tombstone]);
+    assert_eq!(create_record[0].operation_id, tombstone_record[0].operation_id);
+}
+
+#[test]
 fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
     let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
     let appellant = "did:web:appellant.example";

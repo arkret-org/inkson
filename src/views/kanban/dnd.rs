@@ -189,7 +189,6 @@ pub(super) fn submit_kanban_move(
     value: serde_json::Value,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    mut columns: Signal<Vec<KanbanColumn>>,
     mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
@@ -336,7 +335,6 @@ pub(super) fn submit_kanban_move(
                         short_protocol_id(&resp.event_id)
                     );
                 }
-                set_card_state_in_columns(&mut columns, &subject, CardState::Accepted);
                 board_status.set(format!(
                     "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
                     short_protocol_id(&op_for_track),
@@ -358,7 +356,6 @@ pub(super) fn submit_kanban_move(
                     record.state = CardState::Quarantined;
                     record.note = format!("submit failed: {}", err.display());
                 }
-                set_card_state_in_columns(&mut columns, &subject, CardState::Quarantined);
                 board_status.set(format!("quarantined event: {}", err.display()));
             }
         }
@@ -394,7 +391,6 @@ pub(super) fn dispatch_strand_position_move(
     dragged: DraggedCard,
     target_column_id: String,
     neighbours: ColumnNeighbours,
-    mut columns: Signal<Vec<KanbanColumn>>,
     state_store: Signal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
@@ -428,22 +424,11 @@ pub(super) fn dispatch_strand_position_move(
             return;
         }
     };
-    // Show the move immediately as `sending...`; it is not marked
-    // accepted until the server returns from ck.events.submit.
-    let card_opt = {
-        let mut cols = columns.write();
-        relocate_card(
-            &mut cols,
-            &dragged.card_id,
-            &dragged.from_column_id,
-            &target_column_id,
-            &new_rank,
-        )
-    };
-    let Some(_card) = card_opt else {
-        board_status.set("internal: dragged card not found in source column".to_owned());
-        return;
-    };
+    // The move shows immediately because `submit_strand_position_cas_move`
+    // appends the canonical move/reorder op to `raw_operations` (write_state
+    // `submitted`), which the `columns` `use_memo` folds via `project_board` —
+    // no direct signal mutation. It is not marked accepted until the server
+    // returns from ck.events.submit.
     let expected = StrandPositionExpectation::At {
         list_space_id: dragged.from_column_id.clone(),
         rank: dragged.from_rank.clone(),
@@ -468,35 +453,10 @@ pub(super) fn dispatch_strand_position_move(
         kind,
         expected,
         effect,
-        columns,
         state_store,
         write_records,
         board_status,
     );
-}
-
-/// Pure guard for Space-container lifecycle transitions. Refuses two illegal cases:
-/// (1) same-state self-transition — UI structure already gates this
-/// (Archive button only renders on Active columns and vice versa), but
-/// keeping a programmatic guard avoids no-op server roundtrips if a future
-/// code path bypasses the UI filter; (2) UI-emitted Tombstone — terminal
-/// state is server-only. Extracted as a pure fn so the policy is unit-tested
-/// without spinning up a Dioxus runtime.
-pub(super) fn validate_space_container_lifecycle_transition(
-    space_container_id: &str,
-    prior: SpaceContainerLifecycleState,
-    target: SpaceContainerLifecycleState,
-) -> Result<(), String> {
-    if matches!(target, SpaceContainerLifecycleState::Tombstoned) {
-        return Err("Tombstone is server-only; UI dispatch refused".to_owned());
-    }
-    if prior == target {
-        return Err(format!(
-            "list {} already in {target:?} state; refused",
-            short_protocol_id(space_container_id)
-        ));
-    }
-    Ok(())
 }
 
 /// Map soland's wire state strings into `SpaceContainerLifecycleState`.
@@ -596,33 +556,10 @@ pub(super) fn dispatch_space_container_lifecycle(
     actor_id: String,
     space_container_id: String,
     target: SpaceContainerLifecycleState,
-    mut columns: Signal<Vec<KanbanColumn>>,
+    mut state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
-    // Pending state update. Capture prior state for rollback on error
-    // and apply the same-state / Tombstone guard inside the write
-    // critical section so prior is observed atomically.
-    let prior_state = {
-        let mut cols = columns.write();
-        let Some(col) = cols.iter_mut().find(|c| c.id == space_container_id) else {
-            board_status.set(format!(
-                "internal: list {} not in board state",
-                short_protocol_id(&space_container_id)
-            ));
-            return;
-        };
-        let prior = col.state;
-        if let Err(msg) =
-            validate_space_container_lifecycle_transition(&space_container_id, prior, target)
-        {
-            board_status.set(msg);
-            return;
-        }
-        col.state = target;
-        prior
-    };
-
-    // Only Active <-> Archived reach here (validator rejects Tombstone).
+    // Only Active <-> Archived are dispatchable; Tombstone is server-only.
     let builder = match target {
         SpaceContainerLifecycleState::Archived => {
             crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, &space_container_id)
@@ -631,83 +568,69 @@ pub(super) fn dispatch_space_container_lifecycle(
             crate::operation::ck_ops::space_restore(&realm_id, &actor_id, &space_container_id)
         }
         SpaceContainerLifecycleState::Tombstoned => {
-            // Invariant: `validate_space_container_lifecycle_transition` (called above)
-            // already rejects any move to Tombstone, so by construction the
-            // only targets that reach this match are Active|Archived. If we
-            // ever land here something upstream broke the contract — fail
-            // loud rather than emitting a silently-wrong Move.
-            if let Some(col) = columns
-                .write()
-                .iter_mut()
-                .find(|c| c.id == space_container_id)
-            {
-                col.state = prior_state;
-            }
             board_status.set("lifecycle update failed: tombstone is not dispatchable".to_owned());
             return;
         }
     };
-    let base = base_url.clone();
-    let api_token = token();
     let event = match builder.build_sdk_event("yougen") {
         Ok(event) => event,
         Err(err) => {
-            if let Some(col) = columns
-                .write()
-                .iter_mut()
-                .find(|c| c.id == space_container_id)
-            {
-                col.state = prior_state;
-            }
             board_status.set(format!("lifecycle update failed: {err}"));
             return;
         }
     };
     let kind = event.kind.as_str().to_owned();
+    let operation_id = sdk_event_local_operation_id(&event).to_owned();
+    // Append the lifecycle op so the `columns` `use_memo` folds the optimistic
+    // state immediately via `project_board` (`apply_space_*`). On submit
+    // failure we mark the op `dropped`, which `raw_operation_allows_overlay`
+    // excludes — reverting the optimistic flip without a direct signal write.
+    state_store.write().append_raw_operation(
+        operation_id.clone(),
+        Some(realm_id.clone()),
+        json!({
+            "kind": kind,
+            "operation_id": operation_id,
+            "actor_id": actor_id,
+            "created_at": event.created_at.to_rfc3339(),
+            "write_state": "queued",
+            "body": event.content.clone(),
+        }),
+    );
+    let base = base_url.clone();
+    let api_token = token();
+    let operation_id_for_track = operation_id.clone();
     spawn(async move {
         let result = with_authed_api(&base, api_token, |api| async move {
             api.submit_sdk_event(&event).await
         })
         .await;
         match result {
-            Ok(_) => {
-                board_status.set(format!(
-                    "{kind} accepted; list optimistic state = {target:?}"
-                ));
+            Ok(resp) => {
+                if let Ok(mut store) = state_store.try_write() {
+                    store.update_raw_operation_write_state(
+                        &operation_id_for_track,
+                        "accepted",
+                        Some(resp.event_id.clone()),
+                        None,
+                    );
+                }
+                board_status.set(format!("{kind} accepted; list state = {target:?}"));
             }
             Err(err) => {
-                // Rollback optimistic state on submit failure.
-                if let Some(col) = columns
-                    .write()
-                    .iter_mut()
-                    .find(|c| c.id == space_container_id)
-                {
-                    col.state = prior_state;
+                // Revert the optimistic flip by dropping the op from the log.
+                if let Ok(mut store) = state_store.try_write() {
+                    store.update_raw_operation_write_state(
+                        &operation_id_for_track,
+                        "dropped",
+                        None,
+                        Some(err.display().to_string()),
+                    );
                 }
                 board_status.set(format!("{kind} failed: {}", err.display()));
             }
         }
     });
-}
-
-/// Pure guard for Strand lifecycle transitions. Mirrors
-/// `validate_space_container_lifecycle_transition` at the Strand layer — refuses
-/// same-state self-transitions and UI-emitted Redacted targets.
-pub(super) fn validate_strand_lifecycle_transition(
-    strand_id: &str,
-    prior: StrandLifecycleState,
-    target: StrandLifecycleState,
-) -> Result<(), String> {
-    if matches!(target, StrandLifecycleState::Redacted) {
-        return Err("Redaction is server-only; UI dispatch refused".to_owned());
-    }
-    if prior == target {
-        return Err(format!(
-            "card {} already in {target:?} state; refused",
-            short_protocol_id(strand_id)
-        ));
-    }
-    Ok(())
 }
 
 /// Dispatch `ck.strand.archive` or `ck.strand.restore` for a card and
@@ -724,39 +647,10 @@ pub(super) fn dispatch_strand_lifecycle(
     actor_id: String,
     strand_id: String,
     target: StrandLifecycleState,
-    mut columns: Signal<Vec<KanbanColumn>>,
+    mut state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
-    // Locate the card across columns; capture prior state for rollback
-    // and apply the same-state / Tombstone guard inside the write
-    // critical section.
-    let prior_state = {
-        let mut cols = columns.write();
-        let mut found = None;
-        for col in cols.iter_mut() {
-            if let Some(card) = col.cards.iter_mut().find(|c| c.id == strand_id) {
-                let prior = card.lifecycle;
-                if let Err(msg) = validate_strand_lifecycle_transition(&strand_id, prior, target) {
-                    board_status.set(msg);
-                    return;
-                }
-                card.lifecycle = target;
-                found = Some(prior);
-                break;
-            }
-        }
-        match found {
-            Some(prior) => prior,
-            None => {
-                board_status.set(format!(
-                    "internal: card {} not in board state",
-                    short_protocol_id(&strand_id)
-                ));
-                return;
-            }
-        }
-    };
-
+    // Only Active <-> Archived are dispatchable; Redaction is server-only.
     let builder = match target {
         StrandLifecycleState::Archived => {
             crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, &strand_id)
@@ -765,70 +659,62 @@ pub(super) fn dispatch_strand_lifecycle(
             crate::operation::ck_ops::strand_restore(&realm_id, &actor_id, &strand_id)
         }
         StrandLifecycleState::Redacted => {
-            // Invariant: `validate_strand_lifecycle_transition` (called above)
-            // already rejects any move to Redacted, so by construction the
-            // only targets that reach this match are Active|Archived. If we
-            // ever land here something upstream broke the contract — fail
-            // loud rather than emitting a silently-wrong Move.
-            for col in columns.write().iter_mut() {
-                if let Some(card) = col.cards.iter_mut().find(|c| c.id == strand_id) {
-                    card.lifecycle = prior_state;
-                    break;
-                }
-            }
             board_status.set("lifecycle update failed: redaction is not dispatchable".to_owned());
             return;
         }
     };
-    let op = match builder {
-        Ok(builder) => builder.build_sdk_event("yougen"),
+    let event = match builder.and_then(|builder| builder.build_sdk_event("yougen")) {
+        Ok(event) => event,
         Err(err) => {
-            // Roll back the optimistic lifecycle flip applied above.
-            for col in columns.write().iter_mut() {
-                if let Some(card) = col.cards.iter_mut().find(|c| c.id == strand_id) {
-                    card.lifecycle = prior_state;
-                    break;
-                }
-            }
             board_status.set(format!("lifecycle update failed: {err:#}"));
             return;
         }
     };
-
+    let kind = event.kind.as_str().to_owned();
+    let operation_id = sdk_event_local_operation_id(&event).to_owned();
+    // Append the lifecycle op so the `columns` `use_memo` folds the optimistic
+    // flip via `project_board` (`ck.strand.archive` / `ck.strand.restore`). On
+    // submit failure we mark it `dropped` to revert — no direct signal write.
+    state_store.write().append_raw_operation(
+        operation_id.clone(),
+        Some(realm_id.clone()),
+        json!({
+            "kind": kind,
+            "operation_id": operation_id,
+            "actor_id": actor_id,
+            "created_at": event.created_at.to_rfc3339(),
+            "write_state": "queued",
+            "body": event.content.clone(),
+        }),
+    );
     let base = base_url.clone();
     let api_token = token();
-    let event = match op {
-        Ok(event) => event,
-        Err(err) => {
-            for col in columns.write().iter_mut() {
-                if let Some(card) = col.cards.iter_mut().find(|c| c.id == strand_id) {
-                    card.lifecycle = prior_state;
-                    break;
-                }
-            }
-            board_status.set(format!("lifecycle update failed: {err}"));
-            return;
-        }
-    };
-    let kind = event.kind.as_str().to_owned();
+    let operation_id_for_track = operation_id.clone();
     spawn(async move {
         let result = with_authed_api(&base, api_token, |api| async move {
             api.submit_sdk_event(&event).await
         })
         .await;
         match result {
-            Ok(_) => {
-                board_status.set(format!(
-                    "{kind} accepted; card optimistic lifecycle = {target:?}"
-                ));
+            Ok(resp) => {
+                if let Ok(mut store) = state_store.try_write() {
+                    store.update_raw_operation_write_state(
+                        &operation_id_for_track,
+                        "accepted",
+                        Some(resp.event_id.clone()),
+                        None,
+                    );
+                }
+                board_status.set(format!("{kind} accepted; card lifecycle = {target:?}"));
             }
             Err(err) => {
-                // Rollback on failure.
-                for col in columns.write().iter_mut() {
-                    if let Some(card) = col.cards.iter_mut().find(|c| c.id == strand_id) {
-                        card.lifecycle = prior_state;
-                        break;
-                    }
+                if let Ok(mut store) = state_store.try_write() {
+                    store.update_raw_operation_write_state(
+                        &operation_id_for_track,
+                        "dropped",
+                        None,
+                        Some(err.display().to_string()),
+                    );
                 }
                 board_status.set(format!("{kind} failed: {}", err.display()));
             }
@@ -851,7 +737,7 @@ pub(super) fn dispatch_board_archive_cascade(
     realm_id: String,
     actor_id: String,
     board_space_id: String,
-    mut columns: Signal<Vec<KanbanColumn>>,
+    mut state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
     if board_space_id.trim().is_empty() {
@@ -859,63 +745,114 @@ pub(super) fn dispatch_board_archive_cascade(
         return;
     }
 
-    // Snapshot active children and optimistically flip them so the board
-    // empties immediately; capture the prior snapshot for rollback.
-    let snapshot = columns.read().clone();
-    let mut active_card_ids: Vec<String> = Vec::new();
-    let mut active_list_ids: Vec<String> = Vec::new();
-    {
-        let mut cols = columns.write();
-        for col in cols.iter_mut() {
-            for card in col.cards.iter_mut() {
-                if card.lifecycle == StrandLifecycleState::Active {
-                    active_card_ids.push(card.id.clone());
-                    card.lifecycle = StrandLifecycleState::Archived;
-                }
-            }
-            if col.state == SpaceContainerLifecycleState::Active {
-                active_list_ids.push(col.id.clone());
-                col.state = SpaceContainerLifecycleState::Archived;
+    // Resolve the board's active children from the event-folded projection
+    // (the `columns` `use_memo` derives the same set), then build the cascade
+    // of archive events: child cards, child lists, board container last.
+    let raw_operations = state_store.read().load().raw_operations;
+    let active_card_ids: Vec<String> = strand_views_from_ops(&raw_operations)
+        .into_iter()
+        .filter(|view| {
+            view.board_space_id.as_deref() == Some(board_space_id.as_str()) && view.state == "active"
+        })
+        .map(|view| view.strand_id)
+        .collect();
+    let active_list_ids: Vec<String> = space_container_views_from_ops(&raw_operations, &realm_id)
+        .into_iter()
+        .filter(|view| {
+            view.kind == "list"
+                && view.parent_space_id.as_deref() == Some(board_space_id.as_str())
+                && view.state == "active"
+        })
+        .map(|view| view.space_id)
+        .collect();
+
+    // Build every archive event up front so a build error aborts before any
+    // optimistic op is appended.
+    let mut events: Vec<cokret_sdk::Event> = Vec::new();
+    for strand_id in &active_card_ids {
+        match crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, strand_id)
+            .and_then(|builder| builder.build_sdk_event("yougen"))
+        {
+            Ok(event) => events.push(event),
+            Err(err) => {
+                board_status.set(format!("cannot archive board: {err}"));
+                return;
             }
         }
     }
+    for list_id in active_list_ids.iter().chain(std::iter::once(&board_space_id)) {
+        match crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
+            .build_sdk_event("yougen")
+        {
+            Ok(event) => events.push(event),
+            Err(err) => {
+                board_status.set(format!("cannot archive board: {err}"));
+                return;
+            }
+        }
+    }
+
+    // Append all archive ops so the board empties immediately via the memo;
+    // a partial-cascade failure reverts every op by marking it `dropped`.
+    let operation_ids: Vec<String> = {
+        let mut store = state_store.write();
+        events
+            .iter()
+            .map(|event| {
+                let operation_id = sdk_event_local_operation_id(event).to_owned();
+                store.append_raw_operation(
+                    operation_id.clone(),
+                    Some(realm_id.clone()),
+                    json!({
+                        "kind": event.kind.as_str(),
+                        "operation_id": operation_id,
+                        "actor_id": actor_id,
+                        "created_at": event.created_at.to_rfc3339(),
+                        "write_state": "queued",
+                        "body": event.content.clone(),
+                    }),
+                );
+                operation_id
+            })
+            .collect()
+    };
 
     board_status.set(crate::i18n::tr("kanban.archive_board_pending"));
 
     let base = base_url.clone();
     let api_token = token();
     spawn(async move {
+        let events_for_submit = events;
         let outcome = with_authed_api(&base, api_token, |api| async move {
-            // 1) cascade child cards
-            for strand_id in &active_card_ids {
-                let event =
-                    crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, strand_id)?
-                        .build_sdk_event("yougen")?;
-                api.submit_sdk_event(&event).await?;
+            for event in &events_for_submit {
+                api.submit_sdk_event(event).await?;
             }
-            // 2) cascade child lists
-            for list_id in &active_list_ids {
-                let event = crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
-                    .build_sdk_event("yougen")?;
-                api.submit_sdk_event(&event).await?;
-            }
-            // 3) archive the board container last
-            let board_event =
-                crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, &board_space_id)
-                    .build_sdk_event("yougen")?;
-            api.submit_sdk_event(&board_event).await?;
             Ok::<(), anyhow::Error>(())
         })
         .await;
 
         match outcome {
             Ok(()) => {
+                if let Ok(mut store) = state_store.try_write() {
+                    for operation_id in &operation_ids {
+                        store.update_raw_operation_write_state(operation_id, "accepted", None, None);
+                    }
+                }
                 board_status.set(crate::i18n::tr("kanban.archive_board_done"));
             }
             Err(err) => {
-                // Roll the whole board back to its pre-archive snapshot so a
-                // partial cascade does not leave a half-archived board.
-                columns.set(snapshot);
+                // Revert the optimistic cascade so a partial archive does not
+                // leave a half-archived board.
+                if let Ok(mut store) = state_store.try_write() {
+                    for operation_id in &operation_ids {
+                        store.update_raw_operation_write_state(
+                            operation_id,
+                            "dropped",
+                            None,
+                            Some(err.display().to_string()),
+                        );
+                    }
+                }
                 board_status.set(format!(
                     "{} {}",
                     crate::i18n::tr("kanban.archive_board_action"),
@@ -924,52 +861,6 @@ pub(super) fn dispatch_board_archive_cascade(
             }
         }
     });
-}
-
-/// Locate `card_id` in `from_column`, remove it, re-insert into
-/// `target_column` such that the resulting column is sorted by `rank`
-/// (we keep it lexicographically sorted on the assumption every card
-/// has a valid rank). Returns the relocated card or `None` if the
-/// source isn't found.
-pub(super) fn relocate_card(
-    columns: &mut [KanbanColumn],
-    card_id: &str,
-    from_column_id: &str,
-    target_column_id: &str,
-    new_rank: &str,
-) -> Option<KanbanCard> {
-    let source_idx = columns.iter().position(|c| c.id == from_column_id)?;
-    let card_idx = columns[source_idx]
-        .cards
-        .iter()
-        .position(|c| c.id == card_id)?;
-    let mut card = columns[source_idx].cards.remove(card_idx);
-    card.rank = new_rank.to_owned();
-    card.state = CardState::Queued;
-    let target_idx = columns
-        .iter()
-        .position(|c| c.id == target_column_id)
-        .or(Some(source_idx))?;
-    let insert_idx = columns[target_idx]
-        .cards
-        .iter()
-        .position(|c| c.rank.as_str() > new_rank)
-        .unwrap_or(columns[target_idx].cards.len());
-    columns[target_idx].cards.insert(insert_idx, card.clone());
-    Some(card)
-}
-
-pub(super) fn set_card_state_in_columns(
-    columns: &mut Signal<Vec<KanbanColumn>>,
-    card_id: &str,
-    state: CardState,
-) {
-    for column in columns.write().iter_mut() {
-        if let Some(card) = column.cards.iter_mut().find(|card| card.id == card_id) {
-            card.state = state;
-            break;
-        }
-    }
 }
 
 /// Build, sign, and submit a `ck.strand.move` / `ck.strand.reorder` CAS
@@ -989,7 +880,6 @@ pub(super) fn submit_strand_position_cas_move(
     kind: &'static str,
     expected: StrandPositionExpectation,
     effect: StrandPositionEffect,
-    columns: Signal<Vec<KanbanColumn>>,
     state_store: Signal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     board_status: Signal<String>,
@@ -1006,7 +896,6 @@ pub(super) fn submit_strand_position_cas_move(
         expected,
         effect,
         0,
-        columns,
         state_store,
         write_records,
         board_status,
@@ -1031,7 +920,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
     expected: StrandPositionExpectation,
     effect: StrandPositionEffect,
     attempt: u8,
-    mut columns: Signal<Vec<KanbanColumn>>,
     mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
@@ -1131,6 +1019,12 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
                 } => json!({"space_id": list_space_id, "rank": rank}),
                 StrandPositionEffect::Remove => serde_json::Value::Null,
             },
+            // Canonical move/reorder payload so the event-sourced
+            // `project_board` reducer (`apply_move_to_view` /
+            // `apply_reorder_to_view`) folds the optimistic move immediately —
+            // `columns` is a pure `use_memo` over `raw_operations`, so the
+            // relocation must live in the op log, not a direct signal mutation.
+            "body": event.content.clone(),
             "write_state": "submitted",
         }),
     );
@@ -1188,7 +1082,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
                         short_protocol_id(&resp.event_id)
                     );
                 }
-                set_card_state_in_columns(&mut columns, &strand_id, CardState::Accepted);
                 board_status.set(format!(
                     "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
                     short_protocol_id(&move_for_track),
@@ -1217,7 +1110,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
                     record.state = card_state;
                     record.note = format!("events.submit failed: {err_text}");
                 }
-                set_card_state_in_columns(&mut columns, &strand_id, card_state);
                 board_status.set(format!("{kind_for_record} event {err_text}"));
                 // Auto-rebase the CAS event after a cas_conflict: re-fetch
                 // the cell's current head via the projection endpoint,
@@ -1237,7 +1129,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
                         kind_for_record,
                         effect_for_rebase,
                         attempt + 1,
-                        columns,
                         state_store,
                         write_records,
                         board_status,
@@ -1261,7 +1152,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
                             "cas_conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
                         )),
                     );
-                    set_card_state_in_columns(&mut columns, &strand_id, CardState::Quarantined);
                     board_status.set(format!(
                         "{kind_for_record} quarantined after {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
                     ));
@@ -1295,7 +1185,6 @@ pub(super) fn rebase_strand_position_after_conflict(
     kind: String,
     effect: StrandPositionEffect,
     attempt: u8,
-    columns: Signal<Vec<KanbanColumn>>,
     state_store: Signal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
@@ -1347,7 +1236,6 @@ pub(super) fn rebase_strand_position_after_conflict(
             new_expected,
             effect,
             attempt,
-            columns,
             state_store,
             write_records,
             board_status,

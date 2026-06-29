@@ -4,7 +4,6 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use super::model::*;
-use super::set_card_state_in_columns;
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -202,21 +201,6 @@ pub(super) fn assignment_relations_after_mutations(
     relations
 }
 
-pub(super) fn update_card_assignees_in_columns(
-    columns: &mut [KanbanColumn],
-    strand_id: &str,
-    selected_actor_ids: &BTreeSet<String>,
-    relations: Vec<CardAssignedToRelation>,
-    state: CardState,
-) -> Option<KanbanCard> {
-    for column in columns.iter_mut() {
-        if let Some(card) = column.cards.iter_mut().find(|card| card.id == strand_id) {
-            apply_card_assignment_projection(card, selected_actor_ids, relations, state);
-            return Some(card.clone());
-        }
-    }
-    None
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_card_assignees_update(
@@ -227,7 +211,6 @@ pub(super) fn dispatch_card_assignees_update(
     current: KanbanCard,
     selected_actor_ids: BTreeSet<String>,
     assignee_labels: BTreeMap<String, String>,
-    mut columns: Signal<Vec<KanbanColumn>>,
     mut selected_card: Signal<Option<KanbanCard>>,
     mut state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
@@ -271,25 +254,18 @@ pub(super) fn dispatch_card_assignees_update(
 
     let optimistic_relations =
         assignment_relations_after_mutations(&current, &selected_actor_ids, &mutations);
-    let updated_card = {
-        let mut cols = columns.write();
-        update_card_assignees_in_columns(
-            &mut cols,
-            &current.id,
-            &selected_actor_ids,
-            optimistic_relations.clone(),
-            CardState::Queued,
-        )
-    };
-    let Some(updated_card) = updated_card else {
-        let msg = format!(
-            "internal: card {} not in board state",
-            short_protocol_id(&current.id)
-        );
-        assignee_edit_status.set(msg.clone());
-        board_status.set(msg);
-        return false;
-    };
+    // Optimistic detail-panel feedback: apply the assignment to the open card.
+    // The board re-renders from the appended `ck.relation.*` ops below —
+    // `columns` is a `use_memo` over `raw_operations`, folded by
+    // `overlay_local_card_assignment_records`, so there is no direct signal
+    // write.
+    let mut updated_card = current.clone();
+    apply_card_assignment_projection(
+        &mut updated_card,
+        &selected_actor_ids,
+        optimistic_relations.clone(),
+        CardState::Queued,
+    );
     selected_card.set(Some(updated_card));
 
     for mutation in &mutations {
@@ -347,7 +323,6 @@ pub(super) fn dispatch_card_assignees_update(
                         None,
                         Some(err_text.clone()),
                     );
-                    set_card_state_in_columns(&mut columns, &strand_id, CardState::SoftFailed);
                     let selected = selected_card.read().clone();
                     if let Some(mut card) = selected
                         && card.id == strand_id
@@ -361,7 +336,6 @@ pub(super) fn dispatch_card_assignees_update(
                 }
             }
         }
-        set_card_state_in_columns(&mut columns, &strand_id, CardState::Accepted);
         let selected = selected_card.read().clone();
         if let Some(mut card) = selected
             && card.id == strand_id

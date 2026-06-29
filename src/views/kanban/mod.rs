@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use crate::components::{
     EmptyState, EmptyStateKind, SecurityStateBadge, SelfAttributionBadge, UiIcon, WriteStateIcon,
 };
-use crate::local_state::{LocalStateStore, RawOperationRecord};
+use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::rank::rank_for_drop;
 use crate::routes::Route;
@@ -637,35 +637,55 @@ pub fn KanbanPanel(
             .map(|option| option.id.clone())
             .unwrap_or_default()
     });
-    // Event-sourced, local-first mount paint: render the board immediately from
-    // the persisted local op log (raw_operations) so a returning session shows
-    // its last-known board instantly with no network wait or empty flash; the
-    // bootstrap/live reconcile then refreshes it in the background. Computed
-    // ONCE here in the `use_signal` initializer (not on every render).
-    let mut columns = use_signal({
-        let seed_board_id = initial_board_space_id.clone();
-        let seed_realm_id = local_realm_id.clone();
-        move || {
-            let state = state_store.read().load();
-            if initial_columns.is_empty() {
-                let (cols, ..) =
-                    project_board(&state.raw_operations, &seed_board_id, &seed_realm_id, None);
-                cols
-            } else {
-                // Demo / seed-fallback columns: layer local optimistic ops on top.
-                let cols = overlay_local_card_create_records(
-                    initial_columns,
-                    &state.raw_operations,
-                    &seed_board_id,
-                );
-                let cols = overlay_local_card_update_records(cols, &state.raw_operations, None);
-                overlay_local_card_assignment_records(cols, &state.raw_operations)
-            }
-        }
-    });
     let mut board_space_options = use_signal(move || initial_board_options.clone());
     let mut selected_board_space_id = use_signal(move || initial_board_space_id.clone());
     let selected_board_space_id_selected = use_memo(move || Some(selected_board_space_id()));
+    // Opt-in trusted server materialization (`collection_projection` View path,
+    // `board_view_id` set manually via the Projection popover). When present it
+    // takes precedence over the event-sourced projection; `None` (the default)
+    // means the board derives purely from the local op log.
+    let mut collection_view_columns = use_signal(|| Option::<Vec<KanbanColumn>>::None);
+    // `columns` is a PURE derivation of the realm op log: it folds
+    // `raw_operations` (remote backfill / subscribe events + local optimistic
+    // ops) for the selected board via the single event-sourced `project_board`,
+    // re-decrypting with the live MLS context. Because it is a `use_memo`, any
+    // change to `raw_operations` (an appended optimistic op, an ingested
+    // cross-member event, a restored account secret) re-projects the board with
+    // no manual `columns.set` — there is exactly one projection path. The seed
+    // fallback (demo data) only applies when the op log is empty.
+    let columns = use_memo({
+        let seed_realm_id = local_realm_id.clone();
+        let decrypt_realm_id = selected_realm_id.clone();
+        let decrypt_actor = account_did.clone();
+        let decrypt_device = device_id.clone();
+        let seed_columns = initial_columns.clone();
+        move || {
+            if let Some(view_columns) = collection_view_columns()
+                && !view_columns.is_empty()
+            {
+                return view_columns;
+            }
+            let board_id = selected_board_space_id();
+            let decrypt_store = state_store.read();
+            let raw_operations = decrypt_store.load().raw_operations;
+            let decrypt_ctx = MlsDecryptCtx {
+                state_store: &decrypt_store,
+                realm_id: &decrypt_realm_id,
+                actor_id: &decrypt_actor,
+                device_id: &decrypt_device,
+            };
+            if raw_operations.is_empty() && !seed_columns.is_empty() {
+                // Demo / seed-fallback columns: layer local optimistic ops on top.
+                let cols =
+                    overlay_local_card_create_records(seed_columns.clone(), &raw_operations, &board_id);
+                let cols = overlay_local_card_update_records(cols, &raw_operations, Some(&decrypt_ctx));
+                return overlay_local_card_assignment_records(cols, &raw_operations);
+            }
+            let (cols, ..) =
+                project_board(&raw_operations, &board_id, &seed_realm_id, Some(&decrypt_ctx));
+            cols
+        }
+    });
     let mut board_view_id = use_signal(String::new);
     let mut lifecycle_container_projection =
         use_signal(Vec::<crate::api::SpaceContainerProjectionView>::new);
@@ -682,16 +702,6 @@ pub fn KanbanPanel(
     let mut new_card_title = use_signal(String::new);
     let mut adding_card_to = use_signal(|| Option::<String>::None);
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
-    // Synthesis history attribution (option B): the persisted `raw_operations`
-    // log is capped by `RAW_OPERATIONS_MAX` and never holds events this device
-    // synced before the cap or never received at all, so historical synthesis
-    // revisions lose their author and render "Unknown author". When a card's
-    // Synthesis tab is opened we backfill the realm event log, keep this
-    // strand's `ck.strand.update` events (each carries the authoritative
-    // per-event `actor_id` + encrypted body), and merge them into the synthesis
-    // builder so every revision is attributed to its true author.
-    let mut card_history_operations = use_signal(Vec::<RawOperationRecord>::new);
-    let mut card_history_fetched_for = use_signal(String::new);
     let mut mls_sidecar_restore_key_seen = use_signal(String::new);
     let mut board_popover = use_signal(BoardToolbarPopover::default);
     let mut editing_card_detail = use_signal(|| false);
@@ -756,6 +766,49 @@ pub fn KanbanPanel(
             .unwrap_or_else(|| short_protocol_id(&selected_board_space_id_value))
     };
 
+    // Single event-sourced derivation of the board's container-level state:
+    // the list/board lifecycle projections (consumed by child components +
+    // `projected_strand_ids`), the board-switcher options, and the resolved
+    // board selection — all folded from the same `raw_operations` log the
+    // `columns` memo reads. This REPLACES the scattered `lifecycle_*.set` /
+    // `board_space_options.set` / `selected_board_space_id.set` that the
+    // bootstrap / live / route reconcilers used to each perform; they now only
+    // fetch + ingest events into the op log. Comparisons use `peek()` so the
+    // effect subscribes ONLY to `raw_operations`, never to the signals it writes.
+    {
+        let realm = local_realm_id.clone();
+        use_effect(move || {
+            let raw_operations = state_store.read().load().raw_operations;
+            let containers = space_container_views_from_ops(&raw_operations, &realm);
+            let strands = strand_views_from_ops(&raw_operations);
+            let options = board_space_options_from_projection(&containers);
+            if *lifecycle_container_projection.peek() != containers {
+                lifecycle_container_projection.set(containers);
+            }
+            if *lifecycle_strand_projection.peek() != strands {
+                lifecycle_strand_projection.set(strands);
+            }
+            if !options.is_empty() && *board_space_options.peek() != options {
+                board_space_options.set(options.clone());
+            }
+            // Auto-select the first board only when nothing is selected yet
+            // (the route → selection effects below own explicit selection).
+            if selected_board_space_id.peek().trim().is_empty()
+                && let Some(first) = options.first()
+            {
+                selected_board_space_id.set(first.id.clone());
+            }
+        });
+    }
+
+    // Keep the open card-detail panel in sync with the derived board: when the
+    // `columns` memo re-projects (optimistic edit, cross-member event, restored
+    // secret), refresh `selected_card` from the matching card.
+    use_effect(move || {
+        let cols = columns();
+        sync_selected_card_from_columns(selected_card, &cols);
+    });
+
     {
         let routed_strand_id = route_card_strand_id(&route);
         use_effect(move || {
@@ -805,152 +858,95 @@ pub fn KanbanPanel(
         });
     }
 
-    // Synthesis history attribution (option B). When a card's Synthesis tab is
-    // active (viewing or editing), pull the realm event log and stash this
-    // strand's `ck.strand.update` events so the synthesis builder can attribute
-    // every historical revision to its real author instead of falling back to
-    // "Unknown author". Gated on the Synthesis tab so a plain card open never
-    // triggers a realm-wide backfill; single-flighted per strand via
-    // `card_history_fetched_for`.
-    {
-        let history_base = base_url.clone();
-        let history_token = token;
-        let history_realm_id = local_realm_id.clone();
-        use_effect(move || {
-            let open_strand = selected_card()
-                .map(|card| card.id.clone())
-                .unwrap_or_default();
-            let want_history = matches!(card_detail_tab(), CardDetailContentTab::Synthesis)
+    // Synthesis track projection (option B, event-sourced). The track is built
+    // by decrypting and replaying every `ck.strand.update` op for this strand
+    // from the LOCAL `raw_operations` log. Those ops are kept current by the
+    // per-realm events engine (`realm_events_engine` → `ingest_kanban_events`),
+    // which folds the full realm history — including each update's
+    // authoritative per-event `actor_id` — into the store. Historical revisions
+    // therefore recover their true author from local state, with NO per-tab
+    // realm backfill: opening the Synthesis tab no longer fetches the realm
+    // event log. Memoized so the (MLS-decrypting) replay runs only when its
+    // inputs change — `selected_card`, the active tab/edit scope, the local op
+    // log (`state_store`), or a fresh per-realm engine ingest
+    // (`realm_live_epoch`) — instead of on every KanbanPanel re-render.
+    let synthesis_entries_memo = {
+        let memo_realm_id = selected_realm_id.clone();
+        let memo_projection_realm_id = projection_realm_id.clone();
+        let memo_account_did = account_did.clone();
+        let memo_device_id = device_id.clone();
+        use_memo(move || {
+            let want_synthesis = matches!(card_detail_tab(), CardDetailContentTab::Synthesis)
                 || (editing_card_detail() && card_edit_scope() == CardEditScope::Synthesis);
-            if open_strand.trim().is_empty() || !want_history {
-                return;
+            let Some(card) = selected_card() else {
+                return Vec::<CardSynthesisTrackEntry>::new();
+            };
+            if !want_synthesis {
+                return Vec::new();
             }
-            if *card_history_fetched_for.peek() == open_strand {
-                return;
-            }
-            let realm_id = history_realm_id.clone();
-            if realm_id.trim().is_empty() {
-                return;
-            }
-            // Mark up-front so a re-render while the fetch is in flight does not
-            // spawn a second backfill for the same card.
-            card_history_fetched_for.set(open_strand.clone());
-            let base = history_base.clone();
-            let strand_id = open_strand;
-            spawn(async move {
-                // Reset the single-flight marker on every failure path so a
-                // transient backfill error doesn't pin this card to "Unknown
-                // author" for the rest of the session — the next re-render
-                // (tab toggle / reselect) retries. Only kept-as-fetched on
-                // success or when the user has already moved to another card.
-                let api_token = history_token();
-                if api_token.trim().is_empty() {
-                    card_history_fetched_for.set(String::new());
-                    return;
-                }
-                let realm_for_call = realm_id.clone();
-                let events = match with_authed_api(&base, api_token, |api| async move {
-                    api.backfill(&realm_for_call).await
-                })
-                .await
-                {
-                    Ok(response) => response.events,
-                    Err(_) => {
-                        if *card_history_fetched_for.peek() == strand_id {
-                            card_history_fetched_for.set(String::new());
-                        }
-                        return;
-                    }
-                };
-                // Drop the result if the user has since moved to another card.
-                if *card_history_fetched_for.peek() != strand_id {
-                    return;
-                }
-                let mut ops = strand_update_operations_from_events(&events);
-                ops.retain(|record| {
-                    raw_operation_strand_update_target_id(&record.payload).as_deref()
-                        == Some(strand_id.as_str())
-                });
-                card_history_operations.set(ops);
-            });
-        });
-    }
+            // Subscribe to per-realm engine ingests so a freshly-folded update
+            // re-projects the track even when the account `sync_cursor` is the
+            // (cross-member-lossy) path.
+            let _ = realm_live_epoch();
+            let store = state_store.read();
+            let snapshot = store.load();
+            let projection = snapshot.realm_tree_projections.get(&memo_realm_id);
+            let realm_context = member_roster_realm_context(
+                &memo_realm_id,
+                &memo_projection_realm_id,
+                projection,
+            );
+            let member_rows = realm_member_roster(projection);
+            let author_context = CardAuthorDisplayContext {
+                realm_id: &realm_context,
+                member_rows: &member_rows,
+            };
+            let decrypt_ctx = MlsDecryptCtx {
+                state_store: &store,
+                realm_id: &memo_realm_id,
+                actor_id: &memo_account_did,
+                device_id: &memo_device_id,
+            };
+            card_synthesis_track_entries_with_author_context_and_decrypt(
+                &card,
+                &snapshot.raw_operations,
+                &store,
+                Some(author_context),
+                Some(&decrypt_ctx),
+            )
+        })
+    };
 
-    // Route board → selection sync. The board id is authoritative when
-    // it is present in the URL (`/kanban/<realm>/board/<board>` and the
-    // `/task/<strand>` extension). This effect keeps
+    // Route board → selection sync. The board id is authoritative when it is
+    // present in the URL (`/kanban/<realm>/board/<board>` and the
+    // `/task/<strand>` extension). This effect only keeps
     // `selected_board_space_id` aligned with the route across in-app
-    // navigations (back/forward, arriving from another KanbanPanel) and
-    // re-projects the columns from the cached lifecycle snapshot so the
-    // matching board's lists/cards render without waiting for a refetch.
-    // The initial mount is already handled by seeding the signal from
-    // the route above; this effect covers later route changes.
+    // navigations (back/forward, arriving from another KanbanPanel); the
+    // `columns` memo re-projects the matching board automatically once the
+    // selection changes — no refetch, no `columns.set`.
     {
         let routed_board_id = route_board_id(&route);
-        let route_local_realm_id = local_realm_id.clone();
-        let decrypt_realm_id = selected_realm_id.clone();
-        let decrypt_actor = account_did.clone();
-        let decrypt_device = device_id.clone();
         use_effect(move || {
             let Some(board_id) = routed_board_id.clone() else {
                 return;
             };
-            if selected_board_space_id() == board_id {
-                return;
-            }
-            selected_board_space_id.set(board_id.clone());
-            // Single event-sourced projection over the local event log — no
-            // refetch, no separate cached snapshots. `project_board` folds
-            // containers + cards + updates + assignments from raw_operations.
-            let raw_operations = state_store.read().load().raw_operations;
-            if raw_operations.is_empty() {
-                return;
-            }
-            let decrypt_store = state_store.read();
-            let decrypt_ctx = MlsDecryptCtx {
-                state_store: &decrypt_store,
-                realm_id: &decrypt_realm_id,
-                actor_id: &decrypt_actor,
-                device_id: &decrypt_device,
-            };
-            let (projected_columns, options, projected_board_id) =
-                project_board(&raw_operations, &board_id, &route_local_realm_id, Some(&decrypt_ctx));
-            drop(decrypt_store);
-            if projected_board_id.as_deref() == Some(board_id.as_str()) {
-                if !options.is_empty() {
-                    board_space_options.set(options);
-                }
-                if columns() != projected_columns {
-                    columns.set(projected_columns);
-                }
-                projection_source.set(BoardProjectionSource::ApiDerived);
+            if selected_board_space_id() != board_id {
+                selected_board_space_id.set(board_id);
             }
         });
     }
 
-    // Route → board reconciler. When the URL points at a card-detail
-    // page (`/kanban/<realm>/task/<strand>`) and the card's home board
-    // is NOT the currently-selected board, switch the board and
-    // re-project the columns from the cached lifecycle snapshot. This
-    // handles the case where the user arrives at the card-detail URL
-    // via a fresh KanbanPanel mount (e.g. coming from `/spaces/<realm>`
-    // Board tab where a different KanbanPanel instance held the
-    // previous selection) — the bootstrap fetch may have already
-    // picked `board_options.first()` before this reconciler runs, so
-    // we override here whenever the URL's task_id resolves to a known
-    // strand with a different `board_space_id`.
+    // Route → board reconciler. When the URL points at a card-detail page
+    // (`/kanban/<realm>/task/<strand>`) and the card's home board is NOT the
+    // currently-selected board, switch the selection to the card's home board
+    // (resolved from the event-folded strands). The `columns` memo then
+    // re-projects that board; this only owns the selection, not the columns.
     {
         let routed_strand_id = route_card_strand_id(&route);
-        let route_local_realm_id = local_realm_id.clone();
-        let decrypt_realm_id = selected_realm_id.clone();
-        let decrypt_actor = account_did.clone();
-        let decrypt_device = device_id.clone();
         use_effect(move || {
             let Some(strand_id) = routed_strand_id.clone() else {
                 return;
             };
-            // Resolve the card's home board from the event-folded strands, then
-            // reproject that board via the single event-sourced `project_board`.
             let raw_operations = state_store.read().load().raw_operations;
             let Some(strand_board) = strand_views_from_ops(&raw_operations)
                 .into_iter()
@@ -959,31 +955,8 @@ pub fn KanbanPanel(
             else {
                 return;
             };
-            if selected_board_space_id() == strand_board {
-                return;
-            }
-            let decrypt_store = state_store.read();
-            let decrypt_ctx = MlsDecryptCtx {
-                state_store: &decrypt_store,
-                realm_id: &decrypt_realm_id,
-                actor_id: &decrypt_actor,
-                device_id: &decrypt_device,
-            };
-            let (projected_columns, options, projected_board_id) = project_board(
-                &raw_operations,
-                &strand_board,
-                &route_local_realm_id,
-                Some(&decrypt_ctx),
-            );
-            drop(decrypt_store);
-            if let Some(board_id) = projected_board_id {
-                if !options.is_empty() {
-                    board_space_options.set(options);
-                }
-                selected_board_space_id.set(board_id);
-                if columns() != projected_columns {
-                    columns.set(projected_columns);
-                }
+            if selected_board_space_id() != strand_board {
+                selected_board_space_id.set(strand_board);
             }
         });
     }
@@ -1070,7 +1043,10 @@ pub fn KanbanPanel(
                         )
                     };
                     if !cols.is_empty() {
-                        columns.set(cols);
+                        // Opt-in trusted server materialization: hand the
+                        // overlaid View columns to the `columns` memo, which
+                        // prefers them over the event-sourced projection.
+                        collection_view_columns.set(Some(cols));
                     }
                     projection_source.set(BoardProjectionSource::ApiDerived);
                     board_status.set(format!(
@@ -1175,11 +1151,11 @@ pub fn KanbanPanel(
                             Some(&decrypt_ctx),
                         )
                     };
-                    // Only overwrite when the server actually returned a
-                    // non-empty projection — an empty response shouldn't wipe
-                    // a locally-queued optimistic move.
-                    if !cols.is_empty() && cols != columns() {
-                        columns.set(cols);
+                    // Opt-in trusted server materialization. Only overwrite when
+                    // the server returned a non-empty projection — an empty
+                    // response shouldn't wipe the event-sourced board.
+                    if !cols.is_empty() {
+                        collection_view_columns.set(Some(cols));
                         projection_source.set(BoardProjectionSource::ApiDerived);
                     }
                 }
@@ -1191,8 +1167,11 @@ pub fn KanbanPanel(
                 // another member's card content (title in `encrypted_metadata`,
                 // unreadable to the server). Pull the durable event log — the
                 // only source carrying every member's space/strand creates —
-                // fold it into `raw_operations`, then reproject the board purely
-                // from events. This is what makes cross-member cards appear.
+                // and fold it into `raw_operations`. The `columns` memo + the
+                // container/selection sync effect re-project the board purely
+                // from events; this branch ONLY ingests. This is what makes
+                // cross-member cards appear.
+                collection_view_columns.set(None);
                 let events_res = {
                     let realm_id = lifecycle_realm_id.clone();
                     with_authed_api(&base, api_token, |api| async move {
@@ -1208,68 +1187,12 @@ pub fn KanbanPanel(
                     return;
                 }
                 if let Ok(backfill) = events_res {
-                    {
-                        let mut store = state_store.write();
-                        crate::sync_engine::ingest_kanban_events(
-                            &mut store,
-                            &lifecycle_local_realm_id,
-                            &backfill.events,
-                        );
-                    }
-                    let raw_operations = state_store.read().load().raw_operations;
-                    let container_items =
-                        space_container_views_from_ops(&raw_operations, &lifecycle_local_realm_id);
-                    let strand_items = strand_views_from_ops(&raw_operations);
-                    lifecycle_container_projection.set(container_items.clone());
-                    lifecycle_strand_projection.set(strand_items.clone());
-                    let current_board = selected_board_space_id();
-                    let decrypt_store = state_store.read();
-                    let decrypt_ctx = MlsDecryptCtx {
-                        state_store: &decrypt_store,
-                        realm_id: &decrypt_realm_id,
-                        actor_id: &decrypt_actor,
-                        device_id: &decrypt_device,
-                    };
-                    let (projected_columns, options, projected_board_id) =
-                        columns_from_lifecycle_projection_with_local(
-                            &container_items,
-                            &strand_items,
-                            &current_board,
-                            &raw_operations,
-                            &lifecycle_local_realm_id,
-                            Some(&decrypt_ctx),
-                        );
-                    if let Some(board_id) = projected_board_id {
-                        if !options.is_empty() && board_space_options() != options {
-                            board_space_options.set(options);
-                        }
-                        if current_board.trim().is_empty() {
-                            selected_board_space_id.set(board_id.clone());
-                        }
-                        // Content updates / assignments fold from raw_operations
-                        // (already ingested above); no separate remote op list.
-                        let projected_columns = overlay_card_projection_with_operations_and_decrypt(
-                            projected_columns,
-                            &decrypt_store,
-                            &board_id,
-                            &[],
-                            Some(&decrypt_ctx),
-                        );
-                        drop(decrypt_store);
-                        if columns() != projected_columns {
-                            let list_count = projected_columns.len();
-                            let card_count = projected_columns
-                                .iter()
-                                .map(|column| column.cards.len())
-                                .sum::<usize>();
-                            columns.set(projected_columns.clone());
-                            sync_selected_card_from_columns(selected_card, &projected_columns);
-                            projection_source.set(BoardProjectionSource::ApiDerived);
-                            board_status.set(format!(
-                                "Board refreshed: {list_count} list(s), {card_count} card(s)"
-                            ));
-                        }
-                    }
+                    let mut store = state_store.write();
+                    crate::sync_engine::ingest_kanban_events(
+                        &mut store,
+                        &lifecycle_local_realm_id,
+                        &backfill.events,
+                    );
                 }
             }
         });
@@ -1382,40 +1305,14 @@ pub fn KanbanPanel(
                         report.private_plaintext_restored || report.restored > 0
                     };
 
-                    // Fold the freshly backfilled events into the op log, then
-                    // reproject with decrypt context now that the restored
-                    // account-private sidecar can unlock previously-locked
-                    // body/synthesis fields — single event-sourced `project_board`.
+                    // Fold the freshly backfilled events into the op log. The
+                    // restore also wrote the account-private plaintext sidecar
+                    // into `state_store`, so the `columns` memo re-projects with
+                    // the now-unlockable decrypt context automatically — no
+                    // explicit reproject here.
                     {
                         let mut store = state_store.write();
                         crate::sync_engine::ingest_kanban_events(&mut store, &local_realm_id, &events);
-                    }
-                    let current_board = selected_board_space_id();
-                    let raw_operations = state_store.read().load().raw_operations;
-                    let decrypt_store = state_store.read();
-                    let decrypt_ctx = MlsDecryptCtx {
-                        state_store: &decrypt_store,
-                        realm_id: &realm_id,
-                        actor_id: &actor,
-                        device_id: &device,
-                    };
-                    let (projected_columns, options, projected_board_id) =
-                        project_board(&raw_operations, &current_board, &local_realm_id, Some(&decrypt_ctx));
-                    drop(decrypt_store);
-                    if let Some(board_id) = projected_board_id
-                        && selected_board_space_id() != board_id
-                    {
-                        selected_board_space_id.set(board_id);
-                    }
-                    if !options.is_empty() && board_space_options() != options {
-                        board_space_options.set(options);
-                    }
-                    if !projected_columns.is_empty() && columns() != projected_columns {
-                        columns.set(projected_columns.clone());
-                        sync_selected_card_from_columns(selected_card, &projected_columns);
-                        projection_source.set(BoardProjectionSource::ApiDerived);
-                    } else {
-                        sync_selected_card_from_columns(selected_card, &projected_columns);
                     }
                     let card_unlocked = selected_card()
                         .is_some_and(|card| !card.body_locked && !card.synthesis_locked);
@@ -1436,23 +1333,14 @@ pub fn KanbanPanel(
     let mut lifecycle_bootstrapped_for = use_signal(String::new);
     let lifecycle_realm_id = local_realm_id.clone();
     // When the kanban panel mounts on a card-detail URL
-    // (`/kanban/<realm>/task/<strand>`), the user typically came from a
-    // different shell (e.g. `/spaces/<realm>` with the Board tab open)
-    // and the freshly-mounted panel has no `selected_board_space_id`
-    // yet. Without a hint, `columns_from_lifecycle_projection` falls
-    // back to `board_options.first()`, which may not be the board that
-    // actually contains the card. Capture the routed strand id so the
-    // lifecycle fetch below can resolve the card's home board.
-    let lifecycle_routed_strand_id = route_card_strand_id(&route);
+    // (`/kanban/<realm>/task/<strand>`), the card's home board is resolved
+    // by the route → board reconciler effect above (from the event-folded
+    // strands); this cold-start spawn only needs to ingest the durable log.
     if !lifecycle_realm_id.is_empty() && lifecycle_bootstrapped_for() != lifecycle_realm_id {
         lifecycle_bootstrapped_for.set(lifecycle_realm_id.clone());
         let base = base_url.clone();
         let lifecycle_token = token;
-        let lifecycle_routed_strand_id = lifecycle_routed_strand_id.clone();
         let lifecycle_local_realm_id = local_realm_id.clone();
-        let decrypt_realm_id = selected_realm_id.clone();
-        let decrypt_actor = account_did.clone();
-        let decrypt_device = device_id.clone();
         spawn(async move {
             let realm_id = lifecycle_realm_id.clone();
             let api_token = lifecycle_token();
@@ -1473,121 +1361,20 @@ pub fn KanbanPanel(
             {
                 return;
             }
-            let mut applied = 0_usize;
-            let mut server_projection_applied = false;
             if let Ok(backfill) = events_res {
                 // Event-sourced cold start (spec
                 // `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`):
-                // fold the durable event log into `raw_operations` and project
-                // the board purely from events, mirroring the live reconcile.
-                // The per-session server strand/space projection endpoints are
-                // dropped as content sources — they cannot carry another
-                // member's encrypted card content.
-                {
-                    let mut store = state_store.write();
-                    crate::sync_engine::ingest_kanban_events(
-                        &mut store,
-                        &lifecycle_local_realm_id,
-                        &backfill.events,
-                    );
-                }
-                let raw_operations = state_store.read().load().raw_operations;
-                let container_items =
-                    space_container_views_from_ops(&raw_operations, &lifecycle_local_realm_id);
-                let strand_items = strand_views_from_ops(&raw_operations);
-                lifecycle_container_projection.set(container_items.clone());
-                lifecycle_strand_projection.set(strand_items.clone());
-                let current_board = selected_board_space_id();
-                // If the user landed on a card-detail URL and no board
-                // is selected yet, resolve the card's home board from
-                // the just-fetched strand projection so the matching
-                // board is loaded (instead of `board_options.first()`).
-                let current_board = if current_board.trim().is_empty() {
-                    lifecycle_routed_strand_id
-                        .as_deref()
-                        .and_then(|strand_id| {
-                            strand_items
-                                .iter()
-                                .find(|f| f.strand_id == strand_id)
-                                .and_then(|f| f.board_space_id.clone())
-                        })
-                        .unwrap_or(current_board)
-                } else {
-                    current_board
-                };
-                let decrypt_store = state_store.read();
-                let decrypt_ctx = MlsDecryptCtx {
-                    state_store: &decrypt_store,
-                    realm_id: &decrypt_realm_id,
-                    actor_id: &decrypt_actor,
-                    device_id: &decrypt_device,
-                };
-                let (projected_columns, options, projected_board_id) =
-                    columns_from_lifecycle_projection_with_local(
-                        &container_items,
-                        &strand_items,
-                        &current_board,
-                        &raw_operations,
-                        &lifecycle_local_realm_id,
-                        Some(&decrypt_ctx),
-                    );
-                if let Some(board_id) = projected_board_id {
-                    if !options.is_empty() {
-                        board_space_options.set(options);
-                    }
-                    let board_id_for_overlay = board_id.clone();
-                    selected_board_space_id.set(board_id);
-                    let projected_columns = overlay_card_projection_with_operations_and_decrypt(
-                        projected_columns,
-                        &decrypt_store,
-                        &board_id_for_overlay,
-                        &[],
-                        Some(&decrypt_ctx),
-                    );
-                    drop(decrypt_store);
-                    let list_count = projected_columns.len();
-                    let card_count = projected_columns
-                        .iter()
-                        .map(|column| column.cards.len())
-                        .sum::<usize>();
-                    if columns() != projected_columns {
-                        columns.set(projected_columns.clone());
-                        sync_selected_card_from_columns(selected_card, &projected_columns);
-                        applied += list_count.max(1);
-                    }
-                    projection_source.set(BoardProjectionSource::ApiDerived);
-                    server_projection_applied = true;
-                    board_status.set(format!(
-                        "Board loaded: {list_count} list(s), {card_count} card(s)"
-                    ));
-                } else {
-                    let mut cols = columns.write();
-                    for view in &container_items {
-                        if let Some(col) = cols.iter_mut().find(|c| c.id == view.space_id) {
-                            let new_state = space_container_state_from_wire(&view.state);
-                            if col.state != new_state {
-                                col.state = new_state;
-                                applied += 1;
-                            }
-                        }
-                    }
-                    for view in &strand_items {
-                        for col in cols.iter_mut() {
-                            if let Some(card) =
-                                col.cards.iter_mut().find(|c| c.id == view.strand_id)
-                            {
-                                let new_lifecycle = strand_lifecycle_from_wire(&view.state);
-                                if card.lifecycle != new_lifecycle {
-                                    card.lifecycle = new_lifecycle;
-                                    applied += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if applied > 0 && !server_projection_applied {
-                board_status.set(format!("Board refreshed: {applied} item(s) reconciled"));
+                // fold the durable event log into `raw_operations`. The `columns`
+                // memo + the container/selection sync effect re-project the board
+                // purely from events; this spawn ONLY ingests. The per-session
+                // server strand/space projection endpoints are dropped as content
+                // sources — they cannot carry another member's encrypted content.
+                let mut store = state_store.write();
+                crate::sync_engine::ingest_kanban_events(
+                    &mut store,
+                    &lifecycle_local_realm_id,
+                    &backfill.events,
+                );
             }
         });
     }
@@ -1776,9 +1563,6 @@ pub fn KanbanPanel(
                             class: if board_popover() == BoardToolbarPopover::SelectBoard { "board-select-menu-host is-open" } else { "board-select-menu-host" },
                             {
                                 let board_route_realm_id_for_select = board_route_realm_id.clone();
-                                let local_realm_id_for_select = local_realm_id.clone();
-                                let account_did_for_select = account_did.clone();
-                                let device_id_for_select = device_id.clone();
                                 rsx! {
                                     Select::<String> {
                                         class: "board-select-native",
@@ -1792,17 +1576,8 @@ pub fn KanbanPanel(
                                                     board_popover,
                                                     selected_card,
                                                     board_route_realm_id_for_select.clone(),
-                                                    local_realm_id_for_select.clone(),
-                                                    lifecycle_container_projection,
-                                                    lifecycle_strand_projection,
-                                                    columns,
                                                     adding_card_to,
                                                     board_status,
-                                                    board_space_options,
-                                                    projection_source,
-                                                    state_store,
-                                                    account_did_for_select.clone(),
-                                                    device_id_for_select.clone(),
                                                 );
                                             }
                                         },
@@ -1849,9 +1624,6 @@ pub fn KanbanPanel(
                                     "aria-label": "Boards",
                                     {
                                         let board_route_realm_id_for_empty = board_route_realm_id.clone();
-                                        let local_realm_id_for_empty = local_realm_id.clone();
-                                        let account_did_for_empty = account_did.clone();
-                                        let device_id_for_empty = device_id.clone();
                                         rsx! {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
@@ -1865,17 +1637,8 @@ pub fn KanbanPanel(
                                                         board_popover,
                                                         selected_card,
                                                         board_route_realm_id_for_empty.clone(),
-                                                        local_realm_id_for_empty.clone(),
-                                                        lifecycle_container_projection,
-                                                        lifecycle_strand_projection,
-                                                        columns,
                                                         adding_card_to,
                                                         board_status,
-                                                        board_space_options,
-                                                        projection_source,
-                                                        state_store,
-                                                        account_did_for_empty.clone(),
-                                                        device_id_for_empty.clone(),
                                                     );
                                                 },
                                                 UiIcon { name: "board" }
@@ -1889,9 +1652,6 @@ pub fn KanbanPanel(
                                             let option_title = board_option.title.clone();
                                             let option_is_active = selected_board_space_id() == option_id;
                                             let board_route_realm_id_for_option = board_route_realm_id.clone();
-                                            let local_realm_id_for_option = local_realm_id.clone();
-                                            let account_did_for_option = account_did.clone();
-                                            let device_id_for_option = device_id.clone();
                                             rsx! {
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
@@ -1901,8 +1661,6 @@ pub fn KanbanPanel(
                                                     title: "{option_title}",
                                                     onclick: {
                                                         let option_id = option_id.clone();
-                                                        let account_did_for_option = account_did_for_option.clone();
-                                                        let device_id_for_option = device_id_for_option.clone();
                                                         move |_| {
                                                             select_kanban_board(
                                                                 option_id.clone(),
@@ -1910,17 +1668,8 @@ pub fn KanbanPanel(
                                                                 board_popover,
                                                                 selected_card,
                                                                 board_route_realm_id_for_option.clone(),
-                                                                local_realm_id_for_option.clone(),
-                                                                lifecycle_container_projection,
-                                                                lifecycle_strand_projection,
-                                                                columns,
                                                                 adding_card_to,
                                                                 board_status,
-                                                                board_space_options,
-                                                                projection_source,
-                                                                state_store,
-                                                                account_did_for_option.clone(),
-                                                                device_id_for_option.clone(),
                                                             );
                                                         }
                                                     },
@@ -2000,13 +1749,8 @@ pub fn KanbanPanel(
                                                 board_status.set(reason);
                                                 return;
                                             }
-                                            columns.write().push(KanbanColumn {
-                                                id: list_space_id.clone(),
-                                                title: title.clone(),
-                                                rank: rank.clone(),
-                                                cards: Vec::new(),
-                                                state: SpaceContainerLifecycleState::Active,
-                                            });
+                                            // The new list appears immediately: `submit_kanban_operation_event`
+                                            // appends the `ck.space.create` op, which the `columns` memo folds.
                                             submit_kanban_operation_event(
                                                 base.clone(),
                                                 token,
@@ -2045,7 +1789,7 @@ pub fn KanbanPanel(
                                             realm.clone(),
                                             actor.clone(),
                                             selected_board_space_id(),
-                                            columns,
+                                            state_store,
                                             board_status,
                                         );
                                     }
@@ -2128,13 +1872,10 @@ pub fn KanbanPanel(
                                                     board_status.set(reason);
                                                     return;
                                                 }
-                                                board_space_options.write().push(BoardSpaceOption {
-                                                    id: board_space_id.clone(),
-                                                    title: title.clone(),
-                                                    state: SpaceContainerLifecycleState::Active,
-                                                });
+                                                // Select the new board now; its option + (empty) columns
+                                                // derive from the appended `ck.space.create` op via the
+                                                // options-sync effect and the `columns` memo.
                                                 selected_board_space_id.set(board_space_id.clone());
-                                                columns.set(Vec::new());
                                                 adding_card_to.set(None);
                                                 submit_kanban_operation_event(
                                                     base.clone(),
@@ -2254,7 +1995,7 @@ pub fn KanbanPanel(
                                                                 )
                                                             };
                                                             if !cols.is_empty() {
-                                                                columns.set(cols);
+                                                                collection_view_columns.set(Some(cols));
                                                             }
                                                             projection_source.set(BoardProjectionSource::ApiDerived);
                                                             board_status.set(format!(
@@ -2270,7 +2011,7 @@ pub fn KanbanPanel(
                                                                     &state_store.read(),
                                                                     &selected_board_space_id(),
                                                                 );
-                                                                columns.set(cols);
+                                                                collection_view_columns.set(Some(cols));
                                                                 projection_source.set(BoardProjectionSource::SeedFallback);
                                                                 board_status.set(format!(
                                                                     "Board data unavailable: {}; showing sample fallback",
@@ -2498,7 +2239,6 @@ pub fn KanbanPanel(
                                     dragged,
                                     target_column_id.clone(),
                                     neighbours,
-                                    columns,
                                     state_store,
                                     write_records,
                                     board_status,
@@ -2530,17 +2270,18 @@ pub fn KanbanPanel(
                                         return;
                                     };
                                     dragging_column.set(None);
+                                    // Compute the new column order off a read-only snapshot, then
+                                    // submit the per-column `ck.space.update` rank patches. Each
+                                    // appended op folds into the `columns` memo via the space-update
+                                    // reducer, so the reorder renders without a direct signal write.
                                     let reordered_columns = {
-                                        let mut cols = columns.write();
-                                        if reorder_column_before(
+                                        let mut cols = columns();
+                                        reorder_column_before(
                                             &mut cols,
                                             &dragged.column_id,
                                             &target_column_id,
-                                        ) {
-                                            Some(cols.clone())
-                                        } else {
-                                            None
-                                        }
+                                        )
+                                        .then_some(cols)
                                     };
                                     if let Some(reordered_columns) = reordered_columns {
                                         submit_column_order_updates(
@@ -2667,7 +2408,6 @@ pub fn KanbanPanel(
                                             dragged,
                                             target_column_id.clone(),
                                             neighbours,
-                                            columns,
                                             state_store,
                                             write_records,
                                             board_status,
@@ -2851,7 +2591,7 @@ pub fn KanbanPanel(
                                                             actor.clone(),
                                                             strand_id.clone(),
                                                             StrandLifecycleState::Archived,
-                                                            columns,
+                                                            state_store,
                                                             board_status,
                                                         );
                                                     }
@@ -2943,16 +2683,9 @@ pub fn KanbanPanel(
                                                     None,
                                                 )
                                                 .unwrap_or_else(|_| "U".to_owned());
-                                                let card = local_created_card(
-                                                    strand_id.clone(),
-                                                    title.clone(),
-                                                    rank.clone(),
-                                                    String::new(),
-                                                    CardState::Queued,
-                                                );
-                                                if let Some(col) = columns.write().iter_mut().find(|c| c.id == col_id) {
-                                                    col.cards.push(card);
-                                                }
+                                                // The new card appears immediately: `submit_kanban_move`
+                                                // appends the `ck.strand.create` op (write_state queued),
+                                                // which the `columns` memo folds via `strand_views_from_ops`.
                                                 let value = json!({
                                                     "strand_id": strand_id,
                                                     "board_space_id": board_space_id,
@@ -2970,7 +2703,6 @@ pub fn KanbanPanel(
                                                     "ck.strand.create",
                                                     value,
                                                     selected_scope_security_encrypted,
-                                                    columns,
                                                     state_store,
                                                     write_records,
                                                     board_status,
@@ -3042,7 +2774,7 @@ pub fn KanbanPanel(
                                                 actor.clone(),
                                                 space_container_id.clone(),
                                                 SpaceContainerLifecycleState::Archived,
-                                                columns,
+                                                state_store,
                                                 board_status,
                                             );
                                         }
@@ -3121,7 +2853,7 @@ pub fn KanbanPanel(
                                                                 actor.clone(),
                                                                 space_container_id.clone(),
                                                                 SpaceContainerLifecycleState::Active,
-                                                                columns,
+                                                                state_store,
                                                                 board_status,
                                                             );
                                                         }
@@ -3227,7 +2959,7 @@ pub fn KanbanPanel(
                                                                 actor.clone(),
                                                                 strand_id.clone(),
                                                                 StrandLifecycleState::Active,
-                                                                columns,
+                                                                state_store,
                                                                 board_status,
                                                             );
                                                         }
@@ -3332,49 +3064,10 @@ pub fn KanbanPanel(
                         "card-detail-action-menu"
                     };
                     let summary_text = card_summary_text(&card.description);
-                    let synthesis_entries_needed = active_detail_tab
-                        == CardDetailContentTab::Synthesis
-                        || (editing_card_detail() && card_edit_scope() == CardEditScope::Synthesis);
-                    let synthesis_entries = if synthesis_entries_needed {
-                        let store = state_store.read();
-                        let snapshot = store.load();
-                        // Merge the freshly-backfilled strand event history with
-                        // the persisted (capped) raw-operation log so historical
-                        // revisions recover their true author. History wins on
-                        // `operation_id` collisions; local-only queued ops are
-                        // kept for optimistic in-flight edits.
-                        let history_ops = card_history_operations.read();
-                        let merged_operations = merge_history_raw_operations(
-                            &snapshot.raw_operations,
-                            history_ops.as_slice(),
-                        );
-                        let projection = snapshot.realm_tree_projections.get(&selected_realm_id);
-                        let realm_context = member_roster_realm_context(
-                            &selected_realm_id,
-                            &projection_realm_id,
-                            projection,
-                        );
-                        let member_rows = realm_member_roster(projection);
-                        let author_context = CardAuthorDisplayContext {
-                            realm_id: &realm_context,
-                            member_rows: &member_rows,
-                        };
-                        let decrypt_ctx = MlsDecryptCtx {
-                            state_store: &store,
-                            realm_id: &selected_realm_id,
-                            actor_id: &account_did,
-                            device_id: &device_id,
-                        };
-                        card_synthesis_track_entries_with_author_context_and_decrypt(
-                            card,
-                            &merged_operations,
-                            &store,
-                            Some(author_context),
-                            Some(&decrypt_ctx),
-                        )
-                    } else {
-                        Vec::<CardSynthesisTrackEntry>::new()
-                    };
+                    // Decrypt + replay is memoized at the component top level
+                    // (`synthesis_entries_memo`) so it runs only when its inputs
+                    // change, not on every re-render. Read the cached track here.
+                    let synthesis_entries = synthesis_entries_memo();
                     let overlay_navigator = navigator;
                     let overlay_board_route = board_route_after_close.clone();
                     let close_navigator = navigator;
@@ -3629,7 +3322,7 @@ pub fn KanbanPanel(
                                                                                 actor.clone(),
                                                                                 strand_id.clone(),
                                                                                 target,
-                                                                                columns,
+                                                                                state_store,
                                                                                 board_status,
                                                                             );
                                                                             selected_card.set(None);
@@ -3772,7 +3465,6 @@ pub fn KanbanPanel(
                                                                         editing_card_detail,
                                                                         card_detail_actions_open,
                                                                         card_detail_edit_status,
-                                                                        columns,
                                                                         selected_card,
                                                                         state_store,
                                                                         board_status,
@@ -3912,7 +3604,6 @@ pub fn KanbanPanel(
                                                                                 editing_card_detail,
                                                                                 card_detail_actions_open,
                                                                                 card_detail_edit_status,
-                                                                                columns,
                                                                                 selected_card,
                                                                                 state_store,
                                                                                 board_status,
@@ -4287,7 +3978,6 @@ pub fn KanbanPanel(
                                                                                                         editing_card_detail,
                                                                                                         card_detail_actions_open,
                                                                                                         card_detail_edit_status,
-                                                                                                        columns,
                                                                                                         selected_card,
                                                                                                         state_store,
                                                                                                         board_status,
@@ -4376,7 +4066,6 @@ pub fn KanbanPanel(
                                                                                 editing_card_detail,
                                                                                 card_detail_actions_open,
                                                                                 card_detail_edit_status,
-                                                                                columns,
                                                                                 selected_card,
                                                                                 state_store,
                                                                                 board_status,
@@ -4688,7 +4377,6 @@ pub fn KanbanPanel(
                                                                                                     current_card.clone(),
                                                                                                     BTreeSet::new(),
                                                                                                     assignee_labels.clone(),
-                                                                                                    columns,
                                                                                                     selected_card,
                                                                                                     state_store,
                                                                                                     board_status,
@@ -4809,7 +4497,6 @@ pub fn KanbanPanel(
                                                                                                         current_card.clone(),
                                                                                                         assignee_selected_actor_ids(),
                                                                                                         assignee_labels.clone(),
-                                                                                                        columns,
                                                                                                         selected_card,
                                                                                                         state_store,
                                                                                                         board_status,
@@ -4898,7 +4585,6 @@ pub fn KanbanPanel(
                                                                                                         selected_scope_security_encrypted,
                                                                                                         due_picker_open,
                                                                                                         due_edit_status,
-                                                                                                        columns,
                                                                                                         selected_card,
                                                                                                         state_store,
                                                                                                         board_status,
@@ -5076,7 +4762,6 @@ pub fn KanbanPanel(
                                                                                                                 selected_scope_security_encrypted,
                                                                                                                 due_picker_open,
                                                                                                                 due_edit_status,
-                                                                                                                columns,
                                                                                                                 selected_card,
                                                                                                                 state_store,
                                                                                                                 board_status,
@@ -5133,7 +4818,6 @@ pub fn KanbanPanel(
                                                                                                         editing_card_detail,
                                                                                                         card_detail_actions_open,
                                                                                                         card_detail_edit_status,
-                                                                                                        columns,
                                                                                                         selected_card,
                                                                                                         state_store,
                                                                                                         board_status,

@@ -31,7 +31,7 @@ pub struct LifecycleProjectionView<T> {
 ///
 /// Soland serves these rows from
 /// `GET /_cokret/self/realms/{realm_id}/spaces`.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct SpaceContainerProjectionView {
     pub space_id: String,
     pub realm_id: String,
@@ -49,7 +49,7 @@ pub struct SpaceContainerProjectionView {
 }
 
 /// Server-side Strand row from `GET /_cokret/self/realms/{realm_id}/strands`.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct StrandProjectionView {
     pub strand_id: String,
     pub realm_id: String,
@@ -85,7 +85,7 @@ pub struct StrandProjectionView {
     pub updated_at: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct AssignedToRelationProjectionView {
     pub relation_id: String,
     pub actor_id: String,

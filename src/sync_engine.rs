@@ -1149,6 +1149,10 @@ pub fn apply_response(
                 store.set_realm_seal_view(id.clone(), view);
                 store.ingest_move_event_states(id, body);
                 ingest_kanban_state_events_from_projection(store, id, body);
+                // Fold the discussion timeline into `raw_operations` too so the
+                // card-detail Discussion tab renders local-first instead of
+                // refetching + redecrypting the realm on every open.
+                ingest_message_events_from_projection(store, id, body);
                 // R3.1 MID-2 — harvest inlined `ck.member.identity.update`
                 // event envelopes off the `members[]` roster entries. The
                 // SDK's effective-set filter is applied lazily when a UI
@@ -1355,6 +1359,53 @@ fn ingest_kanban_state_events_from_projection(
 ) -> usize {
     let events = sync_realm_state_events(body);
     ingest_kanban_events(store, realm_id, &events)
+}
+
+/// Discussion message events ride a SEPARATE projection array from the kanban
+/// state log: `timeline.events[]` (see `chat_messages_from_sync_realms_*`).
+fn sync_realm_timeline_events(body: &Value) -> Vec<Value> {
+    body.get("timeline")
+        .and_then(|timeline| timeline.get("events"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Fold the realm's discussion timeline into the shared `raw_operations` log so
+/// the Discussion tab projects local-first — no per-open realm backfill /
+/// redecrypt — mirroring [`ingest_kanban_state_events_from_projection`].
+/// Returns the number of newly inserted / changed records. Stores only
+/// ciphertext envelopes / tombstones (never decrypted plaintext); dedup is by
+/// the message event id via `upsert_raw_operation`.
+fn ingest_message_events_from_projection(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    body: &Value,
+) -> usize {
+    ingest_message_events(store, realm_id, &sync_realm_timeline_events(body))
+}
+
+/// Fold a batch of discussion message events into `raw_operations`. Shared by
+/// the account-aggregate sync path (above) and the per-realm `events/subscribe`
+/// engine ([`crate::realm_events_engine`]) — a cross-member message that the
+/// account stream never routed (unroutable delivery binding) still lands
+/// locally through the realm stream — both deduping via the message event id.
+pub(crate) fn ingest_message_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[Value],
+) -> usize {
+    if events.is_empty() {
+        return 0;
+    }
+    let records = crate::views::chat::message_operations_from_events(realm_id, events);
+    let mut changed = 0;
+    for record in records {
+        if store.upsert_raw_operation(record.operation_id, record.realm_id, record.payload) {
+            changed += 1;
+        }
+    }
+    changed
 }
 
 /// Fold a batch of realm events into the local kanban `raw_operations` overlay,

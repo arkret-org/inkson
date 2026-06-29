@@ -248,7 +248,14 @@ async fn run_realm_iteration(
         let changed = {
             let mut state_store = ctx.state_store;
             let mut guard = state_store.write();
-            crate::sync_engine::ingest_kanban_events(&mut guard, realm_id, &event_payloads)
+            // Fold both the kanban board ops and the discussion message events
+            // this realm stream carries — a cross-member message the account
+            // stream never routed (unroutable) still lands locally here.
+            let kanban_changed =
+                crate::sync_engine::ingest_kanban_events(&mut guard, realm_id, &event_payloads);
+            let message_changed =
+                crate::sync_engine::ingest_message_events(&mut guard, realm_id, &event_payloads);
+            kanban_changed + message_changed
         };
         if changed > 0 {
             let mut realm_live_epoch = ctx.realm_live_epoch;

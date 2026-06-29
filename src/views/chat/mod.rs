@@ -33,6 +33,11 @@ mod render;
 use model::*;
 use render::*;
 
+// Re-exported for the sync engine so the account-aggregate stream folds
+// discussion message events into the shared `raw_operations` log (local-first
+// feed), mirroring `kanban::kanban_operations_from_events`.
+pub(crate) use model::message_operations_from_events;
+
 fn moderation_prompt_state(prompt: &ModerationAppealPrompt) -> AppealState {
     match prompt.state.as_str() {
         "submitted" => AppealState::Submitted,

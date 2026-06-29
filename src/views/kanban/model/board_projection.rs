@@ -29,6 +29,9 @@ use super::*;
 /// Every kanban-relevant event kind the client folds into the board.
 pub(crate) const KANBAN_EVENT_KINDS: &[&str] = &[
     "ck.space.create",
+    "ck.space.update",
+    "ck.space.archive",
+    "ck.space.restore",
     "ck.strand.create",
     "ck.strand.update",
     "ck.strand.move",
@@ -94,6 +97,48 @@ fn op_strand_target_id(record: &RawOperationRecord) -> Option<String> {
         .or_else(|| json_path_string(body, &["object", "id"]))
         .or_else(|| json_path_string(Some(&record.payload), &["strand_id"]))
         .or_else(|| json_path_string(Some(&record.payload), &["target_ref"]))
+}
+
+/// Space (container) id a space update / archive / restore op targets.
+fn op_space_target_id(record: &RawOperationRecord) -> Option<String> {
+    let body = op_body(record);
+    json_path_string(body, &["space_id"])
+        .or_else(|| json_path_string(body, &["target_ref"]))
+        .or_else(|| json_path_string(body, &["object", "id"]))
+        .or_else(|| json_path_string(Some(&record.payload), &["space_id"]))
+        .or_else(|| json_path_string(Some(&record.payload), &["target_ref"]))
+}
+
+/// Read a `ck.patch.v1` entry as a string, tolerating both the canonical
+/// `{"$op":"set","value":...}` form and a plain scalar shorthand. Returns
+/// `Some(None)` for an explicit `unset`, `Some(Some(v))` for a set, and
+/// `None` when the key is absent.
+fn patch_entry_string(patch: &Value, keys: &[&str]) -> Option<Option<String>> {
+    let entry = keys.iter().find_map(|key| patch.get(*key))?;
+    match entry.get("$op").and_then(Value::as_str) {
+        Some("set") => Some(entry.get("value").and_then(Value::as_str).map(ToOwned::to_owned)),
+        Some("unset") => Some(None),
+        Some(_) => None,
+        // Plain shorthand: the entry is the scalar value itself.
+        None => entry.as_str().map(|value| Some(value.to_owned())),
+    }
+}
+
+/// Fold a `ck.space.update` patch op (structural metadata: `rank`, `title`)
+/// into the running container view.
+fn apply_space_update_to_view(
+    view: &mut crate::api::SpaceContainerProjectionView,
+    record: &RawOperationRecord,
+) {
+    let Some(patch) = op_body(record).and_then(|body| body.get("patch")) else {
+        return;
+    };
+    if let Some(rank) = patch_entry_string(patch, &["rank", "metadata.rank"]) {
+        view.rank = rank;
+    }
+    if let Some(Some(title)) = patch_entry_string(patch, &["title", "metadata.title"]) {
+        view.title = title;
+    }
 }
 
 /// Build the base [`StrandProjectionView`] from a `ck.strand.create` op. Mirrors
@@ -293,29 +338,61 @@ pub(crate) fn space_container_views_from_ops(
     let mut by_id: std::collections::BTreeMap<String, crate::api::SpaceContainerProjectionView> =
         std::collections::BTreeMap::new();
     for record in ordered_operations(ops) {
-        let Some(local) = local_space_create_from_raw_operation(record) else {
+        if !raw_operation_allows_overlay(&record.payload) {
+            continue;
+        }
+        // CREATE establishes the container; UPDATE / ARCHIVE / RESTORE fold
+        // structural metadata + lifecycle on top, mirroring soland's
+        // `apply_space_*`. A space op observed before its create is ignored
+        // (no container to patch yet).
+        if let Some(local) = local_space_create_from_raw_operation(record) {
+            if !local_space_create_matches_realm(&local, realm_id) {
+                continue;
+            }
+            if !by_id.contains_key(&local.id) {
+                order.push(local.id.clone());
+            }
+            by_id.insert(
+                local.id.clone(),
+                crate::api::SpaceContainerProjectionView {
+                    space_id: local.id,
+                    realm_id: local.realm_id.unwrap_or_else(|| trim_realm_id(realm_id)),
+                    kind: local.kind,
+                    title: local.title,
+                    state: "active".to_owned(),
+                    rank: local.rank,
+                    parent_space_id: local.parent_space_id,
+                },
+            );
+            continue;
+        }
+        let Some(kind) = op_kind(record) else {
             continue;
         };
-        if !local_space_create_matches_realm(&local, realm_id) {
-            continue;
+        match kind.as_str() {
+            "ck.space.update" => {
+                if let Some(id) = op_space_target_id(record)
+                    && let Some(view) = by_id.get_mut(&id)
+                {
+                    apply_space_update_to_view(view, record);
+                }
+            }
+            "ck.space.archive" => {
+                if let Some(id) = op_space_target_id(record)
+                    && let Some(view) = by_id.get_mut(&id)
+                {
+                    view.state = "archived".to_owned();
+                }
+            }
+            "ck.space.restore" => {
+                if let Some(id) = op_space_target_id(record)
+                    && let Some(view) = by_id.get_mut(&id)
+                {
+                    view.state = "active".to_owned();
+                }
+            }
+            _ => {}
         }
-        if !by_id.contains_key(&local.id) {
-            order.push(local.id.clone());
-        }
-        by_id.insert(
-            local.id.clone(),
-            crate::api::SpaceContainerProjectionView {
-                space_id: local.id,
-                realm_id: local
-                    .realm_id
-                    .unwrap_or_else(|| trim_realm_id(realm_id)),
-                kind: local.kind,
-                title: local.title,
-                state: "active".to_owned(),
-                rank: local.rank,
-                parent_space_id: local.parent_space_id,
-            },
-        );
     }
     order
         .into_iter()
@@ -541,6 +618,296 @@ mod tests {
         let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
         let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
         assert!(todos.cards.is_empty(), "archived card is removed from the board");
+    }
+
+    /// Build a locally-appended optimistic op record directly (the shape
+    /// `submit_kanban_*` / `submit_kanban_operation_event` write into
+    /// `raw_operations`), so the tests prove `project_board` folds the
+    /// OPTIMISTIC op shape — not just the canonical backfilled envelope.
+    fn local_op(operation_id: &str, received_at: &str, payload: Value) -> RawOperationRecord {
+        RawOperationRecord {
+            operation_id: operation_id.to_owned(),
+            realm_id: Some(REALM.to_owned()),
+            received_at: chrono::DateTime::parse_from_rfc3339(received_at)
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            payload,
+        }
+    }
+
+    /// The local `ck.strand.create` op (from `submit_kanban_move`) carries the
+    /// canonical create body (`body.object.metadata.fields.*`) PLUS a top-level
+    /// `effect`; folding it must surface the card immediately (optimistic).
+    #[test]
+    fn local_optimistic_card_create_op_projects_into_its_list() {
+        let strand = "ck:strand:019f1072-1001-73b2-9c7e-1bb33a924b5c";
+        let ops = vec![
+            kanban_operations_from_events(&[
+                space_create_event(BOARD, "board", "Board1", None),
+                space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+            ]),
+            vec![local_op(
+                "op-create-1",
+                "2026-06-28T00:05:00Z",
+                json!({
+                    "kind": "ck.strand.create",
+                    "operation_id": "op-create-1",
+                    "actor_id": "did:web:alice.example",
+                    "created_at": "2026-06-28T00:05:00Z",
+                    "wire_kind": "ck.strand.create",
+                    "write_state": "queued",
+                    "effect": {
+                        "strand_id": strand,
+                        "board_space_id": BOARD,
+                        "list_space_id": LIST_A,
+                        "title": "queued card",
+                        "rank": "U",
+                    },
+                    "body": {
+                        "object": {
+                            "id": strand,
+                            "realm_id": REALM,
+                            "created_by": "did:web:alice.example",
+                            "metadata": {
+                                "title": "queued card",
+                                "fields": {
+                                    "strand_kind": "card",
+                                    "board_space_id": BOARD,
+                                    "list_space_id": LIST_A,
+                                    "rank": "U",
+                                }
+                            }
+                        }
+                    },
+                }),
+            )],
+        ]
+        .concat();
+        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
+        assert_eq!(todos.cards.len(), 1, "optimistic create folds into the list");
+        assert_eq!(todos.cards[0].title, "queued card");
+    }
+
+    /// The local CAS move op (from `submit_strand_position_cas_move`) carries
+    /// the canonical `strand_move_payload` in `body`; folding it relocates the
+    /// card without waiting for a server round-trip.
+    #[test]
+    fn local_optimistic_cas_move_op_relocates_card() {
+        let strand = "ck:strand:019f1072-1002-73b2-9c7e-1bb33a924b5c";
+        let mut ops = kanban_operations_from_events(&[
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+            space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
+            strand_create_event(
+                strand,
+                "did:web:alice.example",
+                "moving card",
+                BOARD,
+                LIST_A,
+                "U",
+                "2026-06-28T00:01:00Z",
+            ),
+        ]);
+        ops.push(local_op(
+            "op-move-1",
+            "2026-06-28T00:06:00Z",
+            json!({
+                "kind": "ck.strand.move",
+                "move_id": "op-move-1",
+                "board_space_id": BOARD,
+                "strand_id": strand,
+                "write_state": "submitted",
+                "body": {
+                    "board_space_id": BOARD,
+                    "strand_id": strand,
+                    "target_space_id": LIST_B,
+                    "rank": "U",
+                },
+            }),
+        ));
+        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
+        let doing = columns.iter().find(|column| column.title == "Doing").unwrap();
+        assert!(todos.cards.is_empty(), "card left the origin list");
+        assert_eq!(doing.cards.len(), 1, "optimistic move folds into the target list");
+    }
+
+    /// Column reorder appends a `ck.space.update` patch op carrying the new
+    /// `rank`; folding it must re-sort the columns (both the canonical
+    /// `{$op:set}` patch form and the plain scalar shorthand).
+    #[test]
+    fn local_space_update_rank_reorders_columns() {
+        for rank_entry in [json!({ "$op": "set", "value": "r001" }), json!("r001")] {
+            let mut ops = kanban_operations_from_events(&[
+                space_create_event(BOARD, "board", "Board1", None),
+            ]);
+            // Two lists, A before B by rank.
+            ops.extend(kanban_operations_from_events(&[
+                space_create_event(LIST_A, "list", "First", Some(BOARD)),
+                space_create_event(LIST_B, "list", "Second", Some(BOARD)),
+            ]));
+            // Give A rank r002 and B rank r003 via create-time rank patches so
+            // the initial order is A, B; then bump B to r001 (front).
+            ops.push(local_op(
+                "op-rank-a",
+                "2026-06-28T00:02:00Z",
+                json!({
+                    "kind": "ck.space.update",
+                    "write_state": "queued",
+                    "body": { "space_id": LIST_A, "patch": { "rank": { "$op": "set", "value": "r002" } } },
+                }),
+            ));
+            ops.push(local_op(
+                "op-rank-b",
+                "2026-06-28T00:03:00Z",
+                json!({
+                    "kind": "ck.space.update",
+                    "write_state": "queued",
+                    "body": { "space_id": LIST_B, "patch": { "rank": rank_entry.clone() } },
+                }),
+            ));
+            let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+            assert_eq!(columns.len(), 2);
+            assert_eq!(
+                columns[0].title, "Second",
+                "B moved to the front by its new rank ({rank_entry})"
+            );
+            assert_eq!(columns[1].title, "First");
+        }
+    }
+
+    /// List archive appends a `ck.space.archive` op; folding it flips the
+    /// column's lifecycle to Archived (kept in the projection for the Archived
+    /// section, not dropped).
+    #[test]
+    fn local_space_archive_marks_column_archived() {
+        let mut ops = kanban_operations_from_events(&[
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+        ]);
+        ops.push(local_op(
+            "op-archive-1",
+            "2026-06-28T00:04:00Z",
+            json!({
+                "kind": "ck.space.archive",
+                "write_state": "queued",
+                "body": { "space_id": LIST_A },
+            }),
+        ));
+        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
+        assert_eq!(
+            todos.state,
+            SpaceContainerLifecycleState::Archived,
+            "archived list keeps its column but flips lifecycle"
+        );
+    }
+
+    /// Lock the REAL wire shapes: build the optimistic ops through the same
+    /// `ck_ops` builders the submit helpers use (`body = event.content`) so the
+    /// reducer is proven against the actual serialized payloads, not hand-rolled
+    /// JSON. Guards against a builder/reducer drift (e.g. a patch entry that
+    /// serializes differently than `patch_entry_string` expects).
+    fn local_op_from_builder(
+        operation_id: &str,
+        received_at: &str,
+        kind: &str,
+        body: Value,
+    ) -> RawOperationRecord {
+        local_op(
+            operation_id,
+            received_at,
+            json!({
+                "kind": kind,
+                "operation_id": operation_id,
+                "write_state": "queued",
+                "body": body,
+            }),
+        )
+    }
+
+    #[test]
+    fn real_space_update_builder_rank_reorders_columns() {
+        let actor = "did:web:alice.example";
+        let space_update_body = |space_id: &str, rank: &str| {
+            crate::operation::ck_ops::space_update_patch(
+                REALM,
+                actor,
+                space_id,
+                json!({ "rank": rank }),
+            )
+            .unwrap()
+            .build_sdk_event("yougen")
+            .unwrap()
+            .content
+        };
+        let mut ops = kanban_operations_from_events(&[
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "First", Some(BOARD)),
+            space_create_event(LIST_B, "list", "Second", Some(BOARD)),
+        ]);
+        ops.push(local_op_from_builder(
+            "op-rank-a",
+            "2026-06-28T00:02:00Z",
+            "ck.space.update",
+            space_update_body(LIST_A, "r002"),
+        ));
+        ops.push(local_op_from_builder(
+            "op-rank-b",
+            "2026-06-28T00:03:00Z",
+            "ck.space.update",
+            space_update_body(LIST_B, "r001"),
+        ));
+        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+        assert_eq!(columns.len(), 2);
+        assert_eq!(
+            columns[0].title, "Second",
+            "real ck.space.update rank patch folds and re-sorts the columns"
+        );
+    }
+
+    #[test]
+    fn real_cas_move_builder_relocates_card() {
+        let strand = "ck:strand:019f1072-2002-73b2-9c7e-1bb33a924b5c";
+        let move_body = crate::operation::ck_ops::strand_position_cas_update(
+            REALM,
+            "did:web:alice.example",
+            "ck.strand.move",
+            BOARD,
+            strand,
+            json!({ "list_space_id": LIST_A, "rank": "U" }),
+            json!({ "list_space_id": LIST_B, "rank": "U" }),
+        )
+        .unwrap()
+        .build_sdk_event("yougen")
+        .unwrap()
+        .content;
+        let mut ops = kanban_operations_from_events(&[
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+            space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
+            strand_create_event(
+                strand,
+                "did:web:alice.example",
+                "moving card",
+                BOARD,
+                LIST_A,
+                "U",
+                "2026-06-28T00:01:00Z",
+            ),
+        ]);
+        ops.push(local_op_from_builder(
+            "op-move-real",
+            "2026-06-28T00:06:00Z",
+            "ck.strand.move",
+            move_body,
+        ));
+        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
+        let doing = columns.iter().find(|column| column.title == "Doing").unwrap();
+        assert!(todos.cards.is_empty(), "card left the origin list");
+        assert_eq!(doing.cards.len(), 1, "real CAS move payload folds into the target list");
     }
 
     #[test]

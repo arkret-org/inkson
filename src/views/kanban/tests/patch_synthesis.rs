@@ -211,62 +211,14 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
 }
 
 #[test]
-fn merge_history_raw_operations_dedups_by_operation_id_history_wins() {
-    let received_at = |value: &str| {
-        chrono::DateTime::parse_from_rfc3339(value)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
-    };
-    // Local copy of op-1 carries no author (e.g. an optimistic queued echo);
-    // the history copy is the synced, author-stamped envelope.
-    let local = vec![
-        RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ck:realm:r1".to_owned()),
-            received_at: received_at("2026-05-22T10:00:00Z"),
-            payload: json!({ "kind": "ck.strand.update", "actor_id": "" }),
-        },
-        // Local-only op (just-queued edit not yet in server history).
-        RawOperationRecord {
-            operation_id: "op-local".to_owned(),
-            realm_id: Some("ck:realm:r1".to_owned()),
-            received_at: received_at("2026-05-22T12:00:00Z"),
-            payload: json!({ "kind": "ck.strand.update", "actor_id": "local" }),
-        },
-    ];
-    let history = vec![RawOperationRecord {
-        operation_id: "op-1".to_owned(),
-        realm_id: Some("ck:realm:r1".to_owned()),
-        received_at: received_at("2026-05-22T10:00:00Z"),
-        payload: json!({ "kind": "ck.strand.update", "actor_id": "did:web:acme.example:users:alice" }),
-    }];
-
-    let merged = merge_history_raw_operations(&local, &history);
-
-    assert_eq!(merged.len(), 2, "op-1 deduped, op-local preserved");
-    let op1 = merged
-        .iter()
-        .find(|record| record.operation_id == "op-1")
-        .expect("op-1 present");
-    assert_eq!(
-        op1.payload.get("actor_id").and_then(|v| v.as_str()),
-        Some("did:web:acme.example:users:alice"),
-        "history copy wins on operation_id collision"
-    );
-    assert!(
-        merged
-            .iter()
-            .any(|record| record.operation_id == "op-local"),
-        "local-only operation is preserved"
-    );
-}
-
-#[test]
-fn fetched_history_recovers_authors_when_local_log_is_empty() {
-    // Simulates option B: the persisted raw-operation log was evicted
-    // (RAW_OPERATIONS_MAX), so attribution would otherwise fall back to
-    // "Unknown author". The strand event history fetched on card open carries
-    // the authoritative per-event actor_id; merging it in recovers authorship.
+fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
+    // Option B, event-sourced: the synthesis track is projected straight from
+    // the LOCAL `raw_operations` log. The per-realm events engine folds the
+    // full realm history into that log via `kanban_operations_from_events`
+    // (the same ingest funnel `realm_events_engine` uses), each
+    // `ck.strand.update` carrying its authoritative per-event `actor_id`. So
+    // multi-author attribution is recovered from local state with NO per-tab
+    // realm backfill.
     let mut card = test_card("ck:strand:edit-me", "U");
     card.synthesis = join_synthesis_entry_bodies(vec![
         "alice synthesis".to_owned(),
@@ -277,8 +229,8 @@ fn fetched_history_recovers_authors_when_local_log_is_empty() {
     card.updated_by = "did:web:acme.example:users:bob".to_owned();
     card.updated_at = "2026-05-22T11:00:00Z".to_owned();
 
-    // Backfilled `ck.strand.update` events as `strand_update_operations_from_events`
-    // would shape them (full Event envelopes → raw-operation records).
+    // Canonical realm events as `account.subscribe` / `events/subscribe`
+    // deliver them, folded through the SAME funnel the engine ingests with.
     let history_events = vec![
         json!({
             "event_kind": "ck.strand.update",
@@ -305,11 +257,10 @@ fn fetched_history_recovers_authors_when_local_log_is_empty() {
             }
         }),
     ];
-    let history_ops = strand_update_operations_from_events(&history_events);
+    let local_ops = kanban_operations_from_events(&history_events);
+    assert_eq!(local_ops.len(), 2, "both strand.update events folded locally");
 
-    // Local log is empty (evicted); merge brings the history in.
-    let merged = merge_history_raw_operations(&[], &history_ops);
-    let entries = card_synthesis_track_entries(&card, &merged, &LocalStateStore::default());
+    let entries = card_synthesis_track_entries(&card, &local_ops, &LocalStateStore::default());
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].body, "alice synthesis");
@@ -317,17 +268,57 @@ fn fetched_history_recovers_authors_when_local_log_is_empty() {
     assert_eq!(entries[1].body, "bob synthesis");
     assert_eq!(entries[1].author_label, "bob:acme.example");
 
-    // Sanity: without the fetched history, the multi-author fallback cannot
-    // attribute either entry — exactly the "Unknown author" symptom option B
-    // exists to fix.
+    // Sanity: with no local ops at all, the multi-author projection fallback
+    // cannot attribute either entry — exactly the "Unknown author" symptom the
+    // event-sourced local log exists to fix.
     let fallback = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
     assert_eq!(fallback.len(), 2);
     assert!(
         fallback
             .iter()
             .all(|entry| entry.author_label == "Unknown author"),
-        "without history a multi-author card falls back to Unknown author"
+        "without local ops a multi-author card falls back to Unknown author"
     );
+}
+
+#[test]
+fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
+    // The engine re-folds overlapping history on every resubscribe. The store's
+    // `upsert_raw_operation` dedupes by `operation_id`, and `synthesis_entries`
+    // group/replay by entry id, so a re-delivered update must not double the
+    // track. This is the event-sourced replacement for the old
+    // history-merge dedup guarantee.
+    let mut card = test_card("ck:strand:edit-me", "U");
+    card.synthesis = "alice synthesis".to_owned();
+    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.updated_by = "did:web:acme.example:users:alice".to_owned();
+    card.updated_at = "2026-05-22T10:00:00Z".to_owned();
+
+    let event = json!({
+        "event_kind": "ck.strand.update",
+        "event_id": "op-1",
+        "actor_id": "did:web:acme.example:users:alice",
+        "created_at": "2026-05-22T10:00:00Z",
+        "realm_id": "ck:realm:r1",
+        "payload": {
+            "strand_id": "ck:strand:edit-me",
+            "patch": { "synthesis": { "$op": "set", "value": "alice synthesis" } }
+        }
+    });
+
+    let mut store = LocalStateStore::default();
+    // Fold the same event twice, as a resubscribe would.
+    crate::sync_engine::ingest_kanban_events(&mut store, "ck:realm:r1", &[event.clone()]);
+    crate::sync_engine::ingest_kanban_events(&mut store, "ck:realm:r1", &[event]);
+
+    let raw_ops = store.load().raw_operations;
+    assert_eq!(raw_ops.len(), 1, "resent update deduped by operation_id");
+
+    let entries = card_synthesis_track_entries(&card, &raw_ops, &store);
+    assert_eq!(entries.len(), 1, "no duplicate synthesis entry");
+    assert_eq!(entries[0].body, "alice synthesis");
+    assert_eq!(entries[0].author_label, "alice:acme.example");
 }
 
 #[test]
@@ -613,93 +604,6 @@ fn apply_card_detail_draft_marks_card_queued() {
     assert_eq!(card.assignee, "—");
     assert_eq!(card.due, "2026-05-20");
     assert_eq!(card.state, CardState::Queued);
-}
-
-/// `relocate_card` is the optimistic local mutation that runs as
-/// soon as the user drops a card — before the server sees the
-/// Move. It MUST:
-///   1. remove the card from the source column,
-///   2. assign the new rank,
-///   3. insert into the target column such that ascending-rank ordering is preserved (otherwise the
-///      next drag uses wrong neighbours for `rank_between`).
-#[test]
-fn relocate_card_preserves_rank_ordering_after_move() {
-    let mut cols = vec![
-        KanbanColumn {
-            id: "ck:space:list-a".to_owned(),
-            title: "A".to_owned(),
-            rank: "U".to_owned(),
-            cards: vec![
-                test_card("ck:strand:a1", "U"),
-                test_card("ck:strand:a2", "f"),
-            ],
-            state: SpaceContainerLifecycleState::Active,
-        },
-        KanbanColumn {
-            id: "ck:space:list-b".to_owned(),
-            title: "B".to_owned(),
-            rank: "f".to_owned(),
-            cards: vec![
-                test_card("ck:strand:b1", "U"),
-                test_card("ck:strand:b3", "z"),
-            ],
-            state: SpaceContainerLifecycleState::Active,
-        },
-    ];
-    // Move a1 from A → B, dropped at rank "m" (between b1=U and b3=z).
-    let moved = relocate_card(
-        &mut cols,
-        "ck:strand:a1",
-        "ck:space:list-a",
-        "ck:space:list-b",
-        "m",
-    )
-    .unwrap();
-    assert_eq!(moved.id, "ck:strand:a1");
-    assert_eq!(moved.rank, "m");
-    // Source column no longer contains a1, still has a2.
-    let a = &cols[0];
-    assert_eq!(a.cards.len(), 1);
-    assert_eq!(a.cards[0].id, "ck:strand:a2");
-    // Target column has b1 (U) < a1 (m) < b3 (z), ordering preserved.
-    let b = &cols[1];
-    assert_eq!(b.cards.len(), 3);
-    assert_eq!(b.cards[0].id, "ck:strand:b1");
-    assert_eq!(b.cards[1].id, "ck:strand:a1");
-    assert_eq!(b.cards[2].id, "ck:strand:b3");
-}
-
-/// In-list reorder: removing from a column then re-inserting into
-/// the **same** column (target == source) at a new rank should
-/// land at the right position.
-#[test]
-fn relocate_card_handles_in_list_reorder() {
-    let mut cols = vec![KanbanColumn {
-        id: "ck:space:list-a".to_owned(),
-        title: "A".to_owned(),
-        rank: "U".to_owned(),
-        cards: vec![
-            test_card("ck:strand:a1", "U"),
-            test_card("ck:strand:a2", "f"),
-            test_card("ck:strand:a3", "p"),
-        ],
-        state: SpaceContainerLifecycleState::Active,
-    }];
-    // Move a3 to the top of the same list (rank "0" — before "U").
-    let moved = relocate_card(
-        &mut cols,
-        "ck:strand:a3",
-        "ck:space:list-a",
-        "ck:space:list-a",
-        "0",
-    )
-    .unwrap();
-    assert_eq!(moved.rank, "0");
-    let a = &cols[0];
-    assert_eq!(a.cards.len(), 3);
-    assert_eq!(a.cards[0].id, "ck:strand:a3");
-    assert_eq!(a.cards[1].id, "ck:strand:a1");
-    assert_eq!(a.cards[2].id, "ck:strand:a2");
 }
 
 /// `locate_strand_position_in_projection` is the post-conflict rebase

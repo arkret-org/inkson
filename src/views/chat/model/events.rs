@@ -620,6 +620,70 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
         .collect()
 }
 
+/// Normalize a batch of realm timeline events (from `account.subscribe`
+/// `timeline.events[]` / realm `backfill`) into [`RawOperationRecord`]s for the
+/// discussion message lifecycle, so the chat feed projects **local-first** from
+/// `raw_operations` — exactly like the kanban board does via
+/// `kanban_operations_from_events` — instead of refetching + redecrypting the
+/// whole realm on every Discussion-tab open.
+///
+/// Only canonical `ck.message.create` events (and their server-folded redaction
+/// / expiry tombstone forms, which reuse the same kind + `event_id`) are kept.
+/// Polls / moderation / pins / reactions have their own kinds and projections
+/// and are deliberately excluded. The FULL event is stored as the record
+/// payload so the receiver-proof gate, the `encrypted_content` ciphertext, and
+/// the tombstone markers all survive into the local-first render path — the
+/// decrypted plaintext is NEVER stored here (it stays in the author sidecar /
+/// decrypt-on-read path), preserving the encrypted-send at-rest invariant
+/// (chat X10.6).
+pub(crate) fn message_operations_from_events(
+    realm_id: &str,
+    events: &[Value],
+) -> Vec<crate::local_state::RawOperationRecord> {
+    events
+        .iter()
+        .filter_map(|event| message_raw_operation_from_event(realm_id, event))
+        .collect()
+}
+
+fn message_event_is_ingestable(event: &Value) -> bool {
+    let candidates = message_candidates(event);
+    candidates.iter().any(|candidate| message_kind_is_create(candidate))
+}
+
+fn message_raw_operation_from_event(
+    realm_id: &str,
+    event: &Value,
+) -> Option<crate::local_state::RawOperationRecord> {
+    if !message_event_is_ingestable(event) {
+        return None;
+    }
+    let candidates = message_candidates(event);
+    // Dedup key: the canonical event id. A later redaction/expiry tombstone
+    // carrying the same `event_id` upserts over the create, so the local-first
+    // render folds the tombstone (not the original body).
+    let operation_id = value_string_at(event, &["event_id", "id"])
+        .or_else(|| first_string_in_candidates(&candidates, &["event_id", "message_id", "id"]))?
+        .trim()
+        .to_owned();
+    if operation_id.is_empty() {
+        return None;
+    }
+    let record_realm_id = first_string_in_candidates(&candidates, &["realm_id"])
+        .unwrap_or(realm_id)
+        .to_owned();
+    let received_at = first_string_in_candidates(&candidates, &["created_at"])
+        .and_then(|created_at| chrono::DateTime::parse_from_rfc3339(created_at).ok())
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+    Some(crate::local_state::RawOperationRecord {
+        operation_id,
+        realm_id: Some(record_realm_id),
+        received_at,
+        payload: event.clone(),
+    })
+}
+
 pub(crate) fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a Value> {
     candidates
         .iter()

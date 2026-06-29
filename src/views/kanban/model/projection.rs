@@ -190,37 +190,6 @@ pub(crate) fn overlay_local_board_space_options(
     options
 }
 
-pub(crate) fn containers_with_local_space_creates(
-    containers: &[crate::api::SpaceContainerProjectionView],
-    raw_operations: &[RawOperationRecord],
-    realm_id: &str,
-) -> Vec<crate::api::SpaceContainerProjectionView> {
-    let mut merged = containers.to_vec();
-    for local_create in local_space_create_records(raw_operations, realm_id) {
-        if let Some(existing) = merged
-            .iter_mut()
-            .find(|view| view.space_id == local_create.id)
-        {
-            if should_replace_projected_container_title(&existing.title, &existing.space_id) {
-                existing.title = local_create.title;
-            }
-            continue;
-        }
-        merged.push(crate::api::SpaceContainerProjectionView {
-            space_id: local_create.id,
-            realm_id: local_create
-                .realm_id
-                .unwrap_or_else(|| trim_realm_id(realm_id)),
-            kind: local_create.kind,
-            title: local_create.title,
-            state: "active".to_owned(),
-            rank: local_create.rank,
-            parent_space_id: local_create.parent_space_id,
-        });
-    }
-    merged
-}
-
 /// T20 / YOU-01-009 subtask 3 - Map a spec-registered
 /// [`crate::api::CollectionProjectionView`]
 /// (`view.schema.json#/$defs/collection_projection_view`) into the yougen
@@ -498,19 +467,6 @@ pub(crate) fn columns_from_lifecycle_projection(
     }
 
     (cols, board_options, Some(board_id))
-}
-
-pub(crate) fn columns_from_lifecycle_projection_with_local(
-    containers: &[crate::api::SpaceContainerProjectionView],
-    strands: &[crate::api::StrandProjectionView],
-    preferred_board_id: &str,
-    raw_operations: &[RawOperationRecord],
-    realm_id: &str,
-    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
-    let merged_containers =
-        containers_with_local_space_creates(containers, raw_operations, realm_id);
-    columns_from_lifecycle_projection(&merged_containers, strands, preferred_board_id, decrypt_ctx)
 }
 
 pub(crate) fn sort_kanban_cards(cards: &mut [KanbanCard]) {

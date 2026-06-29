@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 
 use super::card_detail_route_realm_id;
 use super::model::*;
-use crate::local_state::LocalStateStore;
 use crate::views::helpers::short_protocol_id;
 
 #[allow(clippy::too_many_arguments)]
@@ -12,126 +11,22 @@ pub(super) fn select_kanban_board(
     mut board_popover: Signal<BoardToolbarPopover>,
     mut selected_card: Signal<Option<KanbanCard>>,
     board_route_realm_id: String,
-    local_realm_id: String,
-    lifecycle_container_projection: Signal<Vec<crate::api::SpaceContainerProjectionView>>,
-    lifecycle_strand_projection: Signal<Vec<crate::api::StrandProjectionView>>,
-    mut columns: Signal<Vec<KanbanColumn>>,
     mut adding_card_to: Signal<Option<String>>,
     mut board_status: Signal<String>,
-    mut board_space_options: Signal<Vec<BoardSpaceOption>>,
-    mut projection_source: Signal<BoardProjectionSource>,
-    state_store: Signal<LocalStateStore>,
-    decrypt_actor: String,
-    decrypt_device: String,
 ) {
+    // Board switching is pure selection: set `selected_board_space_id` and the
+    // URL, then let the `columns` `use_memo` (keyed on the selection + the op
+    // log) re-project the chosen board. No reproject / `columns.set` here.
     selected_board_space_id.set(board_id.clone());
     board_popover.set(BoardToolbarPopover::None);
-    // Persist the board in the URL so a refresh restores it instead of
-    // falling back to the first board. Closing any open card too: a board
-    // switch should not keep a card from a different board mounted.
+    // Closing any open card too: a board switch should not keep a card from a
+    // different board mounted.
     selected_card.set(None);
-    let containers = lifecycle_container_projection();
-    let strands = lifecycle_strand_projection();
     if board_id.trim().is_empty() {
-        columns.set(Vec::new());
         adding_card_to.set(None);
         board_status.set("Select or create a board before adding lists".to_owned());
-        replace_kanban_board_url(&board_route_realm_id, &board_id);
-        return;
-    }
-    if containers.is_empty() && strands.is_empty() {
-        let raw_operations = state_store.read().load().raw_operations;
-        if raw_operations.is_empty() {
-            board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
-            replace_kanban_board_url(&board_route_realm_id, &board_id);
-            return;
-        }
-        let decrypt_store = state_store.read();
-        let decrypt_ctx = MlsDecryptCtx {
-            state_store: &decrypt_store,
-            realm_id: &board_route_realm_id,
-            actor_id: &decrypt_actor,
-            device_id: &decrypt_device,
-        };
-        let (projected_columns, options, projected_board_id) =
-            columns_from_lifecycle_projection_with_local(
-                &containers,
-                &strands,
-                &board_id,
-                &raw_operations,
-                &local_realm_id,
-                Some(&decrypt_ctx),
-            );
-        if !options.is_empty() {
-            board_space_options.set(options);
-        }
-        if projected_board_id.as_deref() == Some(board_id.as_str()) {
-            let projected_columns = overlay_local_card_creates_with_decrypt(
-                projected_columns,
-                &decrypt_store,
-                &board_id,
-                Some(&decrypt_ctx),
-            );
-            drop(decrypt_store);
-            columns.set(projected_columns);
-            projection_source.set(BoardProjectionSource::ApiDerived);
-            board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
-        } else {
-            columns.set(Vec::new());
-            adding_card_to.set(None);
-            board_status.set(format!(
-                "No list projection available for selected Board · {}",
-                short_protocol_id(&board_id)
-            ));
-        }
-        replace_kanban_board_url(&board_route_realm_id, &board_id);
-        return;
-    }
-    let raw_operations = state_store.read().load().raw_operations;
-    let decrypt_store = state_store.read();
-    let decrypt_ctx = MlsDecryptCtx {
-        state_store: &decrypt_store,
-        realm_id: &board_route_realm_id,
-        actor_id: &decrypt_actor,
-        device_id: &decrypt_device,
-    };
-    let (projected_columns, options, projected_board_id) =
-        columns_from_lifecycle_projection_with_local(
-            &containers,
-            &strands,
-            &board_id,
-            &raw_operations,
-            &local_realm_id,
-            Some(&decrypt_ctx),
-        );
-    if !options.is_empty() {
-        board_space_options.set(options);
-    }
-    if projected_board_id.as_deref() == Some(board_id.as_str()) {
-        let projected_columns = overlay_local_card_creates_with_decrypt(
-            projected_columns,
-            &decrypt_store,
-            &board_id,
-            Some(&decrypt_ctx),
-        );
-        drop(decrypt_store);
-        let list_count = projected_columns.len();
-        let card_count = projected_columns
-            .iter()
-            .map(|column| column.cards.len())
-            .sum::<usize>();
-        columns.set(projected_columns);
-        projection_source.set(BoardProjectionSource::ApiDerived);
-        board_status.set(format!(
-            "Board loaded: {list_count} list(s), {card_count} card(s)"
-        ));
     } else {
-        columns.set(Vec::new());
-        adding_card_to.set(None);
-        board_status.set(format!(
-            "No list projection available for selected Board · {}",
-            short_protocol_id(&board_id)
-        ));
+        board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
     }
     replace_kanban_board_url(&board_route_realm_id, &board_id);
 }
