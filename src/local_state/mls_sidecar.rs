@@ -68,6 +68,22 @@ impl LocalStateStore {
             return;
         }
         let realm_id = realm_id.into();
+        // E2EE-at-rest T1 (wasm): route raw history key material to the
+        // hardened IndexedDB-only SecureKeyStore tier instead of the inline
+        // `history_secrets` field (which would land plaintext in the
+        // localStorage account-state blob). The decrypt path reads it back via
+        // [`Self::history_secret_for`]. Falls through to the inline field only
+        // before the async secure-store upgrade (transitional; migrated on a
+        // later flush by `maybe_strip_inline_history_secrets`).
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut by_epoch =
+                crate::secure_key_store::load_realm_history_secrets(&realm_id).unwrap_or_default();
+            by_epoch.insert(epoch, secret.clone());
+            if crate::secure_key_store::persist_realm_history_secrets(&realm_id, &by_epoch) {
+                return;
+            }
+        }
         self.cached
             .history_secrets
             .entry(realm_id)
@@ -80,9 +96,24 @@ impl LocalStateStore {
     /// pairs ordered by epoch. Used by the tier-3 history decrypt retry to
     /// try every granted epoch key against a pre-join ciphertext.
     pub fn history_secrets_for(&self, realm_id: &str) -> Vec<(u64, Vec<u8>)> {
+        let realm_id = realm_id.trim();
+        // E2EE-at-rest T1 (wasm): the hardened SecureKeyStore is the source of
+        // truth; merge in any not-yet-migrated inline entries (stored wins).
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut merged: BTreeMap<u64, Vec<u8>> =
+                crate::secure_key_store::load_realm_history_secrets(realm_id).unwrap_or_default();
+            if let Some(inline) = self.load().history_secrets.get(realm_id) {
+                for (epoch, secret) in inline {
+                    merged.entry(*epoch).or_insert_with(|| secret.clone());
+                }
+            }
+            return merged.into_iter().collect();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         self.load()
             .history_secrets
-            .get(realm_id.trim())
+            .get(realm_id)
             .map(|by_epoch| {
                 by_epoch
                     .iter()
@@ -94,9 +125,18 @@ impl LocalStateStore {
 
     /// The installed `history_secret` for an exact `(realm, epoch)`, if any.
     pub fn history_secret_for(&self, realm_id: &str, epoch: u64) -> Option<Vec<u8>> {
+        let realm_id = realm_id.trim();
+        // E2EE-at-rest T1 (wasm): prefer the hardened SecureKeyStore, falling
+        // back to a not-yet-migrated inline entry.
+        #[cfg(target_arch = "wasm32")]
+        if let Some(by_epoch) = crate::secure_key_store::load_realm_history_secrets(realm_id)
+            && let Some(secret) = by_epoch.get(&epoch)
+        {
+            return Some(secret.clone());
+        }
         self.load()
             .history_secrets
-            .get(realm_id.trim())
+            .get(realm_id)
             .and_then(|by_epoch| by_epoch.get(&epoch))
             .cloned()
     }

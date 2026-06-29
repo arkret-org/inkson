@@ -472,3 +472,63 @@ impl HostSecretBridge for TestHostSecretBridge {
             .load(std::sync::atomic::Ordering::SeqCst))
     }
 }
+
+// ── E2EE-at-rest T1 / T6 — MLS history-secret hardening helpers ──────────
+
+/// T6.2 — the per-realm history-secret JSON encodes raw 32-byte secrets as
+/// base64url keyed by decimal epoch and round-trips back to identical bytes.
+#[test]
+fn history_secrets_json_round_trips() {
+    use std::collections::BTreeMap;
+    let mut by_epoch: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
+    by_epoch.insert(0, vec![0u8; 32]);
+    by_epoch.insert(7, (0u8..32).collect());
+    by_epoch.insert(4096, vec![0xABu8; 32]);
+
+    let json = encode_history_secrets_json(&by_epoch);
+    let decoded = decode_history_secrets_json(&json);
+    assert_eq!(decoded, by_epoch);
+}
+
+/// T6.1 (regression guard) — the encoded blob must NOT contain the raw secret
+/// bytes in the clear: a distinctive plaintext marker is absent from the JSON.
+#[test]
+fn history_secrets_json_does_not_leak_raw_bytes() {
+    use std::collections::BTreeMap;
+    // A secret whose bytes spell an ASCII marker we can search for.
+    let marker = b"SUPER-SECRET-EXPORTER-KEY-32BYTE";
+    assert_eq!(marker.len(), 32);
+    let mut by_epoch: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
+    by_epoch.insert(3, marker.to_vec());
+
+    let json = encode_history_secrets_json(&by_epoch);
+    assert!(
+        !json.contains("SUPER-SECRET"),
+        "raw secret bytes leaked into stored JSON: {json}"
+    );
+    // ...but it still round-trips back to the exact bytes.
+    assert_eq!(decode_history_secrets_json(&json).get(&3).unwrap(), marker);
+}
+
+/// Malformed entries (bad epoch / bad base64) are dropped, not fatal.
+#[test]
+fn history_secrets_json_drops_malformed_entries() {
+    let json = r#"{"5":"AAAA","not-a-number":"AAAA","9":"!!!not-base64!!!"}"#;
+    let decoded = decode_history_secrets_json(json);
+    assert_eq!(decoded.len(), 1);
+    assert!(decoded.contains_key(&5));
+}
+
+/// The SecureKeyStore key for a realm is the hardened prefix plus a stable,
+/// character-safe base64 encoding of the realm id — and is classified into both
+/// the IndexedDB-required and no-localStorage-mirror tiers (key material).
+#[test]
+fn history_secret_store_key_is_classified_indexeddb_only() {
+    let key = mls_history_secret_store_key("ck:realm:abc123");
+    assert!(key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX));
+    assert!(is_wasm_indexeddb_required_secret_key(&key));
+    assert!(is_wasm_no_localstorage_mirror_key(&key));
+    // Stable across calls (no nonce / randomness in the key derivation).
+    assert_eq!(key, mls_history_secret_store_key("ck:realm:abc123"));
+    assert_ne!(key, mls_history_secret_store_key("ck:realm:other"));
+}

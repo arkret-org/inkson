@@ -662,7 +662,22 @@ impl LocalStateStore {
         let key = account_state_key(did);
         let json = browser_storage().and_then(|storage| storage.get_item(&key).ok().flatten())?;
         match serde_json::from_str::<ClientLocalState>(&json) {
-            Ok(state) => Some(state),
+            Ok(mut state) => {
+                // E2EE-at-rest T1.5: one-time self-heal — once the hardened
+                // SecureKeyStore is ready, lift any inline `history_secret`s out
+                // of the (plaintext) account-state blob into the IndexedDB-only
+                // tier and drop the inline copy so they stop being persisted in
+                // the clear. Before the upgrade this is a no-op; the next flush
+                // ([`Self::write_account_state`]) retries the migration.
+                if !state.history_secrets.is_empty()
+                    && crate::secure_key_store::persist_inline_history_secrets(
+                        &state.history_secrets,
+                    )
+                {
+                    state.history_secrets.clear();
+                }
+                Some(state)
+            }
             Err(error) => {
                 if let Some(storage) = browser_storage() {
                     let _ = storage.set_item(&format!("{key}.corrupt"), &json);
@@ -701,8 +716,15 @@ impl LocalStateStore {
         let Some(storage) = browser_storage() else {
             return Ok(());
         };
+        // E2EE-at-rest T1: never persist raw `history_secret` key material in
+        // the plaintext localStorage blob. When the hardened SecureKeyStore is
+        // ready, lift the inline secrets there first and serialize a stripped
+        // copy; otherwise serialize as-is (transitional — retried once the
+        // async upgrade lands).
+        let stripped = maybe_strip_inline_history_secrets(state);
+        let to_persist = stripped.as_ref().unwrap_or(state);
         storage
-            .set_item(&account_state_key(did), &serde_json::to_string(state)?)
+            .set_item(&account_state_key(did), &serde_json::to_string(to_persist)?)
             .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
         Ok(())
     }
@@ -798,6 +820,26 @@ impl LocalStateStore {
 fn sanitize_did_for_filename(did: &str) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(did.as_bytes())
+}
+
+/// E2EE-at-rest T1 — if `state` carries inline `history_secret`s and the
+/// hardened SecureKeyStore is ready, persist them to the IndexedDB-only tier
+/// and return a clone with the inline copy cleared (so the localStorage blob
+/// holds no raw key material). Returns `None` — meaning "serialize `state`
+/// unchanged" — when there is nothing to strip, or the secure store is not yet
+/// upgraded (the migration is retried on the next flush), or persistence
+/// failed (never drop key material we have not durably re-homed).
+#[cfg(target_arch = "wasm32")]
+fn maybe_strip_inline_history_secrets(state: &ClientLocalState) -> Option<ClientLocalState> {
+    if state.history_secrets.is_empty() {
+        return None;
+    }
+    if !crate::secure_key_store::persist_inline_history_secrets(&state.history_secrets) {
+        return None;
+    }
+    let mut stripped = state.clone();
+    stripped.history_secrets.clear();
+    Some(stripped)
 }
 
 #[cfg(test)]

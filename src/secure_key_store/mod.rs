@@ -162,6 +162,18 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
         || key == WASM_LOCAL_IDENTITY_SEED_KEY
 }
 
+/// SecureKeyStore key prefix for per-realm aggregated MLS `history_secret`s
+/// (E2EE-at-rest hardening spec T1). The value is JSON
+/// `{ "<epoch>": "<base64url(secret)>" }` and the full key is
+/// `yougen.mls_history_secret.v1.<base64(realm_id)>`. This is raw exporter key
+/// material — it MUST live only in the IndexedDB + non-extractable SubtleCrypto
+/// tier (same protection level as the account MLS secret) and MUST NOT be
+/// mirrored to localStorage, so the prefix appears in BOTH
+/// [`is_wasm_indexeddb_required_secret_key`] and
+/// [`is_wasm_no_localstorage_mirror_key`].
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "yougen.mls_history_secret.v1.";
+
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
     is_wasm_ed25519_seed_key(key)
@@ -170,6 +182,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("yougen_mls_account_secret")
         || key.starts_with("yougen.mls_key_package.identity_state.")
         || key.starts_with("coauth.session_credential.")
+        || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
 }
 
 /// Keys that MUST NOT be mirrored to the transient localStorage unload-race
@@ -183,6 +196,136 @@ pub(crate) fn is_wasm_no_localstorage_mirror_key(key: &str) -> bool {
     is_wasm_ed25519_seed_key(key)
         || key == PENDING_LOGOUT_SECRET_KEY
         || key.starts_with("yougen.mls_key_package.identity_state.")
+        || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
+}
+
+/// E2EE-at-rest T1 — SecureKeyStore key for a realm's aggregated MLS
+/// `history_secret`s. The realm id is base64-encoded (no pad) so the key is a
+/// stable, character-safe suffix under [`MLS_HISTORY_SECRET_KEY_PREFIX`].
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn mls_history_secret_store_key(realm_id: &str) -> String {
+    format!(
+        "{MLS_HISTORY_SECRET_KEY_PREFIX}{}",
+        STANDARD_NO_PAD.encode(realm_id.trim().as_bytes())
+    )
+}
+
+/// E2EE-at-rest T1 — encode a per-realm `epoch -> secret` map to the stored
+/// JSON shape `{ "<epoch>": "<base64url(secret)>" }`. `u64` epoch keys are
+/// emitted as decimal strings so the map round-trips through `serde_json`
+/// (which rejects non-string map keys).
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn encode_history_secrets_json(
+    by_epoch: &std::collections::BTreeMap<u64, Vec<u8>>,
+) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let map: std::collections::BTreeMap<String, String> = by_epoch
+        .iter()
+        .map(|(epoch, secret)| (epoch.to_string(), URL_SAFE_NO_PAD.encode(secret)))
+        .collect();
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_owned())
+}
+
+/// E2EE-at-rest T1 — inverse of [`encode_history_secrets_json`]. Malformed
+/// entries (unparseable epoch or base64) are dropped rather than failing the
+/// whole decode, so a single bad entry cannot shadow the rest.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn decode_history_secrets_json(
+    json: &str,
+) -> std::collections::BTreeMap<u64, Vec<u8>> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let map: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(json).unwrap_or_default();
+    map.into_iter()
+        .filter_map(|(epoch, b64)| {
+            let epoch = epoch.parse::<u64>().ok()?;
+            let secret = URL_SAFE_NO_PAD.decode(b64.as_bytes()).ok()?;
+            Some((epoch, secret))
+        })
+        .collect()
+}
+
+/// True once the wasm async upgrade to the IndexedDB + SubtleCrypto tier has
+/// completed. History-secret reads/writes fail closed before this so raw key
+/// material never lands in the weaker localStorage tier.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn wasm_secure_store_upgraded() -> bool {
+    WASM_UPGRADED_SECURE_KEY_STORE.get().is_some()
+}
+
+/// E2EE-at-rest T1 — load a realm's aggregated `history_secret`s from the
+/// hardened SecureKeyStore. Returns `None` before the IndexedDB upgrade (fail
+/// closed) so callers fall back to any transitional inline copy; returns
+/// `Some(empty)` when upgraded but no secrets are stored for the realm.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn load_realm_history_secrets(
+    realm_id: &str,
+) -> Option<std::collections::BTreeMap<u64, Vec<u8>>> {
+    if !wasm_secure_store_upgraded() {
+        return None;
+    }
+    let store = default_secure_key_store("yougen");
+    let key = mls_history_secret_store_key(realm_id);
+    match store.get_secret(&key) {
+        Ok(Some(json)) => Some(decode_history_secrets_json(&json)),
+        Ok(None) => Some(std::collections::BTreeMap::new()),
+        Err(error) => {
+            tracing::warn!(?error, "history secret read from secure store failed");
+            None
+        }
+    }
+}
+
+/// E2EE-at-rest T1 — persist a realm's aggregated `history_secret`s to the
+/// hardened (IndexedDB-only, no localStorage mirror) SecureKeyStore tier.
+/// Returns `false` before the IndexedDB upgrade (fail closed) so the caller
+/// keeps the transitional inline copy for a later flush. An empty map deletes
+/// the entry.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn persist_realm_history_secrets(
+    realm_id: &str,
+    by_epoch: &std::collections::BTreeMap<u64, Vec<u8>>,
+) -> bool {
+    if !wasm_secure_store_upgraded() {
+        return false;
+    }
+    let store = default_secure_key_store("yougen");
+    let key = mls_history_secret_store_key(realm_id);
+    if by_epoch.is_empty() {
+        return store.delete_secret(&key).is_ok();
+    }
+    match store.store_secret(&key, &encode_history_secrets_json(by_epoch)) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(?error, "history secret write to secure store failed");
+            false
+        }
+    }
+}
+
+/// E2EE-at-rest T1 — migrate any inline `history_secret`s carried in a legacy
+/// account-state blob into the hardened SecureKeyStore, merging with whatever
+/// is already stored (existing stored entries win). Returns `true` only when
+/// EVERY realm persisted successfully, so the caller may then safely drop the
+/// inline copy; `false` (incl. before upgrade) means keep the inline copy.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn persist_inline_history_secrets(
+    inline: &std::collections::BTreeMap<String, std::collections::BTreeMap<u64, Vec<u8>>>,
+) -> bool {
+    if inline.is_empty() || !wasm_secure_store_upgraded() {
+        return false;
+    }
+    let mut all_ok = true;
+    for (realm_id, by_epoch) in inline {
+        let mut merged = load_realm_history_secrets(realm_id).unwrap_or_default();
+        for (epoch, secret) in by_epoch {
+            merged.entry(*epoch).or_insert_with(|| secret.clone());
+        }
+        if !persist_realm_history_secrets(realm_id, &merged) {
+            all_ok = false;
+        }
+    }
+    all_ok
 }
 
 #[cfg(target_arch = "wasm32")]
