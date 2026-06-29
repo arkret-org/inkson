@@ -410,8 +410,24 @@ pub fn parse_events_subscribe_ndjson_text(
     Ok(frames)
 }
 
+/// Maximum bytes any native NDJSON streaming reader will buffer between two
+/// newline delimiters. A spec-compliant server delimits every frame with `\n`;
+/// a faulty / malicious server that keeps pushing bytes without a delimiter (or
+/// a single oversized frame) would otherwise grow the `pending` buffer without
+/// bound until the client OOMs. Frames are small control / delta envelopes;
+/// 16 MiB is far above any legitimate single frame yet caps the OOM vector.
+/// Shared by BOTH NDJSON stream paths (`account.subscribe` in `sync_parse` and
+/// `events.subscribe` here) so the resource bound lives in exactly one place.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_NDJSON_STREAM_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
 // Consumed only by the native (`not(wasm32)`) streaming reader
 // (`drain_events_subscribe_response` / `events_subscribe_stream`).
+//
+// COR-01: the caller MUST enforce [`MAX_NDJSON_STREAM_FRAME_BYTES`] on
+// `pending` before invoking this drainer, so an undelimited / oversized frame
+// cannot grow the buffer without bound (parity with the account.subscribe
+// path in `sync_parse::drain_account_subscribe_response`).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn drain_events_subscribe_ndjson_lines<F>(
     pending: &mut Vec<u8>,

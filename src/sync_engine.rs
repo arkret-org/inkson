@@ -767,6 +767,12 @@ async fn run_iteration(
             if prefetch_persistent_event_sender_keys(&api, &response, ctx.did_cache).await {
                 refresh_projection_events_from_sync_response(&response, is_full_sync, ctx);
             }
+            // MID-5: prime the authoritative device signing keys for every
+            // `ck.member.identity.update` asserter in this response so the
+            // synchronous `MemberIdentityStore::current_identity` proof verifier
+            // can resolve them (a Miss is fail-closed → the identity would be
+            // dropped). Keyed by the proof `verification_method` (`actor#device`).
+            prefetch_member_identity_proof_keys(&api, &response, ctx.did_cache).await;
             if let Err(error) = process_to_device_delivery(&api, &response, ctx).await {
                 if is_auth_expired_error(&error) {
                     return IterationOutcome::AuthExpired;
@@ -921,6 +927,79 @@ pub(crate) async fn prefetch_persistent_event_sender_keys(
     prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache).await
 }
 
+/// MID-5: resolve the authoritative device signing key for every
+/// `ck.member.identity.update` asserter referenced by this sync response, so the
+/// synchronous [`crate::member_identity_store::MemberIdentityStore`] proof
+/// verifier (which is cache-only and fail-closed) can validate the proofs. The
+/// `(actor, device)` pair is derived from each proof's `verification_method`
+/// (`did:method:identifier#device`); the controller MUST be the asserting actor.
+async fn prefetch_member_identity_proof_keys(
+    api: &CokretApi,
+    response: &ClientSyncOutcome,
+    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+) -> bool {
+    let mut pairs = BTreeSet::<(String, String)>::new();
+    for (_realm_id, body) in &response.realms {
+        collect_member_identity_proof_devices_from_value(body, 0, &mut pairs);
+    }
+    prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), did_cache).await
+}
+
+/// Recursively scan a projection `Value` for `ck.member.identity.update`
+/// proofs, extracting `(controller_did, device_id)` from each
+/// `member_identity.proof.verification_method`. Depth-bounded to mirror the
+/// persistent-event scanner.
+fn collect_member_identity_proof_devices_from_value(
+    value: &Value,
+    depth: usize,
+    out: &mut BTreeSet<(String, String)>,
+) {
+    const MAX_DEPTH: usize = 12;
+    if depth > MAX_DEPTH {
+        return;
+    }
+    match value {
+        Value::Object(map) => {
+            // A `member_identity` object carries `actor_id` + `proof`.
+            if let Some(proof) = map.get("proof").and_then(Value::as_object)
+                && let Some(vm) = proof.get("verification_method").and_then(Value::as_str)
+                && let Some((controller, device)) = split_verification_method(vm)
+            {
+                // Bind to the object's own actor_id when present (defence in
+                // depth: the controller already equals the asserter at verify
+                // time, but we prefetch whatever the proof names so resolution
+                // can run).
+                out.insert((controller, device));
+            }
+            for nested in map.values() {
+                collect_member_identity_proof_devices_from_value(nested, depth + 1, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_member_identity_proof_devices_from_value(item, depth + 1, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Split a `did:method:identifier#device` verification-method URL into its
+/// controller DID and device fragment. Returns `None` when there is no
+/// fragment (no device selector).
+fn split_verification_method(verification_method: &str) -> Option<(String, String)> {
+    let (controller, fragment) = verification_method.split_once('#')?;
+    let controller = controller
+        .split_once('?')
+        .map_or(controller, |(head, _)| head)
+        .trim();
+    let device = fragment.trim();
+    if controller.is_empty() || device.is_empty() {
+        return None;
+    }
+    Some((controller.to_owned(), device.to_owned()))
+}
+
 pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
     api: &CokretApi,
     values: &[Value],
@@ -931,6 +1010,18 @@ pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
         collect_proof_sender_devices_from_value(value, 0, &mut pairs);
     }
     prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), did_cache).await
+}
+
+/// Public alias of [`prefetch_persistent_event_sender_key_pairs`] for callers
+/// outside the persistent-event projection path (e.g. the history-share install
+/// loop priming `ck.realm_key.share` sender device keys before SEC-02
+/// fail-closed verification).
+pub(crate) async fn prefetch_device_key_pairs(
+    api: &CokretApi,
+    pairs: Vec<(String, String)>,
+    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+) -> bool {
+    prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache).await
 }
 
 async fn prefetch_persistent_event_sender_key_pairs(

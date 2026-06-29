@@ -125,6 +125,15 @@ impl CokretApi {
         let mut pending = Vec::new();
         while let Some(chunk) = response.chunk().await? {
             pending.extend_from_slice(&chunk);
+            // COR-01: cap the inter-newline buffer before draining. A server
+            // that never delimits a frame (or sends an oversized single frame)
+            // MUST NOT be able to grow this buffer without bound — fail closed
+            // instead of risking OOM. Parity with the account.subscribe path.
+            if pending.len() > MAX_NDJSON_STREAM_FRAME_BYTES {
+                anyhow::bail!(
+                    "events subscribe frame exceeded {MAX_NDJSON_STREAM_FRAME_BYTES} bytes without a newline delimiter"
+                );
+            }
             drain_events_subscribe_ndjson_lines(&mut pending, &mut on_frame)?;
         }
 

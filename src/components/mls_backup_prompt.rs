@@ -168,7 +168,15 @@ fn mls_backup_after_write_probe_key(base_url: &str, actor_id: &str) -> String {
 fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
     match MLS_BACKUP_AFTER_WRITE_PROBES.lock() {
         Ok(mut probes) => probes.insert(key),
-        Err(_) => true,
+        Err(_) => {
+            // COR-02: a poisoned lock means a prior holder panicked. Surface it
+            // (it would otherwise be invisible) and treat the probe as already
+            // started so we don't re-spawn against corrupt shared state.
+            tracing::warn!(
+                "MLS backup after-write probe set lock poisoned; skipping probe (treat as started)"
+            );
+            true
+        }
     }
 }
 
@@ -215,7 +223,14 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
                 true
             }
         }
-        Err(_) => false,
+        Err(_) => {
+            // COR-02: poisoned job map → a prior task panicked. Log it so the
+            // dropped backup task is observable rather than silently lost.
+            tracing::warn!(
+                "MLS private plaintext backup job map lock poisoned; backup not scheduled this round"
+            );
+            false
+        }
     };
     if should_spawn {
         spawn(async move {
@@ -268,15 +283,31 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
 }
 
 fn next_mls_private_plaintext_backup_delay(key: &str) -> Option<Duration> {
-    let jobs = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock().ok()?;
+    let jobs = mls_private_plaintext_backup_jobs_lock_or_warn()?;
     jobs.get(key)?;
     Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE)
+}
+
+/// COR-02: acquire the backup-job map lock, logging a `warn!` (instead of
+/// silently returning `None`) when the lock is poisoned so a panicked prior
+/// holder — and the consequently dropped backup task — is observable.
+fn mls_private_plaintext_backup_jobs_lock_or_warn(
+) -> Option<std::sync::MutexGuard<'static, BTreeMap<String, MlsPrivatePlaintextBackupJob>>> {
+    match MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() {
+        Ok(guard) => Some(guard),
+        Err(_) => {
+            tracing::warn!(
+                "MLS private plaintext backup job map lock poisoned; dropping this backup step"
+            );
+            None
+        }
+    }
 }
 
 fn take_mls_private_plaintext_backup_job_snapshot(
     key: &str,
 ) -> Option<MlsPrivatePlaintextBackupJob> {
-    let mut jobs = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock().ok()?;
+    let mut jobs = mls_private_plaintext_backup_jobs_lock_or_warn()?;
     let job = jobs.get_mut(key)?;
     job.scheduled = false;
     job.in_flight = true;
@@ -289,7 +320,7 @@ fn finish_mls_private_plaintext_backup_job(
     cached_previous_body: Option<serde_json::Value>,
     last_uploaded_digest: Option<String>,
 ) -> bool {
-    let Ok(mut jobs) = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() else {
+    let Some(mut jobs) = mls_private_plaintext_backup_jobs_lock_or_warn() else {
         return false;
     };
     let Some(job) = jobs.get_mut(key) else {

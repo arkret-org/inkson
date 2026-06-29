@@ -133,6 +133,12 @@ pub trait CryptoBoundary {
 /// Durable event submission normally uses [`crate::event_signer`]
 /// instead, so EventProof canonicalization, domain/audience binding,
 /// and detached-JWS assembly stay in one place.
+///
+/// SEC-03: the inner `ed25519_dalek::SigningKey` holds the device's
+/// root EventProof seed. The crate is built with `ed25519-dalek`'s
+/// `zeroize` feature, so `SigningKey` is `ZeroizeOnDrop` — the seed +
+/// expanded key are wiped from memory when this boundary drops, matching
+/// the `Zeroizing` discipline used in `recovery_crypto` / `hpke_backup`.
 pub struct RustSdkBoundary {
     signing_key: ed25519_dalek::SigningKey,
 }

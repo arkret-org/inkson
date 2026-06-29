@@ -4,14 +4,10 @@ pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
     Ok(serde_json::from_value(value)?)
 }
 
-/// Maximum bytes the native NDJSON streaming reader will buffer before a
-/// newline is seen. A spec-compliant server delimits every frame with `\n`;
-/// a faulty/malicious server that keeps pushing bytes without a delimiter
-/// (or a single oversized frame) would otherwise grow `pending` without
-/// bound until the client OOMs. Frames are small control/delta envelopes;
-/// 16 MiB is far above any legitimate single frame yet caps the OOM vector.
-#[cfg(not(target_arch = "wasm32"))]
-const MAX_ACCOUNT_SUBSCRIBE_FRAME_BYTES: usize = 16 * 1024 * 1024;
+// The native NDJSON streaming OOM bound is the single shared
+// `MAX_NDJSON_STREAM_FRAME_BYTES` (defined in `http_helpers`, re-exported into
+// `api`), so both NDJSON stream paths (account.subscribe + events.subscribe)
+// share one cap. It is in scope here via `use super::*`.
 
 /// COR-09: upper bound on a server-supplied control-frame `reconnect_after_ms`.
 /// Mirrors the HTTP `Retry-After` ceiling (`MAX_RETRY_DELAY` = 60s) so the
@@ -181,9 +177,9 @@ pub(crate) async fn drain_account_subscribe_response(
         // Cap the inter-newline buffer: a server that never delimits a frame
         // (or sends an oversized single frame) MUST NOT be able to grow this
         // buffer without bound. Fail closed instead of risking OOM.
-        if pending.len() > MAX_ACCOUNT_SUBSCRIBE_FRAME_BYTES {
+        if pending.len() > MAX_NDJSON_STREAM_FRAME_BYTES {
             anyhow::bail!(
-                "account subscribe frame exceeded {MAX_ACCOUNT_SUBSCRIBE_FRAME_BYTES} bytes without a newline delimiter"
+                "account subscribe frame exceeded {MAX_NDJSON_STREAM_FRAME_BYTES} bytes without a newline delimiter"
             );
         }
         while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {

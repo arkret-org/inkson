@@ -344,6 +344,27 @@ fn realm_key_share_sender_principal_id(envelope: &serde_json::Value) -> Option<S
     })
 }
 
+/// SEC-02: derive the `(sender_principal_id, sender_device_id)` directory pair
+/// for a `ck.realm_key.share` to-device envelope. Callers prime the
+/// device-directory cache with this pair (a `keys/query`) before
+/// [`ingest_realm_key_share`] runs, so the synchronous
+/// [`verify_realm_key_share_sender_signature`] can fail-closed on a directory
+/// Miss instead of tolerating an unauthenticated empty signature. Returns
+/// `None` when the envelope exposes no sender principal or no sender device id.
+pub fn realm_key_share_sender_device_pair(
+    envelope: &serde_json::Value,
+) -> Option<(String, String)> {
+    let principal = realm_key_share_sender_principal_id(envelope)?;
+    let content = envelope.get("content").unwrap_or(envelope);
+    let device_id = content
+        .get("sender_device_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_owned();
+    Some((principal, device_id))
+}
+
 /// Verify a `ck.realm_key.share` payload's `sender_device_signature`
 /// (device-lifecycle.md §13), binding the verifying key to the sender's device
 /// directory record when available (SEC-02).
@@ -354,10 +375,12 @@ fn realm_key_share_sender_principal_id(envelope: &serde_json::Value) -> Option<S
 ///   trust chain to be cached). A populated signature is REQUIRED and MUST verify; an empty
 ///   signature is rejected.
 /// - **Directory NegativeHit** (revoked / absent / no signing key): rejected.
-/// - **Directory Miss** (key not prefetched) or **no sender principal**: fall back to the prior
-///   self-asserted-key behaviour — a populated signature must verify under its own embedded key, an
-///   empty signature is tolerated. The per-secret HPKE seal remains the confidentiality/integrity
-///   gate on this path, so this stays a strict improvement rather than a new hard failure.
+/// - **Directory Miss** (resolution failed for a claimed sender, even after the caller's prefetch):
+///   a populated signature must verify under its own embedded key; an empty signature is **rejected**
+///   (SEC-02 fail-closed — the prior fail-open window that tolerated an unauthenticated empty
+///   signature on Miss is closed). The per-secret HPKE seal remains the confidentiality/integrity gate.
+/// - **No sender principal at all**: the share cannot impersonate any actor, so an empty signature is
+///   tolerated and a populated one is verified under its embedded key (HPKE seal gates the payload).
 pub(crate) fn verify_realm_key_share_sender_signature(
     payload: &cokret_sdk::RealmKeySharePayload,
     sender_principal_id: Option<&str>,
@@ -371,16 +394,17 @@ pub(crate) fn verify_realm_key_share_sender_signature(
             .is_some_and(|map| map.is_empty() || !map.contains_key("signature"));
 
     // Resolve the sender device's authoritative directory key (sync, cache-only).
-    let directory_key = sender_principal_id.and_then(|principal| {
+    // The caller (`app::history-share` install loop) primes this cache with a
+    // `keys/query` for the sender device BEFORE this verifier runs, so a Miss
+    // here means directory resolution genuinely failed for a claimed sender.
+    let directory_key = sender_principal_id.map(|principal| {
         match crate::device_directory::cached_device_signing_key(
             principal,
             payload.sender_device_id.trim(),
         ) {
-            crate::device_directory::CacheLookup::Hit(material) => {
-                Some(DirectoryVerdict::Key(material))
-            }
-            crate::device_directory::CacheLookup::NegativeHit => Some(DirectoryVerdict::Revoked),
-            crate::device_directory::CacheLookup::Miss => None,
+            crate::device_directory::CacheLookup::Hit(material) => DirectoryVerdict::Key(material),
+            crate::device_directory::CacheLookup::NegativeHit => DirectoryVerdict::Revoked,
+            crate::device_directory::CacheLookup::Miss => DirectoryVerdict::Unresolved,
         }
     });
 
@@ -390,10 +414,14 @@ pub(crate) fn verify_realm_key_share_sender_signature(
     }
 
     if is_empty {
-        // An empty signature is acceptable ONLY when we hold no positive
-        // directory binding for the sender device. A directory-Hit sender MUST
-        // sign the share.
-        return !matches!(directory_key, Some(DirectoryVerdict::Key(_)));
+        // SEC-02 fail-closed: an empty `sender_device_signature` is acceptable
+        // ONLY when the envelope carries no claimed sender principal at all (an
+        // unbindable share that cannot impersonate any actor; the per-secret
+        // HPKE seal remains the confidentiality/integrity gate). Whenever a
+        // sender principal IS claimed — Hit, revoked, or unresolved (Miss after
+        // a prefetch attempt) — the sender MUST sign the share. This closes the
+        // prior fail-open window where a Miss tolerated an empty signature.
+        return directory_key.is_none();
     }
 
     let Some(sig_b64) = sig_obj.get("signature").and_then(serde_json::Value::as_str) else {
@@ -438,6 +466,11 @@ enum DirectoryVerdict {
     Key(cokret_sdk::signatures::PublicKeyMaterial),
     /// The sender device is revoked / absent / has no signing key.
     Revoked,
+    /// A sender principal was claimed but the directory key could not be
+    /// resolved (cache Miss after a prefetch attempt). A populated signature is
+    /// still verified under its embedded key (best effort, HPKE seal gates
+    /// confidentiality); an empty signature is rejected (SEC-02 fail-closed).
+    Unresolved,
 }
 
 /// Read-only: list the principal DIDs currently in this Realm's local MLS

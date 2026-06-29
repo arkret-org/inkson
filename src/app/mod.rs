@@ -2039,6 +2039,7 @@ pub fn RouterView() -> Element {
         let mut share_in_flight = realm_key_sharing_in_flight;
         let mut share_request_dedup = realm_key_request_dedup;
         let secure_store_ready_for_share = secure_store_bootstrap_ready;
+        let share_did_cache = did_cache;
         use_effect(move || {
             if !secure_store_ready_for_share() {
                 return;
@@ -2107,31 +2108,57 @@ pub fn RouterView() -> Element {
                 return;
             }
             share_in_flight.set(true);
-            // (a) Install inbound shares locally (no network needed).
-            if !shares.is_empty() {
-                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                let mut store = share_state_store.write();
-                let mut installed = 0_usize;
-                for share in &shares {
-                    installed += crate::mls::runtime::ingest_realm_key_share(
-                        &mut store,
-                        secure_store.as_ref(),
-                        &realm_id,
-                        &actor,
-                        &device,
-                        share,
-                    );
-                }
-                if installed > 0 {
-                    tracing::info!(
-                        installed,
-                        realm = %short_protocol_id(&realm_id),
-                        "installed history_secret(s) from ck.realm_key.share"
-                    );
-                }
-            }
             // (b) Answer inbound requests (network).
             spawn(async move {
+                // (a) Install inbound shares locally. SEC-02: before verifying
+                // each share's `sender_device_signature` we MUST resolve the
+                // sender device's authoritative directory key, so the
+                // synchronous verifier can fail-closed on a Miss (an
+                // unauthenticated empty signature is no longer tolerated). The
+                // resolution is a `keys/query` per missing sender device, primed
+                // here into the shared device-directory cache the verifier reads.
+                if !shares.is_empty() {
+                    let sender_pairs: Vec<(String, String)> = shares
+                        .iter()
+                        .filter_map(crate::mls::runtime::realm_key_share_sender_device_pair)
+                        .collect();
+                    if !sender_pairs.is_empty() {
+                        let _ = crate::views::helpers::with_authed_api(
+                            &base,
+                            session.clone(),
+                            |api| async move {
+                                crate::sync_engine::prefetch_device_key_pairs(
+                                    &api,
+                                    sender_pairs,
+                                    share_did_cache,
+                                )
+                                .await;
+                                Ok::<(), anyhow::Error>(())
+                            },
+                        )
+                        .await;
+                    }
+                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    let mut store = share_state_store.write();
+                    let mut installed = 0_usize;
+                    for share in &shares {
+                        installed += crate::mls::runtime::ingest_realm_key_share(
+                            &mut store,
+                            secure_store.as_ref(),
+                            &realm_id,
+                            &actor,
+                            &device,
+                            share,
+                        );
+                    }
+                    if installed > 0 {
+                        tracing::info!(
+                            installed,
+                            realm = %short_protocol_id(&realm_id),
+                            "installed history_secret(s) from ck.realm_key.share"
+                        );
+                    }
+                }
                 for request_envelope in requests {
                     let Some(content) = request_envelope.get("content") else {
                         continue;

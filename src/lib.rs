@@ -96,7 +96,9 @@ pub mod objects;
 // DPoP / event signing, so it could never have drained successfully
 // against authenticated endpoints. Re-add only together with real
 // wiring (enqueue on send failure, authed replay, app-shell drain).
-pub mod oidc;
+// HYG-03: the former empty `oidc` placeholder module was removed — OIDC
+// sign-in lives in `crate::coauth` + `crate::views::login`; the module
+// carried only a doc comment and no code.
 pub mod operation;
 pub mod organization;
 pub mod passkey_prf;

@@ -107,7 +107,7 @@ dioxus-router = {workspace = true}
 # `yoface::ui::*`(`src/lib.rs` 把 `pub mod ui` 改为 `pub use yoface::ui`)。
 # patch 段与 yoface README 单一真相源完全一致(见本文件 [patch] 两段)。
 yoface = {path = "../yoface"}
-ed25519-dalek = {workspace = true,features = ["pem", "pkcs8"]}
+ed25519-dalek = {workspace = true,features = ["pem", "pkcs8", "zeroize"]}
 getrandom = {workspace = true,features = ["wasm_js"]}
 getrandom_02 = {workspace = true,features = ["js"]}
 # rand_core 0.6 alias for the cokret SDK webvh inception builder
