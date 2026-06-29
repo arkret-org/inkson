@@ -342,16 +342,6 @@ pub(crate) fn project_board(
     (columns, board_options, board_id)
 }
 
-/// All board-space options derivable from the operation stream (every board
-/// container, plus list parents), for the board picker.
-pub(crate) fn board_space_options_from_ops(
-    ops: &[RawOperationRecord],
-    realm_id: &str,
-) -> Vec<BoardSpaceOption> {
-    let containers = space_container_views_from_ops(ops, realm_id);
-    board_space_options_from_projection(&containers)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
