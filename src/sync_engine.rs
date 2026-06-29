@@ -1372,10 +1372,13 @@ pub(crate) fn ingest_kanban_events(
     if events.is_empty() {
         return 0;
     }
-    let mut records = crate::views::kanban::strand_update_operations_from_events(events);
-    records.extend(crate::views::kanban::space_create_operations_from_events(
-        events,
-    ));
+    // Single ingest funnel: fold EVERY kanban-relevant kind (space.create,
+    // strand.create, strand.update, strand.move/reorder, strand.archive/restore,
+    // relation.*) into `raw_operations` so the event-sourced `project_board`
+    // sees the full log. The prior code ingested only strand.update +
+    // space.create, which silently dropped remote `ck.strand.create` — the
+    // root cause of cross-member cards never appearing.
+    let records = crate::views::kanban::kanban_operations_from_events(events);
     let mut changed = 0;
     for record in records {
         let operation_id = record.operation_id;

@@ -32,7 +32,10 @@ mod model;
 use dnd::*;
 use due_calendar::*;
 use model::*;
-pub(crate) use model::{space_create_operations_from_events, strand_update_operations_from_events};
+pub(crate) use model::{
+    kanban_operations_from_events, space_create_operations_from_events,
+    strand_update_operations_from_events,
+};
 
 #[component]
 fn CardMarkdownEditor(
