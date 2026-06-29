@@ -32,10 +32,7 @@ mod model;
 use dnd::*;
 use due_calendar::*;
 use model::*;
-pub(crate) use model::{
-    kanban_operations_from_events, space_create_operations_from_events,
-    strand_update_operations_from_events,
-};
+pub(crate) use model::{kanban_operations_from_events, strand_update_operations_from_events};
 
 #[component]
 fn CardMarkdownEditor(
@@ -1217,47 +1214,15 @@ pub fn KanbanPanel(
                     }
                 }
             } else {
-                let containers_res = {
-                    let realm_id = lifecycle_realm_id.clone();
-                    with_authed_api(&base, api_token.clone(), |api| async move {
-                        api.list_space_container_projections(&realm_id).await
-                    })
-                    .await
-                };
-                if containers_res
-                    .as_ref()
-                    .err()
-                    .is_some_and(|err| err.is_auth_expired())
-                {
-                    return;
-                }
-                let strands_res = {
-                    let realm_id = lifecycle_realm_id.clone();
-                    with_authed_api(&base, api_token.clone(), |api| async move {
-                        api.list_strand_projections(&realm_id).await
-                    })
-                    .await
-                };
-                if strands_res
-                    .as_ref()
-                    .err()
-                    .is_some_and(|err| err.is_auth_expired())
-                {
-                    return;
-                }
-                // Cross-member parity: an encrypted realm's `ck.space.create`
-                // events from *other* members reach the durable event log but
-                // may never arrive through this device's live
-                // `account.subscribe` push (non-routable delivery), so they
-                // never land in `raw_operations`. The one-shot lifecycle
-                // bootstrap recovers them via `backfill`, but this live
-                // reconciler runs on every `sync_cursor` advance and — without
-                // the same backfill merge — would reproject from the server
-                // container projection only, dropping the other member's
-                // board/list (the symptom: it "flashes once, then disappears").
-                // Mirror the bootstrap path: fold the backfilled remote
-                // space-creates into the containers before projecting so the
-                // live refresh keeps every member's boards and lists.
+                // Event-sourced live reconcile (spec
+                // `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`).
+                // The per-session server strand/space projections are
+                // visibility-filtered and, for an encrypted realm, never carry
+                // another member's card content (title in `encrypted_metadata`,
+                // unreadable to the server). Pull the durable event log — the
+                // only source carrying every member's space/strand creates —
+                // fold it into `raw_operations`, then reproject the board purely
+                // from events. This is what makes cross-member cards appear.
                 let events_res = {
                     let realm_id = lifecycle_realm_id.clone();
                     with_authed_api(&base, api_token, |api| async move {
@@ -1272,26 +1237,22 @@ pub fn KanbanPanel(
                 {
                     return;
                 }
-                if containers_res.is_ok() || strands_res.is_ok() {
-                    let container_items = containers_res
-                        .ok()
-                        .map(|resp| resp.items)
-                        .unwrap_or_default();
-                    let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
-                    let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                    let remote_update_operations =
-                        strand_update_operations_from_events(&event_items);
-                    let remote_space_create_operations =
-                        space_create_operations_from_events(&event_items);
-                    let container_items = containers_with_local_space_creates(
-                        &container_items,
-                        &remote_space_create_operations,
-                        &lifecycle_local_realm_id,
-                    );
+                if let Ok(backfill) = events_res {
+                    {
+                        let mut store = state_store.write();
+                        crate::sync_engine::ingest_kanban_events(
+                            &mut store,
+                            &lifecycle_local_realm_id,
+                            &backfill.events,
+                        );
+                    }
+                    let raw_operations = state_store.read().load().raw_operations;
+                    let container_items =
+                        space_container_views_from_ops(&raw_operations, &lifecycle_local_realm_id);
+                    let strand_items = strand_views_from_ops(&raw_operations);
                     lifecycle_container_projection.set(container_items.clone());
                     lifecycle_strand_projection.set(strand_items.clone());
                     let current_board = selected_board_space_id();
-                    let raw_operations = state_store.read().load().raw_operations;
                     let decrypt_store = state_store.read();
                     let decrypt_ctx = MlsDecryptCtx {
                         state_store: &decrypt_store,
@@ -1315,11 +1276,13 @@ pub fn KanbanPanel(
                         if current_board.trim().is_empty() {
                             selected_board_space_id.set(board_id.clone());
                         }
+                        // Content updates / assignments fold from raw_operations
+                        // (already ingested above); no separate remote op list.
                         let projected_columns = overlay_card_projection_with_operations_and_decrypt(
                             projected_columns,
                             &decrypt_store,
                             &board_id,
-                            &remote_update_operations,
+                            &[],
                             Some(&decrypt_ctx),
                         );
                         drop(decrypt_store);
@@ -1538,34 +1501,6 @@ pub fn KanbanPanel(
             if api_token.trim().is_empty() {
                 return;
             }
-            let containers_res = {
-                let realm_id = realm_id.clone();
-                with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.list_space_container_projections(&realm_id).await
-                })
-                .await
-            };
-            if containers_res
-                .as_ref()
-                .err()
-                .is_some_and(|err| err.is_auth_expired())
-            {
-                return;
-            }
-            let strands_res = {
-                let realm_id = realm_id.clone();
-                with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.list_strand_projections(&realm_id).await
-                })
-                .await
-            };
-            if strands_res
-                .as_ref()
-                .err()
-                .is_some_and(|err| err.is_auth_expired())
-            {
-                return;
-            }
             let events_res = {
                 let realm_id = realm_id.clone();
                 with_authed_api(&base, api_token, |api| async move {
@@ -1582,23 +1517,26 @@ pub fn KanbanPanel(
             }
             let mut applied = 0_usize;
             let mut server_projection_applied = false;
-            let containers_ok = containers_res.is_ok();
-            let strands_ok = strands_res.is_ok();
-            if containers_ok || strands_ok {
-                let container_items = containers_res
-                    .ok()
-                    .map(|resp| resp.items)
-                    .unwrap_or_default();
-                let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
-                let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                let remote_update_operations = strand_update_operations_from_events(&event_items);
-                let remote_space_create_operations =
-                    space_create_operations_from_events(&event_items);
-                let container_items = containers_with_local_space_creates(
-                    &container_items,
-                    &remote_space_create_operations,
-                    &lifecycle_local_realm_id,
-                );
+            if let Ok(backfill) = events_res {
+                // Event-sourced cold start (spec
+                // `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`):
+                // fold the durable event log into `raw_operations` and project
+                // the board purely from events, mirroring the live reconcile.
+                // The per-session server strand/space projection endpoints are
+                // dropped as content sources — they cannot carry another
+                // member's encrypted card content.
+                {
+                    let mut store = state_store.write();
+                    crate::sync_engine::ingest_kanban_events(
+                        &mut store,
+                        &lifecycle_local_realm_id,
+                        &backfill.events,
+                    );
+                }
+                let raw_operations = state_store.read().load().raw_operations;
+                let container_items =
+                    space_container_views_from_ops(&raw_operations, &lifecycle_local_realm_id);
+                let strand_items = strand_views_from_ops(&raw_operations);
                 lifecycle_container_projection.set(container_items.clone());
                 lifecycle_strand_projection.set(strand_items.clone());
                 let current_board = selected_board_space_id();
@@ -1619,7 +1557,6 @@ pub fn KanbanPanel(
                 } else {
                     current_board
                 };
-                let raw_operations = state_store.read().load().raw_operations;
                 let decrypt_store = state_store.read();
                 let decrypt_ctx = MlsDecryptCtx {
                     state_store: &decrypt_store,
@@ -1646,7 +1583,7 @@ pub fn KanbanPanel(
                         projected_columns,
                         &decrypt_store,
                         &board_id_for_overlay,
-                        &remote_update_operations,
+                        &[],
                         Some(&decrypt_ctx),
                     );
                     drop(decrypt_store);
