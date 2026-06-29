@@ -308,6 +308,7 @@ pub fn build_realm_create_event(
     let envelope_realm_id = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.create.v1", &envelope_realm_id);
     let created_at_for_object = event_timestamp();
+    let notary = realm_genesis_notary(notary_profile, actor_id)?;
     let mut object = json!({
         "id": realm_object_id,
         "schema": "ck.schema.realm.v1",
@@ -326,7 +327,7 @@ pub fn build_realm_create_event(
         "federation_policy": effective_federation_policy,
         "notary_profile": notary_profile,
         "digest_algorithm": digest_algorithm,
-        "notary": realm_genesis_notary(notary_profile, actor_id),
+        "notary": notary,
         "created_at": created_at_for_object,
     });
     if let Some(summary) = summary
@@ -400,48 +401,64 @@ pub fn recommended_realm_policy_components_for_profile(profile: &str) -> Option<
         .then(recommended_realm_policy_components_value)
 }
 
-fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> Value {
-    match notary_profile {
-        "threshold" => json!({
-            "type": "threshold",
-            "members": [actor_id],
-            "threshold": 1,
-        }),
-        "open_set" => json!({
-            "type": "open_set",
-            "members": [actor_id],
-        }),
-        "mixed" => json!({
-            "type": "mixed",
-            "did": actor_id,
-            "recovery_members": [derived_recovery_member_did(actor_id)],
-        }),
-        _ => {
-            // `controller_organization` / `recovery_controller_organizations`
-            // are OPTIONAL (`MAY`-verified) per realm-and-space.md §2.3. We only
-            // emit them when an authoritative organization DID can be derived
-            // from the actor DID (the `did:web` no-history service profile, where
-            // the host *is* the org authority). For the default `did:webvh`
-            // actor the org's webvh DID carries its own SCID that is unknowable
-            // client-side, so we fail closed: omit the org-scoped fields and
-            // anchor recovery on the actor itself rather than fabricate a
-            // malformed `did:webvh:<host>` (no SCID) identifier.
-            match inferred_controller_organization_did(actor_id) {
-                Some(controller) => json!({
-                    "type": "single_did",
-                    "did": actor_id,
-                    "recovery_members": [derived_recovery_member_did(&controller)],
-                    "controller_organization": controller,
-                    "recovery_controller_organizations": [derived_recovery_controller_organization_did(&controller)],
-                }),
-                None => json!({
-                    "type": "single_did",
-                    "did": actor_id,
-                    "recovery_members": [derived_recovery_member_did(actor_id)],
-                }),
+/// Build the genesis notary cell value via the SDK-authoritative
+/// [`cokret_sdk::NotaryValue`] type (no hand-rolled JSON — zero schema drift),
+/// then serialize it to the wire `notary` object.
+fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> anyhow::Result<Value> {
+    let actor_did = cokret_sdk::Did::new(actor_id.to_owned())
+        .map_err(|e| anyhow::anyhow!("realm notary actor DID `{actor_id}` invalid: {e}"))?;
+    let notary = match notary_profile {
+        "threshold" => {
+            // Single-operator genesis committee: 1-of-1. `2*1 > 1` so the
+            // forensic-attribution mode is `quorum_intersection`.
+            cokret_sdk::NotaryValue::Threshold {
+                threshold: 1,
+                members: vec![actor_did],
+                forensic_attribution: cokret_sdk::ForensicAttribution::QuorumIntersection,
             }
         }
-    }
+        "open_set" => cokret_sdk::NotaryValue::OpenSet {
+            members: vec![actor_did],
+        },
+        "mixed" => cokret_sdk::NotaryValue::Mixed {
+            did: actor_did,
+            recovery_members: vec![parse_derived_did(&derived_recovery_member_did(actor_id))?],
+        },
+        _ => {
+            // `controller_organization` / `recovery_controller_organizations`
+            // are required only when an authoritative organization DID can be
+            // derived from the actor DID (the `did:web` no-history service
+            // profile, where the host *is* the org authority). For the default
+            // `did:webvh` actor the org's webvh DID carries its own SCID that is
+            // unknowable client-side, so we omit the org-scoped fields and emit
+            // the orgless `{type, did}` single_did genesis (realm.schema.json
+            // single_did allOf; decisions/0003 §7 — personal Realms fall back to
+            // per-user recovery) rather than fabricate a malformed
+            // `did:webvh:<host>` (no SCID) identifier.
+            match inferred_controller_organization_did(actor_id) {
+                Some(controller) => cokret_sdk::NotaryValue::single_did_with_org(
+                    actor_did,
+                    vec![parse_derived_did(&derived_recovery_member_did(&controller))?],
+                    parse_derived_did(&controller)?,
+                    vec![parse_derived_did(&derived_recovery_controller_organization_did(
+                        &controller,
+                    ))?],
+                ),
+                None => cokret_sdk::NotaryValue::single_did(actor_did),
+            }
+        }
+    };
+    notary
+        .validate()
+        .map_err(|e| anyhow::anyhow!("realm genesis notary invalid: {e}"))?;
+    serde_json::to_value(&notary)
+        .map_err(|e| anyhow::anyhow!("serialize realm genesis notary: {e}"))
+}
+
+/// Parse a client-derived notary DID string into the SDK [`cokret_sdk::Did`].
+fn parse_derived_did(did: &str) -> anyhow::Result<cokret_sdk::Did> {
+    cokret_sdk::Did::new(did.to_owned())
+        .map_err(|e| anyhow::anyhow!("derived notary DID `{did}` invalid: {e}"))
 }
 
 /// Infer the controlling organization (principal-server) DID for a member's
@@ -1136,7 +1153,8 @@ mod notary_derivation_tests {
             inferred_controller_organization_did("did:web:alice.example:users:bob"),
             Some("did:web:alice.example".to_owned())
         );
-        let notary = realm_genesis_notary("single_did", "did:web:alice.example");
+        let notary = realm_genesis_notary("single_did", "did:web:alice.example").unwrap();
+        assert_eq!(notary["type"], "single_did");
         assert_eq!(notary["controller_organization"], "did:web:alice.example");
         assert_eq!(
             notary["recovery_members"][0],
@@ -1159,15 +1177,15 @@ mod notary_derivation_tests {
             None
         );
         let actor = "did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example";
-        let notary = realm_genesis_notary("single_did", actor);
+        let notary = realm_genesis_notary("single_did", actor).unwrap();
+        // Orgless personal Realm emits the minimal `{type, did}` single_did
+        // genesis (relaxed realm.schema.json single_did allOf); the notary
+        // recovery path / org-scoped fields are omitted (personal Realms fall
+        // back to per-user recovery, decisions/0003 §7) rather than fabricated
+        // into a malformed did:webvh:<host>.
         assert_eq!(notary["type"], "single_did");
         assert_eq!(notary["did"], actor);
-        // Recovery anchors on the actor itself; org-scoped fields are omitted
-        // rather than fabricated into a malformed did:webvh:<host>.
-        assert_eq!(
-            notary["recovery_members"][0],
-            format!("{actor}:recovery:notary")
-        );
+        assert!(notary.get("recovery_members").is_none());
         assert!(notary.get("controller_organization").is_none());
         assert!(notary.get("recovery_controller_organizations").is_none());
     }
