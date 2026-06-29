@@ -332,7 +332,10 @@ pub fn ChatPanel(
                 if *is_online.peek() != online {
                     is_online.set(online);
                 }
-                crate::api::sleep_for(std::time::Duration::from_millis(750)).await;
+                // Perf: connectivity is a low-frequency state; 750ms polling was
+                // too tight. Relaxed to 2500ms, still reflecting navigator.onLine
+                // flips promptly (including Playwright setOffline).
+                crate::api::sleep_for(std::time::Duration::from_millis(2_500)).await;
             }
         });
     }
@@ -533,6 +536,21 @@ pub fn ChatPanel(
         })
         .collect();
     let visible_message_count = visible_messages.len();
+    // Perf: prebuild lookup sets for the message-render hot path. Previously each
+    // message ran a full `.iter().any()` over `shared_pins`/`chat_outbox`
+    // (O(messages x N)) and repeatedly cloned `private_saved_targets`. Materialize
+    // them once as HashSets here so the loop body does O(1) lookups.
+    let pinned_target_set: std::collections::HashSet<String> = shared_pins()
+        .iter()
+        .map(|pin| pin.target_ref.clone())
+        .collect();
+    let outbox_message_id_set: std::collections::HashSet<String> = chat_outbox()
+        .iter()
+        .map(|queued| queued.message_id.clone())
+        .collect();
+    // `private_saved_targets` is itself a BTreeSet; clone it once for reuse in the
+    // loop instead of triggering a full-set clone per message.
+    let private_saved_target_set = private_saved_targets();
     // G3.Y2 — derive the highest visible event id so we can post a
     // `ck.read_cursor.advance` covering everything we've rendered. The marker
     // itself is actor-private (`discovery/read-receipts.md §3.1`).
@@ -1655,14 +1673,15 @@ pub fn ChatPanel(
                                 .map(|c| c.circle_id.clone())
                                 .unwrap_or_default();
                             let message_target_ref = msg.pin_saved_target_ref().to_owned();
-                            let message_is_pinned = shared_pins()
-                                .iter()
-                                .any(|pin| pin.target_ref == message_target_ref || pin.target_ref == msg.id);
+                            // O(1) lookup into the prebuilt set, semantically
+                            // equivalent to the original `.iter().any(...)`: a pin
+                            // matches when target_ref equals the message target_ref or message id.
+                            let message_is_pinned = pinned_target_set.contains(&message_target_ref)
+                                || pinned_target_set.contains(&msg.id);
                             let message_is_saved_private =
-                                private_saved_targets().contains(&message_target_ref);
-                            let message_is_queued_offline = chat_outbox()
-                                .iter()
-                                .any(|queued| queued.message_id == msg.id);
+                                private_saved_target_set.contains(&message_target_ref);
+                            let message_is_queued_offline =
+                                outbox_message_id_set.contains(&msg.id);
                             let sender_is_own =
                                 is_own_message_sender(&msg.sender, &account_did);
                             rsx! {

@@ -106,8 +106,12 @@ pub type I18nSignal = Signal<(Locale, HashMap<String, TranslationDict>)>;
 
 /// Get a translated string by key. Falls back to English, then to the key itself.
 pub fn t(signal: &I18nSignal, key: &str) -> String {
-    let (locale, dicts) = signal.read().clone();
-    translate(locale, &dicts, key)
+    // Borrow on read and clone only the matched translation; avoids deep-copying
+    // the whole (Locale, HashMap<String, TranslationDict>) dictionary on every
+    // call (t() is invoked heavily per frame).
+    let guard = signal.read();
+    let (locale, dicts) = &*guard;
+    translate(*locale, dicts, key)
 }
 
 /// Lookup a translated string without requiring a Dioxus runtime.

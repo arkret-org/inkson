@@ -69,11 +69,9 @@ pub fn handle_from_did(did: &str) -> String {
 const SHORT_PROTOCOL_ID_THRESHOLD: usize = 32;
 
 fn shorten_ascii_middle(value: &str, head: usize, tail: usize) -> String {
-    let len = value.len();
-    if len <= head + tail + 3 {
-        return value.to_owned();
-    }
-    format!("{}...{}", &value[..head], &value[len - tail..])
+    // Dedup: delegate to the shared yoface implementation, keeping the local
+    // wrapper name so call sites stay unchanged.
+    yoface::utils::text::truncate_middle(value, head, tail)
 }
 
 /// Return a compact, display-only label for long protocol identifiers.

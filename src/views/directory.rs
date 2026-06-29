@@ -704,7 +704,13 @@ pub fn DirectoryPanel(
                         div { class: "muted", "Search to see Card, Discussion, Actor and Space projections with visibility state." }
                     }
                     for result in object_results() {
-                        ProtocolObjectResult { result }
+                        // Stable list key: use a stable object identifier
+                        // (target_ref/id/did), falling back to title, so a
+                        // missing key doesn't force the whole list to rebuild.
+                        ProtocolObjectResult {
+                            key: "{value_str_any(&result, &[\"target_ref\", \"id\", \"did\"], json_text(&result, \"title\").as_str())}",
+                            result,
+                        }
                     }
                 }
             }
@@ -712,7 +718,10 @@ pub fn DirectoryPanel(
             // Realm directory results
             if active_tab() == DirectoryTab::Realms {
                 for realm in realm_results() {
-                    div { class: "event", "data-testid": "directory-result",
+                    div {
+                        key: "{realm.id}", // Stable list key: realm business id.
+                        class: "event",
+                        "data-testid": "directory-result",
                         div { class: "event-head",
                             span { "{realm.category.clone().unwrap_or_else(|| \"realm\".to_owned())}" }
                             span { if realm.public { "public" } else { "private" } }
@@ -750,6 +759,7 @@ pub fn DirectoryPanel(
                         div { class: "event-head", span { "Index Projection" } span { "{realm_results().len()} result(s)" } }
                         for realm in realm_results() {
                             GenericEntityCard {
+                                key: "{realm.id}", // Stable list key: realm business id (as above).
                                 title: realm.title.clone(),
                                 summary: realm.description.clone().unwrap_or_else(|| "Realm projection".to_owned()),
                                 entity_type: "realm".to_owned(),
@@ -844,6 +854,7 @@ pub fn DirectoryPanel(
                         };
                         rsx! {
                             div {
+                                key: "{org_id}", // Stable list key: organization business id.
                                 class: "event",
                                 "data-testid": "org-result",
                                 "data-organization-id": "{org_id}",
@@ -986,7 +997,11 @@ pub fn DirectoryPanel(
             // Actors tab results
             if active_tab() == DirectoryTab::Actors {
                 for actor in actor_results() {
-                    div { class: "event", "data-testid": "actor-result",
+                    div {
+                        // Stable list key: the actor's did (falls back to the "-" placeholder).
+                        key: "{actor.get(\"did\").and_then(|v| v.as_str()).unwrap_or(\"-\")}",
+                        class: "event",
+                        "data-testid": "actor-result",
                         div { class: "event-head",
                             span { "actor" }
                             {

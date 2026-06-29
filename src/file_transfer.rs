@@ -377,20 +377,9 @@ pub fn data_url_for_download(bytes: &[u8], media_type: &str) -> String {
 }
 
 pub fn format_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0usize;
-    while value >= 1024.0 && unit + 1 < UNITS.len() {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else if value >= 10.0 {
-        format!("{value:.0} {}", UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
+    // Dedup: delegate to the shared yoface implementation, keeping the local
+    // wrapper name so call sites stay unchanged.
+    yoface::utils::format::format_bytes(bytes)
 }
 
 pub fn display_filename(record: &FileTransferRecord) -> String {

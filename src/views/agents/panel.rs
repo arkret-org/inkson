@@ -80,6 +80,12 @@ pub fn AgentsPanel(
             let realm = realm.clone();
             async move {
                 let mut ticks: u32 = 0;
+                // Perf: empty-response backoff. When a backfill round yields no
+                // new results, double the poll interval (capped at 30s); reset to
+                // the 4s baseline when there is new data, cutting idle network/CPU.
+                const BACKFILL_BASE_MS: u64 = 4_000;
+                const BACKFILL_MAX_MS: u64 = 30_000;
+                let mut poll_interval_ms: u64 = BACKFILL_BASE_MS;
                 loop {
                     if ticks > 900 {
                         incoming_status.set(format!(
@@ -148,7 +154,13 @@ pub fn AgentsPanel(
                     });
                     incoming_last_poll_at.set(format!("tick {ticks}"));
                     incoming_results.set(collected);
-                    crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
+                    // Backoff scheduling: delta is the number of new results this round vs. last.
+                    if delta > 0 {
+                        poll_interval_ms = BACKFILL_BASE_MS;
+                    } else {
+                        poll_interval_ms = (poll_interval_ms * 2).min(BACKFILL_MAX_MS);
+                    }
+                    crate::api::sleep_for(std::time::Duration::from_millis(poll_interval_ms)).await;
                 }
             }
         });
