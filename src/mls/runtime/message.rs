@@ -55,6 +55,21 @@ pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> Vec<u8> {
         .unwrap_or_else(|_| format!("{}|{epoch}", realm_id.trim()).into_bytes())
 }
 
+/// True when `realm_id` declares the §2.10 `mls-exporter-aead-v1` content scheme
+/// (capability axis), so authored content uses the history-shareable exporter
+/// AEAD path instead of forward-secret `mls-rfc9420`. Normalizes case + `_`/`-`
+/// so both the canonical kebab token and a `mls_exporter_aead_v1` spelling
+/// match. See [[content-scheme-capability-vs-toggle]].
+fn realm_content_scheme_is_exporter_aead(
+    state_store: &crate::local_state::LocalStateStore,
+    realm_id: &str,
+) -> bool {
+    state_store
+        .realm_content_scheme(realm_id)
+        .map(|scheme| scheme.trim().to_ascii_lowercase().replace('_', "-"))
+        .is_some_and(|scheme| scheme == "mls-exporter-aead-v1")
+}
+
 pub fn decrypt_application_payload(
     state_store: &crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -93,6 +108,28 @@ pub fn decrypt_application_payload(
     let plaintext = match group.decrypt_payload(payload) {
         Ok(plaintext) => plaintext,
         Err(_) => {
+            // §2.10 exporter-aead content at our CURRENT epoch: the live ratchet
+            // cannot open it (it is not an MLS PrivateMessage), but every member
+            // at epoch N can derive `history_secret[N]` directly from the group.
+            // Do so and open it — this keeps post-join content readable once a
+            // Realm uses the exporter-aead content scheme, without depending on a
+            // prior retain or a `ck.realm_key.share`. Past-epoch / pre-join
+            // content (epoch != current) still needs a retained or granted
+            // secret, handled by the group-free standalone path below.
+            if payload.scheme == cokret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+                && snapshot.epoch == payload.epoch
+                && let Ok(secret) = group.derive_and_retain_history_secret(realm_id)
+                && let Ok(nonce_and_ct) =
+                    cokret_sdk::base64url_decode(payload.ciphertext.as_bytes())
+                && let Ok(plaintext) = group.decrypt_content_exporter_aead(
+                    &secret,
+                    realm_id,
+                    &nonce_and_ct,
+                    &history_content_aad_bytes(realm_id, payload.epoch),
+                )
+            {
+                return Some(plaintext);
+            }
             // Tier-3 history decrypt: the live receive ratchet cannot open this
             // (pre-join epoch, or another device's content this group can't
             // ratchet to). Fall back to any granted `history_secret` for the
@@ -1077,11 +1114,23 @@ pub fn encrypt_values_with_device_snapshot(
     } else {
         None
     };
+    // §2.10 content scheme dispatch (capability axis): when this Realm declares
+    // `content_scheme=mls-exporter-aead-v1`, author content under the
+    // history-shareable exporter-aead scheme so a late joiner granted the
+    // epoch's `history_secret` can decrypt it. Otherwise keep the default
+    // forward-secret `mls-rfc9420` PrivateMessage path. The epoch is read AFTER
+    // any forced commit above, so the AEAD aad binds the epoch the content
+    // actually rides; it MUST match the decrypt-side `history_content_aad_bytes`.
+    let use_exporter_aead = realm_content_scheme_is_exporter_aead(state_store, realm_id);
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
+    let exporter_aad = use_exporter_aead.then(|| history_content_aad_bytes(realm_id, group.epoch()));
     for plaintext in plaintext_values {
-        let encrypted = group
-            .encrypt_payload(content_type, plaintext)
-            .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+        let encrypted = if let Some(aad_bytes) = exporter_aad.as_deref() {
+            group.encrypt_payload_exporter_aead(content_type, realm_id, aad_bytes, None, plaintext)
+        } else {
+            group.encrypt_payload(content_type, plaintext)
+        }
+        .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
         encrypted_values.push(
             serde_json::to_value(&encrypted)
                 .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?,
@@ -1185,9 +1234,17 @@ pub fn encrypt_message_with_device_snapshot(
     } else {
         None
     };
-    let encrypted = group
-        .encrypt_payload_with_aad(content_type, Some(aad), plaintext)
-        .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+    // §2.10 content scheme dispatch — see `encrypt_values_with_device_snapshot`.
+    // The routing `aad` rides the envelope (`EncryptedPayload.aad` + digest); the
+    // AEAD itself binds the epoch via `history_content_aad_bytes`, matching the
+    // decrypt-side `try_history_decrypt_standalone`.
+    let encrypted = if realm_content_scheme_is_exporter_aead(state_store, realm_id) {
+        let aad_bytes = history_content_aad_bytes(realm_id, group.epoch());
+        group.encrypt_payload_exporter_aead(content_type, realm_id, &aad_bytes, Some(aad), plaintext)
+    } else {
+        group.encrypt_payload_with_aad(content_type, Some(aad), plaintext)
+    }
+    .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
     let schedule_hash = group.schedule_hash();
     let member_dids = group.member_principal_ids();
     let post_state = group

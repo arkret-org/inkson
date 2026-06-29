@@ -330,6 +330,16 @@ pub fn build_realm_create_event(
         "notary": notary,
         "created_at": created_at_for_object,
     });
+    // §2.10 content scheme (capability axis): MLS-backed realms default to the
+    // history-shareable `mls-exporter-aead-v1` scheme so a late joiner CAN be
+    // granted pre-join content (forward secrecy degrades to per-epoch, §2.10.5).
+    // Orthogonal to `history_visibility` (the runtime delivery toggle); plaintext
+    // realms carry no content scheme. An extreme-confidentiality realm may
+    // instead pin `mls-rfc9420` (per-message FS, history structurally
+    // unshareable) — see [[content-scheme-capability-vs-toggle]].
+    if encryption_profile.trim() == RECOMMENDED_REALM_ENCRYPTION_PROFILE {
+        object["content_scheme"] = Value::String("mls-exporter-aead-v1".to_owned());
+    }
     if let Some(summary) = summary
         && !summary.trim().is_empty()
     {

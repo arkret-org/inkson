@@ -522,6 +522,12 @@ fn welcome_apply_uses_key_package_identity_state() {
     assert_eq!(outcome.applied, 1);
     assert_eq!(outcome.failed, 0);
     assert!(state.mls_snapshot_for(realm).is_some());
+    // The KeyPackage identity state (init private key) is RETAINED after a
+    // Welcome applies — NOT consumed. Invitees publish reusable `last_resort`
+    // KeyPackages, whose init key must survive across Welcomes; deleting it here
+    // was the deadlock root ("no local KeyPackage identity state" / invitee
+    // could never apply a second Welcome). See
+    // [[mls-keypackage-consumed-deadlock-last-resort]].
     assert!(
         load_mls_key_package_identity_state(
             &store,
@@ -530,7 +536,7 @@ fn welcome_apply_uses_key_package_identity_state() {
             &bob_key_package.keypackage_id,
         )
         .unwrap()
-        .is_none()
+        .is_some()
     );
 }
 
