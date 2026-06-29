@@ -484,6 +484,30 @@ pub(super) fn dispatch_calendar_rsvp(
     });
 }
 
+/// Merge the persisted (capped) local raw-operation log with the freshly
+/// backfilled strand event history before building the synthesis track.
+///
+/// Each `ck.strand.update` event in the backfill carries the authoritative
+/// per-event `actor_id`, so feeding them through the same builder lets
+/// historical revisions recover their true author instead of falling back to
+/// "Unknown author" (see `card_history_operations` in the kanban panel). On an
+/// `operation_id` collision the history copy wins (it is the synced,
+/// author-stamped envelope); local-only operations — e.g. a just-queued
+/// optimistic edit not yet reflected in server history — are preserved.
+pub(super) fn merge_history_raw_operations(
+    local: &[RawOperationRecord],
+    history: &[RawOperationRecord],
+) -> Vec<RawOperationRecord> {
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    let mut merged = Vec::with_capacity(local.len() + history.len());
+    for record in history.iter().chain(local.iter()) {
+        if seen.insert(record.operation_id.clone()) {
+            merged.push(record.clone());
+        }
+    }
+    merged
+}
+
 pub(super) fn projection_synthesis_revision(
     card: &KanbanCard,
     index: usize,

@@ -312,39 +312,99 @@ pub fn ensure_device_key_with_secure_store(
     store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<DpopHandle, AuthDpopError> {
-    if let Some(record) = store
+    let record = store
         .load_dpop_device_key_with_secure_store(secure_store)
-        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?
-    {
-        let handle = decode_record(&record)?;
-        #[cfg(not(test))]
-        crate::event_signer::activate_device_signer_from_seed_b64url(
-            &record.seed_b64,
-            Some(secure_store),
-        )
-        .map_err(|err| AuthDpopError::SecureStore(format!("activate event signer: {err}")))?;
-        store
-            .set_dpop_device_key_with_secure_store(Some(record), secure_store)
-            .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+    let signing_seed = crate::secure_key_store::load_signing_seed(secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(format!("load device signing seed: {err}")))?;
+
+    if let Some(material) = signing_seed {
+        let (seed_handle, seed_record) = handle_and_record_from_seed(material.seed);
+        let record_matches_seed = record
+            .as_ref()
+            .and_then(|record| decode_record(record).ok())
+            .is_some_and(|handle| handle.jkt() == seed_handle.jkt());
+        if !record_matches_seed {
+            tracing::warn!(
+                stored_jkt = record
+                    .as_ref()
+                    .map(|record| record.jkt.as_str())
+                    .unwrap_or(""),
+                seed_jkt = seed_handle.jkt(),
+                "DPoP device-key record did not match active signing seed; repairing record from signing seed"
+            );
+            store
+                .set_dpop_device_key_with_secure_store(Some(seed_record), secure_store)
+                .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+            #[cfg(not(test))]
+            crate::event_signer::activate_device_signer_from_seed(
+                material.seed,
+                Some(secure_store),
+            )
+            .map_err(|err| AuthDpopError::SecureStore(format!("activate event signer: {err}")))?;
+            return Ok(seed_handle);
+        }
+    }
+
+    if let Some(record) = record {
+        let handle = persist_loaded_record(store, secure_store, record)?;
         return Ok(handle);
     }
 
     let material = crate::secure_key_store::ensure_signing_seed(secure_store)
         .map_err(|err| AuthDpopError::SecureStore(format!("ensure device signing seed: {err}")))?;
-    let signing_key = SigningKey::from_bytes(&material.seed);
-    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key());
-    let record = DpopDeviceKeyRecord {
-        seed_b64: URL_SAFE_NO_PAD.encode(material.seed),
-        jkt: jkt.clone(),
-        created_at: Utc::now(),
-    };
+    let (handle, record) = handle_and_record_from_seed(material.seed);
     store
         .set_dpop_device_key_with_secure_store(Some(record), secure_store)
         .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
     #[cfg(not(test))]
     crate::event_signer::activate_device_signer_from_seed(material.seed, Some(secure_store))
         .map_err(|err| AuthDpopError::SecureStore(format!("activate event signer: {err}")))?;
-    Ok(DpopHandle { signing_key, jkt })
+    Ok(handle)
+}
+
+fn persist_loaded_record(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    record: DpopDeviceKeyRecord,
+) -> Result<DpopHandle, AuthDpopError> {
+    let handle = decode_record(&record)?;
+    #[cfg(not(test))]
+    crate::event_signer::activate_device_signer_from_seed_b64url(
+        &record.seed_b64,
+        Some(secure_store),
+    )
+    .map_err(|err| AuthDpopError::SecureStore(format!("activate event signer: {err}")))?;
+    store
+        .set_dpop_device_key_with_secure_store(Some(record), secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+    Ok(handle)
+}
+
+fn handle_and_record_from_seed(seed: [u8; 32]) -> (DpopHandle, DpopDeviceKeyRecord) {
+    let signing_key = SigningKey::from_bytes(&seed);
+    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key());
+    let record = DpopDeviceKeyRecord {
+        seed_b64: URL_SAFE_NO_PAD.encode(seed),
+        jkt: jkt.clone(),
+        created_at: Utc::now(),
+    };
+    (DpopHandle { signing_key, jkt }, record)
+}
+
+fn persist_recovered_seed_record(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    seed: [u8; 32],
+) -> Result<DpopHandle, AuthDpopError> {
+    let (handle, record) = handle_and_record_from_seed(seed);
+    store
+        .set_dpop_device_key_with_secure_store(Some(record), secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(format!("recover DPoP record: {err}")))?;
+    #[cfg(not(test))]
+    crate::event_signer::activate_device_signer_from_seed(seed, Some(secure_store))
+        .map_err(|err| AuthDpopError::SecureStore(format!("activate event signer: {err}")))?;
+    Ok(handle)
 }
 
 #[cfg(test)]
@@ -398,6 +458,62 @@ pub fn load_device_key_with_secure_store(
         return Ok(None);
     };
     decode_record(&record).map(Some)
+}
+
+/// Read the persisted DPoP key, or recover its record from the active
+/// account-scoped signing seed when a prior boot/login wrote the seed but the
+/// derived DPoP record was not durably re-homed yet. This never generates a new
+/// key: if neither the record nor signing seed exists, the current session
+/// grant cannot be sender-constrained and the caller should let auth recovery
+/// fail closed.
+#[cfg(not(test))]
+pub fn load_or_recover_device_key(
+    store: &mut LocalStateStore,
+) -> Result<Option<DpopHandle>, AuthDpopError> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    load_or_recover_device_key_with_secure_store(store, secure_store.as_ref())
+}
+
+#[cfg(test)]
+pub fn load_or_recover_device_key(
+    store: &mut LocalStateStore,
+) -> Result<Option<DpopHandle>, AuthDpopError> {
+    load_device_key(store)
+}
+
+pub fn load_or_recover_device_key_with_secure_store(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<Option<DpopHandle>, AuthDpopError> {
+    let record = store
+        .load_dpop_device_key_with_secure_store(secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+    let signing_seed = crate::secure_key_store::load_signing_seed(secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(format!("load signing seed: {err}")))?;
+
+    if let Some(material) = signing_seed {
+        let (seed_handle, _) = handle_and_record_from_seed(material.seed);
+        let record_matches_seed = record
+            .as_ref()
+            .and_then(|record| decode_record(record).ok())
+            .is_some_and(|handle| handle.jkt() == seed_handle.jkt());
+        if !record_matches_seed {
+            tracing::warn!(
+                stored_jkt = record
+                    .as_ref()
+                    .map(|record| record.jkt.as_str())
+                    .unwrap_or(""),
+                seed_jkt = seed_handle.jkt(),
+                "recovering DPoP device-key record from active signing seed"
+            );
+            return persist_recovered_seed_record(store, secure_store, material.seed).map(Some);
+        }
+    }
+
+    match record {
+        Some(record) => persist_loaded_record(store, secure_store, record).map(Some),
+        None => Ok(None),
+    }
 }
 
 /// Rebuild a [`DpopHandle`] from a persisted seed + thumbprint pair,
@@ -487,10 +603,32 @@ pub fn dpop_device_key_record_from_seed(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
     use super::*;
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     use crate::local_state::isolated_store_for_tests as isolated_store;
     use crate::secure_key_store::MemorySecureKeyStore;
+
+    fn seed_scope_test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("seed scope test lock")
+    }
+
+    struct SeedScopeReset;
+
+    impl Drop for SeedScopeReset {
+        fn drop(&mut self) {
+            crate::secure_key_store::set_active_device_seed_scope(None);
+        }
+    }
+
+    fn set_seed_scope(scope: &str) -> SeedScopeReset {
+        crate::secure_key_store::set_active_device_seed_scope(Some(scope));
+        SeedScopeReset
+    }
 
     #[test]
     fn ensure_device_key_is_idempotent() {
@@ -647,6 +785,7 @@ mod tests {
 
     #[test]
     fn secure_store_seed_round_trips_without_plaintext_state_seed() {
+        let _lock = seed_scope_test_lock();
         let mut store = isolated_store("secure");
         let secure = MemorySecureKeyStore::default();
         let first = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
@@ -658,5 +797,80 @@ mod tests {
             .unwrap()
             .expect("loaded");
         assert_eq!(second.jkt(), first.jkt());
+    }
+
+    #[test]
+    fn recovers_secure_store_dpop_record_from_account_scoped_signing_seed() {
+        let _lock = seed_scope_test_lock();
+        let mut store = isolated_store("recover-secure-dpop-record");
+        let secure = MemorySecureKeyStore::default();
+        let actor = "did:web:alice.example";
+        let _scope = set_seed_scope(actor);
+        let seed = [9_u8; 32];
+        crate::secure_key_store::store_signing_seed_scoped(&secure, Some(actor), &seed).unwrap();
+
+        let recovered = load_or_recover_device_key_with_secure_store(&mut store, &secure)
+            .unwrap()
+            .expect("recovered handle");
+        assert_eq!(recovered.seed_b64(), URL_SAFE_NO_PAD.encode(seed));
+        let public_record = store.dpop_device_key().expect("public dpop record");
+        assert!(public_record.seed_b64.is_empty());
+        assert_eq!(public_record.jkt, recovered.jkt());
+        let loaded = load_device_key_with_secure_store(&store, &secure)
+            .unwrap()
+            .expect("loaded recovered handle");
+        assert_eq!(loaded.jkt(), recovered.jkt());
+    }
+
+    #[test]
+    fn load_or_recover_repairs_stale_account_dpop_record_from_signing_seed() {
+        let _lock = seed_scope_test_lock();
+        let mut store = isolated_store("repair-stale-dpop-record");
+        let secure = MemorySecureKeyStore::default();
+        let actor = "did:web:bob.example";
+        let _scope = set_seed_scope(actor);
+        let old_seed = [3_u8; 32];
+        let new_seed = [7_u8; 32];
+        let old_record =
+            dpop_device_key_record_from_seed(&URL_SAFE_NO_PAD.encode(old_seed)).unwrap();
+        store
+            .set_dpop_device_key_with_secure_store(Some(old_record.clone()), &secure)
+            .unwrap();
+        crate::secure_key_store::store_signing_seed_scoped(&secure, Some(actor), &new_seed)
+            .unwrap();
+
+        let repaired = load_or_recover_device_key_with_secure_store(&mut store, &secure)
+            .unwrap()
+            .expect("repaired handle");
+
+        assert_ne!(repaired.jkt(), old_record.jkt);
+        assert_eq!(repaired.seed_b64(), URL_SAFE_NO_PAD.encode(new_seed));
+        let loaded = load_device_key_with_secure_store(&store, &secure)
+            .unwrap()
+            .expect("loaded repaired handle");
+        assert_eq!(loaded.jkt(), repaired.jkt());
+    }
+
+    #[test]
+    fn ensure_repairs_stale_account_dpop_record_from_signing_seed() {
+        let _lock = seed_scope_test_lock();
+        let mut store = isolated_store("ensure-repairs-stale-dpop-record");
+        let secure = MemorySecureKeyStore::default();
+        let actor = "did:web:returning.example";
+        let _scope = set_seed_scope(actor);
+        let old_seed = [11_u8; 32];
+        let new_seed = [13_u8; 32];
+        let old_record =
+            dpop_device_key_record_from_seed(&URL_SAFE_NO_PAD.encode(old_seed)).unwrap();
+        store
+            .set_dpop_device_key_with_secure_store(Some(old_record.clone()), &secure)
+            .unwrap();
+        crate::secure_key_store::store_signing_seed_scoped(&secure, Some(actor), &new_seed)
+            .unwrap();
+
+        let repaired = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
+
+        assert_ne!(repaired.jkt(), old_record.jkt);
+        assert_eq!(repaired.seed_b64(), URL_SAFE_NO_PAD.encode(new_seed));
     }
 }

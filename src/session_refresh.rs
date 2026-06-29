@@ -187,8 +187,13 @@ fn prepare_refresh_grant(
 ) -> RefreshPrepared {
     // The rotation proof is signed by the durable device DPoP key (the same key
     // bound into the grant's `cnf.jkt`), not the grant's own session key.
-    let device_handle = match crate::auth_dpop::ensure_device_key(store) {
-        Ok(handle) => handle,
+    let device_handle = match crate::auth_dpop::load_or_recover_device_key(store) {
+        Ok(Some(handle)) => handle,
+        Ok(None) => {
+            return RefreshPrepared::Done(RefreshOutcome::Transient {
+                reason: "could not load device DPoP key for grant rotation".to_owned(),
+            });
+        }
         Err(error) => {
             return RefreshPrepared::Done(RefreshOutcome::Transient {
                 reason: format!("could not load device DPoP key for grant rotation: {error}"),
@@ -511,6 +516,22 @@ mod tests {
             outcome,
             RefreshPrepared::Done(RefreshOutcome::NoGrant)
         ));
+        assert!(store.session_grant().is_some());
+    }
+
+    #[test]
+    fn prepare_refresh_does_not_generate_new_dpop_key_for_existing_grant() {
+        let mut store = isolated_store("missing-grant-dpop-key");
+        store.set_session_grant(Some(grant_with_expiry(600)));
+
+        let outcome =
+            prepare_refresh_for_server_after_unauthorized(&mut store, "https://principal.example");
+
+        assert!(matches!(
+            outcome,
+            RefreshPrepared::Done(RefreshOutcome::Transient { .. })
+        ));
+        assert!(store.dpop_device_key().is_none());
         assert!(store.session_grant().is_some());
     }
 

@@ -193,28 +193,45 @@ pub(super) fn redirect_to_login(navigator: Navigator) {
 
 fn attach_current_session_material(
     api: CokretApi,
-    store: &crate::local_state::LocalStateStore,
+    store: &mut crate::local_state::LocalStateStore,
 ) -> CokretApi {
-    let Some(handle) = crate::auth_dpop::load_device_key(store).ok().flatten() else {
-        return api;
-    };
-    api.with_dpop_device(handle)
+    match crate::auth_dpop::load_or_recover_device_key(store) {
+        Ok(Some(handle)) => api.with_dpop_device(handle),
+        Ok(None) => {
+            tracing::warn!(
+                target: "session_boot",
+                "session DPoP device key unavailable; self-path requests will be rejected until sign-in refreshes the device key"
+            );
+            api
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "session_boot",
+                %error,
+                "session DPoP device key load/recovery failed"
+            );
+            api
+        }
+    }
 }
 
-fn current_base_api(base: &str, state_store: Signal<LocalStateStore>) -> anyhow::Result<CokretApi> {
+fn current_base_api(
+    base: &str,
+    mut state_store: Signal<LocalStateStore>,
+) -> anyhow::Result<CokretApi> {
     let api = CokretApi::new(base)?;
-    let store = state_store.read();
-    Ok(attach_current_session_material(api, &store))
+    let mut store = state_store.write();
+    Ok(attach_current_session_material(api, &mut store))
 }
 
 fn current_authed_api(
     base: &str,
     session_credential: &str,
-    state_store: Signal<LocalStateStore>,
+    mut state_store: Signal<LocalStateStore>,
 ) -> anyhow::Result<CokretApi> {
     let api = CokretApi::new(base)?.with_bearer(session_credential.to_owned());
-    let store = state_store.read();
-    Ok(attach_current_session_material(api, &store))
+    let mut store = state_store.write();
+    Ok(attach_current_session_material(api, &mut store))
 }
 
 /// ②(A+②) — build a `/_cokret/self/*`-ready client: the credential
@@ -229,8 +246,8 @@ pub(super) fn self_authed_api(
     session_credential: impl Into<String>,
 ) -> anyhow::Result<CokretApi> {
     let api = CokretApi::new(base)?.with_bearer(session_credential);
-    let store = crate::local_state::LocalStateStore::default();
-    Ok(attach_current_session_material(api, &store))
+    let mut store = crate::local_state::LocalStateStore::default();
+    Ok(attach_current_session_material(api, &mut store))
 }
 
 pub(super) fn adopt_live_token_for_api(

@@ -748,7 +748,6 @@ pub fn ChatPanel(
         initial_sync_finished.set(false);
         let base = base_url.clone();
         let api_token = token();
-        let wait_for = active_sync_token(sync_cursor());
         let selected_realm_for_load = selected_realm_id.clone();
         let account_did_for_load = account_did.clone();
         // P0 decrypt-on-read identity: this device's actor + device id let the
@@ -791,7 +790,15 @@ pub fn ChatPanel(
                 account_did_for_decrypt.as_str(),
                 device_id_for_decrypt.as_str(),
             ));
-            let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) else {
+            // The bootstrap snapshot must NOT carry a `wait_for` frontier. On
+            // wasm the subscribe response is read as a single buffered body
+            // (account.rs cannot frame-read NDJSON in the browser), so a
+            // `wait_for` header makes the server hold the stream open until the
+            // cursor advances — on a quiet realm that never returns and the
+            // discussion feed is stuck on "Loading…". The ongoing delta sync
+            // (sync_engine::run_iteration) omits `wait_for` for the same reason;
+            // read-your-writes only applies after a local write (outbox flush).
+            let Ok(api) = authed_api_with_sync(&base, api_token, None) else {
                 initial_sync_finished_for_load.set(true);
                 return;
             };

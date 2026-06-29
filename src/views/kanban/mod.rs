@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use crate::components::{
     EmptyState, EmptyStateKind, SecurityStateBadge, SelfAttributionBadge, UiIcon, WriteStateIcon,
 };
-use crate::local_state::LocalStateStore;
+use crate::local_state::{LocalStateStore, RawOperationRecord};
 use crate::operation::uuid_v7;
 use crate::rank::rank_for_drop;
 use crate::routes::Route;
@@ -680,6 +680,16 @@ pub fn KanbanPanel(
     let mut new_card_title = use_signal(String::new);
     let mut adding_card_to = use_signal(|| Option::<String>::None);
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
+    // Synthesis history attribution (option B): the persisted `raw_operations`
+    // log is capped by `RAW_OPERATIONS_MAX` and never holds events this device
+    // synced before the cap or never received at all, so historical synthesis
+    // revisions lose their author and render "Unknown author". When a card's
+    // Synthesis tab is opened we backfill the realm event log, keep this
+    // strand's `ck.strand.update` events (each carries the authoritative
+    // per-event `actor_id` + encrypted body), and merge them into the synthesis
+    // builder so every revision is attributed to its true author.
+    let mut card_history_operations = use_signal(Vec::<RawOperationRecord>::new);
+    let mut card_history_fetched_for = use_signal(String::new);
     let mut mls_sidecar_restore_key_seen = use_signal(String::new);
     let mut board_popover = use_signal(BoardToolbarPopover::default);
     let mut editing_card_detail = use_signal(|| false);
@@ -790,6 +800,77 @@ pub fn KanbanPanel(
                 card_synthesis_selected_revision_id.set(None);
                 selected_card.set(Some(card));
             }
+        });
+    }
+
+    // Synthesis history attribution (option B). When a card's Synthesis tab is
+    // active (viewing or editing), pull the realm event log and stash this
+    // strand's `ck.strand.update` events so the synthesis builder can attribute
+    // every historical revision to its real author instead of falling back to
+    // "Unknown author". Gated on the Synthesis tab so a plain card open never
+    // triggers a realm-wide backfill; single-flighted per strand via
+    // `card_history_fetched_for`.
+    {
+        let history_base = base_url.clone();
+        let history_token = token;
+        let history_realm_id = local_realm_id.clone();
+        use_effect(move || {
+            let open_strand = selected_card()
+                .map(|card| card.id.clone())
+                .unwrap_or_default();
+            let want_history = matches!(card_detail_tab(), CardDetailContentTab::Synthesis)
+                || (editing_card_detail() && card_edit_scope() == CardEditScope::Synthesis);
+            if open_strand.trim().is_empty() || !want_history {
+                return;
+            }
+            if *card_history_fetched_for.peek() == open_strand {
+                return;
+            }
+            let realm_id = history_realm_id.clone();
+            if realm_id.trim().is_empty() {
+                return;
+            }
+            // Mark up-front so a re-render while the fetch is in flight does not
+            // spawn a second backfill for the same card.
+            card_history_fetched_for.set(open_strand.clone());
+            let base = history_base.clone();
+            let strand_id = open_strand;
+            spawn(async move {
+                // Reset the single-flight marker on every failure path so a
+                // transient backfill error doesn't pin this card to "Unknown
+                // author" for the rest of the session — the next re-render
+                // (tab toggle / reselect) retries. Only kept-as-fetched on
+                // success or when the user has already moved to another card.
+                let api_token = history_token();
+                if api_token.trim().is_empty() {
+                    card_history_fetched_for.set(String::new());
+                    return;
+                }
+                let realm_for_call = realm_id.clone();
+                let events = match with_authed_api(&base, api_token, |api| async move {
+                    api.backfill(&realm_for_call).await
+                })
+                .await
+                {
+                    Ok(response) => response.events,
+                    Err(_) => {
+                        if *card_history_fetched_for.peek() == strand_id {
+                            card_history_fetched_for.set(String::new());
+                        }
+                        return;
+                    }
+                };
+                // Drop the result if the user has since moved to another card.
+                if *card_history_fetched_for.peek() != strand_id {
+                    return;
+                }
+                let mut ops = strand_update_operations_from_events(&events);
+                ops.retain(|record| {
+                    raw_operation_strand_update_target_id(&record.payload).as_deref()
+                        == Some(strand_id.as_str())
+                });
+                card_history_operations.set(ops);
+            });
         });
     }
 
@@ -3306,6 +3387,16 @@ pub fn KanbanPanel(
                     let synthesis_entries = if synthesis_entries_needed {
                         let store = state_store.read();
                         let snapshot = store.load();
+                        // Merge the freshly-backfilled strand event history with
+                        // the persisted (capped) raw-operation log so historical
+                        // revisions recover their true author. History wins on
+                        // `operation_id` collisions; local-only queued ops are
+                        // kept for optimistic in-flight edits.
+                        let history_ops = card_history_operations.read();
+                        let merged_operations = merge_history_raw_operations(
+                            &snapshot.raw_operations,
+                            history_ops.as_slice(),
+                        );
                         let projection = snapshot.realm_tree_projections.get(&selected_realm_id);
                         let realm_context = member_roster_realm_context(
                             &selected_realm_id,
@@ -3325,7 +3416,7 @@ pub fn KanbanPanel(
                         };
                         card_synthesis_track_entries_with_author_context_and_decrypt(
                             card,
-                            &snapshot.raw_operations,
+                            &merged_operations,
                             &store,
                             Some(author_context),
                             Some(&decrypt_ctx),

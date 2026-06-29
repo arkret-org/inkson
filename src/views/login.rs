@@ -123,20 +123,11 @@ pub fn LoginPanel(
                         store.clear_account_scoped();
                         store.set_session_grant(None);
                     }
-                    // Re-home the DPoP device-key RECORD under the now-active
-                    // account scope. The callback minted the device key under the
-                    // bootstrap scope (its jkt is the grant's `cnf.jkt`), and
-                    // `adopt_device_seed_scope_on_login` re-homed the SIGNING SEED
-                    // to the account scope but NOT this record. Without it, connect's
-                    // read-only `load_device_key` finds no account-scope record and
-                    // sends `/_cokret/self/*` requests with no DPoP header → soland
-                    // 401 → `list_devices` fails → `enroll_current_session_device`
-                    // never fires → the device stays `unverified` and the 24-word
-                    // recovery screen is suppressed behind the device-authorization
-                    // gate. `ensure_device_key` finds no account-scope record, falls
-                    // back to the just-re-homed account-scope signing seed (same
-                    // seed → same jkt, still matching `cnf.jkt`), and persists the
-                    // record under the account scope so connect can attach DPoP.
+                    // Re-home the DPoP device-key record under the now-active
+                    // account scope. A returning account may already have an
+                    // older account-scoped DPoP record; ensure_device_key repairs
+                    // that stale record from the just-adopted signing seed, whose
+                    // jkt is the one bound into the newly-issued grant.
                     if let Err(error) = crate::auth_dpop::ensure_device_key(&mut store) {
                         tracing::warn!(%error, "re-home DPoP device key under account scope failed");
                     }

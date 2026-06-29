@@ -211,10 +211,132 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
 }
 
 #[test]
-fn projection_synthesis_revision_prefers_updated_by_over_creator() {
+fn merge_history_raw_operations_dedups_by_operation_id_history_wins() {
+    let received_at = |value: &str| {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    };
+    // Local copy of op-1 carries no author (e.g. an optimistic queued echo);
+    // the history copy is the synced, author-stamped envelope.
+    let local = vec![
+        RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ck:realm:r1".to_owned()),
+            received_at: received_at("2026-05-22T10:00:00Z"),
+            payload: json!({ "kind": "ck.strand.update", "actor_id": "" }),
+        },
+        // Local-only op (just-queued edit not yet in server history).
+        RawOperationRecord {
+            operation_id: "op-local".to_owned(),
+            realm_id: Some("ck:realm:r1".to_owned()),
+            received_at: received_at("2026-05-22T12:00:00Z"),
+            payload: json!({ "kind": "ck.strand.update", "actor_id": "local" }),
+        },
+    ];
+    let history = vec![RawOperationRecord {
+        operation_id: "op-1".to_owned(),
+        realm_id: Some("ck:realm:r1".to_owned()),
+        received_at: received_at("2026-05-22T10:00:00Z"),
+        payload: json!({ "kind": "ck.strand.update", "actor_id": "did:web:acme.example:users:alice" }),
+    }];
+
+    let merged = merge_history_raw_operations(&local, &history);
+
+    assert_eq!(merged.len(), 2, "op-1 deduped, op-local preserved");
+    let op1 = merged
+        .iter()
+        .find(|record| record.operation_id == "op-1")
+        .expect("op-1 present");
+    assert_eq!(
+        op1.payload.get("actor_id").and_then(|v| v.as_str()),
+        Some("did:web:acme.example:users:alice"),
+        "history copy wins on operation_id collision"
+    );
+    assert!(
+        merged
+            .iter()
+            .any(|record| record.operation_id == "op-local"),
+        "local-only operation is preserved"
+    );
+}
+
+#[test]
+fn fetched_history_recovers_authors_when_local_log_is_empty() {
+    // Simulates option B: the persisted raw-operation log was evicted
+    // (RAW_OPERATIONS_MAX), so attribution would otherwise fall back to
+    // "Unknown author". The strand event history fetched on card open carries
+    // the authoritative per-event actor_id; merging it in recovers authorship.
+    let mut card = test_card("ck:strand:edit-me", "U");
+    card.synthesis = join_synthesis_entry_bodies(vec![
+        "alice synthesis".to_owned(),
+        "bob synthesis".to_owned(),
+    ]);
+    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.updated_by = "did:web:acme.example:users:bob".to_owned();
+    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+
+    // Backfilled `ck.strand.update` events as `strand_update_operations_from_events`
+    // would shape them (full Event envelopes → raw-operation records).
+    let history_events = vec![
+        json!({
+            "event_kind": "ck.strand.update",
+            "event_id": "op-1",
+            "actor_id": "did:web:acme.example:users:alice",
+            "created_at": "2026-05-22T10:00:00Z",
+            "realm_id": "ck:realm:r1",
+            "payload": {
+                "strand_id": "ck:strand:edit-me",
+                "patch": { "synthesis": { "$op": "set", "value": "alice synthesis" } }
+            }
+        }),
+        json!({
+            "event_kind": "ck.strand.update",
+            "event_id": "op-2",
+            "actor_id": "did:web:acme.example:users:bob",
+            "created_at": "2026-05-22T11:00:00Z",
+            "realm_id": "ck:realm:r1",
+            "payload": {
+                "strand_id": "ck:strand:edit-me",
+                "patch": {
+                    "synthesis": { "$op": "set", "value": "alice synthesis\n\n---\n\nbob synthesis" }
+                }
+            }
+        }),
+    ];
+    let history_ops = strand_update_operations_from_events(&history_events);
+
+    // Local log is empty (evicted); merge brings the history in.
+    let merged = merge_history_raw_operations(&[], &history_ops);
+    let entries = card_synthesis_track_entries(&card, &merged, &LocalStateStore::default());
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].body, "alice synthesis");
+    assert_eq!(entries[0].author_label, "alice:acme.example");
+    assert_eq!(entries[1].body, "bob synthesis");
+    assert_eq!(entries[1].author_label, "bob:acme.example");
+
+    // Sanity: without the fetched history, the multi-author fallback cannot
+    // attribute either entry — exactly the "Unknown author" symptom option B
+    // exists to fix.
+    let fallback = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
+    assert_eq!(fallback.len(), 2);
+    assert!(
+        fallback
+            .iter()
+            .all(|entry| entry.author_label == "Unknown author"),
+        "without history a multi-author card falls back to Unknown author"
+    );
+}
+
+#[test]
+fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
+    // Single-author card (created_by == updated_by): the projection fallback
+    // may confidently attribute the entry to that author.
     let mut card = test_card("ck:strand:edit-me", "U");
     card.synthesis = "bob synthesis".to_owned();
-    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_by = "did:web:acme.example:users:bob".to_owned();
     card.created_at = "2026-05-22T09:00:00Z".to_owned();
     card.updated_by = "did:web:acme.example:users:bob".to_owned();
     card.updated_at = "2026-05-22T11:00:00Z".to_owned();
@@ -226,6 +348,28 @@ fn projection_synthesis_revision_prefers_updated_by_over_creator() {
     assert_eq!(entries[0].actor_id, "did:web:acme.example:users:bob");
     assert_eq!(entries[0].author_label, "bob:acme.example");
     assert_eq!(entries[0].timestamp_label, "2026-05-22 11:00");
+}
+
+#[test]
+fn projection_synthesis_revision_leaves_multi_author_card_unattributed() {
+    // Multi-author card with no per-entry provenance (no raw ops, no fetched
+    // history): the projection fallback must NOT guess `updated_by` for every
+    // entry — that was the "张冠李戴" attribution bug. It leaves the entry
+    // unattributed ("Unknown author") instead, which option B then fills in by
+    // fetching the strand event history on card open.
+    let mut card = test_card("ck:strand:edit-me", "U");
+    card.synthesis = "bob synthesis".to_owned();
+    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.updated_by = "did:web:acme.example:users:bob".to_owned();
+    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+
+    let entries = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].body, "bob synthesis");
+    assert_eq!(entries[0].actor_id, "");
+    assert_eq!(entries[0].author_label, "Unknown author");
 }
 
 #[test]
