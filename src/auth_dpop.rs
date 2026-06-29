@@ -40,6 +40,7 @@ use chrono::Utc;
 use ed25519_dalek::{Signer as _, SigningKey};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 use crate::dpop::{
     DpopClaims, DpopError, build_dpop_proof_ed25519, fresh_dpop_claims, jwk_thumbprint_ed25519,
@@ -104,8 +105,8 @@ impl DpopHandle {
     /// [`device_handle_from_seed`] and mint the holder proof that revokes
     /// the *old* grant. This is the same secret already held in the secure
     /// key store; it is cleared as soon as the revoke succeeds.
-    pub fn seed_b64(&self) -> String {
-        URL_SAFE_NO_PAD.encode(self.signing_key.to_bytes())
+    pub fn seed_b64(&self) -> Zeroizing<String> {
+        Zeroizing::new(URL_SAFE_NO_PAD.encode(self.signing_key.to_bytes()))
     }
 
     /// Export the device signing key as PKCS#8 PEM.
@@ -117,11 +118,11 @@ impl DpopHandle {
     /// rotated grant's `session_private_key_pem` lets the existing proof path
     /// (`session_grant_signing_key_from_pem`) sign with the right key, uniformly
     /// with the first-login flow.
-    pub fn session_signing_key_pkcs8_pem(&self) -> Result<String, AuthDpopError> {
+    pub fn session_signing_key_pkcs8_pem(&self) -> Result<Zeroizing<String>, AuthDpopError> {
         use ed25519_dalek::pkcs8::EncodePrivateKey as _;
         self.signing_key
             .to_pkcs8_pem(ed25519_dalek::pkcs8::spki::der::pem::LineEnding::LF)
-            .map(|pem| pem.to_string())
+            .map(|pem| Zeroizing::new(pem.to_string()))
             .map_err(|err| AuthDpopError::SessionGrantProof(format!("device key pkcs8 pem: {err}")))
     }
 
@@ -739,7 +740,7 @@ mod tests {
         let original = ensure_device_key(&mut store).unwrap();
         let record = dpop_device_key_record_from_seed(&original.seed_b64()).unwrap();
         assert_eq!(record.jkt, original.jkt());
-        assert_eq!(record.seed_b64, original.seed_b64());
+        assert_eq!(record.seed_b64, original.seed_b64().as_str());
         assert_eq!(decode_record(&record).unwrap().jkt(), original.jkt());
     }
 
@@ -812,7 +813,7 @@ mod tests {
         let recovered = load_or_recover_device_key_with_secure_store(&mut store, &secure)
             .unwrap()
             .expect("recovered handle");
-        assert_eq!(recovered.seed_b64(), URL_SAFE_NO_PAD.encode(seed));
+        assert_eq!(recovered.seed_b64().as_str(), URL_SAFE_NO_PAD.encode(seed));
         let public_record = store.dpop_device_key().expect("public dpop record");
         assert!(public_record.seed_b64.is_empty());
         assert_eq!(public_record.jkt, recovered.jkt());
@@ -844,7 +845,7 @@ mod tests {
             .expect("repaired handle");
 
         assert_ne!(repaired.jkt(), old_record.jkt);
-        assert_eq!(repaired.seed_b64(), URL_SAFE_NO_PAD.encode(new_seed));
+        assert_eq!(repaired.seed_b64().as_str(), URL_SAFE_NO_PAD.encode(new_seed));
         let loaded = load_device_key_with_secure_store(&store, &secure)
             .unwrap()
             .expect("loaded repaired handle");
@@ -871,6 +872,6 @@ mod tests {
         let repaired = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
 
         assert_ne!(repaired.jkt(), old_record.jkt);
-        assert_eq!(repaired.seed_b64(), URL_SAFE_NO_PAD.encode(new_seed));
+        assert_eq!(repaired.seed_b64().as_str(), URL_SAFE_NO_PAD.encode(new_seed));
     }
 }

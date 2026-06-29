@@ -31,6 +31,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize as _;
 
 /// Secure-key-store key for the journalled logout intent. Defined in
 /// `secure_key_store` so its seed-grade (IndexedDB-only, no localStorage
@@ -82,6 +83,20 @@ pub struct PendingLogout {
     pub account_did: String,
     /// When the record was journalled. Drives the [`RECORD_TTL_HOURS`] bound.
     pub created_at: DateTime<Utc>,
+}
+
+impl Drop for PendingLogout {
+    /// Defence-in-depth: wipe the stashed device seed (the holder secret bound
+    /// into the grant's `cnf.jkt`) when the journal record drops, so the
+    /// plaintext key material does not linger in freed heap. `zeroize`'s
+    /// `serde` feature is not enabled in this workspace, so the field stays a
+    /// plain `String` for (de)serialisation and is wiped here instead of via a
+    /// `Zeroizing<String>` field type.
+    fn drop(&mut self) {
+        if let Some(seed) = self.device_seed_b64.as_mut() {
+            seed.zeroize();
+        }
+    }
 }
 
 impl PendingLogout {

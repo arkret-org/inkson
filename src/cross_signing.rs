@@ -28,6 +28,7 @@ use cokret_sdk::{
     SignedCrossSigningKey, TypedTrustDomainId,
 };
 use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
+use zeroize::Zeroizing;
 use serde::{Deserialize, Serialize};
 
 use crate::did_key::encode_ed25519_did_key_multibase;
@@ -352,21 +353,27 @@ impl CrossSigningSetupOutput {
         principal_did: &str,
     ) -> Result<(), SecureKeyStoreError> {
         let generation = self.publish_content.generation;
+        // Hold each hex-encoded private seed in a `Zeroizing<String>` so the
+        // plaintext key material is wiped from the heap once it has been handed
+        // to the secure store, rather than lingering in a freed `String`.
+        let psk_hex = Zeroizing::new(hex_encode(&self.principal_signing_key.to_bytes()));
         store.store_secret(
             &secure_key_store_key(
                 principal_did,
                 generation,
                 CrossSigningKeyRole::PrincipalSigning,
             ),
-            &hex_encode(&self.principal_signing_key.to_bytes()),
+            &psk_hex,
         )?;
+        let ssk_hex = Zeroizing::new(hex_encode(&self.self_signing_key.to_bytes()));
         store.store_secret(
             &secure_key_store_key(principal_did, generation, CrossSigningKeyRole::SelfSigning),
-            &hex_encode(&self.self_signing_key.to_bytes()),
+            &ssk_hex,
         )?;
+        let usk_hex = Zeroizing::new(hex_encode(&self.user_signing_key.to_bytes()));
         store.store_secret(
             &secure_key_store_key(principal_did, generation, CrossSigningKeyRole::UserSigning),
-            &hex_encode(&self.user_signing_key.to_bytes()),
+            &usk_hex,
         )?;
         Ok(())
     }
@@ -408,18 +415,22 @@ pub fn load_signing_key(
     let Some(value) = store
         .get_secret(&key)
         .map_err(|err| anyhow::anyhow!("secure key store get: {err}"))?
+        .map(Zeroizing::new)
     else {
         return Ok(None);
     };
-    let bytes = hex_decode(&value)
-        .ok_or_else(|| anyhow::anyhow!("cross_signing key hex decode failed for role {role:?}"))?;
+    // Hold the decoded private seed in zeroizing containers so the plaintext key
+    // material is wiped from the heap once the `SigningKey` has been built.
+    let bytes = Zeroizing::new(hex_decode(&value).ok_or_else(|| {
+        anyhow::anyhow!("cross_signing key hex decode failed for role {role:?}")
+    })?);
     if bytes.len() != SECRET_KEY_LENGTH {
         anyhow::bail!(
             "cross_signing key for role {role:?} has wrong length: expected {SECRET_KEY_LENGTH}, got {}",
             bytes.len()
         );
     }
-    let mut seed = [0u8; SECRET_KEY_LENGTH];
+    let mut seed = Zeroizing::new([0u8; SECRET_KEY_LENGTH]);
     seed.copy_from_slice(&bytes);
     Ok(Some(SigningKey::from_bytes(&seed)))
 }

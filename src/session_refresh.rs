@@ -300,7 +300,7 @@ async fn rotate_session_grant(
         .map_err(|error| anyhow::anyhow!("export device session key: {error}"))?;
     Ok(PersistedSessionGrant {
         grant_jwt: outcome.grant_jwt,
-        session_private_key_pem,
+        session_private_key_pem: session_private_key_pem.to_string(),
         grant_id: outcome.grant_id.to_string(),
         audience: outcome.audience,
         principal_id: grant.principal_id.clone(),

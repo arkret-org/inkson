@@ -4854,7 +4854,7 @@ pub fn RouterView() -> Element {
                                                             .map(|grant| grant.grant_jwt.clone()),
                                                         device_seed_b64: logout_device_handle
                                                             .as_ref()
-                                                            .map(|handle| handle.seed_b64()),
+                                                            .map(|handle| handle.seed_b64().to_string()),
                                                         device_jkt: logout_device_handle
                                                             .as_ref()
                                                             .map(|handle| handle.jkt().to_owned()),

@@ -186,8 +186,24 @@ fn handle_avatar_seed(value: &str) -> Option<String> {
     )
 }
 
-fn handle_subject_did(value: &str) -> Option<String> {
-    crate::identity_handle::parse_user_handle(value).map(|handle| handle.subject_did)
+/// Best-effort, **display-only** check of whether `handle` plausibly names the
+/// same principal as the authoritative `identity` DID, used purely to pick a
+/// stable avatar seed. This does NOT materialise the handle into a DID (that
+/// would fabricate a non-attested `did:web` identifier — see
+/// `identity_handle`): it compares the handle's localpart/domain against the
+/// segments embedded in a materialised user DID (`…:users:<localpart>` under
+/// `did:web:<domain>` / `did:webvh:<scid>:<domain>`). Identities whose DID does
+/// not embed the handle shape simply don't match and fall through to the other
+/// avatar-seed heuristics.
+fn handle_matches_identity(handle: &str, identity: &str) -> bool {
+    let Some(parsed) = crate::identity_handle::parse_user_handle(handle) else {
+        return false;
+    };
+    let Some(display) = handle_display_from_did(identity) else {
+        return false;
+    };
+    crate::identity_handle::parse_user_handle(&display)
+        .is_some_and(|materialised| materialised.handle == parsed.handle)
 }
 
 fn materialized_did_avatar_seed(value: &str) -> Option<String> {
@@ -233,7 +249,7 @@ pub(crate) fn avatar_seed_from_identity_value(value: &str) -> Option<String> {
 pub(crate) fn identity_avatar_seed(handles: &[String], identity_id: &str) -> String {
     let identity = identity_id.trim();
     for handle in handles {
-        if handle_subject_did(handle).as_deref() == Some(identity)
+        if handle_matches_identity(handle, identity)
             && let Some(seed) = handle_avatar_seed(handle)
         {
             return seed;
@@ -578,27 +594,25 @@ pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMent
     tokens
 }
 
+/// Parse audience tokens (`@here` / `@all` / …) from raw message text into
+/// structured [`MentionNode::AudienceMention`] entries.
+///
+/// Typed actor handles (`@alice:example.com`) are intentionally NOT
+/// materialised into [`MentionNode::Mention`] here: a `Mention`'s
+/// authoritative `subject_id` MUST be a directory-attested principal DID
+/// (`identity-handles.md §80`), which a synchronous text parser cannot
+/// produce. Fabricating one client-side from the handle string would write a
+/// non-verifiable `did:web` identifier into the wire `mentions[]` field. Actor
+/// mentions therefore only enter the wire via the mention picker, whose chips
+/// already carry a resolved `subject_id` (see `chat::mod` send path).
 pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
     let mut mentions = Vec::new();
     for token in input.split_whitespace() {
         let normalized = normalize_inline_token(token);
-        if let Some(handle) = normalized.strip_prefix('@') {
-            if let Some(audience) = cokret_sdk::AudienceMention::from_ui_token(normalized) {
-                mentions.push(MentionNode::audience_mention(audience));
-                continue;
-            }
-            if !handle.is_empty()
-                && let Some(parsed) = crate::identity_handle::parse_user_handle(handle)
-                && let Ok(subject_id) = cokret_sdk::Did::new(parsed.subject_did)
-            {
-                let mut mention = cokret_sdk::Mention::new(subject_id)
-                    .with_display_name_at_time(parsed.display)
-                    .with_mention_text_original(normalized.to_owned());
-                if let Ok(handle) = cokret_sdk::Handle::parse(&parsed.handle) {
-                    mention = mention.with_handle_at_time(handle);
-                }
-                mentions.push(MentionNode::mention(mention));
-            }
+        if normalized.strip_prefix('@').is_some()
+            && let Some(audience) = cokret_sdk::AudienceMention::from_ui_token(normalized)
+        {
+            mentions.push(MentionNode::audience_mention(audience));
         }
     }
 
@@ -880,26 +894,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_actor_mentions_without_entity_references() {
+    fn typed_actor_handles_are_not_materialized_into_wire_mentions() {
+        // A typed actor handle must NOT become a wire `Mention`: its
+        // authoritative `subject_id` requires a directory-attested resolve,
+        // not a client-fabricated `did:web` identifier. Only audience tokens
+        // and (elsewhere) picker chips carry resolved subjects.
         let mentions = parse_mention_nodes(
             "ping @did:web:bob.example and @Alice and @carol:example.com about #ck:task:123 and #topic-demo",
         );
-
-        assert_eq!(mentions.len(), 1);
         assert!(
-            !mentions
-                .iter()
-                .any(|mention| mention.mention_text_original() == Some("@Alice"))
-        );
-        assert!(
-            !mentions
-                .iter()
-                .any(|mention| mention.mention_text_original() == Some("@did:web:bob.example"))
-        );
-        assert!(
-            mentions
-                .iter()
-                .any(|mention| mention.target_id() == "did:web:example.com:users:carol")
+            mentions.is_empty(),
+            "typed actor handles must not produce wire mentions"
         );
     }
 

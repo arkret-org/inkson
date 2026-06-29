@@ -417,27 +417,60 @@ fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> Value {
             "recovery_members": [derived_recovery_member_did(actor_id)],
         }),
         _ => {
-            let controller = inferred_controller_organization_did(actor_id);
-            json!({
-                "type": "single_did",
-                "did": actor_id,
-                "recovery_members": [derived_recovery_member_did(&controller)],
-                "controller_organization": controller,
-                "recovery_controller_organizations": [derived_recovery_controller_organization_did(&controller)],
-            })
+            // `controller_organization` / `recovery_controller_organizations`
+            // are OPTIONAL (`MAY`-verified) per realm-and-space.md §2.3. We only
+            // emit them when an authoritative organization DID can be derived
+            // from the actor DID (the `did:web` no-history service profile, where
+            // the host *is* the org authority). For the default `did:webvh`
+            // actor the org's webvh DID carries its own SCID that is unknowable
+            // client-side, so we fail closed: omit the org-scoped fields and
+            // anchor recovery on the actor itself rather than fabricate a
+            // malformed `did:webvh:<host>` (no SCID) identifier.
+            match inferred_controller_organization_did(actor_id) {
+                Some(controller) => json!({
+                    "type": "single_did",
+                    "did": actor_id,
+                    "recovery_members": [derived_recovery_member_did(&controller)],
+                    "controller_organization": controller,
+                    "recovery_controller_organizations": [derived_recovery_controller_organization_did(&controller)],
+                }),
+                None => json!({
+                    "type": "single_did",
+                    "did": actor_id,
+                    "recovery_members": [derived_recovery_member_did(actor_id)],
+                }),
+            }
         }
     }
 }
 
-fn inferred_controller_organization_did(actor_id: &str) -> String {
+/// Infer the controlling organization (principal-server) DID for a member's
+/// actor DID, returning `None` when no authoritative org DID can be derived.
+///
+/// Only the explicit no-history `did:web:<host>[:<path>…]` service profile lets
+/// us reduce the actor to a valid org DID (`did:web:<host>`). v1 core defaults
+/// principal/service to `did:webvh`, whose org DID is
+/// `did:webvh:<org-scid>:<host>…` — the org's SCID is not derivable from the
+/// member DID, so we MUST NOT fabricate one (a bare `strip_prefix("did:web:")`
+/// silently missed every `did:webvh` actor and fell back to the whole actor DID
+/// as the organization, poisoning recovery-notary / controller-org derivation).
+fn inferred_controller_organization_did(actor_id: &str) -> Option<String> {
     let actor_id = actor_id.trim();
+    // Default `did:webvh` actors: org webvh DID requires the org's own SCID,
+    // which is not knowable client-side — fail closed.
+    if let Ok(did) = cokret_sdk::Did::new(actor_id.to_owned())
+        && cokret_sdk::identity::did_webvh_parts(&did).is_some()
+    {
+        return None;
+    }
+    // Explicit `did:web:<host>[:<path>…]` no-history service profile.
     if let Some(web_specific_id) = actor_id.strip_prefix("did:web:")
         && let Some(host) = web_specific_id.split(':').next()
         && !host.is_empty()
     {
-        return format!("did:web:{host}");
+        return Some(format!("did:web:{host}"));
     }
-    actor_id.to_owned()
+    None
 }
 
 fn derived_recovery_controller_organization_did(controller: &str) -> String {
@@ -1086,4 +1119,56 @@ pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Resu
         anyhow::bail!("device verification proof missing device_envelope")
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod notary_derivation_tests {
+    use super::*;
+
+    #[test]
+    fn web_no_history_actor_derives_org_and_recovery_fields() {
+        assert_eq!(
+            inferred_controller_organization_did("did:web:alice.example"),
+            Some("did:web:alice.example".to_owned())
+        );
+        // Multi-segment did:web path still reduces to the host authority.
+        assert_eq!(
+            inferred_controller_organization_did("did:web:alice.example:users:bob"),
+            Some("did:web:alice.example".to_owned())
+        );
+        let notary = realm_genesis_notary("single_did", "did:web:alice.example");
+        assert_eq!(notary["controller_organization"], "did:web:alice.example");
+        assert_eq!(
+            notary["recovery_members"][0],
+            "did:web:alice.example:recovery:notary"
+        );
+        assert_eq!(
+            notary["recovery_controller_organizations"][0],
+            "did:web:alice.example:recovery"
+        );
+    }
+
+    #[test]
+    fn webvh_actor_fails_closed_without_fabricating_org_did() {
+        // The org's webvh DID carries its own SCID, unknowable client-side —
+        // so no controller_organization is derivable and none is fabricated.
+        assert_eq!(
+            inferred_controller_organization_did(
+                "did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example"
+            ),
+            None
+        );
+        let actor = "did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example";
+        let notary = realm_genesis_notary("single_did", actor);
+        assert_eq!(notary["type"], "single_did");
+        assert_eq!(notary["did"], actor);
+        // Recovery anchors on the actor itself; org-scoped fields are omitted
+        // rather than fabricated into a malformed did:webvh:<host>.
+        assert_eq!(
+            notary["recovery_members"][0],
+            format!("{actor}:recovery:notary")
+        );
+        assert!(notary.get("controller_organization").is_none());
+        assert!(notary.get("recovery_controller_organizations").is_none());
+    }
 }

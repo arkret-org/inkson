@@ -703,7 +703,7 @@ fn session_grant_info_from_outcome(
         id: grant_id,
         grant_jwt: outcome.session_grant.clone(),
         session_public_key,
-        session_private_key_pem,
+        session_private_key_pem: session_private_key_pem.to_string(),
         expires_at: outcome.expires_at.to_rfc3339(),
         audience,
         scopes: outcome.granted_scope.clone(),

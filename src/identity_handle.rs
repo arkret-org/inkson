@@ -5,8 +5,18 @@
 //! URI form has been retired. `acct:<localpart>@<domain>` remains an interop
 //! alias only.
 //!
-//! Realm membership materialises the resolved user DID plus the recipient
-//! Principal Server DID, never the display string itself.
+//! A handle is **addressing only**. It is NEVER materialised into an
+//! authoritative principal/subject DID on the client: per
+//! `identity/identity-handles.md §80` the resolution result MUST first be
+//! reduced to a DID + verifiable claim by the Directory (`resolve_handle`),
+//! and a handle string carries no verifiable claim that the client could use
+//! to fabricate that DID. The previous client-side
+//! `format!("did:web:{domain}:users:{localpart}")` materialisation has been
+//! removed: it both bypassed the directory-attested reduction and hard-coded
+//! the `did:web` method even though v1 core defaults principal/service to
+//! `did:webvh`. The authoritative `subject_id` / `recipient_service_did` must
+//! be taken from the Directory `resolve_handle` response (verified claim
+//! subject + member delivery binding) and never from this parser.
 use unicode_normalization::UnicodeNormalization;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,8 +31,6 @@ pub struct ParsedUserHandle {
     /// without going through the display path.
     pub handle: String,
     pub acct_alias: String,
-    pub subject_did: String,
-    pub principal_server_did: String,
 }
 
 pub fn parse_user_handle(input: &str) -> Option<ParsedUserHandle> {
@@ -53,13 +61,6 @@ fn parse_sdk_handle(input: &str) -> cokret_sdk::Result<cokret_sdk::models::Handl
 }
 
 fn parsed_from_sdk_handle(handle: cokret_sdk::models::Handle) -> ParsedUserHandle {
-    let did_authority = if let Some(port) = handle.port() {
-        format!("{}%3A{port}", handle.domain())
-    } else {
-        handle.domain().to_owned()
-    };
-    let principal_server_did = format!("did:web:{did_authority}");
-    let subject_did = format!("{principal_server_did}:users:{}", handle.localpart());
     ParsedUserHandle {
         localpart: handle.localpart().to_owned(),
         domain: handle.domain().to_owned(),
@@ -67,8 +68,6 @@ fn parsed_from_sdk_handle(handle: cokret_sdk::models::Handle) -> ParsedUserHandl
         display: handle.canonical().to_owned(),
         handle: handle.canonical().to_owned(),
         acct_alias: handle.to_acct(),
-        subject_did,
-        principal_server_did,
     }
 }
 
@@ -76,12 +75,18 @@ pub fn normalize_user_handle_display(input: &str) -> Option<String> {
     parse_user_handle(input).map(|handle| handle.display)
 }
 
+/// Return an authoritative principal DID for an identifier that is *already*
+/// a DID. A bare handle (`alice:example.com`) is intentionally NOT accepted:
+/// reducing a handle to its principal DID requires a directory-attested
+/// `resolve_handle` round-trip (see module docs), which this synchronous
+/// helper cannot perform. Handle inputs therefore fail closed (`None`) instead
+/// of being materialised into a fabricated `did:web` identifier.
 pub fn principal_did_from_identifier(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.starts_with("did:") && trimmed.len() > "did:".len() {
         return Some(trimmed.to_owned());
     }
-    parse_user_handle(trimmed).map(|handle| handle.subject_did)
+    None
 }
 
 /// Client-side wrapper around the SDK's canonical localpart normalizer.
@@ -117,8 +122,8 @@ mod tests {
         assert_eq!(parsed.display, "alice:example.com");
         assert_eq!(parsed.handle, "alice:example.com");
         assert_eq!(parsed.acct_alias, "acct:alice@example.com");
-        assert_eq!(parsed.principal_server_did, "did:web:example.com");
-        assert_eq!(parsed.subject_did, "did:web:example.com:users:alice");
+        assert_eq!(parsed.localpart, "alice");
+        assert_eq!(parsed.domain, "example.com");
     }
 
     #[test]
@@ -181,14 +186,17 @@ mod tests {
     }
 
     #[test]
-    fn principal_identifier_accepts_did_or_handle() {
+    fn principal_identifier_accepts_did_but_fails_closed_on_handle() {
         assert_eq!(
             principal_did_from_identifier("did:web:alice.example").unwrap(),
             "did:web:alice.example"
         );
         assert_eq!(
-            principal_did_from_identifier("alice:example.com").unwrap(),
-            "did:web:example.com:users:alice"
+            principal_did_from_identifier("did:webvh:zSCID:alice.example").unwrap(),
+            "did:webvh:zSCID:alice.example"
         );
+        // A bare handle is NOT materialised into a fabricated DID; reducing it
+        // requires a directory-attested resolve_handle round-trip.
+        assert!(principal_did_from_identifier("alice:example.com").is_none());
     }
 }
