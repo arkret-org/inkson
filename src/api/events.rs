@@ -107,7 +107,7 @@ impl CokretApi {
         }
         let request = self
             .http
-            .get(self.endpoint(&events_subscribe_path(realm_id, after, include_history))?)
+            .get(self.endpoint(&events_subscribe_path(realm_id, after, include_history, None))?)
             .header(ACCEPT, "application/x-ndjson");
         let mut response = self
             .send_with_retry(self.prepare_request(request), Method::GET, true)
@@ -132,6 +132,55 @@ impl CokretApi {
             on_frame(frame)?;
         }
         Ok(())
+    }
+
+    /// All-target buffered long-poll of `ck.self.events.stream.subscribe`
+    /// (`GET /_cokret/self/events/subscribe`). Unlike [`Self::events_subscribe_ndjson`]
+    /// it does NOT read the NDJSON body frame-by-frame (reqwest's wasm32
+    /// browser-fetch backend exposes no `Response::chunk()` reader): it awaits
+    /// the whole response body and parses every NDJSON line at once. The server
+    /// closes the stream after `max_duration_ms`, so that window doubles as the
+    /// liveness latency for this realm stream — pick it small enough to keep the
+    /// board fresh and large enough to behave as a long-poll.
+    ///
+    /// This is the per-realm counterpart to `account_subscribe_snapshot_outcome`:
+    /// it carries the realm's OWN stream cursor in `after=` (never the account
+    /// cursor — they are bound to different `filter_digest`s per
+    /// `encoding.md` §8.3.1, and cross-binding reuse is `cursor_integrity_invalid`).
+    pub async fn events_subscribe_poll(
+        &self,
+        realm_id: &str,
+        after: Option<&str>,
+        include_history: bool,
+        max_duration_ms: u64,
+    ) -> anyhow::Result<Vec<cokret_sdk::EventsSubscribeFrame>> {
+        if let Some(token) = after {
+            validate_cursor(token)?;
+        }
+        let path = events_subscribe_path(
+            realm_id,
+            after,
+            Some(include_history),
+            Some(max_duration_ms),
+        );
+        let request = self
+            .http
+            .get(self.endpoint(&path)?)
+            .header(ACCEPT, "application/x-ndjson");
+        let response = self
+            .send_with_retry(self.prepare_request(request), Method::GET, true)
+            .await?;
+        let status = response.status();
+        let bytes = response.bytes().await?;
+        if !status.is_success() {
+            return Err(CokretApiError {
+                status,
+                error: decode_cokret_error(status, &bytes),
+            }
+            .into());
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        parse_events_subscribe_ndjson_text(&text)
     }
 
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral

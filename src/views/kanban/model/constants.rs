@@ -6,16 +6,23 @@ pub(crate) const DEMO_BOARD_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-0
 /// two-actor races without spinning indefinitely if the cell is hot.
 pub(crate) const MAX_CONFLICT_REBASE_ATTEMPTS: u8 = 3;
 
+/// Refresh-key for the kanban live reconciler. `live_epoch` is the per-realm
+/// `events/subscribe` engine's monotonic counter ([`crate::realm_events_engine`]):
+/// it advances when that engine folds fresh realm events that the
+/// (cross-member-lossy) account `sync_cursor` never delivered, giving the panel
+/// a second, correct freshness axis besides the account cursor.
 pub(crate) fn kanban_projection_refresh_key(
     realm_id: &str,
     view_id: &str,
     sync_cursor: &str,
+    live_epoch: u64,
 ) -> String {
     format!(
-        "{}|{}|{}",
+        "{}|{}|{}|{}",
         realm_id.trim(),
         view_id.trim(),
-        sync_cursor.trim()
+        sync_cursor.trim(),
+        live_epoch
     )
 }
 
@@ -24,14 +31,18 @@ pub(crate) fn next_kanban_projection_refresh_key(
     realm_id: &str,
     view_id: &str,
     sync_cursor: &str,
+    live_epoch: u64,
 ) -> Option<String> {
-    let key = kanban_projection_refresh_key(realm_id, view_id, sync_cursor);
+    let key = kanban_projection_refresh_key(realm_id, view_id, sync_cursor, live_epoch);
     if last_seen_key == key {
         return None;
     }
     let cursor = sync_cursor.trim();
-    if cursor.is_empty()
-        || cursor == "-"
+    // Refresh when the account cursor is usable OR the realm events engine has
+    // reported fresh content (`live_epoch > 0`). Either way still require a
+    // realm / view selector so a bare boot doesn't churn.
+    let has_usable_cursor = !(cursor.is_empty() || cursor == "-");
+    if (!has_usable_cursor && live_epoch == 0)
         || (realm_id.trim().is_empty() && view_id.trim().is_empty())
     {
         return None;
@@ -99,30 +110,69 @@ mod tests {
 
     #[test]
     fn kanban_projection_refresh_waits_for_cursor_advance() {
-        let first_key = kanban_projection_refresh_key(" ck:realm:r1 ", "", " ck:cursor:1 ");
+        let first_key = kanban_projection_refresh_key(" ck:realm:r1 ", "", " ck:cursor:1 ", 0);
 
         assert_eq!(
-            next_kanban_projection_refresh_key(&first_key, "ck:realm:r1", "", "ck:cursor:1"),
+            next_kanban_projection_refresh_key(&first_key, "ck:realm:r1", "", "ck:cursor:1", 0),
             None
         );
         assert_eq!(
-            next_kanban_projection_refresh_key(&first_key, "ck:realm:r1", "", "ck:cursor:2"),
-            Some("ck:realm:r1||ck:cursor:2".to_owned())
+            next_kanban_projection_refresh_key(&first_key, "ck:realm:r1", "", "ck:cursor:2", 0),
+            Some("ck:realm:r1||ck:cursor:2|0".to_owned())
         );
     }
 
     #[test]
     fn kanban_projection_refresh_ignores_empty_or_bootstrap_cursor() {
         assert_eq!(
-            next_kanban_projection_refresh_key("", "ck:realm:r1", "", ""),
+            next_kanban_projection_refresh_key("", "ck:realm:r1", "", "", 0),
             None
         );
         assert_eq!(
-            next_kanban_projection_refresh_key("", "ck:realm:r1", "", "-"),
+            next_kanban_projection_refresh_key("", "ck:realm:r1", "", "-", 0),
             None
         );
         assert_eq!(
-            next_kanban_projection_refresh_key("", "", "", "ck:cursor:1"),
+            next_kanban_projection_refresh_key("", "", "", "ck:cursor:1", 0),
+            None
+        );
+    }
+
+    #[test]
+    fn kanban_projection_refresh_fires_on_realm_live_epoch() {
+        // Account cursor is still the bootstrap sentinel (the cross-member
+        // bug case), but the realm events engine bumped its epoch: the panel
+        // must still refresh off that second freshness axis.
+        let key = next_kanban_projection_refresh_key("", "ck:realm:r1", "", "-", 1);
+        assert_eq!(key, Some("ck:realm:r1||-|1".to_owned()));
+
+        // Same epoch + same inputs → no churn.
+        assert_eq!(
+            next_kanban_projection_refresh_key(
+                "ck:realm:r1||-|1",
+                "ck:realm:r1",
+                "",
+                "-",
+                1
+            ),
+            None
+        );
+
+        // A later epoch advances the key again.
+        assert_eq!(
+            next_kanban_projection_refresh_key(
+                "ck:realm:r1||-|1",
+                "ck:realm:r1",
+                "",
+                "-",
+                2
+            ),
+            Some("ck:realm:r1||-|2".to_owned())
+        );
+
+        // Still no realm/view selector → no refresh even with an epoch.
+        assert_eq!(
+            next_kanban_projection_refresh_key("", "", "", "-", 5),
             None
         );
     }

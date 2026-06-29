@@ -285,6 +285,11 @@ pub fn RouterView() -> Element {
         crate::push::push_status_label(initial_local_state.push_registration.as_ref());
     let initial_realm_tree_nodes_for_signal = initial_realm_tree_nodes.clone();
     let mut sync_cursor = use_signal(move || initial_sync_cursor);
+    // Liveness counter for the per-realm `events/subscribe` engine
+    // (`crate::realm_events_engine`). Bumped when that engine folds fresh realm
+    // events the account stream never delivered (cross-member case); the kanban
+    // panel reads it as a second freshness axis besides `sync_cursor`.
+    let realm_live_epoch = use_signal(|| 0u64);
     let mut selected_realm_id = use_signal(move || initial_selected_realm_id);
     let mut new_space_context_node = use_signal(String::new);
     let mut realm_tree_nodes = use_signal(move || initial_realm_tree_nodes_for_signal);
@@ -768,9 +773,18 @@ pub fn RouterView() -> Element {
                         }
                         crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
                             last_error.set(Some(reason));
+                            if token().trim().is_empty() {
+                                status
+                                    .set("Session could not be restored; sign in again".to_owned());
+                                session_boot_state.set(SessionBootState::Unauthenticated);
+                            }
                         }
                         crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
                             last_error.set(Some(reason));
+                            if token().trim().is_empty() {
+                                status.set("Session expired; sign in again".to_owned());
+                                session_boot_state.set(SessionBootState::Unauthenticated);
+                            }
                         }
                         crate::session::CurrentSessionRefresh::RetryLater { reason } => {
                             // Keep the current credential alive; a reactive 401
@@ -779,6 +793,12 @@ pub fn RouterView() -> Element {
                             last_error.set(Some(format!(
                                 "background session refresh pending: {reason}"
                             )));
+                            if token().trim().is_empty() {
+                                status.set(
+                                    "Session restore is unavailable; sign in again".to_owned(),
+                                );
+                                session_boot_state.set(SessionBootState::Unauthenticated);
+                            }
                         }
                     }
                 }
@@ -804,6 +824,9 @@ pub fn RouterView() -> Element {
     // itself is spawned by the `use_effect` further down.
     let mut sync_generation = use_signal(|| 0u64);
     let mut sync_engine_active_generation = use_signal(|| Option::<u64>::None);
+    // Dedup key (`<generation>|<realm_id>`) for the per-realm events engine, so
+    // a base_url/token re-render doesn't stack a second loop on the same realm.
+    let mut realm_events_engine_active_key = use_signal(|| Option::<String>::None);
 
     {
         let mut account_recovery_configured = account_recovery_configured;
@@ -1129,6 +1152,52 @@ pub fn RouterView() -> Element {
             crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;
             if *active_generation.peek() == Some(current_gen) {
                 active_generation.set(None);
+            }
+        });
+    });
+
+    // Per-realm `events/subscribe` engine — the realm-scoped counterpart to the
+    // account SyncEngine above. It long-polls the SELECTED realm's durable event
+    // stream with that realm's OWN cursor, so cross-member events that never ride
+    // the (delivery-routing-gated) account push still reach the board. Respawned
+    // when the generation, realm, base_url, or token change; the previous loop
+    // self-exits when its realm no longer matches the selection.
+    use_effect(move || {
+        let current_gen = sync_generation();
+        let base = base_url();
+        let session = token();
+        let realm_id = selected_realm_id();
+        if base.trim().is_empty()
+            || session.trim().is_empty()
+            || realm_id.trim().is_empty()
+            || !sync_bootstrap_complete()
+        {
+            return;
+        }
+        let active_key = format!("{current_gen}|{realm_id}");
+        if realm_events_engine_active_key.peek().as_deref() == Some(active_key.as_str()) {
+            return;
+        }
+        realm_events_engine_active_key.set(Some(active_key.clone()));
+        let ctx = crate::realm_events_engine::RealmEventsEngineContext {
+            base_url,
+            token,
+            state_store,
+            selected_realm_id,
+            realm_live_epoch,
+            profiles: profiles_signal,
+        };
+        let mut active_key_signal = realm_events_engine_active_key;
+        spawn(async move {
+            crate::realm_events_engine::run_realm_events_engine(
+                current_gen,
+                sync_generation,
+                realm_id,
+                ctx,
+            )
+            .await;
+            if active_key_signal.peek().as_deref() == Some(active_key.as_str()) {
+                active_key_signal.set(None);
             }
         });
     });
@@ -1868,7 +1937,18 @@ pub fn RouterView() -> Element {
                 }
                 return;
             }
-            if admit_in_flight() {
+            // Read in-flight with `peek()` (NOT `()`) so this effect does NOT
+            // subscribe to it. Subscribing would turn the guard into a spin
+            // engine: `set(true)` here + the spawn's `set(false)` on completion
+            // each notify the effect, re-running it, which re-spawns — a
+            // self-driven loop that needs no external change. When reconcile
+            // short-circuits to `Ok(0)` (e.g. snapshot present but its roster is
+            // undecryptable, so `reconcile_mls_admissions_for_realm` returns
+            // before any network await) the cycle collapses to ~3ms/iteration,
+            // flooding the console and starving the main thread. `peek()` keeps
+            // the concurrency guard while leaving re-runs driven only by real
+            // dependency changes (`sync_cursor` / `state_store` per sync round).
+            if *admit_in_flight.peek() {
                 return;
             }
             admit_in_flight.set(true);
@@ -4948,6 +5028,7 @@ pub fn RouterView() -> Element {
                                             selected_realm_id: active_realm_id.clone(),
                                             projection_realm_id: active_projection_realm_id.clone(),
                                             sync_cursor,
+                                            realm_live_epoch,
                                             frontier_state,
                                             state_store,
                                             event_write_ready,
@@ -5194,6 +5275,7 @@ pub fn RouterView() -> Element {
                                     selected_realm_id: active_realm_id.clone(),
                                     projection_realm_id: active_projection_realm_id.clone(),
                                     sync_cursor,
+                                    realm_live_epoch,
                                     frontier_state,
                                     state_store,
                                     event_write_ready,

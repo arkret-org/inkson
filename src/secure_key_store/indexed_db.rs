@@ -160,38 +160,49 @@ impl IndexedDbSecureKeyStore {
             std::rc::Rc::new(std::cell::RefCell::new(None));
         let on_success_slot = on_success.clone();
         let on_error_slot = on_error.clone();
+        let settled = std::rc::Rc::new(std::cell::Cell::new(false));
         let promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let reject_for_error = reject.clone();
-            let success = Closure::once(move |event: web_sys::Event| {
+            let success_settled = settled.clone();
+            let success_resolve = resolve.clone();
+            let success_reject = reject.clone();
+            let error_settled = settled.clone();
+            let error_reject = reject.clone();
+            let success = Closure::wrap(Box::new(move |event: web_sys::Event| {
+                if success_settled.replace(true) {
+                    return;
+                }
                 match event
                     .target()
                     .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
                 {
                     Some(req) => match req.result() {
                         Ok(value) => {
-                            let _ = resolve.call1(&JsValue::NULL, &value);
+                            let _ = success_resolve.call1(&JsValue::NULL, &value);
                         }
                         Err(err) => {
-                            let _ = reject.call1(&JsValue::NULL, &err);
+                            let _ = success_reject.call1(&JsValue::NULL, &err);
                         }
                     },
                     None => {
-                        let _ = reject.call1(
+                        let _ = success_reject.call1(
                             &JsValue::NULL,
                             &JsValue::from_str("indexedDB request: event has no IdbRequest target"),
                         );
                     }
                 }
-            });
-            let error = Closure::once(move |event: web_sys::Event| {
+            }) as Box<dyn FnMut(web_sys::Event)>);
+            let error = Closure::wrap(Box::new(move |event: web_sys::Event| {
+                if error_settled.replace(true) {
+                    return;
+                }
                 let err = event
                     .target()
                     .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
                     .and_then(|req| req.error().ok().flatten())
                     .map(JsValue::from)
                     .unwrap_or_else(|| JsValue::from_str("indexedDB request error"));
-                let _ = reject_for_error.call1(&JsValue::NULL, &err);
-            });
+                let _ = error_reject.call1(&JsValue::NULL, &err);
+            }) as Box<dyn FnMut(web_sys::Event)>);
             request.set_onsuccess(Some(success.as_ref().unchecked_ref()));
             request.set_onerror(Some(error.as_ref().unchecked_ref()));
             *on_success_slot.borrow_mut() = Some(success);

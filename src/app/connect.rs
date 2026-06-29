@@ -1,5 +1,52 @@
+use std::future::Future;
+
 use super::*;
 use crate::api::is_terminal_session_grant_error;
+
+#[cfg(target_arch = "wasm32")]
+const BOOTSTRAP_NETWORK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
+async fn bootstrap_request<T, F>(label: &'static str, future: F) -> anyhow::Result<T>
+where
+    F: Future<Output = anyhow::Result<T>>,
+{
+    #[cfg(target_arch = "wasm32")]
+    {
+        tokio::select! {
+            result = future => result,
+            _ = crate::api::sleep_for(BOOTSTRAP_NETWORK_TIMEOUT) => {
+                Err(anyhow::anyhow!(
+                    "{label} timed out after {}s",
+                    BOOTSTRAP_NETWORK_TIMEOUT.as_secs()
+                ))
+            }
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = label;
+        future.await
+    }
+}
+
+async fn bootstrap_session_refresh() -> crate::session::CurrentSessionRefresh {
+    #[cfg(target_arch = "wasm32")]
+    {
+        tokio::select! {
+            result = crate::session::refresh_current_session() => result,
+            _ = crate::api::sleep_for(BOOTSTRAP_NETWORK_TIMEOUT) => {
+                crate::session::CurrentSessionRefresh::retry_later(format!(
+                    "session refresh timed out after {}s",
+                    BOOTSTRAP_NETWORK_TIMEOUT.as_secs()
+                ))
+            }
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        crate::session::refresh_current_session().await
+    }
+}
 
 /// The single source of truth for restoring or rotating the current session credential.
 ///
@@ -28,6 +75,14 @@ pub(super) async fn refresh_session_credential_for_active_context(
     let actor = account_did();
     let device = device_id();
     let generation = session_generation();
+
+    #[cfg(target_arch = "wasm32")]
+    if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await
+    {
+        return crate::session::CurrentSessionRefresh::RetryLater {
+            reason: format!("secure key store is not ready for session refresh: {error}"),
+        };
+    }
 
     if token().trim().is_empty() {
         let live_grant = {
@@ -429,7 +484,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 // — otherwise an existing session with cached/server-side
                 // the Realm tree silently renders "No Realm tree loaded" until the user
                 // manually retries.
-                let description = match api.describe().await {
+                let description = match bootstrap_request("server describe", api.describe()).await {
                     Ok(description) => {
                         let missing = description.missing_v1_principal_server_requirements();
                         if !missing.is_empty() {
@@ -495,24 +550,27 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     }
                 };
 
-                let identity_health = match api.identity_describe().await {
-                    Ok(identity) => {
-                        crate::components::DidResolutionHealth::from_identity_description(&identity)
-                    }
-                    Err(error) => {
-                        tracing::warn!(?error, "identity describe probe failed");
-                        let cache = ctx.did_cache.read();
-                        crate::components::DidResolutionHealth::from_identity_probe_failure(
-                            &cache,
-                            chrono::Utc::now(),
-                        )
-                    }
-                };
+                let identity_health =
+                    match bootstrap_request("identity describe", api.identity_describe()).await {
+                        Ok(identity) => {
+                            crate::components::DidResolutionHealth::from_identity_description(
+                                &identity,
+                            )
+                        }
+                        Err(error) => {
+                            tracing::warn!(?error, "identity describe probe failed");
+                            let cache = ctx.did_cache.read();
+                            crate::components::DidResolutionHealth::from_identity_probe_failure(
+                                &cache,
+                                chrono::Utc::now(),
+                            )
+                        }
+                    };
                 did_resolution_health.set(identity_health);
 
                 let mut session_credential = token();
                 if session_credential.trim().is_empty() {
-                    match crate::session::refresh_current_session().await {
+                    match bootstrap_session_refresh().await {
                         crate::session::CurrentSessionRefresh::Credential(refreshed) => {
                             session_credential = refreshed;
                             if let Ok(rebound) = current_base_api(&base, state_store) {
@@ -537,12 +595,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             return;
                         }
                         crate::session::CurrentSessionRefresh::RetryLater { reason } => {
-                            status.set("Session refresh pending; retrying".to_owned());
+                            status.set("Session could not be restored; sign in again".to_owned());
                             network_state.set("reconnecting".to_owned());
-                            last_error.set(Some(format!(
-                                "session credential restore pending: {reason}"
-                            )));
-                            session_boot_state.set(SessionBootState::Restoring);
+                            last_error
+                                .set(Some(format!("session credential restore failed: {reason}")));
+                            session_boot_state.set(SessionBootState::Unauthenticated);
                             sync_bootstrap_complete.set(true);
                             return;
                         }
@@ -569,7 +626,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
                 //      still has a chance to populate realm_tree_nodes.
                 let mut account_personal_handle = None::<String>;
-                let canonical_actor = match authed.account_me().await {
+                let canonical_actor = match bootstrap_request("account viewer", authed.account_me())
+                    .await
+                {
                     Ok(account) if !account.did.trim().is_empty() => {
                         account_personal_handle =
                             personal_handle_from_account_handle(&account.handle);
@@ -583,7 +642,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         actor.clone()
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        match crate::session::refresh_current_session().await {
+                        match bootstrap_session_refresh().await {
                             crate::session::CurrentSessionRefresh::Credential(refreshed) => {
                                 session_credential = refreshed;
                                 if let Ok(rebound) = current_base_api(&base, state_store) {
@@ -594,7 +653,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         .unwrap_or_else(|_| {
                                             api.clone().with_bearer(session_credential.clone())
                                         });
-                                match authed.account_me().await {
+                                match bootstrap_request("account viewer retry", authed.account_me())
+                                    .await
+                                {
                                     Ok(account) if !account.did.trim().is_empty() => {
                                         account_personal_handle =
                                             personal_handle_from_account_handle(&account.handle);
@@ -723,12 +784,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut session_credential,
                     &mut authed,
                 );
-                match probe_device_authorization_with_auto_enroll(
-                    &base,
-                    &canonical_actor,
-                    &device,
-                    &authed,
-                    state_store,
+                match bootstrap_request(
+                    "device authorization check",
+                    probe_device_authorization_with_auto_enroll(
+                        &base,
+                        &canonical_actor,
+                        &device,
+                        &authed,
+                        state_store,
+                    ),
                 )
                 .await
                 {
@@ -738,7 +802,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         device_authorization_check_complete.set(true);
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        match crate::session::refresh_current_session().await {
+                        match bootstrap_session_refresh().await {
                             crate::session::CurrentSessionRefresh::Credential(refreshed) => {
                                 session_credential = refreshed;
                                 if let Ok(rebound) = current_base_api(&base, state_store) {
@@ -749,12 +813,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         .unwrap_or_else(|_| {
                                             api.clone().with_bearer(session_credential.clone())
                                         });
-                                match probe_device_authorization_with_auto_enroll(
-                                    &base,
-                                    &canonical_actor,
-                                    &device,
-                                    &authed,
-                                    state_store,
+                                match bootstrap_request(
+                                    "device authorization retry",
+                                    probe_device_authorization_with_auto_enroll(
+                                        &base,
+                                        &canonical_actor,
+                                        &device,
+                                        &authed,
+                                        state_store,
+                                    ),
                                 )
                                 .await
                                 {
@@ -831,10 +898,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut session_credential,
                     &mut authed,
                 );
-                let sync_result = match authed.account_subscribe_snapshot(None).await {
+                let sync_result = match bootstrap_request(
+                    "account subscribe bootstrap",
+                    authed.account_subscribe_snapshot(None),
+                )
+                .await
+                {
                     Ok(sync) => Ok(sync),
                     Err(error) if is_auth_expired_error(&error) => {
-                        match crate::session::refresh_current_session().await {
+                        match bootstrap_session_refresh().await {
                             crate::session::CurrentSessionRefresh::Credential(refreshed) => {
                                 session_credential = refreshed;
                                 if let Ok(rebound) = current_base_api(&base, state_store) {
@@ -845,7 +917,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         .unwrap_or_else(|_| {
                                             api.clone().with_bearer(session_credential.clone())
                                         });
-                                authed.account_subscribe_snapshot(None).await
+                                bootstrap_request(
+                                    "account subscribe bootstrap retry",
+                                    authed.account_subscribe_snapshot(None),
+                                )
+                                .await
                             }
                             crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
                                 invalidate_bootstrap_session(
@@ -890,46 +966,56 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             &mut session_credential,
                             &mut authed,
                         );
-                        let invite_notifications = match authed.invites().await {
-                            Ok(response) => Some(response.invites),
-                            Err(error) if is_auth_expired_error(&error) => {
-                                match crate::session::refresh_current_session().await {
-                                    crate::session::CurrentSessionRefresh::Credential(
-                                        refreshed,
-                                    ) => {
-                                        session_credential = refreshed;
-                                        if let Ok(rebound) = current_base_api(&base, state_store) {
-                                            api = rebound;
+                        let invite_notifications =
+                            match bootstrap_request("invite notifications", authed.invites()).await
+                            {
+                                Ok(response) => Some(response.invites),
+                                Err(error) if is_auth_expired_error(&error) => {
+                                    match bootstrap_session_refresh().await {
+                                        crate::session::CurrentSessionRefresh::Credential(
+                                            refreshed,
+                                        ) => {
+                                            session_credential = refreshed;
+                                            if let Ok(rebound) =
+                                                current_base_api(&base, state_store)
+                                            {
+                                                api = rebound;
+                                            }
+                                            authed = current_authed_api(
+                                                &base,
+                                                &session_credential,
+                                                state_store,
+                                            )
+                                            .unwrap_or_else(|_| {
+                                                api.clone().with_bearer(session_credential.clone())
+                                            });
+                                            bootstrap_request(
+                                                "invite notifications retry",
+                                                authed.invites(),
+                                            )
+                                            .await
+                                            .ok()
+                                            .map(|response| response.invites)
                                         }
-                                        authed = current_authed_api(
-                                            &base,
-                                            &session_credential,
-                                            state_store,
-                                        )
-                                        .unwrap_or_else(|_| {
-                                            api.clone().with_bearer(session_credential.clone())
-                                        });
-                                        authed.invites().await.ok().map(|response| response.invites)
+                                        crate::session::CurrentSessionRefresh::SignInRequired {
+                                            ..
+                                        }
+                                        | crate::session::CurrentSessionRefresh::LoginRequired {
+                                            ..
+                                        }
+                                        | crate::session::CurrentSessionRefresh::RetryLater {
+                                            ..
+                                        } => None,
                                     }
-                                    crate::session::CurrentSessionRefresh::SignInRequired {
-                                        ..
-                                    }
-                                    | crate::session::CurrentSessionRefresh::LoginRequired {
-                                        ..
-                                    }
-                                    | crate::session::CurrentSessionRefresh::RetryLater {
-                                        ..
-                                    } => None,
                                 }
-                            }
-                            Err(error) => {
-                                tracing::debug!(
-                                    ?error,
-                                    "background sync could not refresh invite notifications"
-                                );
-                                None
-                            }
-                        };
+                                Err(error) => {
+                                    tracing::debug!(
+                                        ?error,
+                                        "background sync could not refresh invite notifications"
+                                    );
+                                    None
+                                }
+                            };
                         {
                             let mut store = state_store.write();
                             store.save_sync_cursor(sync.cursor.clone());
@@ -1332,13 +1418,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut authed,
                 );
                 tracing::warn!(target: "session_boot", "connect: post-sync, about to await events_describe() (if no 'events_describe returned' line follows, THIS await is the hang)");
-                let events_result = match authed.events_describe().await {
+                let events_result = match bootstrap_request(
+                    "events describe",
+                    authed.events_describe(),
+                )
+                .await
+                {
                     Ok(events) => {
                         tracing::warn!(target: "session_boot", "connect: events_describe returned Ok");
                         Ok(events)
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        match crate::session::refresh_current_session().await {
+                        match bootstrap_session_refresh().await {
                             crate::session::CurrentSessionRefresh::Credential(refreshed) => {
                                 session_credential = refreshed;
                                 if let Ok(rebound) = current_base_api(&base, state_store) {
@@ -1349,7 +1440,8 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         .unwrap_or_else(|_| {
                                             api.clone().with_bearer(session_credential.clone())
                                         });
-                                authed.events_describe().await
+                                bootstrap_request("events describe retry", authed.events_describe())
+                                    .await
                             }
                             crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
                                 invalidate_bootstrap_session(

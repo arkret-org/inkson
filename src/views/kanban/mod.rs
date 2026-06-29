@@ -590,6 +590,11 @@ pub fn KanbanPanel(
     selected_realm_id: String,
     projection_realm_id: String,
     sync_cursor: Signal<String>,
+    /// Monotonic counter bumped by the per-realm `events/subscribe` engine
+    /// ([`crate::realm_events_engine`]) when it folds fresh realm events that
+    /// the account `sync_cursor` never delivered (cross-member case). Drives the
+    /// live reconciler independently of the account cursor.
+    realm_live_epoch: Signal<u64>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
     event_write_ready: bool,
@@ -1132,7 +1137,13 @@ pub fn KanbanPanel(
         move || {
             let initial_view = board_view_id.peek().clone();
             let initial_cursor = sync_cursor.peek().clone();
-            kanban_projection_refresh_key(&initial_realm_id, &initial_view, &initial_cursor)
+            let initial_epoch = *realm_live_epoch.peek();
+            kanban_projection_refresh_key(
+                &initial_realm_id,
+                &initial_view,
+                &initial_cursor,
+                initial_epoch,
+            )
         }
     });
     let live_base = base_url.clone();
@@ -1156,11 +1167,16 @@ pub fn KanbanPanel(
             return;
         }
         let cursor = sync_cursor();
+        // Reading `realm_live_epoch` here subscribes this effect to the per-realm
+        // events engine, so fresh cross-member events trigger a reproject even
+        // when the account `sync_cursor` never advanced for them.
+        let live_epoch = realm_live_epoch();
         let Some(refresh_key) = next_kanban_projection_refresh_key(
             live_refresh_key_seen.peek().as_str(),
             &lifecycle_realm_id,
             &view,
             &cursor,
+            live_epoch,
         ) else {
             return;
         };
@@ -1226,12 +1242,49 @@ pub fn KanbanPanel(
                 {
                     return;
                 }
+                // Cross-member parity: an encrypted realm's `ck.space.create`
+                // events from *other* members reach the durable event log but
+                // may never arrive through this device's live
+                // `account.subscribe` push (non-routable delivery), so they
+                // never land in `raw_operations`. The one-shot lifecycle
+                // bootstrap recovers them via `backfill`, but this live
+                // reconciler runs on every `sync_cursor` advance and — without
+                // the same backfill merge — would reproject from the server
+                // container projection only, dropping the other member's
+                // board/list (the symptom: it "flashes once, then disappears").
+                // Mirror the bootstrap path: fold the backfilled remote
+                // space-creates into the containers before projecting so the
+                // live refresh keeps every member's boards and lists.
+                let events_res = {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token, |api| async move {
+                        api.backfill(&realm_id).await
+                    })
+                    .await
+                };
+                if events_res
+                    .as_ref()
+                    .err()
+                    .is_some_and(|err| err.is_auth_expired())
+                {
+                    return;
+                }
                 if containers_res.is_ok() || strands_res.is_ok() {
                     let container_items = containers_res
                         .ok()
                         .map(|resp| resp.items)
                         .unwrap_or_default();
                     let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
+                    let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
+                    let remote_update_operations =
+                        strand_update_operations_from_events(&event_items);
+                    let remote_space_create_operations =
+                        space_create_operations_from_events(&event_items);
+                    let container_items = containers_with_local_space_creates(
+                        &container_items,
+                        &remote_space_create_operations,
+                        &lifecycle_local_realm_id,
+                    );
                     lifecycle_container_projection.set(container_items.clone());
                     lifecycle_strand_projection.set(strand_items.clone());
                     let current_board = selected_board_space_id();
@@ -1263,7 +1316,7 @@ pub fn KanbanPanel(
                             projected_columns,
                             &decrypt_store,
                             &board_id,
-                            &[],
+                            &remote_update_operations,
                             Some(&decrypt_ctx),
                         );
                         drop(decrypt_store);
