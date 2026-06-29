@@ -637,25 +637,32 @@ pub fn KanbanPanel(
             .map(|option| option.id.clone())
             .unwrap_or_default()
     });
-    let initial_columns = {
-        // Synchronous mount paints only local optimistic ops on top of any
-        // demo/seed columns; the full event-sourced board is filled by the
-        // bootstrap/live reconcile (project_board) right after mount. We do NOT
-        // run project_board here: rendering a full board at synchronous mount
-        // exposed a pre-existing Dioxus stale-grid (orphaned board-grid DOM left
-        // on a route-arm swap) — keep the mount paint minimal so the reconcile
-        // owns the single live grid.
-        let state = state_store.read().load();
-        let initial_columns = overlay_local_card_create_records(
-            initial_columns,
-            &state.raw_operations,
-            &initial_board_space_id,
-        );
-        let initial_columns =
-            overlay_local_card_update_records(initial_columns, &state.raw_operations, None);
-        overlay_local_card_assignment_records(initial_columns, &state.raw_operations)
-    };
-    let mut columns = use_signal(|| initial_columns);
+    // Event-sourced, local-first mount paint: render the board immediately from
+    // the persisted local op log (raw_operations) so a returning session shows
+    // its last-known board instantly with no network wait or empty flash; the
+    // bootstrap/live reconcile then refreshes it in the background. Computed
+    // ONCE here in the `use_signal` initializer (not on every render).
+    let mut columns = use_signal({
+        let seed_board_id = initial_board_space_id.clone();
+        let seed_realm_id = local_realm_id.clone();
+        move || {
+            let state = state_store.read().load();
+            if initial_columns.is_empty() {
+                let (cols, ..) =
+                    project_board(&state.raw_operations, &seed_board_id, &seed_realm_id, None);
+                cols
+            } else {
+                // Demo / seed-fallback columns: layer local optimistic ops on top.
+                let cols = overlay_local_card_create_records(
+                    initial_columns,
+                    &state.raw_operations,
+                    &seed_board_id,
+                );
+                let cols = overlay_local_card_update_records(cols, &state.raw_operations, None);
+                overlay_local_card_assignment_records(cols, &state.raw_operations)
+            }
+        }
+    });
     let mut board_space_options = use_signal(move || initial_board_options.clone());
     let mut selected_board_space_id = use_signal(move || initial_board_space_id.clone());
     let selected_board_space_id_selected = use_memo(move || Some(selected_board_space_id()));
