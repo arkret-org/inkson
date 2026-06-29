@@ -980,6 +980,24 @@ impl CokretApi {
             .await
     }
 
+    /// Read the verified Realm ↔ organization relationships projection
+    /// (`ck.self.realm_organization.query.list`,
+    /// `GET /_cokret/self/realms/{realm_id}/organizations`).
+    ///
+    /// The server only returns `verified_active` / `revoked_or_expired`
+    /// lifecycle rows plus `declared_organization_hints` (owning-organization
+    /// DIDs with no verified statement). `pending_consent` is a client-side
+    /// bind-flow state and is never projected here. This is read-only: binding
+    /// and organization-side signing happen in the admin console (sodmin).
+    pub async fn list_realm_organizations(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<cokret_sdk::models::RealmOrganizationRelationshipList> {
+        let realm_id = trim_realm_id(realm_id);
+        let path = format!("_cokret/self/realms/{realm_id}/organizations");
+        self.get_json(&path).await
+    }
+
     /// Resolve the current seal head for `realm_id` to be stamped onto
     /// outgoing reducer-input events as `seal_ref`.
     ///

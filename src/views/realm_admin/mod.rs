@@ -24,7 +24,7 @@ pub(crate) use members_panel::{
     reconcile_mls_admissions_for_realm, request_history_keys_for_realm, share_history_to_requester,
     submit_mls_admission_for_invitees,
 };
-pub use organization::RealmOrganizationPanel;
+pub use organization::{RealmOrganizationPanel, ServerAdminSignal, is_server_admin};
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to

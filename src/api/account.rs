@@ -590,6 +590,19 @@ impl CokretApi {
         self.get_json("_cokret/root/identity/describe").await
     }
 
+    /// Submit a `did:webvh` DID operation (inception / rotation) to soland's
+    /// embedded identity provider. Spec op
+    /// `ck.root.identity.command.submit_did_operation`
+    /// (`POST /_cokret/root/identity/submit-did-operation`). The body is the
+    /// SDK-built `submit_body` from `cokret_sdk::webvh::prepare_inception`.
+    pub async fn submit_did_operation(
+        &self,
+        body: &cokret_sdk::models::DidOperationSubmitRequestBody,
+    ) -> anyhow::Result<cokret_sdk::models::DidOperationSubmitOutcome> {
+        self.post_json("_cokret/root/identity/submit-did-operation", body)
+            .await
+    }
+
     pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveOutcome> {
         let subject = cokret_sdk::Did::new(did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid did `{did}`: {err}"))?;

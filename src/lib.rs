@@ -98,6 +98,7 @@ pub mod objects;
 // wiring (enqueue on send failure, authed replay, app-shell drain).
 pub mod oidc;
 pub mod operation;
+pub mod organization;
 pub mod passkey_prf;
 pub mod pending_logout;
 /// Input-path perf helpers — draft-save debounce + typing throttle for the

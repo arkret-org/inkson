@@ -438,6 +438,43 @@ pub fn RouterView() -> Element {
     use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
         Signal::new(crate::capability::CapabilityEngine::new())
     });
+    // D0 — server-administrator signal sourced from
+    // `AccountView.is_server_admin` (the server's configured admin principal
+    // set), provided via context so operator-only surfaces (organization
+    // create / bind) can gate their UI without prop drilling. This is the real
+    // operator signal — distinct from any Realm-role `is_admin` placeholder.
+    let mut is_server_admin = use_context_provider(|| {
+        crate::views::realm_admin::ServerAdminSignal(Signal::new(false))
+    })
+    .0;
+    {
+        // Refresh the admin signal whenever the session credential or server
+        // changes. Failures (offline, transient) leave it `false` (fail closed),
+        // so the write UI never appears for a viewer we can't confirm.
+        let base_url = base_url;
+        let token = token;
+        let viewer_admin = use_resource(move || {
+            let base = base_url();
+            let session = token();
+            async move {
+                if session.trim().is_empty() {
+                    return false;
+                }
+                crate::views::helpers::with_authed_api(&base, session, |api| async move {
+                    api.account_viewer().await
+                })
+                .await
+                .map(|viewer| viewer.is_server_admin)
+                .unwrap_or(false)
+            }
+        });
+        use_effect(move || {
+            let resolved = viewer_admin().unwrap_or(false);
+            if *is_server_admin.peek() != resolved {
+                is_server_admin.set(resolved);
+            }
+        });
+    }
     // Y1 - session-scoped DID resolution cache handle.
     //
     // Mount point note: yougen app state is a set of scattered `use_signal`
