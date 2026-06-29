@@ -649,6 +649,29 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     }
     .map_err(|error| error.user_message())?;
 
+    // Persist the welcome envelopes into the local to-device inbox so the
+    // pre-join history flow can recognise the admitting member (alice) as a
+    // history-key provider. The welcome is fetched + acked on this bootstrap
+    // path WITHOUT going through the sync engine, so without this ingest the
+    // inbox stays empty and `provider_candidates_from_inbox` finds nobody to
+    // request `ck.realm_key.share` from. Each envelope already carries
+    // `sender_principal_id` + `sender_device_id`, which is exactly the
+    // (principal, device) tuple the request planner needs.
+    if let Some(welcome_messages) = messages_value
+        .get("messages")
+        .and_then(Value::as_array)
+        .filter(|entries| !entries.is_empty())
+    {
+        let ingested = state_store
+            .write()
+            .ingest_to_device_messages(welcome_messages);
+        tracing::debug!(
+            realm = %realm_id,
+            ingested,
+            "ingested MLS welcome envelopes into to-device inbox for history provider discovery"
+        );
+    }
+
     // Welcomes were present but some/all failed to apply: report (do not fail
     // the boot when others succeeded). A totally-empty welcome set has
     // `failed == 0` and is silent.

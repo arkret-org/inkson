@@ -1617,6 +1617,24 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
         anyhow::anyhow!("{reason}")
     })?;
+    // History sharing (encryption-and-audit.md): retain the CURRENT (pre-commit)
+    // epoch's `history_secret` BEFORE building the admission commit. The commit
+    // advances the group epoch (N → N+1) and OpenMLS can only export the epoch
+    // the group is currently at, so the only moment to capture epoch N's secret
+    // is here, while the local snapshot is still at N. Without this, the invitee
+    // joins at epoch N+1 and requests the pre-join window [0, N], but the
+    // provider has only ever retained the post-commit epoch (N+1) — its share
+    // range is empty and the late joiner can never decrypt pre-join content.
+    {
+        let mut store = state_store.write();
+        let _ = crate::mls::runtime::derive_and_retain_realm_history_secret(
+            &mut store,
+            secure_store.as_ref(),
+            &realm_id,
+            &actor_id,
+            &device_id,
+        );
+    }
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claim(
@@ -2038,7 +2056,8 @@ fn provider_candidates_from_inbox(
             continue;
         }
         let principal = message
-            .get("sender")
+            .get("sender_principal_id")
+            .or_else(|| message.get("sender"))
             .or_else(|| message.get("origin"))
             .and_then(Value::as_str)
             .map(str::trim)
@@ -2080,11 +2099,9 @@ pub(crate) fn pending_history_request_dedup_key(
     realm_id: &str,
     actor_id: &str,
 ) -> Option<String> {
-    if !store.realm_projection_is_mls_encrypted(realm_id) {
-        return None;
-    }
-    let snapshot = store.mls_snapshot_for(realm_id)?;
-    let join_epoch = snapshot.epoch;
+    let is_encrypted = store.realm_projection_is_mls_encrypted(realm_id);
+    let snapshot = store.mls_snapshot_for(realm_id);
+    let join_epoch = snapshot.as_ref().map(|s| s.epoch);
     let mut installed_epochs: Vec<u64> = store
         .history_secrets_for(realm_id)
         .into_iter()
@@ -2095,13 +2112,20 @@ pub(crate) fn pending_history_request_dedup_key(
         projected_history_visibility_for_realm(store, realm_id).unwrap_or_default();
     let inbox = store.to_device_inbox();
     let providers = provider_candidates_from_inbox(&inbox, realm_id, actor_id);
-    let plan = plan_history_key_request(
-        &history_visibility,
-        join_epoch,
-        &installed_epochs,
-        actor_id,
-        &providers,
-    )?;
+    let plan = join_epoch.and_then(|epoch| {
+        plan_history_key_request(
+            &history_visibility,
+            epoch,
+            &installed_epochs,
+            actor_id,
+            &providers,
+        )
+    });
+    if !is_encrypted {
+        return None;
+    }
+    let _snapshot = snapshot?;
+    let plan = plan?;
     let installed_signature = installed_epochs
         .iter()
         .map(u64::to_string)

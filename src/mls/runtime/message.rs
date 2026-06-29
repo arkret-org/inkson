@@ -2,9 +2,8 @@
 //! minimal-metadata AAD policy enforcement.
 
 use super::{
-    MlsRuntimeError, delete_mls_key_package_identity_state, load_device_snapshot_secret,
-    load_mls_key_package_identity_state, load_or_create_device_snapshot_secret,
-    should_force_epoch_advance,
+    MlsRuntimeError, load_device_snapshot_secret, load_mls_key_package_identity_state,
+    load_or_create_device_snapshot_secret, should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
 
@@ -1014,21 +1013,16 @@ pub fn apply_welcome_messages_with_device_snapshot(
         if let Some(policy_root) = welcome_policy_root.as_deref() {
             state_store.record_genesis_policy_root_for_effective_scope(realm_id, None, policy_root);
         }
-        if let Some(key_package_id) = welcome_entry.key_package_id.as_deref()
-            && let Err(err) = delete_mls_key_package_identity_state(
-                secure_store,
-                actor_id,
-                device_id,
-                key_package_id,
-            )
-        {
-            tracing::warn!(
-                %realm_id,
-                %key_package_id,
-                error = %err,
-                "failed to delete consumed MLS KeyPackage identity state",
-            );
-        }
+        // RETAIN the KeyPackage init private key — do NOT delete it after a
+        // successful apply. Invitees publish reusable **last-resort** KeyPackages
+        // (`identity.last_resort_key_package_record()`), whose whole purpose is to
+        // stay decryptable across repeated Welcomes (redelivery of the to-device
+        // Welcome, re-admission after a device/epoch change). Deleting the init
+        // key here "consumed" it: the FIRST apply succeeded, then the very next
+        // re-delivered Welcome failed with "no local KeyPackage identity state"
+        // because the key was already gone — a self-inflicted deadlock that
+        // exactly defeats the last-resort retention guarantee. A redelivered
+        // Welcome is now an idempotent no-op via the stale-snapshot guard above.
         outcome.applied += 1;
     }
     Ok(outcome)
