@@ -637,29 +637,32 @@ pub fn KanbanPanel(
             .map(|option| option.id.clone())
             .unwrap_or_default()
     });
-    let initial_columns = {
-        let state = state_store.read().load();
-        if initial_columns.is_empty() {
-            // Event-sourced initial render straight from the persisted local op
-            // log (no fetch yet) — a prior session's space/strand creates
-            // reproject the board instantly via the single `project_board`.
-            // No decrypt context at synchronous mount; encrypted body fields
-            // fill in on the first reconcile.
-            let (cols, ..) =
-                project_board(&state.raw_operations, &initial_board_space_id, &local_realm_id, None);
-            cols
-        } else {
-            // Demo / seed-fallback columns: layer local optimistic ops on top.
-            let cols = overlay_local_card_create_records(
-                initial_columns,
-                &state.raw_operations,
-                &initial_board_space_id,
-            );
-            let cols = overlay_local_card_update_records(cols, &state.raw_operations, None);
-            overlay_local_card_assignment_records(cols, &state.raw_operations)
+    // Event-sourced, local-first mount paint: render the board immediately from
+    // the persisted local op log (raw_operations) so a returning session shows
+    // its last-known board instantly with no network wait or empty flash; the
+    // bootstrap/live reconcile then refreshes it in the background. Computed
+    // ONCE here in the `use_signal` initializer (not on every render).
+    let mut columns = use_signal({
+        let seed_board_id = initial_board_space_id.clone();
+        let seed_realm_id = local_realm_id.clone();
+        move || {
+            let state = state_store.read().load();
+            if initial_columns.is_empty() {
+                let (cols, ..) =
+                    project_board(&state.raw_operations, &seed_board_id, &seed_realm_id, None);
+                cols
+            } else {
+                // Demo / seed-fallback columns: layer local optimistic ops on top.
+                let cols = overlay_local_card_create_records(
+                    initial_columns,
+                    &state.raw_operations,
+                    &seed_board_id,
+                );
+                let cols = overlay_local_card_update_records(cols, &state.raw_operations, None);
+                overlay_local_card_assignment_records(cols, &state.raw_operations)
+            }
         }
-    };
-    let mut columns = use_signal(|| initial_columns);
+    });
     let mut board_space_options = use_signal(move || initial_board_options.clone());
     let mut selected_board_space_id = use_signal(move || initial_board_space_id.clone());
     let selected_board_space_id_selected = use_memo(move || Some(selected_board_space_id()));
