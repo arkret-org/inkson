@@ -193,6 +193,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
+        None,
     )
     .unwrap();
     let kinds = events
@@ -338,6 +339,7 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
         "ck:trust_domain:server.example",
         &[],
         None,
+        None,
     )
     .unwrap();
 
@@ -402,6 +404,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         &["did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
+        None,
     )
     .unwrap();
 
@@ -439,6 +442,7 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
         "ck:trust_domain:server.example",
         &["bob:example.com".to_owned()],
         &[],
+        None,
         None,
     )
     .expect_err("handle seed members require Directory-resolved evidence");
@@ -567,6 +571,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         "ck:trust_domain:server.example",
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
+        None,
         None,
     )
     .unwrap();

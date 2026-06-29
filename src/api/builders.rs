@@ -161,6 +161,7 @@ pub fn build_realm_bootstrap_events(
     invitees: &[String],
     plaintext_visible_services: &[String],
     alias: Option<&str>,
+    content_scheme: Option<&str>,
 ) -> anyhow::Result<Vec<cokret_sdk::Event>> {
     // Spec realm-and-space.md §2.6: creator membership is auto-derived
     // by the reducer from `ck.realm.create`'s `created_by == actor_id`
@@ -191,9 +192,10 @@ pub fn build_realm_bootstrap_events(
         trust_domain,
         plaintext_visible_services,
         alias,
+        content_scheme,
     )?);
     if let Some(policy_components) =
-        recommended_realm_policy_components_for_profile(encryption_profile)
+        recommended_realm_policy_components_for_profile(encryption_profile, content_scheme)
     {
         events.push(build_realm_state_event(
             realm_id,
@@ -295,6 +297,7 @@ pub fn build_realm_create_event(
     trust_domain: &str,
     plaintext_visible_services: &[String],
     alias: Option<&str>,
+    content_scheme: Option<&str>,
 ) -> anyhow::Result<cokret_sdk::Event> {
     // Per spec realm-and-space.md §2.3: high_assurance security_class
     // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
@@ -336,9 +339,14 @@ pub fn build_realm_create_event(
     // Orthogonal to `history_visibility` (the runtime delivery toggle); plaintext
     // realms carry no content scheme. An extreme-confidentiality realm may
     // instead pin `mls-rfc9420` (per-message FS, history structurally
-    // unshareable) — see [[content-scheme-capability-vs-toggle]].
+    // unshareable) by passing `content_scheme=Some("mls-rfc9420")` — see
+    // [[content-scheme-capability-vs-toggle]].
     if encryption_profile.trim() == RECOMMENDED_REALM_ENCRYPTION_PROFILE {
-        object["content_scheme"] = Value::String("mls-exporter-aead-v1".to_owned());
+        // Informational declaration on the realm object; soland's *authoritative*
+        // projection reads content_scheme from the policy_components cell, but
+        // the object field keeps realm.schema.json self-describing.
+        object["content_scheme"] =
+            Value::String(resolve_realm_content_scheme(content_scheme).to_owned());
     }
     if let Some(summary) = summary
         && !summary.trim().is_empty()
@@ -398,17 +406,35 @@ pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
         .eq_ignore_ascii_case(RECOMMENDED_REALM_ENCRYPTION_PROFILE)
 }
 
-pub fn recommended_realm_policy_components_value() -> Value {
+/// Resolve the effective §2.10 content scheme (capability axis) from the
+/// optional caller selection: `None` or any history-capable choice ⇒ the
+/// history-shareable `mls-exporter-aead-v1` default; an explicit `mls-rfc9420`
+/// pins the forward-secret-only scheme. See [[content-scheme-capability-vs-toggle]].
+pub fn resolve_realm_content_scheme(content_scheme: Option<&str>) -> &'static str {
+    match content_scheme.map(str::trim) {
+        Some("mls-rfc9420") => "mls-rfc9420",
+        _ => "mls-exporter-aead-v1",
+    }
+}
+
+pub fn recommended_realm_policy_components_value(content_scheme: Option<&str>) -> Value {
     json!({
         "policy_revision": 1,
         "content_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
         "metadata_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
+        // §2.10 content scheme — soland projects the effective scheme from THIS
+        // policy_components cell (`policy_floor_field(components, "content_scheme")`),
+        // not from the realm.create object, and applies a one-way ratchet.
+        "content_scheme": resolve_realm_content_scheme(content_scheme),
     })
 }
 
-pub fn recommended_realm_policy_components_for_profile(profile: &str) -> Option<Value> {
+pub fn recommended_realm_policy_components_for_profile(
+    profile: &str,
+    content_scheme: Option<&str>,
+) -> Option<Value> {
     encryption_profile_uses_recommended_floor(profile)
-        .then(recommended_realm_policy_components_value)
+        .then(|| recommended_realm_policy_components_value(content_scheme))
 }
 
 /// Build the genesis notary cell value via the SDK-authoritative

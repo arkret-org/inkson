@@ -59,6 +59,9 @@ pub fn SetupPanel(
     // are Realm create-locked fields; default to the safe `mls_rfc9420` +
     // `standard` case.
     let realm_encryption_profile = use_signal(|| "mls_rfc9420".to_owned());
+    // §2.10 content-scheme capability axis: default to history-capable
+    // (exporter-aead) so collaboration realms can share pre-join history.
+    let realm_content_scheme = use_signal(|| "mls-exporter-aead-v1".to_owned());
     let realm_security_class = use_signal(|| "standard".to_owned());
     // Spec realm-and-space.md §2.3 advanced create-locked fields; safe defaults
     // `restricted` / `single_did` / `sha256`.
@@ -110,6 +113,7 @@ pub fn SetupPanel(
                     realm_policy_join_rule,
                     realm_policy_history_visibility,
                     realm_encryption_profile,
+                    realm_content_scheme,
                     realm_security_class,
                     realm_federation_policy,
                     realm_notary_profile,

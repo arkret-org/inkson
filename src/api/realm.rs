@@ -37,6 +37,7 @@ impl CokretApi {
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
         alias: Option<&str>,
+        content_scheme: Option<&str>,
     ) -> anyhow::Result<RealmCreateResult> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
@@ -68,6 +69,7 @@ impl CokretApi {
             &invitees,
             &plaintext_visible_services,
             alias,
+            content_scheme,
         )?;
         // Genesis Realm bootstrap has no prior snapshot head. The
         // `ck.realm.create` precondition asserts `head_eq null`; follow-up
@@ -399,7 +401,11 @@ impl CokretApi {
         }
         if let Some(join_policy) = join_policy {
             let mut policy_components = if preserve_recommended_encryption_floor {
-                recommended_realm_policy_components_value()
+                // None ⇒ the history-capable `mls-exporter-aead-v1` default. soland
+                // applies a one-way content_scheme ratchet, so a policy_components
+                // write MUST re-assert a scheme of rank ≥ the projected one;
+                // omitting it would be rejected for exporter-aead realms.
+                recommended_realm_policy_components_value(None)
             } else {
                 json!({
                     "policy_revision": 1,

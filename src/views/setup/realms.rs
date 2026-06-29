@@ -4,9 +4,9 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 
 use super::data::{
-    ANCHOR_PROFILE_OPTIONS, DISCOVERABILITY_OPTIONS, ENCRYPTION_PROFILE_OPTIONS,
-    FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS, HISTORY_VISIBILITY_OPTIONS, JOIN_RULE_OPTIONS,
-    SECURITY_CLASS_OPTIONS,
+    ANCHOR_PROFILE_OPTIONS, CONTENT_SCHEME_OPTIONS, DISCOVERABILITY_OPTIONS,
+    ENCRYPTION_PROFILE_OPTIONS, FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS,
+    HISTORY_VISIBILITY_OPTIONS, JOIN_RULE_OPTIONS, SECURITY_CLASS_OPTIONS,
 };
 use super::helpers::{parse_seed_members, plaintext_services_for_policy, policy_combination_hint};
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
@@ -46,6 +46,7 @@ pub(super) fn RealmsSection(
     mut realm_policy_join_rule: Signal<String>,
     mut realm_policy_history_visibility: Signal<String>,
     mut realm_encryption_profile: Signal<String>,
+    mut realm_content_scheme: Signal<String>,
     mut realm_security_class: Signal<String>,
     mut realm_federation_policy: Signal<String>,
     mut realm_notary_profile: Signal<String>,
@@ -63,6 +64,7 @@ pub(super) fn RealmsSection(
     let realm_policy_history_visibility_selected =
         use_memo(move || Some(realm_policy_history_visibility()));
     let realm_encryption_profile_selected = use_memo(move || Some(realm_encryption_profile()));
+    let realm_content_scheme_selected = use_memo(move || Some(realm_content_scheme()));
     let realm_security_class_selected = use_memo(move || Some(realm_security_class()));
     let realm_federation_policy_selected = use_memo(move || Some(realm_federation_policy()));
     let realm_notary_profile_selected = use_memo(move || Some(realm_notary_profile()));
@@ -76,6 +78,9 @@ pub(super) fn RealmsSection(
     let join_rule_value = realm_policy_join_rule();
     let history_visibility_value = realm_policy_history_visibility();
     let encryption_profile_value = realm_encryption_profile();
+    let content_scheme_value = realm_content_scheme();
+    let encryption_is_e2ee =
+        crate::security_state::encryption_profile_is_encrypted(&encryption_profile_value);
     let security_class_value = realm_security_class();
     let federation_policy_value = realm_federation_policy();
     let notary_profile_value = realm_notary_profile();
@@ -366,6 +371,41 @@ pub(super) fn RealmsSection(
                                     }
                                 }
                             }
+                            // encryption-and-audit.md §2.10 — content-scheme
+                            // capability axis. Only meaningful for E2EE realms;
+                            // orthogonal to History visibility (the runtime
+                            // delivery toggle). Default "History-capable".
+                            if encryption_is_e2ee {
+                                div { class: "metric directory-axis-card",
+                                    strong { "History sharing" }
+                                    div { class: "workflow-form setup-field",
+                                        label { "Can new members ever be granted pre-join history?" }
+                                        Select::<String> {
+                                            "data-testid": "realm-content-scheme-input",
+                                            value: Some(realm_content_scheme_selected.into()),
+                                            on_value_change: move |v: Option<String>| {
+                                                if let Some(v) = v {
+                                                    realm_content_scheme.set(v);
+                                                }
+                                            },
+                                            for (i, (option_value, label, _)) in CONTENT_SCHEME_OPTIONS.iter().enumerate() {
+                                                SelectOption::<String> {
+                                                    index: i,
+                                                    value: option_value.to_string(),
+                                                    text_value: "{label}",
+                                                    "{label}"
+                                                }
+                                            }
+                                        }
+                                        div { class: "muted",
+                                            "{CONTENT_SCHEME_OPTIONS.iter().find(|(value, _, _)| *value == content_scheme_value).map(|(_, _, hint)| *hint).unwrap_or(\"Content scheme is not set.\")}"
+                                        }
+                                        div { class: "muted",
+                                            "Capability only — actual delivery still follows History visibility. Locked after creation."
+                                        }
+                                    }
+                                }
+                            }
                             div { class: "metric directory-axis-card",
                                 strong { "Security class" }
                                 div { class: "workflow-form setup-field",
@@ -625,6 +665,7 @@ pub(super) fn RealmsSection(
                                         let federation_policy = realm_federation_policy();
                                         let notary_profile = realm_notary_profile();
                                         let digest_algorithm = realm_digest_algorithm();
+                                        let content_scheme = realm_content_scheme();
                                         let seed_text = seed_members();
                                         let actor = account_did();
                                         let device = device_id();
@@ -697,6 +738,7 @@ pub(super) fn RealmsSection(
                                                         invitees.clone(),
                                                         plaintext_services.clone(),
                                                         (!alias.trim().is_empty()).then(|| alias.trim()),
+                                                        Some(content_scheme.as_str()),
                                                     ).await {
                                                     Ok(realm) => {
                                                         // R15: ck.realm.create now returns

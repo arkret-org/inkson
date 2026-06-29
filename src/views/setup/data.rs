@@ -100,6 +100,25 @@ pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 2] = [
     ),
 ];
 
+// encryption-and-audit.md §2.10 — content scheme (the *capability* axis,
+// orthogonal to `history_visibility` which is the runtime delivery toggle).
+// `mls-exporter-aead-v1` makes every epoch's content structurally shareable to
+// late joiners (forward secrecy degrades to per-epoch, §2.10.5);
+// `mls-rfc9420` keeps per-message forward secrecy and makes pre-join history
+// permanently unshareable. Default capable — matches most collaboration needs.
+pub(super) const CONTENT_SCHEME_OPTIONS: [(&str, &str, &str); 2] = [
+    (
+        "mls-exporter-aead-v1",
+        "History-capable",
+        "Recommended. New members can be granted history from before they joined. Forward secrecy is per-epoch.",
+    ),
+    (
+        "mls-rfc9420",
+        "Forward-secret only",
+        "Maximum confidentiality: pre-join history can never be shared with late joiners. Per-message forward secrecy.",
+    ),
+];
+
 // Spec realm-and-space.md §2.3 — `security_class`. `high_assurance`
 // automatically locks `federation_policy` to one of
 // `{closed, restricted, quarantine}`; client UI hint reflects this.
