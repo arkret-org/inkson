@@ -363,13 +363,16 @@ pub(crate) fn events_query_path_after(realm_id: &str, after: &str) -> String {
     )
 }
 
-// Consumed only by the native (`not(wasm32)`) `events_subscribe_ndjson`
-// streaming reader; the wasm build has no streaming subscribe path yet.
-#[cfg(not(target_arch = "wasm32"))]
+// Builds the `ck.self.events.stream.subscribe` URL. Used by both the native
+// streaming reader (`events_subscribe_ndjson`) and the all-target buffered
+// long-poll (`events_subscribe_poll`); `max_duration_ms` bounds how long the
+// server holds the stream open (the buffered reader can only surface frames at
+// close, so it doubles as the wasm liveness window).
 pub(crate) fn events_subscribe_path(
     realm_id: &str,
     after: Option<&str>,
     include_history: Option<bool>,
+    max_duration_ms: Option<u64>,
 ) -> String {
     let mut url = format!(
         "_cokret/self/events/subscribe?realms={}",
@@ -382,6 +385,10 @@ pub(crate) fn events_subscribe_path(
     if let Some(include_history) = include_history {
         url.push_str("&include_history=");
         url.push_str(if include_history { "true" } else { "false" });
+    }
+    if let Some(max_duration_ms) = max_duration_ms {
+        url.push_str("&max_duration_ms=");
+        url.push_str(&max_duration_ms.to_string());
     }
     url
 }

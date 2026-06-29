@@ -32,7 +32,7 @@ mod model;
 use dnd::*;
 use due_calendar::*;
 use model::*;
-pub(crate) use model::{space_create_operations_from_events, strand_update_operations_from_events};
+pub(crate) use model::{kanban_operations_from_events, strand_update_operations_from_events};
 
 #[component]
 fn CardMarkdownEditor(
@@ -590,6 +590,11 @@ pub fn KanbanPanel(
     selected_realm_id: String,
     projection_realm_id: String,
     sync_cursor: Signal<String>,
+    /// Monotonic counter bumped by the per-realm `events/subscribe` engine
+    /// ([`crate::realm_events_engine`]) when it folds fresh realm events that
+    /// the account `sync_cursor` never delivered (cross-member case). Drives the
+    /// live reconciler independently of the account cursor.
+    realm_live_epoch: Signal<u64>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
     event_write_ready: bool,
@@ -634,31 +639,25 @@ pub fn KanbanPanel(
     });
     let initial_columns = {
         let state = state_store.read().load();
-        let initial_columns =
-            if initial_columns.is_empty() && !initial_board_space_id.trim().is_empty() {
-                // Empty server projections here (local raw-op overlay
-                // only): no encrypted strand cards are produced, so no
-                // decrypt context is required.
-                let (local_columns, ..) = columns_from_lifecycle_projection_with_local(
-                    &[],
-                    &[],
-                    &initial_board_space_id,
-                    &state.raw_operations,
-                    &local_realm_id,
-                    None,
-                );
-                local_columns
-            } else {
-                initial_columns
-            };
-        let initial_columns = overlay_local_card_create_records(
-            initial_columns,
-            &state.raw_operations,
-            &initial_board_space_id,
-        );
-        let initial_columns =
-            overlay_local_card_update_records(initial_columns, &state.raw_operations, None);
-        overlay_local_card_assignment_records(initial_columns, &state.raw_operations)
+        if initial_columns.is_empty() {
+            // Event-sourced initial render straight from the persisted local op
+            // log (no fetch yet) — a prior session's space/strand creates
+            // reproject the board instantly via the single `project_board`.
+            // No decrypt context at synchronous mount; encrypted body fields
+            // fill in on the first reconcile.
+            let (cols, ..) =
+                project_board(&state.raw_operations, &initial_board_space_id, &local_realm_id, None);
+            cols
+        } else {
+            // Demo / seed-fallback columns: layer local optimistic ops on top.
+            let cols = overlay_local_card_create_records(
+                initial_columns,
+                &state.raw_operations,
+                &initial_board_space_id,
+            );
+            let cols = overlay_local_card_update_records(cols, &state.raw_operations, None);
+            overlay_local_card_assignment_records(cols, &state.raw_operations)
+        }
     };
     let mut columns = use_signal(|| initial_columns);
     let mut board_space_options = use_signal(move || initial_board_options.clone());
@@ -897,10 +896,11 @@ pub fn KanbanPanel(
                 return;
             }
             selected_board_space_id.set(board_id.clone());
-            let containers = lifecycle_container_projection();
-            let strands = lifecycle_strand_projection();
+            // Single event-sourced projection over the local event log — no
+            // refetch, no separate cached snapshots. `project_board` folds
+            // containers + cards + updates + assignments from raw_operations.
             let raw_operations = state_store.read().load().raw_operations;
-            if containers.is_empty() && strands.is_empty() && raw_operations.is_empty() {
+            if raw_operations.is_empty() {
                 return;
             }
             let decrypt_store = state_store.read();
@@ -911,25 +911,12 @@ pub fn KanbanPanel(
                 device_id: &decrypt_device,
             };
             let (projected_columns, options, projected_board_id) =
-                columns_from_lifecycle_projection_with_local(
-                    &containers,
-                    &strands,
-                    &board_id,
-                    &raw_operations,
-                    &route_local_realm_id,
-                    Some(&decrypt_ctx),
-                );
+                project_board(&raw_operations, &board_id, &route_local_realm_id, Some(&decrypt_ctx));
+            drop(decrypt_store);
             if projected_board_id.as_deref() == Some(board_id.as_str()) {
                 if !options.is_empty() {
                     board_space_options.set(options);
                 }
-                let projected_columns = overlay_local_card_creates_with_decrypt(
-                    projected_columns,
-                    &decrypt_store,
-                    &board_id,
-                    Some(&decrypt_ctx),
-                );
-                drop(decrypt_store);
                 if columns() != projected_columns {
                     columns.set(projected_columns);
                 }
@@ -959,24 +946,19 @@ pub fn KanbanPanel(
             let Some(strand_id) = routed_strand_id.clone() else {
                 return;
             };
-            let strand_items = lifecycle_strand_projection.read();
-            let Some(strand_board) = strand_items
-                .iter()
-                .find(|f| f.strand_id == strand_id)
-                .and_then(|f| f.board_space_id.clone())
+            // Resolve the card's home board from the event-folded strands, then
+            // reproject that board via the single event-sourced `project_board`.
+            let raw_operations = state_store.read().load().raw_operations;
+            let Some(strand_board) = strand_views_from_ops(&raw_operations)
+                .into_iter()
+                .find(|view| view.strand_id == strand_id)
+                .and_then(|view| view.board_space_id)
             else {
                 return;
             };
             if selected_board_space_id() == strand_board {
                 return;
             }
-            // Re-project columns for the resolved board so the existing
-            // card-detail effect (above) can find the card on the next
-            // render cycle.
-            let containers = lifecycle_container_projection.read().clone();
-            let strands = strand_items.clone();
-            drop(strand_items);
-            let raw_operations = state_store.read().load().raw_operations;
             let decrypt_store = state_store.read();
             let decrypt_ctx = MlsDecryptCtx {
                 state_store: &decrypt_store,
@@ -984,28 +966,18 @@ pub fn KanbanPanel(
                 actor_id: &decrypt_actor,
                 device_id: &decrypt_device,
             };
-            let (projected_columns, options, projected_board_id) =
-                columns_from_lifecycle_projection_with_local(
-                    &containers,
-                    &strands,
-                    &strand_board,
-                    &raw_operations,
-                    &route_local_realm_id,
-                    Some(&decrypt_ctx),
-                );
+            let (projected_columns, options, projected_board_id) = project_board(
+                &raw_operations,
+                &strand_board,
+                &route_local_realm_id,
+                Some(&decrypt_ctx),
+            );
+            drop(decrypt_store);
             if let Some(board_id) = projected_board_id {
                 if !options.is_empty() {
                     board_space_options.set(options);
                 }
-                let board_id_for_overlay = board_id.clone();
                 selected_board_space_id.set(board_id);
-                let projected_columns = overlay_local_card_creates_with_decrypt(
-                    projected_columns,
-                    &decrypt_store,
-                    &board_id_for_overlay,
-                    Some(&decrypt_ctx),
-                );
-                drop(decrypt_store);
                 if columns() != projected_columns {
                     columns.set(projected_columns);
                 }
@@ -1132,7 +1104,13 @@ pub fn KanbanPanel(
         move || {
             let initial_view = board_view_id.peek().clone();
             let initial_cursor = sync_cursor.peek().clone();
-            kanban_projection_refresh_key(&initial_realm_id, &initial_view, &initial_cursor)
+            let initial_epoch = *realm_live_epoch.peek();
+            kanban_projection_refresh_key(
+                &initial_realm_id,
+                &initial_view,
+                &initial_cursor,
+                initial_epoch,
+            )
         }
     });
     let live_base = base_url.clone();
@@ -1156,11 +1134,16 @@ pub fn KanbanPanel(
             return;
         }
         let cursor = sync_cursor();
+        // Reading `realm_live_epoch` here subscribes this effect to the per-realm
+        // events engine, so fresh cross-member events trigger a reproject even
+        // when the account `sync_cursor` never advanced for them.
+        let live_epoch = realm_live_epoch();
         let Some(refresh_key) = next_kanban_projection_refresh_key(
             live_refresh_key_seen.peek().as_str(),
             &lifecycle_realm_id,
             &view,
             &cursor,
+            live_epoch,
         ) else {
             return;
         };
@@ -1198,44 +1181,45 @@ pub fn KanbanPanel(
                     }
                 }
             } else {
-                let containers_res = {
+                // Event-sourced live reconcile (spec
+                // `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`).
+                // The per-session server strand/space projections are
+                // visibility-filtered and, for an encrypted realm, never carry
+                // another member's card content (title in `encrypted_metadata`,
+                // unreadable to the server). Pull the durable event log — the
+                // only source carrying every member's space/strand creates —
+                // fold it into `raw_operations`, then reproject the board purely
+                // from events. This is what makes cross-member cards appear.
+                let events_res = {
                     let realm_id = lifecycle_realm_id.clone();
-                    with_authed_api(&base, api_token.clone(), |api| async move {
-                        api.list_space_container_projections(&realm_id).await
+                    with_authed_api(&base, api_token, |api| async move {
+                        api.backfill(&realm_id).await
                     })
                     .await
                 };
-                if containers_res
+                if events_res
                     .as_ref()
                     .err()
                     .is_some_and(|err| err.is_auth_expired())
                 {
                     return;
                 }
-                let strands_res = {
-                    let realm_id = lifecycle_realm_id.clone();
-                    with_authed_api(&base, api_token.clone(), |api| async move {
-                        api.list_strand_projections(&realm_id).await
-                    })
-                    .await
-                };
-                if strands_res
-                    .as_ref()
-                    .err()
-                    .is_some_and(|err| err.is_auth_expired())
-                {
-                    return;
-                }
-                if containers_res.is_ok() || strands_res.is_ok() {
-                    let container_items = containers_res
-                        .ok()
-                        .map(|resp| resp.items)
-                        .unwrap_or_default();
-                    let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
+                if let Ok(backfill) = events_res {
+                    {
+                        let mut store = state_store.write();
+                        crate::sync_engine::ingest_kanban_events(
+                            &mut store,
+                            &lifecycle_local_realm_id,
+                            &backfill.events,
+                        );
+                    }
+                    let raw_operations = state_store.read().load().raw_operations;
+                    let container_items =
+                        space_container_views_from_ops(&raw_operations, &lifecycle_local_realm_id);
+                    let strand_items = strand_views_from_ops(&raw_operations);
                     lifecycle_container_projection.set(container_items.clone());
                     lifecycle_strand_projection.set(strand_items.clone());
                     let current_board = selected_board_space_id();
-                    let raw_operations = state_store.read().load().raw_operations;
                     let decrypt_store = state_store.read();
                     let decrypt_ctx = MlsDecryptCtx {
                         state_store: &decrypt_store,
@@ -1259,6 +1243,8 @@ pub fn KanbanPanel(
                         if current_board.trim().is_empty() {
                             selected_board_space_id.set(board_id.clone());
                         }
+                        // Content updates / assignments fold from raw_operations
+                        // (already ingested above); no separate remote op list.
                         let projected_columns = overlay_card_projection_with_operations_and_decrypt(
                             projected_columns,
                             &decrypt_store,
@@ -1393,9 +1379,14 @@ pub fn KanbanPanel(
                         report.private_plaintext_restored || report.restored > 0
                     };
 
-                    let remote_update_operations = strand_update_operations_from_events(&events);
-                    let container_items = lifecycle_container_projection.read().clone();
-                    let strand_items = lifecycle_strand_projection.read().clone();
+                    // Fold the freshly backfilled events into the op log, then
+                    // reproject with decrypt context now that the restored
+                    // account-private sidecar can unlock previously-locked
+                    // body/synthesis fields — single event-sourced `project_board`.
+                    {
+                        let mut store = state_store.write();
+                        crate::sync_engine::ingest_kanban_events(&mut store, &local_realm_id, &events);
+                    }
                     let current_board = selected_board_space_id();
                     let raw_operations = state_store.read().load().raw_operations;
                     let decrypt_store = state_store.read();
@@ -1406,24 +1397,7 @@ pub fn KanbanPanel(
                         device_id: &device,
                     };
                     let (projected_columns, options, projected_board_id) =
-                        columns_from_lifecycle_projection_with_local(
-                            &container_items,
-                            &strand_items,
-                            &current_board,
-                            &raw_operations,
-                            &local_realm_id,
-                            Some(&decrypt_ctx),
-                        );
-                    let board_id = projected_board_id
-                        .clone()
-                        .unwrap_or_else(|| current_board.clone());
-                    let projected_columns = overlay_card_projection_with_operations_and_decrypt(
-                        projected_columns,
-                        &decrypt_store,
-                        &board_id,
-                        &remote_update_operations,
-                        Some(&decrypt_ctx),
-                    );
+                        project_board(&raw_operations, &current_board, &local_realm_id, Some(&decrypt_ctx));
                     drop(decrypt_store);
                     if let Some(board_id) = projected_board_id
                         && selected_board_space_id() != board_id
@@ -1482,34 +1456,6 @@ pub fn KanbanPanel(
             if api_token.trim().is_empty() {
                 return;
             }
-            let containers_res = {
-                let realm_id = realm_id.clone();
-                with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.list_space_container_projections(&realm_id).await
-                })
-                .await
-            };
-            if containers_res
-                .as_ref()
-                .err()
-                .is_some_and(|err| err.is_auth_expired())
-            {
-                return;
-            }
-            let strands_res = {
-                let realm_id = realm_id.clone();
-                with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.list_strand_projections(&realm_id).await
-                })
-                .await
-            };
-            if strands_res
-                .as_ref()
-                .err()
-                .is_some_and(|err| err.is_auth_expired())
-            {
-                return;
-            }
             let events_res = {
                 let realm_id = realm_id.clone();
                 with_authed_api(&base, api_token, |api| async move {
@@ -1526,23 +1472,26 @@ pub fn KanbanPanel(
             }
             let mut applied = 0_usize;
             let mut server_projection_applied = false;
-            let containers_ok = containers_res.is_ok();
-            let strands_ok = strands_res.is_ok();
-            if containers_ok || strands_ok {
-                let container_items = containers_res
-                    .ok()
-                    .map(|resp| resp.items)
-                    .unwrap_or_default();
-                let strand_items = strands_res.ok().map(|resp| resp.items).unwrap_or_default();
-                let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                let remote_update_operations = strand_update_operations_from_events(&event_items);
-                let remote_space_create_operations =
-                    space_create_operations_from_events(&event_items);
-                let container_items = containers_with_local_space_creates(
-                    &container_items,
-                    &remote_space_create_operations,
-                    &lifecycle_local_realm_id,
-                );
+            if let Ok(backfill) = events_res {
+                // Event-sourced cold start (spec
+                // `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`):
+                // fold the durable event log into `raw_operations` and project
+                // the board purely from events, mirroring the live reconcile.
+                // The per-session server strand/space projection endpoints are
+                // dropped as content sources — they cannot carry another
+                // member's encrypted card content.
+                {
+                    let mut store = state_store.write();
+                    crate::sync_engine::ingest_kanban_events(
+                        &mut store,
+                        &lifecycle_local_realm_id,
+                        &backfill.events,
+                    );
+                }
+                let raw_operations = state_store.read().load().raw_operations;
+                let container_items =
+                    space_container_views_from_ops(&raw_operations, &lifecycle_local_realm_id);
+                let strand_items = strand_views_from_ops(&raw_operations);
                 lifecycle_container_projection.set(container_items.clone());
                 lifecycle_strand_projection.set(strand_items.clone());
                 let current_board = selected_board_space_id();
@@ -1563,7 +1512,6 @@ pub fn KanbanPanel(
                 } else {
                     current_board
                 };
-                let raw_operations = state_store.read().load().raw_operations;
                 let decrypt_store = state_store.read();
                 let decrypt_ctx = MlsDecryptCtx {
                     state_store: &decrypt_store,
@@ -1590,7 +1538,7 @@ pub fn KanbanPanel(
                         projected_columns,
                         &decrypt_store,
                         &board_id_for_overlay,
-                        &remote_update_operations,
+                        &[],
                         Some(&decrypt_ctx),
                     );
                     drop(decrypt_store);

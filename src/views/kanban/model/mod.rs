@@ -14,6 +14,7 @@ use crate::components::WriteState;
 use crate::local_state::RawOperationRecord;
 use crate::operation::trim_realm_id;
 
+mod board_projection;
 mod calendar;
 mod constants;
 mod entities;
@@ -22,6 +23,7 @@ mod overlays;
 mod projection;
 mod strand;
 
+pub(crate) use board_projection::*;
 pub(crate) use calendar::*;
 pub(crate) use constants::*;
 pub(crate) use entities::*;

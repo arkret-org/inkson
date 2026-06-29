@@ -111,6 +111,7 @@ pub mod rank;
 /// extracted out of the (formerly 12k-line) `app` module so the
 /// hierarchy + projection-parsing logic is unit-testable in isolation.
 pub(crate) mod realm_tree;
+pub mod realm_events_engine;
 pub mod recovery_crypto;
 pub mod recovery_proof;
 pub mod recovery_strand;

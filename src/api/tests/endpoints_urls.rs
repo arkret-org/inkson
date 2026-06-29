@@ -94,12 +94,21 @@ fn event_paths_use_v1_query_parameters() {
     );
     assert!(!backfill.contains("direction="));
 
-    let subscribe = events_subscribe_path("ck:realm:demo", Some("ck:cursor:demo"), Some(true));
+    let subscribe =
+        events_subscribe_path("ck:realm:demo", Some("ck:cursor:demo"), Some(true), None);
     assert_eq!(
         subscribe,
         "_cokret/self/events/subscribe?realms=ck%3Arealm%3Ademo&after=ck%3Acursor%3Ademo&include_history=true"
     );
     assert!(!subscribe.contains("&from="));
+
+    let subscribe_windowed = events_subscribe_path(
+        "ck:realm:demo",
+        Some("ck:cursor:demo"),
+        Some(true),
+        Some(5_000),
+    );
+    assert!(subscribe_windowed.ends_with("&max_duration_ms=5000"));
 }
 
 #[test]

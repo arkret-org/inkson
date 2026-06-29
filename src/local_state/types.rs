@@ -504,6 +504,13 @@ pub struct SnapshotSyncStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
+    /// Per-realm `ck.self.events.stream.subscribe` resume cursors, keyed by
+    /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
+    /// `sync_cursor`: the realm events stream and the account stream are
+    /// bound to different `filter_digest`s (encoding.md §8.3.1), so their
+    /// cursors are not interchangeable and MUST NOT be cross-used.
+    #[serde(default)]
+    pub realm_events_cursors: BTreeMap<String, String>,
     pub raw_operations: Vec<RawOperationRecord>,
     #[serde(default)]
     pub realm_lifecycle_state: BTreeMap<String, RealmLifecycleState>,
@@ -979,6 +986,7 @@ impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
             sync_cursor: None,
+            realm_events_cursors: BTreeMap::new(),
             raw_operations: Vec::new(),
             realm_lifecycle_state: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),

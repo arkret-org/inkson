@@ -325,7 +325,7 @@ fn remote_space_create_backfill_restores_board_title_when_projection_only_has_li
             }
         }
     })];
-    let remote_operations = space_create_operations_from_events(&events);
+    let remote_operations = kanban_operations_from_events(&events);
     let containers = vec![crate::api::SpaceContainerProjectionView {
         space_id: list_id.to_owned(),
         realm_id: realm_id.to_owned(),

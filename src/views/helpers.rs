@@ -29,8 +29,17 @@ pub fn authed_api_with_sync(
     let mut api = CokretApi::new(base_url)?;
     if !session_credential.is_empty() {
         api = api.with_bearer(session_credential);
+        #[cfg(target_arch = "wasm32")]
+        {
+            api = require_device_dpop(api)?;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            api = attach_device_dpop(api);
+        }
+    } else {
+        api = attach_device_dpop(api);
     }
-    api = attach_device_dpop(api);
     if let Some(sync_token) = wait_for_sync_token {
         api = api.with_wait_for(sync_token);
     }
@@ -43,11 +52,45 @@ pub fn authed_api_with_sync(
 /// passed state store); in tests no key is present and the client stays
 /// without device proof material.
 pub fn attach_device_dpop(api: CokretApi) -> CokretApi {
-    let store = crate::local_state::LocalStateStore::default();
-    let Some(handle) = crate::auth_dpop::load_device_key(&store).ok().flatten() else {
-        return api;
+    match try_attach_device_dpop(api.clone()) {
+        Ok(api) => api,
+        Err(error) => {
+            tracing::warn!(?error, "view API DPoP device-key attach skipped");
+            api
+        }
+    }
+}
+
+fn try_attach_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
+    let mut store = crate::local_state::LocalStateStore::default();
+    let Some(handle) = crate::auth_dpop::load_or_recover_device_key(&mut store)? else {
+        return Ok(api);
     };
-    api.with_dpop_device(handle)
+    Ok(api.with_dpop_device(handle))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn require_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
+    let mut store = crate::local_state::LocalStateStore::default();
+    let Some(handle) = crate::auth_dpop::load_or_recover_device_key(&mut store)? else {
+        anyhow::bail!("missing DPoP device key for authenticated self request");
+    };
+    Ok(api.with_dpop_device(handle))
+}
+
+async fn ensure_self_path_auth_material_ready() -> Result<(), ApiCallError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen")
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                ApiCallError::Unavailable(anyhow::anyhow!(
+                    "secure key store is not ready for authenticated self request: {error}"
+                ))
+            })?;
+    }
+    Ok(())
 }
 
 /// Derive a lowercase handle string from a DID, suitable for registration.
@@ -410,6 +453,7 @@ where
     {
         session_credential = refreshed;
     }
+    ensure_self_path_auth_material_ready().await?;
     let api = authed_api(base_url, session_credential).map_err(ApiCallError::Unavailable)?;
     match f(api).await {
         Ok(value) => Ok(value),
@@ -441,6 +485,7 @@ where
     {
         session_credential = refreshed;
     }
+    ensure_self_path_auth_material_ready().await?;
     let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token)
         .map_err(ApiCallError::Unavailable)?;
     match f(api).await {

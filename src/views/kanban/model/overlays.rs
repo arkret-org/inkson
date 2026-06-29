@@ -118,19 +118,8 @@ pub(crate) fn strand_update_operations_from_events(events: &[Value]) -> Vec<RawO
         .collect()
 }
 
-pub(crate) fn space_create_operations_from_events(events: &[Value]) -> Vec<RawOperationRecord> {
-    events
-        .iter()
-        .filter_map(space_create_operation_from_event)
-        .collect()
-}
-
 pub(crate) fn strand_update_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
     raw_operation_from_event(event, "ck.strand.update")
-}
-
-pub(crate) fn space_create_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
-    raw_operation_from_event(event, "ck.space.create")
 }
 
 pub(crate) fn raw_operation_from_event(

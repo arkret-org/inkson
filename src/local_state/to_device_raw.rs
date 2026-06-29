@@ -11,6 +11,39 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    /// Resume cursor for this realm's `ck.self.events.stream.subscribe`. Kept
+    /// separate from `sync_cursor` (account stream); see
+    /// [`crate::local_state::types::ClientLocalState::realm_events_cursors`].
+    pub fn realm_events_cursor(&self, realm_id: &str) -> Option<String> {
+        self.load().realm_events_cursors.get(realm_id).cloned()
+    }
+
+    /// Persist the realm events stream resume cursor. A `None` cursor clears the
+    /// stored value so the next subscribe rebuilds from history.
+    pub fn save_realm_events_cursor(&mut self, realm_id: &str, cursor: Option<String>) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.trim();
+        if realm_id.is_empty() {
+            return;
+        }
+        match cursor {
+            Some(cursor) => {
+                if self.cached.realm_events_cursors.get(realm_id) == Some(&cursor) {
+                    return; // unchanged — skip flush
+                }
+                self.cached
+                    .realm_events_cursors
+                    .insert(realm_id.to_owned(), cursor);
+            }
+            None => {
+                if self.cached.realm_events_cursors.remove(realm_id).is_none() {
+                    return; // nothing to clear — skip flush
+                }
+            }
+        }
+        let _ = self.flush();
+    }
+
     pub fn save_presence_projection(&mut self, events: Vec<Value>) {
         self.ensure_cached_loaded();
         if self.cached.presence_projection == events {

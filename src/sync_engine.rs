@@ -24,12 +24,11 @@
 //!   + login strand take over. Cursor-invalid errors clear the cursor and immediately retry as a
 //!     full sync.
 //!
-//! The engine deliberately does NOT trigger session refresh inline —
-//! that's owned by [`crate::session_refresh`] which runs in parallel.
-//! When an iteration hits `is_auth_expired_error` the engine just exits;
-//! the refresh poller updates the session credential, the lifecycle bumps
-//! the generation, and a new engine spawn picks up. This keeps refresh
-//! logic in one place.
+//! When an iteration hits `is_auth_expired_error`, the engine calls the
+//! app-wide single-flight refresher and either continues with the refreshed
+//! token, backs off on retryable restore failures, or exits after terminal
+//! invalidation. This keeps refresh policy in one place without turning
+//! auth failures into a spawn/exit/render loop.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -258,9 +257,29 @@ pub async fn run_sync_engine(
                 sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
             IterationOutcome::AuthExpired => {
-                // Hand off to the refresh poller / login strand. The
-                // lifecycle code will bump generation and respawn us.
-                return;
+                match crate::session::refresh_current_session().await {
+                    crate::session::CurrentSessionRefresh::Credential(_) => {
+                        backoff_secs = MIN_BACKOFF_SECS;
+                        ctx.last_error.clone().set(None);
+                        sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
+                    }
+                    crate::session::CurrentSessionRefresh::SignInRequired { reason }
+                    | crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                        {
+                            let mut last_error = ctx.last_error;
+                            last_error.set(Some(format!("sync_engine session refresh: {reason}")));
+                        }
+                        sleep_for(Duration::from_secs(backoff_secs)).await;
+                        backoff_secs = (backoff_secs.saturating_mul(2)).min(MAX_BACKOFF_SECS);
+                    }
+                    crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                        {
+                            let mut last_error = ctx.last_error;
+                            last_error.set(Some(format!("sync_engine session expired: {reason}")));
+                        }
+                        return;
+                    }
+                }
             }
             IterationOutcome::NotReady => {
                 // Nothing to do until base_url / token are populated.
@@ -647,12 +666,23 @@ async fn run_iteration(
     if base.trim().is_empty() || token.trim().is_empty() {
         return IterationOutcome::NotReady;
     }
-    // ②(A+②): `token` is the `ck.session.grant`; attach the device DPoP key so
-    // the account-subscribe self-path request is sender-constrained (§3.3).
-    let api = match CokretApi::new(&base) {
-        Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(token.clone())),
+    #[cfg(target_arch = "wasm32")]
+    if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await
+    {
+        return IterationOutcome::Transient(format!(
+            "sync_engine: secure key store is not ready for authenticated sync: {error}"
+        ));
+    }
+
+    // ②(A+②): `token` is the `ck.session.grant`; every self-path sync request
+    // must include the device DPoP holder key instead of falling back to a bare
+    // bearer request that the server will reject.
+    let api = match crate::views::helpers::authed_api(&base, token.clone()) {
+        Ok(api) => api,
         Err(error) => {
-            return IterationOutcome::Transient(format!("sync_engine: invalid base URL: {error}"));
+            return IterationOutcome::Transient(format!(
+                "sync_engine: authenticated API unavailable: {error}"
+            ));
         }
     };
 
@@ -1324,13 +1354,31 @@ fn ingest_kanban_state_events_from_projection(
     body: &Value,
 ) -> usize {
     let events = sync_realm_state_events(body);
+    ingest_kanban_events(store, realm_id, &events)
+}
+
+/// Fold a batch of realm events into the local kanban `raw_operations` overlay,
+/// returning the number of records that were newly inserted / changed. Shared
+/// by the account-aggregate sync path (above) and the per-realm
+/// `events/subscribe` engine ([`crate::realm_events_engine`]) so both sources
+/// dedupe through the same `operation_id` upsert. Events are the projection
+/// event JSON shape (`event_kind` / `payload` / `operation_id`), matching both
+/// `account.subscribe` `state.events[]` and `events/subscribe` Event frames.
+pub(crate) fn ingest_kanban_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[Value],
+) -> usize {
     if events.is_empty() {
         return 0;
     }
-    let mut records = crate::views::kanban::strand_update_operations_from_events(&events);
-    records.extend(crate::views::kanban::space_create_operations_from_events(
-        &events,
-    ));
+    // Single ingest funnel: fold EVERY kanban-relevant kind (space.create,
+    // strand.create, strand.update, strand.move/reorder, strand.archive/restore,
+    // relation.*) into `raw_operations` so the event-sourced `project_board`
+    // sees the full log. The prior code ingested only strand.update +
+    // space.create, which silently dropped remote `ck.strand.create` — the
+    // root cause of cross-member cards never appearing.
+    let records = crate::views::kanban::kanban_operations_from_events(events);
     let mut changed = 0;
     for record in records {
         let operation_id = record.operation_id;
@@ -1663,6 +1711,72 @@ mod tests {
                 .as_nanos(),
         ));
         LocalStateStore::with_path(path)
+    }
+
+    /// The per-realm `events/subscribe` engine ingest contract: a realistic
+    /// NDJSON stream (history Event frames + `catchup_complete` + `heartbeat`)
+    /// parses into typed frames, whose Event payloads fold through the SHARED
+    /// [`ingest_kanban_events`] into `raw_operations` — and re-folding the same
+    /// frames is idempotent (operation_id dedupe), so a buffered long-poll that
+    /// re-delivers history never double-inserts.
+    #[test]
+    fn realm_subscribe_frames_ingest_into_raw_operations_and_dedupe() {
+        use cokret_sdk::EventsSubscribeFrameKind;
+
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
+        // Mirrors the server's `events/subscribe` framing: one `event` frame
+        // carrying the projection-event JSON, a `catchup_complete`, a heartbeat.
+        let ndjson = format!(
+            "{}\n{}\n{}\n",
+            json!({
+                "kind": "event",
+                "seq": 1,
+                "cursor": "ck:cursor:realmframe1",
+                "payload": {
+                    "event_id": "ck:event:0196419b-0000-7000-8000-000000000101",
+                    "event_kind": "ck.space.create",
+                    "realm_id": realm_id,
+                    "actor_id": "did:web:bob.example",
+                    "created_at": "2026-06-29T00:00:00Z",
+                    "operation_id": "sha256:remote-board-create",
+                    "payload": {
+                        "object": {
+                            "id": board_id,
+                            "schema": "ck.schema.space.v1",
+                            "realm_id": realm_id,
+                            "kind": "board",
+                            "title": "Cross-member board"
+                        }
+                    }
+                }
+            }),
+            json!({ "kind": "catchup_complete", "cursor": "ck:cursor:realmframe1" }),
+            json!({ "kind": "heartbeat", "ts": "2026-06-29T00:00:01Z" }),
+        );
+
+        let frames = crate::api::parse_events_subscribe_ndjson_text(&ndjson)
+            .expect("events/subscribe NDJSON parses");
+        // event + catchup_complete + heartbeat.
+        assert_eq!(frames.len(), 3);
+
+        let event_payloads: Vec<Value> = frames
+            .iter()
+            .filter(|frame| frame.kind == EventsSubscribeFrameKind::Event)
+            .map(|frame| frame.payload.clone())
+            .collect();
+        assert_eq!(event_payloads.len(), 1);
+
+        let mut store = temp_store("realm-subscribe-ingest");
+        let changed = ingest_kanban_events(&mut store, realm_id, &event_payloads);
+        assert_eq!(changed, 1, "the remote space-create folds in once");
+        assert_eq!(store.load().raw_operations.len(), 1);
+
+        // Re-folding the same frames (buffered long-poll re-delivers history) is
+        // idempotent: operation_id dedupe means zero new inserts.
+        let changed_again = ingest_kanban_events(&mut store, realm_id, &event_payloads);
+        assert_eq!(changed_again, 0, "re-ingest is deduped by operation_id");
+        assert_eq!(store.load().raw_operations.len(), 1);
     }
 
     fn to_device_message(kind: &str) -> Value {

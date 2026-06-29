@@ -670,6 +670,22 @@ fn auth_surface_hides_login_while_session_is_restoring() {
 }
 
 #[test]
+fn session_boot_state_leaves_restoring_when_secure_store_is_ready_without_material() {
+    assert_eq!(
+        session_boot_state_from_bootstrap_material("", false, "did:web:alice.example", false,),
+        SessionBootState::Restoring
+    );
+    assert_eq!(
+        session_boot_state_from_bootstrap_material("", false, "did:web:alice.example", true),
+        SessionBootState::Unauthenticated
+    );
+    assert_eq!(
+        auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Unauthenticated),
+        AuthSurface::Login
+    );
+}
+
+#[test]
 fn auth_surface_shows_shell_while_live_session_is_checking() {
     assert_eq!(
         auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking),

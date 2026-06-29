@@ -748,14 +748,42 @@
   box-shadow: var(--shadow-lg);
 }
 
+.shell.app > .device-authorization-banner,
+.shell.app > .mls-account-unlock-banner {
+  position: fixed;
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: var(--layer-toast);
+  width: min(540px, calc(100vw - var(--sidebar-w, 264px) - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: none;
+  overflow: visible;
+  padding: 12px 14px;
+  box-shadow: var(--shadow-lg);
+}
+
 .shell.app.sidebar-collapsed > .recovery-setup-banner {
   left: calc(var(--sidebar-collapsed-w, 72px) + 16px);
   max-width: min(760px, calc(100vw - var(--sidebar-collapsed-w, 72px) - 32px));
 }
 
+.shell.app.sidebar-collapsed > .device-authorization-banner,
+.shell.app.sidebar-collapsed > .mls-account-unlock-banner {
+  width: min(540px, calc(100vw - var(--sidebar-collapsed-w, 72px) - 32px));
+}
+
 .shell.app.rtl > .recovery-setup-banner {
   right: calc(var(--sidebar-w, 264px) + 16px);
   left: 16px;
+}
+
+.shell.app.rtl > .device-authorization-banner,
+.shell.app.rtl > .mls-account-unlock-banner {
+  right: auto;
+  left: 50%;
 }
 
 .shell.app.rtl.sidebar-collapsed > .recovery-setup-banner {
@@ -938,12 +966,38 @@
     z-index: var(--layer-sticky);
   }
 
-  .shell.app > .recovery-setup-banner .actions {
+  .shell.app > .device-authorization-banner,
+  .shell.app > .mls-account-unlock-banner {
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    transform: none;
+    grid-column: 1;
+    grid-row: 2;
+    width: auto;
+    margin: 8px 12px;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+    padding: 10px 12px;
+    align-self: start;
+    z-index: var(--layer-sticky);
+  }
+
+  .shell.app > .recovery-setup-banner .actions,
+  .shell.app > .device-authorization-banner .actions,
+  .shell.app > .mls-account-unlock-banner .actions {
     flex-direction: row;
   }
 
   .shell.app > .recovery-setup-banner .actions > .primary,
-  .shell.app > .recovery-setup-banner .actions > .secondary {
+  .shell.app > .recovery-setup-banner .actions > .secondary,
+  .shell.app > .device-authorization-banner .actions > .primary,
+  .shell.app > .device-authorization-banner .actions > .secondary,
+  .shell.app > .mls-account-unlock-banner .actions > .primary,
+  .shell.app > .mls-account-unlock-banner .actions > .secondary {
     width: auto;
     flex: 1 1 160px;
   }
