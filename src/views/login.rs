@@ -10,7 +10,11 @@ use crate::coauth::{
     extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
     restore_oidc_scaffold,
 };
-use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
+use crate::components::UiIcon;
+use crate::config::{
+    LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
+    same_server_url,
+};
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
@@ -67,6 +71,15 @@ pub fn LoginPanel(
     let mut is_busy = use_signal(|| auto_capture_callback);
     let mut callback_started = use_signal(|| false);
     let mut state_store_write = state_store;
+    // Whether the styled Principal Server preset list is expanded. Yougen is a
+    // neutral client: the field is a free-text URL input that the user can edit
+    // to point at ANY server, with this custom-styled dropdown offering the
+    // configured presets (and the current value) as one-click choices.
+    let mut server_menu_open = use_signal(|| false);
+    // Principal Server presets come from local config, with the current value
+    // and the local development default merged in.
+    let principal_server_options =
+        principal_server_options_for(&base_url(), &config_store.read().load().principal_servers);
 
     use_future(move || async move {
         if !auto_capture_callback || callback_started() {
@@ -281,72 +294,109 @@ pub fn LoginPanel(
 
             div { class: "auth-form",
                 Label { html_for: "login-server-url-input", "Principal server" }
-                Input {
-                    id: "login-server-url-input",
-                    "data-testid": "login-server-url",
-                    "aria-label": "Principal server URL",
-                    autocomplete: "off",
-                    value: "{base_url}",
-                    disabled: is_busy(),
-                    oninput: move |event: FormEvent| {
-                        let value = normalize_server_url(&event.value());
-                        base_url.set(value.clone());
-                        token.set(String::new());
-                        persist_config(config_store, value, account_did(), device_id(), String::new());
-                    },
-                }
-
-                {
-                    // A returning account is one already persisted on this
-                    // browser: its DID is known AND it carries a valid stable
-                    // `device_id`. Its primary action re-authenticates on that
-                    // SAME device (reuse = true) so the protocol device_id never
-                    // drifts; an explicit secondary action signs a different /
-                    // first account in on a fresh device (reuse = false).
-                    let returning_actor = account_did();
-                    let returning_device = device_id();
-                    let has_returning_account = returning_account_can_reuse_device(
-                        &returning_actor,
-                        &returning_device,
-                    );
-                    let returning_label = if has_returning_account {
-                        display_name_for_did(&state_store_write.read(), &returning_actor)
-                    } else {
-                        String::new()
-                    };
-                    rsx! {
-                        if has_returning_account {
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                class: "auth-primary",
-                                "data-testid": "start-server-login-button",
-                                disabled: is_busy(),
-                                onclick: move |_| { let mut go = launch_sign_in; go(true); },
-                                if is_busy() {
-                                    "Working..."
-                                } else {
-                                    "Continue as {returning_label}"
-                                }
-                            }
-                            Button {
-                                variant: ButtonVariant::Ghost,
-                                class: "ghost",
-                                "data-testid": "use-different-account-button",
-                                disabled: is_busy(),
-                                onclick: move |_| { let mut go = launch_sign_in; go(false); },
-                                "Use a different account"
-                            }
+                // Yougen is a neutral client: this is a free-text Principal
+                // Server URL the user can edit to point at ANY server. The
+                // custom-styled dropdown below offers the configured presets
+                // (and the current value) as one-click choices — a styled
+                // replacement for the native `<datalist>` (whose popup is
+                // unstyleable). Selecting a preset only fills the text field;
+                // the user is free to keep typing a custom address.
+                div { class: "auth-combobox", "data-testid": "login-server-combobox",
+                    Input {
+                        id: "login-server-url-input",
+                        "data-testid": "login-server-url",
+                        "aria-label": "Principal server URL",
+                        autocomplete: "off",
+                        value: "{base_url}",
+                        disabled: is_busy(),
+                        oninput: move |event: FormEvent| {
+                            let value = normalize_server_url(&event.value());
+                            base_url.set(value.clone());
+                            token.set(String::new());
+                            persist_config(config_store, value, account_did(), device_id(), String::new());
+                        },
+                    }
+                    button {
+                        r#type: "button",
+                        class: "auth-combobox-toggle",
+                        "data-testid": "login-server-options-toggle",
+                        "aria-label": "Show preset servers",
+                        "aria-expanded": if server_menu_open() { "true" } else { "false" },
+                        disabled: is_busy(),
+                        onclick: move |_| server_menu_open.toggle(),
+                        if server_menu_open() {
+                            UiIcon { name: "chevron-up" }
                         } else {
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                class: "auth-primary",
-                                "data-testid": "start-server-login-button",
-                                disabled: is_busy(),
-                                onclick: move |_| { let mut go = launch_sign_in; go(false); },
-                                if is_busy() { "Working..." } else { "Continue" }
+                            UiIcon { name: "chevron-down" }
+                        }
+                    }
+                    if server_menu_open() {
+                        div {
+                            class: "auth-combobox-menu",
+                            "data-testid": "login-server-options",
+                            role: "listbox",
+                            "aria-label": "Preset servers",
+                            for option_url in principal_server_options.iter() {
+                                button {
+                                    key: "{option_url}",
+                                    r#type: "button",
+                                    class: if same_server_url(option_url, &base_url()) {
+                                        "auth-combobox-option active"
+                                    } else {
+                                        "auth-combobox-option"
+                                    },
+                                    "data-testid": "login-server-option",
+                                    role: "option",
+                                    "aria-selected": if same_server_url(option_url, &base_url()) { "true" } else { "false" },
+                                    onclick: {
+                                        let option_url = option_url.clone();
+                                        move |_| {
+                                            let value = normalize_server_url(&option_url);
+                                            base_url.set(value.clone());
+                                            token.set(String::new());
+                                            persist_config(
+                                                config_store,
+                                                value,
+                                                account_did(),
+                                                device_id(),
+                                                String::new(),
+                                            );
+                                            server_menu_open.set(false);
+                                        }
+                                    },
+                                    span { class: "auth-combobox-option-url mono", "{option_url}" }
+                                    if same_server_url(option_url, &base_url()) {
+                                        span { class: "auth-combobox-option-check", "✓" }
+                                    }
+                                }
                             }
                         }
                     }
+                }
+
+                // A single sign-in action. Account selection is delegated to the
+                // Account Authority's OIDC screen — yougen only chooses the
+                // Principal Server. The device path is auto-selected to keep the
+                // protocol `device_id` stable: a returning account already
+                // persisted on this browser (known DID + valid stable
+                // `device_id`) re-authenticates on its OWN device (`reuse = true`)
+                // so the device_id never drifts; otherwise a fresh device is
+                // minted (`reuse = false`). See `returning_account_can_reuse_device`
+                // / crypto-media/device-lifecycle.md §4.
+                Button {
+                    variant: ButtonVariant::Primary,
+                    class: "auth-primary",
+                    "data-testid": "start-server-login-button",
+                    disabled: is_busy(),
+                    onclick: move |_| {
+                        let reuse = returning_account_can_reuse_device(
+                            &account_did(),
+                            &device_id(),
+                        );
+                        let mut go = launch_sign_in;
+                        go(reuse);
+                    },
+                    if is_busy() { "Working..." } else { "Continue" }
                 }
 
                 if !auth_status().is_empty() {

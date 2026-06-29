@@ -638,6 +638,100 @@
   width: 100%;
 }
 
+/* Principal-server combobox: an editable URL field with a custom-styled
+   preset dropdown (a themed replacement for the unstyleable native
+   <datalist> popup). */
+.auth-combobox {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.auth-combobox > input {
+  width: 100%;
+  /* Leave room at the end for the toggle button. */
+  padding-inline-end: 40px;
+}
+
+.auth-combobox-toggle {
+  position: absolute;
+  inset-inline-end: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.auth-combobox-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+}
+
+.auth-combobox-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.auth-combobox-menu {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.auth-combobox-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.auth-combobox-option:hover,
+.auth-combobox-option.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.auth-combobox-option-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.auth-combobox-option-check {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .auth-passkey {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

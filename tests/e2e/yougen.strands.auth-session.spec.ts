@@ -57,11 +57,22 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
   await page.goto("/login", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("login-panel")).toBeVisible();
   await expect(page.getByTestId("login-server-url")).toHaveValue("https://local.host");
-  // The principal-server field has no history datalist and no native autofill
-  // dropdown (autocomplete is off) — it is a plain URL input.
+  // Neutral client: the principal-server field is a free-text URL input with a
+  // custom-styled preset dropdown (no native <datalist>, no browser autofill).
   await expect(page.getByTestId("login-server-url")).not.toHaveAttribute("list", /.*/);
   await expect(page.locator("datalist#login-principal-server-options")).toHaveCount(0);
+  // The preset list is collapsed until the toggle is clicked, then offers the
+  // configured presets as one-click choices.
+  await expect(page.getByTestId("login-server-options")).toHaveCount(0);
+  await page.getByTestId("login-server-options-toggle").click();
+  await expect(page.getByTestId("login-server-options")).toBeVisible();
+  await expect(page.getByTestId("login-server-option").first()).toContainText("https://local.host");
+  await page.getByTestId("login-server-options-toggle").click();
+  await expect(page.getByTestId("login-server-options")).toHaveCount(0);
+  // Account lifecycle is delegated to coauth OIDC: a single Continue action,
+  // no in-app account selection.
   await expect(page.getByTestId("login-account-hint")).toHaveCount(0);
+  await expect(page.getByTestId("use-different-account-button")).toHaveCount(0);
   await expect(page.getByTestId("start-server-login-button")).toBeVisible();
 
   await expect(page.getByTestId("create-account-link")).toHaveCount(0);
