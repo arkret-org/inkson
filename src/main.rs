@@ -1,5 +1,13 @@
 fn main() {
     init_tracing();
+    // First console line: which wasm bundle the browser actually loaded. If this
+    // id is older than your last rebuild, the browser is running STALE cached
+    // wasm — hard-reload or use a fresh profile. (Stamped by `build.rs`.)
+    tracing::warn!(
+        target: "build",
+        build_id = yougen::build_info::build_id(),
+        "yougen build loaded"
+    );
     if let Err(err) = yougen::event_signer::bootstrap_default_signer("yougen") {
         eprintln!("yougen signer bootstrap failed: {err}");
     }

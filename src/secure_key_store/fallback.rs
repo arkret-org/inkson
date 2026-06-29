@@ -42,6 +42,33 @@ impl SecureKeyStore for FallbackSecureKeyStore {
         }
     }
 
+    fn store_secret_durable<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>,
+    > {
+        Box::pin(async move {
+            // Await the primary (IndexedDB) durable write. Required-IndexedDB
+            // keys (e.g. the MLS KeyPackage init key) only live in the primary;
+            // the localStorage fallback refuses them, so a best-effort mirror is
+            // all the fallback can offer for the rest.
+            match self.primary.store_secret_durable(key, value).await {
+                Ok(()) => {
+                    let _ = self.fallback.store_secret(key, value);
+                    Ok(())
+                }
+                Err(primary_err) => match self.fallback.store_secret(key, value) {
+                    Ok(()) => Ok(()),
+                    Err(fallback_err) => Err(SecureKeyStoreError::Backend(format!(
+                        "primary durable secure store write failed: {primary_err}; fallback write failed: {fallback_err}"
+                    ))),
+                },
+            }
+        })
+    }
+
     fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
         match self.primary.get_secret(key) {
             Ok(Some(secret)) => Ok(Some(secret)),

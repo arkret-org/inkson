@@ -249,6 +249,21 @@ pub fn LoginPanel(
                 reset_state_store
                     .write()
                     .begin_pending_login(device.trim(), None);
+                // Persist the freshly-minted device_id under the bootstrap scope,
+                // paired with the bootstrap signing seed, so
+                // `adopt_device_seed_scope_on_login` re-homes BOTH under the
+                // account scope once the principal DID resolves. This is what
+                // keeps the device_id stable across later reloads (it is then
+                // recovered from the secure store, not re-minted from a phantom
+                // config blob) and matches the MLS KeyPackage published this
+                // sign-in.
+                if let Err(error) = crate::secure_key_store::store_device_id_scoped(
+                    secure_store.as_ref(),
+                    None,
+                    device.trim(),
+                ) {
+                    tracing::warn!(%error, "persist bootstrap device_id for sign-in failed");
+                }
             }
             match start_oidc_strand(&principal, device.trim(), "", actor_hint.trim()).await {
                 Ok(()) => {}

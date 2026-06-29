@@ -284,6 +284,18 @@ pub fn adopt_device_seed_scope_on_login(
     if let Some(material) = load_signing_seed_scoped(store, None)? {
         store_signing_seed_scoped(store, Some(account), &material.seed)?;
         delete_signing_seed_scoped(store, None)?;
+        // Re-home the paired bootstrap `device_id` under the account scope in
+        // lockstep with the seed it was minted with, so the account keeps one
+        // stable device identity (the MLS KeyPackage published during this
+        // sign-in is bound to it). Only adopt the bootstrap `device_id` when the
+        // account does not already hold one — a returning account keeps its
+        // existing stable id rather than inheriting this sign-in's fresh one.
+        if let Some(bootstrap_device_id) = load_device_id_scoped(store, None)? {
+            if load_device_id_scoped(store, Some(account))?.is_none() {
+                store_device_id_scoped(store, Some(account), &bootstrap_device_id)?;
+            }
+            delete_device_id_scoped(store, None)?;
+        }
     }
     set_active_device_seed_scope(Some(account));
     Ok(())
@@ -296,6 +308,7 @@ pub fn reset_device_seed_scope_for_signin(
     store: &dyn SecureKeyStore,
 ) -> Result<(), SecureKeyStoreError> {
     set_active_device_seed_scope(None);
+    let _ = delete_device_id_scoped(store, None);
     delete_signing_seed_scoped(store, None)
 }
 
@@ -319,6 +332,126 @@ pub fn ensure_signing_seed_scoped(
     getrandom::fill(&mut seed)
         .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom signing seed: {err}")))?;
     store_signing_seed_scoped(store, scope, &seed)
+}
+
+/// Canonical storage key for the stable protocol `device_id`
+/// (`ck:device:<uuidv7>`), scoped per account.
+///
+/// The `device_id` is NOT a secret — it is a PUBLIC identifier that already
+/// appears in events, KeyPackages and DIDs — so on wasm it lives in PLAIN
+/// `localStorage` (`DEVICE_ID_LOCALSTORAGE_KEY`), deliberately OUTSIDE the
+/// encrypted IndexedDB secure store. That decoupling is load-bearing: the secure
+/// store's AES-GCM wrapping key can transiently mismatch (a second store
+/// deriving a fresh random-salt key), making encrypted entries fail to decrypt
+/// and silently vanish. If `device_id` lived there, such a miss would mint a NEW
+/// device on the next reload — stranding the MLS KeyPackage (and its retained
+/// init key) published under the prior device, so the Welcome can never be
+/// decrypted ("no local KeyPackage identity state"). Plain `localStorage` is
+/// always readable regardless of the wrapping-key state, so the `device_id`
+/// stays stable. Native keeps it in the OS keychain, which has no such
+/// instability.
+#[cfg(not(target_arch = "wasm32"))]
+const DEVICE_ID_KEY: &str = "device.id.v1";
+
+#[cfg(target_arch = "wasm32")]
+const DEVICE_ID_LOCALSTORAGE_KEY: &str = "yougen.device_id.v1";
+
+/// Storage key for the `device_id` under `scope` (account DID), or the bootstrap
+/// key when `scope` is `None`/empty. The account segment is URL-safe-base64
+/// encoded, matching [`signing_seed_key_for`].
+fn device_id_key_for(scope: Option<&str>) -> String {
+    #[cfg(target_arch = "wasm32")]
+    let base = DEVICE_ID_LOCALSTORAGE_KEY;
+    #[cfg(not(target_arch = "wasm32"))]
+    let base = DEVICE_ID_KEY;
+    match scope.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(account) => format!("{base}.{}", URL_SAFE_NO_PAD.encode(account.as_bytes())),
+        None => base.to_owned(),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn device_id_local_storage() -> Option<web_sys::Storage> {
+    web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+}
+
+/// Read the persisted stable `device_id` for the active account scope.
+pub fn load_device_id(store: &dyn SecureKeyStore) -> Result<Option<String>, SecureKeyStoreError> {
+    load_device_id_scoped(store, active_device_seed_scope().as_deref())
+}
+
+/// [`load_device_id`] for an explicit account scope (`None` = bootstrap).
+pub fn load_device_id_scoped(
+    store: &dyn SecureKeyStore,
+    scope: Option<&str>,
+) -> Result<Option<String>, SecureKeyStoreError> {
+    let key = device_id_key_for(scope);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = store;
+        Ok(device_id_local_storage()
+            .and_then(|storage| storage.get_item(&key).ok().flatten())
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(store
+            .get_secret(&key)?
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()))
+    }
+}
+
+/// Persist `device_id` for the active account scope. Overwrites silently.
+pub fn store_device_id(
+    store: &dyn SecureKeyStore,
+    device_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    store_device_id_scoped(store, active_device_seed_scope().as_deref(), device_id)
+}
+
+/// [`store_device_id`] for an explicit account scope (`None` = bootstrap).
+pub fn store_device_id_scoped(
+    store: &dyn SecureKeyStore,
+    scope: Option<&str>,
+    device_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key = device_id_key_for(scope);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = store;
+        if let Some(storage) = device_id_local_storage() {
+            storage.set_item(&key, device_id.trim()).map_err(|err| {
+                SecureKeyStoreError::Backend(format!("localStorage device_id set: {err:?}"))
+            })?;
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        store.store_secret(&key, device_id.trim())
+    }
+}
+
+/// Delete the `device_id` for `scope` (`None` = bootstrap). Best-effort.
+fn delete_device_id_scoped(
+    store: &dyn SecureKeyStore,
+    scope: Option<&str>,
+) -> Result<(), SecureKeyStoreError> {
+    let key = device_id_key_for(scope);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = store;
+        if let Some(storage) = device_id_local_storage() {
+            let _ = storage.remove_item(&key);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        store.delete_secret(&key)
+    }
 }
 
 /// Encode an Ed25519 seed into a `did:key:z…`.

@@ -25,6 +25,7 @@ pub mod audit;
 pub mod auth_dpop;
 pub mod avatar_crop;
 pub mod blob;
+pub mod build_info;
 pub mod canonical;
 pub mod capability;
 pub mod card_comments;
