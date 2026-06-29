@@ -10,9 +10,7 @@ use crate::coauth::{
     extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
     restore_oidc_scaffold,
 };
-use crate::config::{
-    LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
-};
+use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
@@ -69,10 +67,6 @@ pub fn LoginPanel(
     let mut is_busy = use_signal(|| auto_capture_callback);
     let mut callback_started = use_signal(|| false);
     let mut state_store_write = state_store;
-    // Principal Server presets come from local config, with the current value
-    // and the local development default merged in for the datalist.
-    let principal_server_options =
-        principal_server_options_for(&base_url(), &config_store.read().load().principal_servers);
 
     use_future(move || async move {
         if !auto_capture_callback || callback_started() {
@@ -291,8 +285,7 @@ pub fn LoginPanel(
                     id: "login-server-url-input",
                     "data-testid": "login-server-url",
                     "aria-label": "Principal server URL",
-                    "list": "login-principal-server-options",
-                    autocomplete: "url",
+                    autocomplete: "off",
                     value: "{base_url}",
                     disabled: is_busy(),
                     oninput: move |event: FormEvent| {
@@ -301,17 +294,6 @@ pub fn LoginPanel(
                         token.set(String::new());
                         persist_config(config_store, value, account_did(), device_id(), String::new());
                     },
-                }
-                datalist {
-                    id: "login-principal-server-options",
-                    "data-testid": "login-principal-server-options",
-                    for option_url in principal_server_options.iter() {
-                        option {
-                            key: "{option_url}",
-                            value: "{option_url}",
-                            "{option_url}"
-                        }
-                    }
                 }
 
                 {
