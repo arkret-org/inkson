@@ -506,22 +506,15 @@ fn validate_grant_schema(value: &Value) -> Result<(), ValidationError> {
 }
 
 fn validate_encrypted_envelope_schema(value: &Value) -> Result<(), ValidationError> {
-    let Some(obj) = value.as_object() else {
+    if !value.is_object() {
         return Err(ValidationError::ExpectedObject("encrypted-envelope".into()));
-    };
-    for field in &["scheme", "version", "group_id", "epoch", "ciphertext"] {
-        if !obj.contains_key(*field) {
-            return Err(ValidationError::MissingField(field.to_string()));
-        }
     }
-    // Verify scheme is mls-rfc9420
-    if obj.get("scheme").and_then(|v| v.as_str()) != Some("mls-rfc9420") {
-        return Err(ValidationError::InvalidValue {
-            field: "scheme".into(),
-            expected: "mls-rfc9420".into(),
-        });
-    }
-    Ok(())
+    cokret_sdk::EncryptedEnvelopeV1::parse_and_validate(value.clone())
+        .map(|_| ())
+        .map_err(|_| ValidationError::InvalidValue {
+            field: "encrypted-envelope".into(),
+            expected: "ck.schema.encrypted_envelope.v1".into(),
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -728,20 +721,48 @@ mod tests {
     fn validate_encrypted_envelope_schema() {
         let envelope = json!({
             "scheme": "mls-rfc9420",
-            "version": 1,
-            "group_id": "g1",
+            "version": "1.0",
+            "group_id": "Z3JvdXA",
             "epoch": 0,
-            "ciphertext": "base64data"
+            "content_type": "application/json",
+            "ciphertext": "Y2lwaGVydGV4dA",
+            "aad_visibility_event_id": "hidden",
+            "aad": {
+                "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+                "event_kind": "ck.message.create"
+            },
+            "key_ref": {
+                "algorithm": "MLS",
+                "group_state_ref": "ck:event:01904100-0000-7000-8000-000000000001"
+            },
+            "aad_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "payload_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
         });
         assert!(validate_structure(&envelope, "encrypted-envelope").is_ok());
 
-        let bad = json!({
-            "scheme": "olm",
-            "version": 1,
-            "group_id": "g1",
+        let exporter = json!({
+            "scheme": "mls-exporter-aead-v1",
+            "version": "1.0",
+            "group_id": "Z3JvdXA",
             "epoch": 0,
-            "ciphertext": "data"
+            "content_type": "application/json",
+            "ciphertext": "Y2lwaGVydGV4dA",
+            "aad_visibility_event_id": "hidden",
+            "aad": {
+                "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+                "event_kind": "ck.message.create"
+            },
+            "key_ref": {
+                "algorithm": "MLS-EXPORTER-AEAD",
+                "group_state_ref": "ck:event:01904100-0000-7000-8000-000000000001"
+            },
+            "aad_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "payload_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
         });
+        assert!(validate_structure(&exporter, "encrypted-envelope").is_ok());
+
+        let mut bad = exporter.clone();
+        bad["key_ref"]["algorithm"] = json!("MLS");
         assert!(validate_structure(&bad, "encrypted-envelope").is_err());
     }
 
