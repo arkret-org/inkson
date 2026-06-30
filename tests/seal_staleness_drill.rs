@@ -94,6 +94,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
         "ck:trust_domain:server.example",
         &[],
         None,
+        None,
     )
     .expect("build_realm_create_event succeeds");
 
@@ -122,6 +123,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
         "ck:trust_domain:server.example",
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
+        None,
         None,
     )
     .expect("build_realm_bootstrap_events succeeds");
