@@ -1975,8 +1975,12 @@ pub fn RouterView() -> Element {
         let mut admit_last_error = last_error;
         let mut admit_diag_last = mls_admission_diag_last;
         let secure_store_ready_for_admit = secure_store_bootstrap_ready;
+        let admit_route_enabled = realm_events_route_enabled;
         use_effect(move || {
             if !secure_store_ready_for_admit() {
+                return;
+            }
+            if !admit_route_enabled() {
                 return;
             }
             let description = server_description();

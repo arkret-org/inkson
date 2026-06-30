@@ -58,12 +58,9 @@ pub(super) fn submit_kanban_operation_event(
     //
     // X13.6 — but a DETACHED task may outlive the scope that owns the
     // `Signal`s it captured (component unmount, or a `dx serve` hot-reload
-    // tearing scopes down mid-flight). Accessing a dropped signal PANICS in
-    // Dioxus 0.7 (`Result::unwrap()` on `Dropped(ValueDroppedError)`), which is
-    // exactly the crash this caused. So every post-await signal touch goes
-    // through `try_write()` and silently no-ops when the signal is gone. The
-    // POST already reached the server before any signal access, so a missed
-    // local `write_state` flip is cosmetic only — the next /sync reconciles it.
+    // tearing scopes down mid-flight). Do not touch component-owned Signals
+    // after the await from this root task; the POST already reached the server,
+    // and the next /sync reconciles local `write_state`.
     //
     // NOTE: `spawn_forever` is NOT in the dioxus prelude (only `spawn` is);
     // reach it via the re-exported core crate.
@@ -74,33 +71,20 @@ pub(super) fn submit_kanban_operation_event(
         .await;
         match result {
             Ok(resp) => {
-                if let Ok(mut store) = state_store.try_write() {
-                    store.update_raw_operation_write_state(
-                        &operation_id_for_status,
-                        "accepted",
-                        Some(resp.event_id.clone()),
-                        None,
-                    );
-                }
-                if let Ok(mut status) = board_status.try_write() {
-                    *status = format!(
-                        "{kind} operation accepted by server (event_id={})",
-                        short_protocol_id(&resp.event_id)
-                    );
-                }
+                tracing::debug!(
+                    operation_id = %short_protocol_id(&operation_id_for_status),
+                    event_id = %short_protocol_id(&resp.event_id),
+                    kind = %kind,
+                    "detached kanban operation accepted"
+                );
             }
             Err(err) => {
-                if let Ok(mut store) = state_store.try_write() {
-                    store.update_raw_operation_write_state(
-                        &operation_id_for_status,
-                        "failed",
-                        None,
-                        Some(err.display().to_string()),
-                    );
-                }
-                if let Ok(mut status) = board_status.try_write() {
-                    *status = format!("{kind} operation failed: {}", err.display());
-                }
+                tracing::warn!(
+                    operation_id = %short_protocol_id(&operation_id_for_status),
+                    kind = %kind,
+                    error = %err.display(),
+                    "detached kanban operation failed"
+                );
             }
         }
     });
