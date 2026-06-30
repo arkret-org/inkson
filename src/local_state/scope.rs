@@ -279,19 +279,19 @@ impl LocalStateStore {
         self.read_root().pending_login
     }
 
-    /// Adopt the pending pre-DID device material onto the resolved principal
-    /// `did` (session grant has returned the DID). Two outcomes:
+    /// Adopt the pending pre-DID login onto the resolved principal `did`
+    /// (session grant has returned the DID). Two outcomes:
     ///
-    /// * `did` already has a persisted entry (a returning account on this browser) → DISCARD the
-    ///   pending device material; the returning account keeps its own stable `device_id` + key
-    ///   (`cnf.jkt` stays stable). Returns `false` (not a new account).
-    /// * `did` is new on this browser → keep the pending device material as the new account's
-    ///   device. Returns `true` (new account).
+    /// * `did` already has a persisted entry (a returning account on this browser) -> load that
+    ///   account's entry without wiping its projections. Returns `false` (not a new account).
+    /// * `did` is new on this browser -> activate a default entry for the new account. Returns
+    ///   `true` (new account).
     ///
-    /// Either way the pending entry is cleared and `did` becomes active. The
-    /// secure-store device seed re-homing itself is handled by
-    /// `adopt_device_seed_scope_on_login`; this drives the root-index side and
-    /// the active-account switch.
+    /// Either way the pending root entry is cleared and `did` becomes active.
+    /// The secure-store device seed/device_id re-homing itself is handled by
+    /// `adopt_device_seed_scope_on_login` before this is called; that step always
+    /// adopts the bootstrap tuple bound to the freshly-issued session grant, even
+    /// for a returning DID.
     pub fn adopt_pending_login(&mut self, did: &str) -> bool {
         self.ensure_cached_loaded();
         let did = did.trim();

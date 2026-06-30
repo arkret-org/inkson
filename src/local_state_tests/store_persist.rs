@@ -841,7 +841,7 @@ fn adopt_pending_login_keeps_pending_device_for_new_account() {
     store.begin_pending_login("ck:device:new-1", Some("jkt-new"));
     assert!(store.pending_login().is_some());
 
-    // A DID never seen on this browser is a NEW account → keep pending device.
+    // A DID never seen on this browser is a new account.
     let is_new = store.adopt_pending_login("did:web:newcomer.example");
     assert!(is_new, "an unknown DID adopts as a new account");
     assert!(store.pending_login().is_none(), "pending is cleared");
@@ -852,7 +852,7 @@ fn adopt_pending_login_keeps_pending_device_for_new_account() {
 }
 
 #[test]
-fn adopt_pending_login_discards_pending_for_returning_account() {
+fn adopt_pending_login_preserves_returning_account_entry() {
     let path = temp_state_path("pending-returning");
     let mut store = LocalStateStore::with_path(path);
     // Alice already has a persisted entry on this browser.
@@ -863,7 +863,9 @@ fn adopt_pending_login_discards_pending_for_returning_account() {
     let is_new = store.adopt_pending_login("did:web:alice.example");
     assert!(!is_new, "a returning DID is not a new account");
     assert!(store.pending_login().is_none());
-    // Alice's own entry (with her cursor) is restored, not replaced.
+    // Alice's own entry (with her cursor) is restored, not wiped. The
+    // secure-store seed/device_id tuple was already re-homed before this root
+    // marker is adopted.
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
 }
 

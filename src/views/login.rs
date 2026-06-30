@@ -113,9 +113,9 @@ pub fn LoginPanel(
                     // independent entry (its grant/cursor/projections/device
                     // key) — a previous identity's revoked grant or foreign
                     // cursor lives in a separate key and can never leak in.
-                    // When a pre-DID `pending_login` is in flight this also
-                    // discards-or-migrates the pending device material based on
-                    // whether the resolved account is returning or new.
+                    // When a pre-DID `pending_login` is in flight this closes
+                    // the root pending marker after the secure-store bootstrap
+                    // device tuple has already been adopted for the resolved DID.
                     let switched = if store.pending_login().is_some() {
                         store.adopt_pending_login(&completed.actor)
                     } else {
