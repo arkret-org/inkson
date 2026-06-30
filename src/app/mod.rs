@@ -271,6 +271,11 @@ pub fn RouterView() -> Element {
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());
+    let current_route_uses_realm_context = route_uses_realm_context(&route);
+    let mut realm_events_route_enabled = use_signal(move || current_route_uses_realm_context);
+    if *realm_events_route_enabled.peek() != current_route_uses_realm_context {
+        realm_events_route_enabled.set(current_route_uses_realm_context);
+    }
     let mut status = use_signal(|| ConnectionState::Offline.label().to_owned());
     let initial_sync_cursor = initial_local_state
         .sync_cursor
@@ -505,10 +510,8 @@ pub fn RouterView() -> Element {
     // set), provided via context so operator-only surfaces (organization
     // create / bind) can gate their UI without prop drilling. This is the real
     // operator signal — distinct from any Realm-role `is_admin` placeholder.
-    let mut is_server_admin = use_context_provider(|| {
-        crate::views::realm_admin::ServerAdminSignal(Signal::new(false))
-    })
-    .0;
+    let mut is_server_admin =
+        use_context_provider(|| crate::views::realm_admin::ServerAdminSignal(Signal::new(false))).0;
     {
         // Refresh the admin signal whenever the session credential or server
         // changes. Failures (offline, transient) leave it `false` (fail closed),
@@ -1262,9 +1265,11 @@ pub fn RouterView() -> Element {
         let base = base_url();
         let session = token();
         let realm_id = selected_realm_id();
+        let route_enabled = realm_events_route_enabled();
         if base.trim().is_empty()
             || session.trim().is_empty()
             || realm_id.trim().is_empty()
+            || !route_enabled
             || !sync_bootstrap_complete()
         {
             return;
@@ -1279,6 +1284,7 @@ pub fn RouterView() -> Element {
             token,
             state_store,
             selected_realm_id,
+            route_enabled: realm_events_route_enabled,
             realm_live_epoch,
             profiles: profiles_signal,
         };
@@ -2155,15 +2161,13 @@ pub fn RouterView() -> Element {
             if !secure_store_ready_for_share() {
                 return;
             }
-            if !share_route_uses_realm_context {
-                return;
-            }
-            let realm_id = share_context_realm_id
-                .clone()
-                .unwrap_or_else(|| selected_realm_id());
-            if realm_id.trim().is_empty() {
-                return;
-            }
+            let active_realm_id = share_route_uses_realm_context
+                .then(|| {
+                    share_context_realm_id
+                        .clone()
+                        .unwrap_or_else(|| selected_realm_id())
+                })
+                .filter(|realm_id| !realm_id.trim().is_empty());
             let description = server_description();
             if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
                 || !sync_bootstrap_complete()
@@ -2174,45 +2178,61 @@ pub fn RouterView() -> Element {
             let session = token();
             let actor = account_did();
             let device = device_id();
-            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+            if base.trim().is_empty()
+                || session.trim().is_empty()
+                || actor.trim().is_empty()
+                || device.trim().is_empty()
+            {
                 return;
             }
             // Re-fire on every sync round so a freshly delivered share/request is
             // consumed.
             let _ = share_sync_cursor();
-            // Cheap pre-filter: nothing to do when no realm_key.* envelopes are
-            // queued for this Realm.
-            let (shares, requests) = {
+            // Cheap pre-filter: drain inbound realm-key envelopes globally by
+            // their own Realm binding. Provider response is a to-device duty,
+            // not a page-local action; the active Realm only matters for this
+            // device's receiver-initiated pull.
+            let (shares_by_realm, requests, pull_request_key) = {
                 let store = share_state_store.read();
                 let inbox = store.to_device_inbox();
-                let shares = crate::mls::runtime::collect_realm_key_share_messages_for_realm(
-                    &inbox, &realm_id,
-                );
-                let requests: Vec<serde_json::Value> = inbox
+                let mut shares_by_realm = BTreeMap::<String, Vec<serde_json::Value>>::new();
+                for message in &inbox {
+                    let kind = message
+                        .get("kind")
+                        .or_else(|| message.get("type"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    if kind != cokret_sdk::events::kinds::REALM_KEY_SHARE {
+                        continue;
+                    }
+                    if let Some(share_realm_id) =
+                        crate::mls::runtime::realm_key_share_message_realm_id(message)
+                    {
+                        shares_by_realm
+                            .entry(share_realm_id)
+                            .or_default()
+                            .push(message.clone());
+                    }
+                }
+                let requests: Vec<_> = inbox
                     .iter()
-                    .filter(|message| {
-                        message.get("kind").and_then(serde_json::Value::as_str)
-                            == Some("ck.realm_key.request")
+                    .filter_map(crate::views::realm_admin::parse_realm_key_request_envelope)
+                    .filter(|request| {
+                        request.payload.target_principal_id.as_str().trim() == actor.trim()
+                            && request.payload.target_source_ref.trim() == device.trim()
                     })
-                    .cloned()
                     .collect();
-                (shares, requests)
-            };
-            // (c) Receiver-initiated pull pre-filter: compute a dedup key that
-            // folds in this device's installed-history-secret signature for the
-            // Realm, so the request fires once per distinct gap state and re-fires
-            // only after a freshly installed secret changes that state. `None`
-            // when there is no pull need (not encrypted / no snapshot / no gap).
-            let pull_request_key = {
-                let store = share_state_store.read();
-                crate::views::realm_admin::pending_history_request_dedup_key(
-                    &store, &realm_id, &actor,
-                )
+                let pull_request_key = active_realm_id.as_ref().and_then(|realm_id| {
+                    crate::views::realm_admin::pending_history_request_dedup_key(
+                        &store, realm_id, &actor,
+                    )
+                });
+                (shares_by_realm, requests, pull_request_key)
             };
             let needs_pull = pull_request_key
                 .as_deref()
                 .is_some_and(|key| share_request_dedup().as_deref() != Some(key));
-            if shares.is_empty() && requests.is_empty() && !needs_pull {
+            if shares_by_realm.is_empty() && requests.is_empty() && !needs_pull {
                 return;
             }
             if share_in_flight() {
@@ -2228,9 +2248,10 @@ pub fn RouterView() -> Element {
                 // unauthenticated empty signature is no longer tolerated). The
                 // resolution is a `keys/query` per missing sender device, primed
                 // here into the shared device-directory cache the verifier reads.
-                if !shares.is_empty() {
-                    let sender_pairs: Vec<(String, String)> = shares
-                        .iter()
+                if !shares_by_realm.is_empty() {
+                    let sender_pairs: Vec<(String, String)> = shares_by_realm
+                        .values()
+                        .flat_map(|shares| shares.iter())
                         .filter_map(crate::mls::runtime::realm_key_share_sender_device_pair)
                         .collect();
                     if !sender_pairs.is_empty() {
@@ -2251,38 +2272,48 @@ pub fn RouterView() -> Element {
                     }
                     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
                     let mut store = share_state_store.write();
-                    let mut installed = 0_usize;
-                    for share in &shares {
-                        installed += crate::mls::runtime::ingest_realm_key_share(
-                            &mut store,
-                            secure_store.as_ref(),
-                            &realm_id,
-                            &actor,
-                            &device,
-                            share,
-                        );
+                    let mut installed_by_realm = BTreeMap::<String, usize>::new();
+                    let mut installed_share_ids = Vec::<String>::new();
+                    for (share_realm_id, shares) in &shares_by_realm {
+                        for share in shares {
+                            let count = crate::mls::runtime::ingest_realm_key_share(
+                                &mut store,
+                                secure_store.as_ref(),
+                                share_realm_id,
+                                &actor,
+                                &device,
+                                share,
+                            );
+                            if count > 0 {
+                                *installed_by_realm
+                                    .entry(share_realm_id.to_string())
+                                    .or_default() += count;
+                                if let Some(operation_id) =
+                                    crate::mls::runtime::realm_key_share_message_operation_id(share)
+                                {
+                                    installed_share_ids.push(operation_id);
+                                }
+                            }
+                        }
                     }
-                    if installed > 0 {
+                    for operation_id in installed_share_ids {
+                        let _ = store.dismiss_realm_key_share_to_device_message(&operation_id);
+                    }
+                    for (share_realm_id, count) in installed_by_realm {
                         tracing::info!(
-                            installed,
-                            realm = %short_protocol_id(&realm_id),
+                            installed = count,
+                            realm = %short_protocol_id(&share_realm_id),
                             "installed history_secret(s) from ck.realm_key.share"
                         );
                     }
                 }
                 for request_envelope in requests {
-                    let Some(content) = request_envelope.get("content") else {
-                        continue;
-                    };
-                    let request: cokret_sdk::RealmKeyRequestPayload =
-                        match serde_json::from_value(content.clone()) {
-                            Ok(request) => request,
-                            Err(_) => continue,
-                        };
-                    let realm = realm_id.clone();
+                    let realm = request_envelope.realm_id.clone();
+                    let request_id = request_envelope.request_id.clone();
+                    let request = request_envelope.payload;
                     let actor_c = actor.clone();
                     let device_c = device.clone();
-                    let _ = crate::views::helpers::with_authed_api(
+                    let outcome = crate::views::helpers::with_authed_api(
                         &base,
                         session.clone(),
                         |api| async move {
@@ -2298,13 +2329,26 @@ pub fn RouterView() -> Element {
                         },
                     )
                     .await;
+                    if matches!(outcome, Ok(true))
+                        && let Some(request_id) = request_id
+                    {
+                        let removed = share_state_store
+                            .write()
+                            .dismiss_realm_key_request_to_device_message(&request_id);
+                        if removed > 0 {
+                            tracing::debug!(
+                                request_id = %short_protocol_id(&request_id),
+                                "dismissed answered ck.realm_key.request from local inbox"
+                            );
+                        }
+                    }
                 }
                 // (c) Receiver-initiated pull: ask a joined provider device to
                 // seal the missing pre-join history range to this device. Guarded
                 // by `needs_pull` (dedup against the installed-secret signature) so
                 // we emit at most one request per distinct gap state.
-                if needs_pull {
-                    let realm = realm_id.clone();
+                if needs_pull && let Some(realm) = active_realm_id {
+                    let realm_for_log = realm.clone();
                     let actor_c = actor.clone();
                     let device_c = device.clone();
                     let outcome = crate::views::helpers::with_authed_api(
@@ -2335,7 +2379,7 @@ pub fn RouterView() -> Element {
                         }
                         Err(error) => {
                             tracing::debug!(
-                                realm = %short_protocol_id(&realm_id),
+                                realm = %short_protocol_id(&realm_for_log),
                                 ?error,
                                 "history key request deferred (will retry on next sync)"
                             );

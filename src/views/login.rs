@@ -914,7 +914,10 @@ mod tests {
         assert!(!returning_account_can_reuse_device("", valid_device));
         assert!(!returning_account_can_reuse_device("   ", valid_device));
         // Account known but no valid stable device_id → fresh sign-in.
-        assert!(!returning_account_can_reuse_device("did:web:bob.example", ""));
+        assert!(!returning_account_can_reuse_device(
+            "did:web:bob.example",
+            ""
+        ));
         assert!(!returning_account_can_reuse_device(
             "did:web:bob.example",
             "not-a-device-id"

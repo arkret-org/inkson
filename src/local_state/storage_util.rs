@@ -34,11 +34,20 @@ pub(crate) fn to_device_message_dedup_key(message: &Value) -> String {
         .or_else(|| message.get("device_id"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    let content = message.get("content").unwrap_or(&Value::Null);
+    let content = message
+        .get("content")
+        .or_else(|| message.get("payload"))
+        .unwrap_or(&Value::Null);
     let transaction = content
         .get("transaction_id")
         .or_else(|| content.get("request_id"))
+        .or_else(|| content.get("operation_id"))
+        .or_else(|| content.get("event_id"))
         .or_else(|| content.get("pairing_code"))
+        .or_else(|| message.get("request_id"))
+        .or_else(|| message.get("transaction_id"))
+        .or_else(|| message.get("operation_id"))
+        .or_else(|| message.get("event_id"))
         .and_then(Value::as_str)
         .unwrap_or("");
     if !transaction.is_empty() {

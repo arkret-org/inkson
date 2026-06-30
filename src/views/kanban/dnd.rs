@@ -752,7 +752,8 @@ pub(super) fn dispatch_board_archive_cascade(
     let active_card_ids: Vec<String> = strand_views_from_ops(&raw_operations)
         .into_iter()
         .filter(|view| {
-            view.board_space_id.as_deref() == Some(board_space_id.as_str()) && view.state == "active"
+            view.board_space_id.as_deref() == Some(board_space_id.as_str())
+                && view.state == "active"
         })
         .map(|view| view.strand_id)
         .collect();
@@ -780,7 +781,10 @@ pub(super) fn dispatch_board_archive_cascade(
             }
         }
     }
-    for list_id in active_list_ids.iter().chain(std::iter::once(&board_space_id)) {
+    for list_id in active_list_ids
+        .iter()
+        .chain(std::iter::once(&board_space_id))
+    {
         match crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
             .build_sdk_event("yougen")
         {
@@ -835,7 +839,12 @@ pub(super) fn dispatch_board_archive_cascade(
             Ok(()) => {
                 if let Ok(mut store) = state_store.try_write() {
                     for operation_id in &operation_ids {
-                        store.update_raw_operation_write_state(operation_id, "accepted", None, None);
+                        store.update_raw_operation_write_state(
+                            operation_id,
+                            "accepted",
+                            None,
+                            None,
+                        );
                     }
                 }
                 board_status.set(crate::i18n::tr("kanban.archive_board_done"));

@@ -28,8 +28,8 @@ use cokret_sdk::{
     SignedCrossSigningKey, TypedTrustDomainId,
 };
 use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
-use zeroize::Zeroizing;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::did_key::encode_ed25519_did_key_multibase;
 use crate::operation::OperationBuilder;
@@ -421,9 +421,10 @@ pub fn load_signing_key(
     };
     // Hold the decoded private seed in zeroizing containers so the plaintext key
     // material is wiped from the heap once the `SigningKey` has been built.
-    let bytes = Zeroizing::new(hex_decode(&value).ok_or_else(|| {
-        anyhow::anyhow!("cross_signing key hex decode failed for role {role:?}")
-    })?);
+    let bytes =
+        Zeroizing::new(hex_decode(&value).ok_or_else(|| {
+            anyhow::anyhow!("cross_signing key hex decode failed for role {role:?}")
+        })?);
     if bytes.len() != SECRET_KEY_LENGTH {
         anyhow::bail!(
             "cross_signing key for role {role:?} has wrong length: expected {SECRET_KEY_LENGTH}, got {}",

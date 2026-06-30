@@ -62,9 +62,8 @@ impl RngCore for GetrandomRng {
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core_06::Error> {
-        getrandom::fill(dest).map_err(|err| {
-            rand_core_06::Error::new(std::io::Error::other(err.to_string()))
-        })
+        getrandom::fill(dest)
+            .map_err(|err| rand_core_06::Error::new(std::io::Error::other(err.to_string())))
     }
 }
 
@@ -103,9 +102,7 @@ pub fn load_organization_control_key(
         return Ok(None);
     };
     let bytes = hex_decode(&value).ok_or_else(|| {
-        SecureKeyStoreError::Backend(
-            "organization control seed hex decode failed".to_owned(),
-        )
+        SecureKeyStoreError::Backend("organization control seed hex decode failed".to_owned())
     })?;
     if bytes.len() != 32 {
         return Err(SecureKeyStoreError::Backend(format!(
@@ -250,9 +247,12 @@ pub fn sign_organization_statement(
 ) -> anyhow::Result<RealmOrganizationPayload> {
     let realm_id = cokret_sdk::RealmId::new(input.realm_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid realm id `{}`: {err}", input.realm_id))?;
-    let organization_id = cokret_sdk::Did::new(input.organization_did.trim().to_owned())
-        .map_err(|err| {
-            anyhow::anyhow!("invalid organization DID `{}`: {err}", input.organization_did)
+    let organization_id =
+        cokret_sdk::Did::new(input.organization_did.trim().to_owned()).map_err(|err| {
+            anyhow::anyhow!(
+                "invalid organization DID `{}`: {err}",
+                input.organization_did
+            )
         })?;
 
     if input.control_scopes.is_empty() {
@@ -362,9 +362,8 @@ mod tests {
             .decode(proof.as_bytes())
             .expect("base64url decode");
         let signature = ed25519_dalek::Signature::from_slice(&sig_bytes).expect("64-byte sig");
-        let signing_bytes =
-            cokret_sdk::models::realm_organization_statement_signing_bytes(&signed)
-                .expect("signing bytes");
+        let signing_bytes = cokret_sdk::models::realm_organization_statement_signing_bytes(&signed)
+            .expect("signing bytes");
         use ed25519_dalek::Verifier;
         control_key
             .verifying_key()

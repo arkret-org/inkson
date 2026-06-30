@@ -34,6 +34,79 @@ fn local_state_store_tracks_cursor_operations_projections_and_drafts() {
 }
 
 #[test]
+fn raw_operation_upsert_is_noop_for_identical_payload() {
+    let path = temp_state_path("raw-op-upsert-noop");
+    let mut store = LocalStateStore::with_path(path);
+    let payload = serde_json::json!({
+        "kind": "ck.strand.create",
+        "event_id": "ck:event:upsert-1",
+        "operation_id": "op-upsert-1",
+        "write_state": "synced",
+        "body": {
+            "object": {
+                "id": "ck:strand:upsert-1",
+                "metadata": { "title": "Card" }
+            }
+        }
+    });
+
+    assert!(store.upsert_raw_operation(
+        "op-upsert-1",
+        Some("ck:realm:upsert".to_owned()),
+        payload.clone()
+    ));
+    let first = store.load().raw_operations[0].clone();
+
+    assert!(!store.upsert_raw_operation(
+        "op-upsert-1",
+        Some("ck:realm:upsert".to_owned()),
+        payload
+    ));
+    let state = store.load();
+    assert_eq!(state.raw_operations.len(), 1);
+    assert_eq!(state.raw_operations[0].received_at, first.received_at);
+    assert_eq!(state.raw_operations[0].payload, first.payload);
+}
+
+#[test]
+fn raw_operation_upsert_reports_real_payload_changes() {
+    let path = temp_state_path("raw-op-upsert-change");
+    let mut store = LocalStateStore::with_path(path);
+    let base = serde_json::json!({
+        "kind": "ck.strand.update",
+        "event_id": "ck:event:upsert-2",
+        "operation_id": "op-upsert-2",
+        "write_state": "synced",
+        "body": { "patch": { "title": { "$op": "set", "value": "Before" } } }
+    });
+    let enriched = serde_json::json!({
+        "kind": "ck.strand.update",
+        "event_id": "ck:event:upsert-2",
+        "operation_id": "op-upsert-2",
+        "write_state": "synced",
+        "synthesis_entry_id": "ck:synthesis:entry-1",
+        "body": { "patch": { "title": { "$op": "set", "value": "After" } } }
+    });
+
+    assert!(store.upsert_raw_operation("op-upsert-2", Some("ck:realm:upsert".to_owned()), base));
+    assert!(store.upsert_raw_operation(
+        "op-upsert-2",
+        Some("ck:realm:upsert".to_owned()),
+        enriched
+    ));
+    let state = store.load();
+    assert_eq!(state.raw_operations.len(), 1);
+    assert_eq!(
+        state.raw_operations[0].payload["synthesis_entry_id"],
+        "ck:synthesis:entry-1"
+    );
+    assert_eq!(
+        state.raw_operations[0].payload["body"]["patch"]["title"]["value"],
+        "After"
+    );
+}
+
+#[test]
 fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
     let path = temp_state_path("realm-lifecycle");
     let mut store = LocalStateStore::with_path(path.clone());

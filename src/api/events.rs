@@ -107,7 +107,12 @@ impl CokretApi {
         }
         let request = self
             .http
-            .get(self.endpoint(&events_subscribe_path(realm_id, after, include_history, None))?)
+            .get(self.endpoint(&events_subscribe_path(
+                realm_id,
+                after,
+                include_history,
+                None,
+            ))?)
             .header(ACCEPT, "application/x-ndjson");
         let mut response = self
             .send_with_retry(self.prepare_request(request), Method::GET, true)

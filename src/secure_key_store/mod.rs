@@ -231,9 +231,7 @@ pub(crate) fn encode_history_secrets_json(
 /// entries (unparseable epoch or base64) are dropped rather than failing the
 /// whole decode, so a single bad entry cannot shadow the rest.
 #[cfg(any(target_arch = "wasm32", test))]
-pub(crate) fn decode_history_secrets_json(
-    json: &str,
-) -> std::collections::BTreeMap<u64, Vec<u8>> {
+pub(crate) fn decode_history_secrets_json(json: &str) -> std::collections::BTreeMap<u64, Vec<u8>> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let map: std::collections::BTreeMap<String, String> =
         serde_json::from_str(json).unwrap_or_default();
@@ -447,9 +445,8 @@ pub trait SecureKeyStore: Send + Sync {
         &'a self,
         key: &'a str,
         value: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
+    {
         let result = self.store_secret(key, value);
         Box::pin(async move { result })
     }

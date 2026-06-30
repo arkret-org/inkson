@@ -8,7 +8,11 @@ use super::data::{
     ENCRYPTION_PROFILE_OPTIONS, FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS,
     HISTORY_VISIBILITY_OPTIONS, JOIN_RULE_OPTIONS, SECURITY_CLASS_OPTIONS,
 };
-use super::helpers::{parse_seed_members, plaintext_services_for_policy, policy_combination_hint};
+use super::helpers::{
+    history_content_scheme_constraint_hint, history_visibility_admits_prejoin,
+    normalize_history_content_scheme, parse_seed_members, plaintext_services_for_policy,
+    policy_combination_hint,
+};
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api::is_auth_expired_error;
 use crate::config::LocalConfigStore;
@@ -81,6 +85,13 @@ pub(super) fn RealmsSection(
     let content_scheme_value = realm_content_scheme();
     let encryption_is_e2ee =
         crate::security_state::encryption_profile_is_encrypted(&encryption_profile_value);
+    let history_requires_history_capable =
+        encryption_is_e2ee && history_visibility_admits_prejoin(&history_visibility_value);
+    let content_scheme_constraint_hint = history_content_scheme_constraint_hint(
+        encryption_is_e2ee,
+        &history_visibility_value,
+        &content_scheme_value,
+    );
     let security_class_value = realm_security_class();
     let federation_policy_value = realm_federation_policy();
     let notary_profile_value = realm_notary_profile();
@@ -102,7 +113,7 @@ pub(super) fn RealmsSection(
     );
     let current_policy_error = matches!(current_visibility_hint, Some(("error", _, _)));
     let basics_ready = !title_value.trim().is_empty();
-    let boundary_ready = !current_policy_error;
+    let boundary_ready = !current_policy_error && content_scheme_constraint_hint.is_none();
     let create_blocker = if !has_session {
         Some("Sign in before creating a Realm.")
     } else if !secure_store_ready {
@@ -323,6 +334,15 @@ pub(super) fn RealmsSection(
                                         value: Some(realm_policy_history_visibility_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
+                                                if history_visibility_admits_prejoin(&v)
+                                                    && crate::security_state::encryption_profile_is_encrypted(
+                                                        &realm_encryption_profile(),
+                                                    )
+                                                {
+                                                    realm_content_scheme.set(
+                                                        "mls-exporter-aead-v1".to_owned(),
+                                                    );
+                                                }
                                                 realm_policy_history_visibility.set(v);
                                             }
                                         },
@@ -351,6 +371,17 @@ pub(super) fn RealmsSection(
                                         value: Some(realm_encryption_profile_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
+                                                let encrypted =
+                                                    crate::security_state::encryption_profile_is_encrypted(&v);
+                                                if encrypted
+                                                    && history_visibility_admits_prejoin(
+                                                        &realm_policy_history_visibility(),
+                                                    )
+                                                {
+                                                    realm_content_scheme.set(
+                                                        "mls-exporter-aead-v1".to_owned(),
+                                                    );
+                                                }
                                                 realm_encryption_profile.set(v);
                                             }
                                         },
@@ -385,6 +416,14 @@ pub(super) fn RealmsSection(
                                             value: Some(realm_content_scheme_selected.into()),
                                             on_value_change: move |v: Option<String>| {
                                                 if let Some(v) = v {
+                                                    if v == "mls-rfc9420"
+                                                        && history_visibility_admits_prejoin(
+                                                            &realm_policy_history_visibility(),
+                                                        )
+                                                    {
+                                                        realm_policy_history_visibility
+                                                            .set("joined".to_owned());
+                                                    }
                                                     realm_content_scheme.set(v);
                                                 }
                                             },
@@ -393,12 +432,24 @@ pub(super) fn RealmsSection(
                                                     index: i,
                                                     value: option_value.to_string(),
                                                     text_value: "{label}",
+                                                    disabled: history_requires_history_capable
+                                                        && *option_value == "mls-rfc9420",
                                                     "{label}"
                                                 }
                                             }
                                         }
                                         div { class: "muted",
                                             "{CONTENT_SCHEME_OPTIONS.iter().find(|(value, _, _)| *value == content_scheme_value).map(|(_, _, hint)| *hint).unwrap_or(\"Content scheme is not set.\")}"
+                                        }
+                                        if history_requires_history_capable {
+                                            div { class: "muted",
+                                                "Pre-join history uses the history-capable MLS scheme."
+                                            }
+                                        }
+                                        if let Some(hint) = content_scheme_constraint_hint {
+                                            div { class: "inline-warn",
+                                                span { class: "body", "{hint}" }
+                                            }
                                         }
                                         div { class: "muted",
                                             "Capability only — actual delivery still follows History visibility. Locked after creation."
@@ -626,11 +677,32 @@ pub(super) fn RealmsSection(
                                 onclick: {
                                     let base = base_url.clone();
                                     move |_| {
+                                        let history_visibility = realm_policy_history_visibility();
+                                        let encryption_profile = realm_encryption_profile();
+                                        let content_scheme = normalize_history_content_scheme(
+                                            crate::security_state::encryption_profile_is_encrypted(
+                                                &encryption_profile,
+                                            ),
+                                            &history_visibility,
+                                            &realm_content_scheme(),
+                                        );
+                                        if let Err(error) =
+                                            crate::api::validate_realm_history_content_scheme_for_profile(
+                                                &encryption_profile,
+                                                &history_visibility,
+                                                Some(content_scheme.as_str()),
+                                            )
+                                        {
+                                            let message = error.to_string();
+                                            realm_state.set(message.clone());
+                                            status.set(message);
+                                            return;
+                                        }
                                         // S6 soft-gate: block encrypted-Realm creation when
                                         // no recovery path is configured, unless the user has
                                         // explicitly overridden via the gate dialog.
                                         if crate::security_state::encryption_profile_is_encrypted(
-                                            &realm_encryption_profile(),
+                                            &encryption_profile,
                                         ) && !recovery_gate_acknowledged()
                                         {
                                             let actor_now = account_did();
@@ -659,13 +731,10 @@ pub(super) fn RealmsSection(
                                         let alias = realm_alias();
                                         let discoverability = realm_discoverability();
                                         let join_rule = realm_policy_join_rule();
-                                        let history_visibility = realm_policy_history_visibility();
-                                        let encryption_profile = realm_encryption_profile();
                                         let security_class = realm_security_class();
                                         let federation_policy = realm_federation_policy();
                                         let notary_profile = realm_notary_profile();
                                         let digest_algorithm = realm_digest_algorithm();
-                                        let content_scheme = realm_content_scheme();
                                         let seed_text = seed_members();
                                         let actor = account_did();
                                         let device = device_id();

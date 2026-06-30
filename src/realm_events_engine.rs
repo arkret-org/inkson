@@ -30,10 +30,9 @@
 //! `events_subscribe_ndjson` reader for instant push without changing the
 //! ingest / cursor contract here.
 
+use cokret_sdk::EventsSubscribeFrameKind;
 use dioxus::prelude::*;
 use serde_json::Value;
-
-use cokret_sdk::EventsSubscribeFrameKind;
 
 use crate::api::{
     is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after, sleep_for,
@@ -62,6 +61,9 @@ pub struct RealmEventsEngineContext {
     /// this no longer matches the realm it was spawned for, so a realm switch
     /// retires the old loop while `app` spawns a fresh one for the new realm.
     pub selected_realm_id: Signal<String>,
+    /// Whether the current route actually consumes a Realm stream. This lets a
+    /// stream spawned on Board/Chat exit when navigation returns to Home.
+    pub route_enabled: Signal<bool>,
     /// Bumped once per iteration that folded ≥1 new operation into the local
     /// store, so the kanban panel can re-project off a signal that is NOT the
     /// (cross-member-lossy) account `sync_cursor`.
@@ -109,6 +111,9 @@ pub async fn run_realm_events_engine(
         if ctx.selected_realm_id.read().as_str() != realm_id {
             return;
         }
+        if !(ctx.route_enabled)() {
+            return;
+        }
 
         match run_realm_iteration(&realm_id, &ctx, start_generation, generation).await {
             RealmIterationOutcome::Ok => {
@@ -118,7 +123,10 @@ pub async fn run_realm_events_engine(
                 sleep_for(std::time::Duration::from_millis(250)).await;
             }
             RealmIterationOutcome::Backoff { delay_ms } => {
-                sleep_for(std::time::Duration::from_millis(delay_ms.max(MIN_BACKOFF_MS))).await;
+                sleep_for(std::time::Duration::from_millis(
+                    delay_ms.max(MIN_BACKOFF_MS),
+                ))
+                .await;
                 backoff_ms = (backoff_ms.saturating_mul(2)).min(MAX_BACKOFF_MS);
             }
             RealmIterationOutcome::NotReady | RealmIterationOutcome::AuthExpired => {

@@ -827,9 +827,8 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         &'a self,
         key: &'a str,
         value: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
+    {
         // Update the in-memory cache synchronously (same as `store_secret`) so
         // concurrent reads in this session observe the value immediately.
         if let Ok(mut guard) = self.cache.lock() {

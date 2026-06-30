@@ -46,9 +46,8 @@ impl SecureKeyStore for FallbackSecureKeyStore {
         &'a self,
         key: &'a str,
         value: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
+    {
         Box::pin(async move {
             // Await the primary (IndexedDB) durable write. Required-IndexedDB
             // keys (e.g. the MLS KeyPackage init key) only live in the primary;

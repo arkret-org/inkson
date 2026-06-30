@@ -718,6 +718,73 @@ fn ingest_realm_key_share_installs_history_secrets() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn ingest_realm_key_share_accepts_projected_payload_envelope() {
+    // soland projects durable ck.realm_key.share events into device_messages as
+    // `{ kind, realm_id, sender, sender_device_id, payload }`, not the older
+    // local `{ kind, content }` test shape. The receiver must parse the spec
+    // payload field or Bob never installs the shared history key.
+    let mut state = temp_state_store("history-share-projected-payload");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000e8";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000e9";
+    let alice_actor = "did:web:alice.example";
+    let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+
+    let (_priv, bob_pub) =
+        load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
+    let secrets = vec![(0_u64, vec![7u8; 32])];
+    let legacy = realm_key_share_envelope(
+        realm,
+        bob_actor,
+        bob_device,
+        alice_device,
+        &bob_pub,
+        &secrets,
+    );
+    let projected = json!({
+        "kind": "ck.realm_key.share",
+        "sender": alice_actor,
+        "sender_device_id": alice_device,
+        "realm_id": realm,
+        "operation_id": "ck:event:01904100-0000-7000-8000-0000000000ee",
+        "payload": legacy.get("content").unwrap().clone(),
+    });
+
+    assert_eq!(
+        realm_key_share_message_realm_id(&projected),
+        Some(realm.to_owned())
+    );
+    assert_eq!(
+        collect_realm_key_share_messages_for_realm(&[projected.clone()], realm).len(),
+        1
+    );
+    assert_eq!(
+        realm_key_share_sender_device_pair(&projected),
+        Some((alice_actor.to_owned(), alice_device.to_owned()))
+    );
+    assert_eq!(
+        realm_key_share_message_operation_id(&projected).as_deref(),
+        Some("ck:event:01904100-0000-7000-8000-0000000000ee")
+    );
+    let mut ingestable = projected.clone();
+    ingestable.as_object_mut().unwrap().remove("sender");
+    assert_eq!(
+        ingest_realm_key_share(
+            &mut state,
+            &secure,
+            realm,
+            bob_actor,
+            bob_device,
+            &ingestable
+        ),
+        1
+    );
+    assert_eq!(state.history_secret_for(realm, 0), Some(vec![7u8; 32]));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn history_secrets_survive_json_persistence_round_trip() {
     // The store flushes to JSON; a granted history_secret must survive a
     // "restart" (fresh store over the same backing file). Regression guard for

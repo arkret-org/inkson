@@ -116,7 +116,12 @@ fn op_space_target_id(record: &RawOperationRecord) -> Option<String> {
 fn patch_entry_string(patch: &Value, keys: &[&str]) -> Option<Option<String>> {
     let entry = keys.iter().find_map(|key| patch.get(*key))?;
     match entry.get("$op").and_then(Value::as_str) {
-        Some("set") => Some(entry.get("value").and_then(Value::as_str).map(ToOwned::to_owned)),
+        Some("set") => Some(
+            entry
+                .get("value")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+        ),
         Some("unset") => Some(None),
         Some(_) => None,
         // Plain shorthand: the entry is the scalar value itself.
@@ -146,7 +151,9 @@ fn apply_space_update_to_view(
 /// `metadata.title`, position from the `ck.component.strand.position.v1`
 /// component / `fields`), tolerating both the canonical envelope
 /// (`object.metadata.*`) and the local optimistic shape (`object.*`).
-fn strand_view_from_create_op(record: &RawOperationRecord) -> Option<crate::api::StrandProjectionView> {
+fn strand_view_from_create_op(
+    record: &RawOperationRecord,
+) -> Option<crate::api::StrandProjectionView> {
     let body = op_body(record)?;
     let object = body.get("object").unwrap_or(body);
     let metadata = object.get("metadata");
@@ -265,7 +272,9 @@ fn apply_reorder_to_view(view: &mut crate::api::StrandProjectionView, record: &R
 /// (base view) + MOVE / REORDER (placement) + ARCHIVE / RESTORE (lifecycle) in
 /// causal order; content updates and assignments are layered later at the card
 /// level. Archived strands are dropped from the board.
-pub(crate) fn strand_views_from_ops(ops: &[RawOperationRecord]) -> Vec<crate::api::StrandProjectionView> {
+pub(crate) fn strand_views_from_ops(
+    ops: &[RawOperationRecord],
+) -> Vec<crate::api::StrandProjectionView> {
     // Preserve first-seen (create) order for stable output; placement/sort is
     // applied by `columns_from_lifecycle_projection`.
     let mut order: Vec<String> = Vec::new();
@@ -588,10 +597,16 @@ mod tests {
             strand_move_event(strand, BOARD, LIST_B, "U"),
         ];
         let ops = kanban_operations_from_events(&events);
-        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
 
-        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
-        let doing = columns.iter().find(|column| column.title == "Doing").unwrap();
+        let todos = columns
+            .iter()
+            .find(|column| column.title == "Todos")
+            .unwrap();
+        let doing = columns
+            .iter()
+            .find(|column| column.title == "Doing")
+            .unwrap();
         assert!(todos.cards.is_empty(), "card left the origin list");
         assert_eq!(doing.cards.len(), 1, "card moved into the target list");
         assert_eq!(doing.cards[0].title, "moving card");
@@ -615,9 +630,15 @@ mod tests {
             strand_archive_event(strand),
         ];
         let ops = kanban_operations_from_events(&events);
-        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
-        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
-        assert!(todos.cards.is_empty(), "archived card is removed from the board");
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns
+            .iter()
+            .find(|column| column.title == "Todos")
+            .unwrap();
+        assert!(
+            todos.cards.is_empty(),
+            "archived card is removed from the board"
+        );
     }
 
     /// Build a locally-appended optimistic op record directly (the shape
@@ -683,9 +704,16 @@ mod tests {
             )],
         ]
         .concat();
-        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
-        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
-        assert_eq!(todos.cards.len(), 1, "optimistic create folds into the list");
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns
+            .iter()
+            .find(|column| column.title == "Todos")
+            .unwrap();
+        assert_eq!(
+            todos.cards.len(),
+            1,
+            "optimistic create folds into the list"
+        );
         assert_eq!(todos.cards[0].title, "queued card");
     }
 
@@ -726,11 +754,21 @@ mod tests {
                 },
             }),
         ));
-        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
-        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
-        let doing = columns.iter().find(|column| column.title == "Doing").unwrap();
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns
+            .iter()
+            .find(|column| column.title == "Todos")
+            .unwrap();
+        let doing = columns
+            .iter()
+            .find(|column| column.title == "Doing")
+            .unwrap();
         assert!(todos.cards.is_empty(), "card left the origin list");
-        assert_eq!(doing.cards.len(), 1, "optimistic move folds into the target list");
+        assert_eq!(
+            doing.cards.len(),
+            1,
+            "optimistic move folds into the target list"
+        );
     }
 
     /// Column reorder appends a `ck.space.update` patch op carrying the new
@@ -739,9 +777,9 @@ mod tests {
     #[test]
     fn local_space_update_rank_reorders_columns() {
         for rank_entry in [json!({ "$op": "set", "value": "r001" }), json!("r001")] {
-            let mut ops = kanban_operations_from_events(&[
-                space_create_event(BOARD, "board", "Board1", None),
-            ]);
+            let mut ops = kanban_operations_from_events(&[space_create_event(
+                BOARD, "board", "Board1", None,
+            )]);
             // Two lists, A before B by rank.
             ops.extend(kanban_operations_from_events(&[
                 space_create_event(LIST_A, "list", "First", Some(BOARD)),
@@ -767,7 +805,7 @@ mod tests {
                     "body": { "space_id": LIST_B, "patch": { "rank": rank_entry.clone() } },
                 }),
             ));
-            let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+            let (columns, ..) = project_board(&ops, BOARD, REALM, None);
             assert_eq!(columns.len(), 2);
             assert_eq!(
                 columns[0].title, "Second",
@@ -795,8 +833,11 @@ mod tests {
                 "body": { "space_id": LIST_A },
             }),
         ));
-        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
-        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns
+            .iter()
+            .find(|column| column.title == "Todos")
+            .unwrap();
         assert_eq!(
             todos.state,
             SpaceContainerLifecycleState::Archived,
@@ -859,7 +900,7 @@ mod tests {
             "ck.space.update",
             space_update_body(LIST_B, "r001"),
         ));
-        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
         assert_eq!(columns.len(), 2);
         assert_eq!(
             columns[0].title, "Second",
@@ -903,11 +944,21 @@ mod tests {
             "ck.strand.move",
             move_body,
         ));
-        let (columns, _, _) = project_board(&ops, BOARD, REALM, None);
-        let todos = columns.iter().find(|column| column.title == "Todos").unwrap();
-        let doing = columns.iter().find(|column| column.title == "Doing").unwrap();
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns
+            .iter()
+            .find(|column| column.title == "Todos")
+            .unwrap();
+        let doing = columns
+            .iter()
+            .find(|column| column.title == "Doing")
+            .unwrap();
         assert!(todos.cards.is_empty(), "card left the origin list");
-        assert_eq!(doing.cards.len(), 1, "real CAS move payload folds into the target list");
+        assert_eq!(
+            doing.cards.len(),
+            1,
+            "real CAS move payload folds into the target list"
+        );
     }
 
     #[test]

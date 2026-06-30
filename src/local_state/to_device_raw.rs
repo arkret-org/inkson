@@ -132,6 +132,54 @@ impl LocalStateStore {
         removed
     }
 
+    /// Drop a handled `ck.realm_key.request` from the local to-device inbox.
+    /// The server-delivered envelope carries `request_id` at top-level, while
+    /// older local/test envelopes may nest it under `content`; accept both so a
+    /// successfully answered request does not trigger duplicate shares forever.
+    pub fn dismiss_realm_key_request_to_device_message(&mut self, request_id: &str) -> usize {
+        self.ensure_cached_loaded();
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return 0;
+        }
+        let before = self.cached.to_device_inbox.len();
+        self.cached.to_device_inbox.retain(|message| {
+            if message.get("kind").and_then(Value::as_str) != Some("ck.realm_key.request") {
+                return true;
+            }
+            realm_key_request_message_id(message).as_deref() != Some(request_id)
+        });
+        let removed = before - self.cached.to_device_inbox.len();
+        if removed > 0 {
+            let _ = self.flush();
+        }
+        removed
+    }
+
+    /// Drop a handled `ck.realm_key.share` from the local to-device inbox once
+    /// its history secrets were installed. soland projects durable shares with
+    /// the source Event `operation_id`, while event-shaped envelopes may expose
+    /// `event_id`; accept both identifiers.
+    pub fn dismiss_realm_key_share_to_device_message(&mut self, operation_id: &str) -> usize {
+        self.ensure_cached_loaded();
+        let operation_id = operation_id.trim();
+        if operation_id.is_empty() {
+            return 0;
+        }
+        let before = self.cached.to_device_inbox.len();
+        self.cached.to_device_inbox.retain(|message| {
+            if message.get("kind").and_then(Value::as_str) != Some("ck.realm_key.share") {
+                return true;
+            }
+            realm_key_share_message_id(message).as_deref() != Some(operation_id)
+        });
+        let removed = before - self.cached.to_device_inbox.len();
+        if removed > 0 {
+            let _ = self.flush();
+        }
+        removed
+    }
+
     pub fn append_raw_operation(
         &mut self,
         operation_id: impl Into<String>,
@@ -190,13 +238,23 @@ impl LocalStateStore {
         });
         if let Some(index) = existing_index {
             let existing = &mut self.cached.raw_operations[index];
-            if realm_id.is_some() {
-                existing.realm_id = realm_id;
+            let mut changed = false;
+            if let Some(realm_id) = realm_id
+                && existing.realm_id.as_deref() != Some(realm_id.as_str())
+            {
+                existing.realm_id = Some(realm_id);
+                changed = true;
             }
-            existing.payload = merge_synced_raw_operation_payload(&existing.payload, payload);
-            existing.received_at = Utc::now();
-            let _ = self.flush();
-            return false;
+            let merged_payload = merge_synced_raw_operation_payload(&existing.payload, payload);
+            if existing.payload != merged_payload {
+                existing.payload = merged_payload;
+                changed = true;
+            }
+            if changed {
+                existing.received_at = Utc::now();
+                let _ = self.flush();
+            }
+            return changed;
         }
         self.cached.raw_operations.push(RawOperationRecord {
             operation_id,
@@ -256,6 +314,60 @@ impl LocalStateStore {
         let _ = self.flush();
         true
     }
+}
+
+fn realm_key_request_message_id(message: &Value) -> Option<String> {
+    message
+        .get("request_id")
+        .or_else(|| {
+            message
+                .get("content")
+                .and_then(|content| content.get("request_id"))
+        })
+        .or_else(|| {
+            message
+                .get("payload")
+                .and_then(|payload| payload.get("request_id"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn realm_key_share_message_id(message: &Value) -> Option<String> {
+    message
+        .get("operation_id")
+        .or_else(|| message.get("event_id"))
+        .or_else(|| {
+            message
+                .get("content")
+                .and_then(|content| content.get("operation_id"))
+        })
+        .or_else(|| {
+            message
+                .get("content")
+                .and_then(|content| content.get("event_id"))
+        })
+        .or_else(|| {
+            message
+                .get("payload")
+                .and_then(|payload| payload.get("operation_id"))
+        })
+        .or_else(|| {
+            message
+                .get("payload")
+                .and_then(|payload| payload.get("event_id"))
+        })
+        .or_else(|| {
+            message
+                .get("unsigned")
+                .and_then(|unsigned| unsigned.get("source_event_id"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn raw_payload_string(payload: &Value, key: &str) -> Option<String> {

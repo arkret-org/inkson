@@ -291,8 +291,8 @@ fn next_mls_private_plaintext_backup_delay(key: &str) -> Option<Duration> {
 /// COR-02: acquire the backup-job map lock, logging a `warn!` (instead of
 /// silently returning `None`) when the lock is poisoned so a panicked prior
 /// holder — and the consequently dropped backup task — is observable.
-fn mls_private_plaintext_backup_jobs_lock_or_warn(
-) -> Option<std::sync::MutexGuard<'static, BTreeMap<String, MlsPrivatePlaintextBackupJob>>> {
+fn mls_private_plaintext_backup_jobs_lock_or_warn()
+-> Option<std::sync::MutexGuard<'static, BTreeMap<String, MlsPrivatePlaintextBackupJob>>> {
     match MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() {
         Ok(guard) => Some(guard),
         Err(_) => {

@@ -739,7 +739,10 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     assert_eq!(records.len(), 1, "only the message-create event is folded");
     assert_eq!(records[0].operation_id, "ck:event:msg-1");
     assert_eq!(records[0].realm_id.as_deref(), Some("ck:realm:r1"));
-    assert_eq!(records[0].payload, create, "full event stored for proof/ciphertext");
+    assert_eq!(
+        records[0].payload, create,
+        "full event stored for proof/ciphertext"
+    );
 
     let state = ClientLocalState {
         raw_operations: records,
@@ -781,7 +784,10 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
 
     let create_record = message_operations_from_events("ck:realm:r1", &[create]);
     let tombstone_record = message_operations_from_events("ck:realm:r1", &[tombstone]);
-    assert_eq!(create_record[0].operation_id, tombstone_record[0].operation_id);
+    assert_eq!(
+        create_record[0].operation_id,
+        tombstone_record[0].operation_id
+    );
 }
 
 #[test]

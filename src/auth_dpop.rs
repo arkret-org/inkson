@@ -845,7 +845,10 @@ mod tests {
             .expect("repaired handle");
 
         assert_ne!(repaired.jkt(), old_record.jkt);
-        assert_eq!(repaired.seed_b64().as_str(), URL_SAFE_NO_PAD.encode(new_seed));
+        assert_eq!(
+            repaired.seed_b64().as_str(),
+            URL_SAFE_NO_PAD.encode(new_seed)
+        );
         let loaded = load_device_key_with_secure_store(&store, &secure)
             .unwrap()
             .expect("loaded repaired handle");
@@ -872,6 +875,9 @@ mod tests {
         let repaired = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
 
         assert_ne!(repaired.jkt(), old_record.jkt);
-        assert_eq!(repaired.seed_b64().as_str(), URL_SAFE_NO_PAD.encode(new_seed));
+        assert_eq!(
+            repaired.seed_b64().as_str(),
+            URL_SAFE_NO_PAD.encode(new_seed)
+        );
     }
 }

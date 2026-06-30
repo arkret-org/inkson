@@ -258,7 +258,11 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
         }),
     ];
     let local_ops = kanban_operations_from_events(&history_events);
-    assert_eq!(local_ops.len(), 2, "both strand.update events folded locally");
+    assert_eq!(
+        local_ops.len(),
+        2,
+        "both strand.update events folded locally"
+    );
 
     let entries = card_synthesis_track_entries(&card, &local_ops, &LocalStateStore::default());
 

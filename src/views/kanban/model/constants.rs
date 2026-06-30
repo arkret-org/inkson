@@ -148,33 +148,18 @@ mod tests {
 
         // Same epoch + same inputs → no churn.
         assert_eq!(
-            next_kanban_projection_refresh_key(
-                "ck:realm:r1||-|1",
-                "ck:realm:r1",
-                "",
-                "-",
-                1
-            ),
+            next_kanban_projection_refresh_key("ck:realm:r1||-|1", "ck:realm:r1", "", "-", 1),
             None
         );
 
         // A later epoch advances the key again.
         assert_eq!(
-            next_kanban_projection_refresh_key(
-                "ck:realm:r1||-|1",
-                "ck:realm:r1",
-                "",
-                "-",
-                2
-            ),
+            next_kanban_projection_refresh_key("ck:realm:r1||-|1", "ck:realm:r1", "", "-", 2),
             Some("ck:realm:r1||-|2".to_owned())
         );
 
         // Still no realm/view selector → no refresh even with an epoch.
-        assert_eq!(
-            next_kanban_projection_refresh_key("", "", "", "-", 5),
-            None
-        );
+        assert_eq!(next_kanban_projection_refresh_key("", "", "", "-", 5), None);
     }
 
     #[test]

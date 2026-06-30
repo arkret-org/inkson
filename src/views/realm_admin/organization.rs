@@ -110,16 +110,12 @@ fn control_scope_from_slug(slug: &str) -> Option<RealmOrganizationControlScope> 
         "realm_admin" => Some(RealmOrganizationControlScope::RealmAdmin),
         "notary_control" => Some(RealmOrganizationControlScope::NotaryControl),
         "policy_server" => Some(RealmOrganizationControlScope::PolicyServer),
-        "delivery_binding_policy" => {
-            Some(RealmOrganizationControlScope::DeliveryBindingPolicy)
-        }
+        "delivery_binding_policy" => Some(RealmOrganizationControlScope::DeliveryBindingPolicy),
         "durability_policy" => Some(RealmOrganizationControlScope::DurabilityPolicy),
         "moderation_policy" => Some(RealmOrganizationControlScope::ModerationPolicy),
         "retention_policy" => Some(RealmOrganizationControlScope::RetentionPolicy),
         "directory_listing" => Some(RealmOrganizationControlScope::DirectoryListing),
-        "plaintext_visible_service" => {
-            Some(RealmOrganizationControlScope::PlaintextVisibleService)
-        }
+        "plaintext_visible_service" => Some(RealmOrganizationControlScope::PlaintextVisibleService),
         _ => None,
     }
 }

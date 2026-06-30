@@ -676,13 +676,21 @@ pub fn KanbanPanel(
             };
             if raw_operations.is_empty() && !seed_columns.is_empty() {
                 // Demo / seed-fallback columns: layer local optimistic ops on top.
+                let cols = overlay_local_card_create_records(
+                    seed_columns.clone(),
+                    &raw_operations,
+                    &board_id,
+                );
                 let cols =
-                    overlay_local_card_create_records(seed_columns.clone(), &raw_operations, &board_id);
-                let cols = overlay_local_card_update_records(cols, &raw_operations, Some(&decrypt_ctx));
+                    overlay_local_card_update_records(cols, &raw_operations, Some(&decrypt_ctx));
                 return overlay_local_card_assignment_records(cols, &raw_operations);
             }
-            let (cols, ..) =
-                project_board(&raw_operations, &board_id, &seed_realm_id, Some(&decrypt_ctx));
+            let (cols, ..) = project_board(
+                &raw_operations,
+                &board_id,
+                &seed_realm_id,
+                Some(&decrypt_ctx),
+            );
             cols
         }
     });
@@ -891,11 +899,8 @@ pub fn KanbanPanel(
             let store = state_store.read();
             let snapshot = store.load();
             let projection = snapshot.realm_tree_projections.get(&memo_realm_id);
-            let realm_context = member_roster_realm_context(
-                &memo_realm_id,
-                &memo_projection_realm_id,
-                projection,
-            );
+            let realm_context =
+                member_roster_realm_context(&memo_realm_id, &memo_projection_realm_id, projection);
             let member_rows = realm_member_roster(projection);
             let author_context = CardAuthorDisplayContext {
                 realm_id: &realm_context,
@@ -1312,7 +1317,11 @@ pub fn KanbanPanel(
                     // explicit reproject here.
                     {
                         let mut store = state_store.write();
-                        crate::sync_engine::ingest_kanban_events(&mut store, &local_realm_id, &events);
+                        crate::sync_engine::ingest_kanban_events(
+                            &mut store,
+                            &local_realm_id,
+                            &events,
+                        );
                     }
                     let card_unlocked = selected_card()
                         .is_some_and(|card| !card.body_locked && !card.synthesis_locked);

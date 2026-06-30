@@ -201,7 +201,6 @@ pub(super) fn assignment_relations_after_mutations(
     relations
 }
 
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_card_assignees_update(
     base_url: String,

@@ -1871,6 +1871,118 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     Ok(Some(next_epoch))
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ParsedRealmKeyRequestEnvelope {
+    pub(crate) realm_id: String,
+    pub(crate) request_id: Option<String>,
+    pub(crate) payload: cokret_sdk::RealmKeyRequestPayload,
+}
+
+fn realm_key_request_payload_candidate(value: &Value) -> Option<&Value> {
+    value.get("key_scope").is_some().then_some(value)
+}
+
+pub(crate) fn realm_key_request_scope_realm_id(
+    request: &cokret_sdk::RealmKeyRequestPayload,
+) -> Option<String> {
+    request
+        .key_scope
+        .effective_scope
+        .get("realm_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn realm_key_request_envelope_request_id(envelope: &Value) -> Option<String> {
+    envelope
+        .get("request_id")
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("request_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(|payload| payload.get("request_id"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn realm_key_request_envelope_realm_id(envelope: &Value) -> Option<String> {
+    envelope
+        .get("realm_id")
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("realm_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(|payload| payload.get("realm_id"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+/// Parse a server/local to-device `ck.realm_key.request` envelope. soland's
+/// relay shape carries the spec request body under `payload`; older local test
+/// envelopes used `content`. The payload's `key_scope.effective_scope.realm_id`
+/// is authoritative, and any repeated envelope-level Realm must match it.
+pub(crate) fn parse_realm_key_request_envelope(
+    envelope: &Value,
+) -> Option<ParsedRealmKeyRequestEnvelope> {
+    let kind = envelope
+        .get("kind")
+        .or_else(|| envelope.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if kind != "ck.realm_key.request" {
+        return None;
+    }
+    let payload_value = envelope
+        .get("payload")
+        .and_then(realm_key_request_payload_candidate)
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(realm_key_request_payload_candidate)
+        })
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("payload"))
+                .and_then(realm_key_request_payload_candidate)
+        })
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(|payload| payload.get("content"))
+                .and_then(realm_key_request_payload_candidate)
+        })?;
+    let payload: cokret_sdk::RealmKeyRequestPayload =
+        serde_json::from_value(payload_value.clone()).ok()?;
+    let realm_id = realm_key_request_scope_realm_id(&payload)?;
+    if let Some(envelope_realm) = realm_key_request_envelope_realm_id(envelope)
+        && envelope_realm != realm_id
+    {
+        return None;
+    }
+    Some(ParsedRealmKeyRequestEnvelope {
+        realm_id,
+        request_id: realm_key_request_envelope_request_id(envelope),
+        payload,
+    })
+}
+
 /// Provider-side: answer one `ck.realm_key.request` from a late joiner by
 /// sealing the retained `history_secret` range to the requester's advertised
 /// HPKE public key and submitting a durable `ck.realm_key.share`
@@ -1888,6 +2000,17 @@ pub(crate) async fn share_history_to_requester(
     device_id: String,
     request: &cokret_sdk::RealmKeyRequestPayload,
 ) -> anyhow::Result<bool> {
+    let Some(request_realm_id) = realm_key_request_scope_realm_id(request) else {
+        return Ok(false);
+    };
+    if request_realm_id != realm_id.trim() {
+        return Ok(false);
+    }
+    if request.target_principal_id.as_str().trim() != actor_id.trim()
+        || request.target_source_ref.trim() != device_id.trim()
+    {
+        return Ok(false);
+    }
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     // Ensure the current epoch's key is retained, then gather every retained
     // (epoch, secret) the requester is asking for.
@@ -2419,10 +2542,7 @@ fn raw_operation_event_time(record: &RawOperationRecord) -> chrono::DateTime<chr
         .unwrap_or(record.received_at)
 }
 
-fn accepted_joined_member_signature_for_realm(
-    store: &LocalStateStore,
-    realm_id: &str,
-) -> String {
+fn accepted_joined_member_signature_for_realm(store: &LocalStateStore, realm_id: &str) -> String {
     let mut dids: Vec<String> = accepted_membership_profiles_for_realm(store, realm_id)
         .into_iter()
         .filter(|member| member.normalized_membership() == Some("join"))
@@ -5104,6 +5224,76 @@ mod tests {
         ];
         let candidates = provider_candidates_from_inbox(&inbox, "ck:realm:abc", SELF_DID);
         assert_eq!(candidates.len(), 1);
+    }
+
+    #[test]
+    fn parses_projected_realm_key_request_payload_envelope() {
+        let realm = "ck:realm:abc";
+        let request = cokret_sdk::RealmKeyRequestPayload {
+            key_scope: cokret_sdk::RealmKeyRequestScope {
+                effective_scope: json!({ "realm_id": realm }),
+                policy_digest: None,
+                membership_frontier_digest: None,
+                from_epoch: 0,
+                to_epoch: 0,
+                history_visibility: None,
+            },
+            recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_device_id: "ck:device:self".to_owned(),
+            recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
+            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            target_source_ref: PROVIDER_DEVICE.to_owned(),
+            target_principal_id: cokret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
+        let envelope = json!({
+            "kind": "ck.realm_key.request",
+            "realm_id": realm,
+            "request_id": "sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9",
+            "sender_device_id": "ck:device:self",
+            "payload": request,
+        });
+
+        let parsed = parse_realm_key_request_envelope(&envelope)
+            .expect("server-projected payload envelope should parse");
+        assert_eq!(parsed.realm_id, realm);
+        assert_eq!(
+            parsed.request_id.as_deref(),
+            Some("sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9")
+        );
+        assert_eq!(parsed.payload.target_source_ref, PROVIDER_DEVICE);
+    }
+
+    #[test]
+    fn rejects_realm_key_request_when_envelope_realm_mismatches_payload() {
+        let request = cokret_sdk::RealmKeyRequestPayload {
+            key_scope: cokret_sdk::RealmKeyRequestScope {
+                effective_scope: json!({ "realm_id": "ck:realm:abc" }),
+                policy_digest: None,
+                membership_frontier_digest: None,
+                from_epoch: 0,
+                to_epoch: 0,
+                history_visibility: None,
+            },
+            recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_device_id: "ck:device:self".to_owned(),
+            recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
+            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            target_source_ref: PROVIDER_DEVICE.to_owned(),
+            target_principal_id: cokret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
+        let envelope = json!({
+            "kind": "ck.realm_key.request",
+            "realm_id": "ck:realm:other",
+            "payload": request,
+        });
+
+        assert!(parse_realm_key_request_envelope(&envelope).is_none());
     }
 
     #[test]

@@ -239,6 +239,104 @@ pub fn derive_and_retain_realm_history_secret(
     Some((epoch, history_secret))
 }
 
+fn realm_key_share_payload_candidate(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    value
+        .get("key_scope")
+        .is_some()
+        .then_some(value)
+        .filter(|candidate| {
+            candidate.get("recipient_principal_id").is_some()
+                || candidate.get("ciphertext").is_some()
+                || candidate.get("share_class").is_some()
+        })
+}
+
+fn realm_key_share_payload_value(envelope: &serde_json::Value) -> Option<&serde_json::Value> {
+    envelope
+        .get("content")
+        .and_then(realm_key_share_payload_candidate)
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(realm_key_share_payload_candidate)
+        })
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("payload"))
+                .and_then(realm_key_share_payload_candidate)
+        })
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(|payload| payload.get("content"))
+                .and_then(realm_key_share_payload_candidate)
+        })
+        .or_else(|| realm_key_share_payload_candidate(envelope))
+}
+
+/// Extract the Realm named by a `ck.realm_key.share` to-device/event envelope.
+/// The spec payload binds it under `key_scope.effective_scope.realm_id`; soland's
+/// to-device projection also repeats it at top-level for routing. If both are
+/// present they must agree, otherwise the envelope is ignored fail-closed.
+pub fn realm_key_share_message_realm_id(envelope: &serde_json::Value) -> Option<String> {
+    let payload_realm = realm_key_share_payload_value(envelope)
+        .and_then(|payload| payload.get("key_scope"))
+        .and_then(|scope| scope.get("effective_scope"))
+        .and_then(|scope| scope.get("realm_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let top_realm = envelope
+        .get("realm_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match (payload_realm, top_realm) {
+        (Some(scope), Some(top)) if scope != top => None,
+        (Some(scope), _) => Some(scope.to_owned()),
+        (None, Some(top)) => Some(top.to_owned()),
+        (None, None) => None,
+    }
+}
+
+/// Stable source Event identifier for a projected `ck.realm_key.share`, when
+/// present. Used only for local inbox dismissal after successful install.
+pub fn realm_key_share_message_operation_id(envelope: &serde_json::Value) -> Option<String> {
+    envelope
+        .get("operation_id")
+        .or_else(|| envelope.get("event_id"))
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("operation_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("event_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(|payload| payload.get("operation_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(|payload| payload.get("event_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("unsigned")
+                .and_then(|unsigned| unsigned.get("source_event_id"))
+        })
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 /// Filter a to-device inbox / device-messages batch down to the
 /// `ck.realm_key.share` envelopes addressed at this Realm. The discriminator is
 /// the envelope `kind`; the Realm binding is the share payload's
@@ -258,17 +356,7 @@ pub fn collect_realm_key_share_messages_for_realm(
                 .and_then(|t| t.as_str())
                 == Some(cokret_sdk::events::kinds::REALM_KEY_SHARE)
         })
-        .filter(|message| {
-            // Accept shares whose scope names this realm, OR carry no scope hint
-            // (a directed to-device share already addressed to this device).
-            let scope_realm = message
-                .get("content")
-                .and_then(|content| content.get("key_scope"))
-                .and_then(|scope| scope.get("effective_scope"))
-                .and_then(|scope| scope.get("realm_id"))
-                .and_then(serde_json::Value::as_str);
-            scope_realm.is_none_or(|value| value.trim() == realm_id)
-        })
+        .filter(|message| realm_key_share_message_realm_id(message).as_deref() == Some(realm_id))
         .cloned()
         .collect()
 }
@@ -288,7 +376,10 @@ pub fn ingest_realm_key_share(
     device_id: &str,
     share_envelope: &serde_json::Value,
 ) -> usize {
-    let content = share_envelope.get("content").unwrap_or(share_envelope);
+    let content = realm_key_share_payload_value(share_envelope)
+        .or_else(|| share_envelope.get("content"))
+        .or_else(|| share_envelope.get("payload"))
+        .unwrap_or(share_envelope);
     let payload: cokret_sdk::RealmKeySharePayload = match serde_json::from_value(content.clone()) {
         Ok(payload) => payload,
         Err(err) => {
@@ -391,9 +482,20 @@ pub fn realm_key_share_sender_device_pair(
     envelope: &serde_json::Value,
 ) -> Option<(String, String)> {
     let principal = realm_key_share_sender_principal_id(envelope)?;
-    let content = envelope.get("content").unwrap_or(envelope);
-    let device_id = content
+    let payload = realm_key_share_payload_value(envelope);
+    let device_id = envelope
         .get("sender_device_id")
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("sender_device_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(|payload| payload.get("sender_device_id"))
+        })
+        .or_else(|| payload.and_then(|payload| payload.get("sender_device_id")))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?
@@ -412,11 +514,13 @@ pub fn realm_key_share_sender_device_pair(
 ///   signature is rejected.
 /// - **Directory NegativeHit** (revoked / absent / no signing key): rejected.
 /// - **Directory Miss** (resolution failed for a claimed sender, even after the caller's prefetch):
-///   a populated signature must verify under its own embedded key; an empty signature is **rejected**
-///   (SEC-02 fail-closed — the prior fail-open window that tolerated an unauthenticated empty
-///   signature on Miss is closed). The per-secret HPKE seal remains the confidentiality/integrity gate.
-/// - **No sender principal at all**: the share cannot impersonate any actor, so an empty signature is
-///   tolerated and a populated one is verified under its embedded key (HPKE seal gates the payload).
+///   a populated signature must verify under its own embedded key; an empty signature is
+///   **rejected** (SEC-02 fail-closed — the prior fail-open window that tolerated an
+///   unauthenticated empty signature on Miss is closed). The per-secret HPKE seal remains the
+///   confidentiality/integrity gate.
+/// - **No sender principal at all**: the share cannot impersonate any actor, so an empty signature
+///   is tolerated and a populated one is verified under its embedded key (HPKE seal gates the
+///   payload).
 pub(crate) fn verify_realm_key_share_sender_signature(
     payload: &cokret_sdk::RealmKeySharePayload,
     sender_principal_id: Option<&str>,
@@ -433,16 +537,19 @@ pub(crate) fn verify_realm_key_share_sender_signature(
     // The caller (`app::history-share` install loop) primes this cache with a
     // `keys/query` for the sender device BEFORE this verifier runs, so a Miss
     // here means directory resolution genuinely failed for a claimed sender.
-    let directory_key = sender_principal_id.map(|principal| {
-        match crate::device_directory::cached_device_signing_key(
-            principal,
-            payload.sender_device_id.trim(),
-        ) {
-            crate::device_directory::CacheLookup::Hit(material) => DirectoryVerdict::Key(material),
-            crate::device_directory::CacheLookup::NegativeHit => DirectoryVerdict::Revoked,
-            crate::device_directory::CacheLookup::Miss => DirectoryVerdict::Unresolved,
-        }
-    });
+    let directory_key =
+        sender_principal_id.map(
+            |principal| match crate::device_directory::cached_device_signing_key(
+                principal,
+                payload.sender_device_id.trim(),
+            ) {
+                crate::device_directory::CacheLookup::Hit(material) => {
+                    DirectoryVerdict::Key(material)
+                }
+                crate::device_directory::CacheLookup::NegativeHit => DirectoryVerdict::Revoked,
+                crate::device_directory::CacheLookup::Miss => DirectoryVerdict::Unresolved,
+            },
+        );
 
     // Fail closed on a revoked / absent sender device.
     if matches!(directory_key, Some(DirectoryVerdict::Revoked)) {
@@ -1123,7 +1230,8 @@ pub fn encrypt_values_with_device_snapshot(
     // actually rides; it MUST match the decrypt-side `history_content_aad_bytes`.
     let use_exporter_aead = realm_content_scheme_is_exporter_aead(state_store, realm_id);
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
-    let exporter_aad = use_exporter_aead.then(|| history_content_aad_bytes(realm_id, group.epoch()));
+    let exporter_aad =
+        use_exporter_aead.then(|| history_content_aad_bytes(realm_id, group.epoch()));
     for plaintext in plaintext_values {
         let encrypted = if let Some(aad_bytes) = exporter_aad.as_deref() {
             group.encrypt_payload_exporter_aead(content_type, realm_id, aad_bytes, None, plaintext)
@@ -1240,7 +1348,13 @@ pub fn encrypt_message_with_device_snapshot(
     // decrypt-side `try_history_decrypt_standalone`.
     let encrypted = if realm_content_scheme_is_exporter_aead(state_store, realm_id) {
         let aad_bytes = history_content_aad_bytes(realm_id, group.epoch());
-        group.encrypt_payload_exporter_aead(content_type, realm_id, &aad_bytes, Some(aad), plaintext)
+        group.encrypt_payload_exporter_aead(
+            content_type,
+            realm_id,
+            &aad_bytes,
+            Some(aad),
+            plaintext,
+        )
     } else {
         group.encrypt_payload_with_aad(content_type, Some(aad), plaintext)
     }

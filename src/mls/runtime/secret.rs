@@ -347,8 +347,8 @@ pub fn load_mls_key_package_identity_state(
     #[cfg(target_arch = "wasm32")]
     let secret = {
         let _ = store;
-        let value = mls_identity_local_storage()
-            .and_then(|storage| storage.get_item(&key).ok().flatten());
+        let value =
+            mls_identity_local_storage().and_then(|storage| storage.get_item(&key).ok().flatten());
         tracing::warn!(target: "mls_diag", key = %key, found = value.is_some(), "DIAG LOAD MLS identity-state <- PLAINTEXT localStorage");
         value
     };

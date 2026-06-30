@@ -279,6 +279,10 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(events[1].content["value"]["policy_revision"], 1);
+    assert_eq!(
+        events[1].content["value"]["content_scheme"],
+        "mls-exporter-aead-v1"
+    );
     assert_eq!(events[2].content["value"], "invite");
     assert_eq!(events[3].content["value"], "shared");
     assert_eq!(
@@ -346,6 +350,61 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     assert_eq!(envelope.content["object"]["encryption_profile"], "none");
     assert!(envelope.content["object"]["content_encryption_floor"].is_null());
     assert!(envelope.content["object"]["metadata_encryption_floor"].is_null());
+}
+
+#[test]
+fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
+    let err = build_realm_bootstrap_events(
+        "ck:realm:0196419b-0000-7000-8000-000000000011",
+        "did:web:alice.example",
+        "Strict history",
+        None,
+        "listed",
+        "invite",
+        "shared",
+        "mls_rfc9420",
+        "standard",
+        "restricted",
+        "single_did",
+        "sha256",
+        "ck:trust_domain:server.example",
+        &[],
+        &[],
+        None,
+        Some("mls-rfc9420"),
+    )
+    .expect_err("pre-join history requires the history-capable content scheme");
+
+    assert!(
+        err.to_string()
+            .contains(cokret_sdk::error::REASON_HISTORY_VISIBILITY_REQUIRES_HISTORY_CAPABLE_SCHEME)
+    );
+}
+
+#[test]
+fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
+    let events = build_realm_bootstrap_events(
+        "ck:realm:0196419b-0000-7000-8000-000000000012",
+        "did:web:alice.example",
+        "Strict history",
+        None,
+        "listed",
+        "invite",
+        "joined",
+        "mls_rfc9420",
+        "standard",
+        "restricted",
+        "single_did",
+        "sha256",
+        "ck:trust_domain:server.example",
+        &[],
+        &[],
+        None,
+        Some("mls-rfc9420"),
+    )
+    .expect("joined history is valid with the strict MLS content scheme");
+
+    assert_eq!(events[1].content["value"]["content_scheme"], "mls-rfc9420");
 }
 
 #[test]

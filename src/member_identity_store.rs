@@ -240,14 +240,12 @@ impl MemberIdentityStore {
 ///       key taken from the envelope itself.
 ///
 /// Resolution + trust rules (mirrors `verify_welcome_claim_envelope_signer`):
-///   - `proof.verification_method` is a `did:method:identifier#device` URL; its
-///     controller DID MUST equal the identity's `actor_id` (an actor can only
-///     assert its own member identity).
-///   - the fragment selects the asserting device; its key is looked up in the
-///     device-directory cache. A directory NegativeHit (revoked / absent) or a
-///     Miss (not resolved) is fail-closed (rejected). Only `Ed25519` is
-///     verifiable on this synchronous path; `ES256` / `ES384` are rejected
-///     (no synchronous verifier wired) rather than silently trusted.
+///   - `proof.verification_method` is a `did:method:identifier#device` URL; its controller DID MUST
+///     equal the identity's `actor_id` (an actor can only assert its own member identity).
+///   - the fragment selects the asserting device; its key is looked up in the device-directory
+///     cache. A directory NegativeHit (revoked / absent) or a Miss (not resolved) is fail-closed
+///     (rejected). Only `Ed25519` is verifiable on this synchronous path; `ES256` / `ES384` are
+///     rejected (no synchronous verifier wired) rather than silently trusted.
 fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
     use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 
@@ -273,7 +271,9 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
     let actor_id = identity.actor_id.as_str();
     let (controller, fragment) = match proof.verification_method.split_once('#') {
         Some((controller, fragment)) => (
-            controller.split_once('?').map_or(controller, |(head, _)| head),
+            controller
+                .split_once('?')
+                .map_or(controller, |(head, _)| head),
             fragment,
         ),
         // No fragment → no device selector → cannot resolve an authoritative
@@ -291,20 +291,20 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
     // Resolve the asserter's authoritative device signing key (sync, cache-only;
     // primed by the sync engine's member-identity prefetch). Miss / NegativeHit
     // are fail-closed.
-    let verifying_key = match crate::device_directory::cached_device_signing_key(actor_id, device_id)
-    {
-        crate::device_directory::CacheLookup::Hit(material) => {
-            let Ok(bytes) = material.ed25519_bytes() else {
-                return false;
-            };
-            let Ok(key) = VerifyingKey::from_bytes(&bytes) else {
-                return false;
-            };
-            key
-        }
-        crate::device_directory::CacheLookup::NegativeHit
-        | crate::device_directory::CacheLookup::Miss => return false,
-    };
+    let verifying_key =
+        match crate::device_directory::cached_device_signing_key(actor_id, device_id) {
+            crate::device_directory::CacheLookup::Hit(material) => {
+                let Ok(bytes) = material.ed25519_bytes() else {
+                    return false;
+                };
+                let Ok(key) = VerifyingKey::from_bytes(&bytes) else {
+                    return false;
+                };
+                key
+            }
+            crate::device_directory::CacheLookup::NegativeHit
+            | crate::device_directory::CacheLookup::Miss => return false,
+        };
 
     // (b) signature over the canonical payload bytes (the same bytes the digest
     // commits to).
@@ -323,12 +323,11 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
 #[cfg(test)]
 mod tests {
     use cokret_sdk::DisplayProfile;
+    use cokret_sdk::signatures::PublicKeyMaterial;
+    use ed25519_dalek::{Signer as _, SigningKey};
     use serde_json::json;
 
     use super::*;
-
-    use cokret_sdk::signatures::PublicKeyMaterial;
-    use ed25519_dalek::{Signer as _, SigningKey};
 
     const TEST_REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
     const TEST_DEVICE: &str = "ck:device:01904100-0000-7000-8000-00000000d001";

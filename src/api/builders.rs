@@ -175,6 +175,11 @@ pub fn build_realm_bootstrap_events(
             "restricted history_visibility requires a ck.realm.history_sharing_policy event in the same ordered batch"
         ));
     }
+    validate_realm_history_content_scheme_for_profile(
+        encryption_profile,
+        history_visibility,
+        content_scheme,
+    )?;
     let invitees = parse_realm_bootstrap_members(invitees)?;
     events.push(build_realm_create_event(
         realm_id,
@@ -417,6 +422,21 @@ pub fn resolve_realm_content_scheme(content_scheme: Option<&str>) -> &'static st
     }
 }
 
+pub fn validate_realm_history_content_scheme_for_profile(
+    encryption_profile: &str,
+    history_visibility: &str,
+    content_scheme: Option<&str>,
+) -> anyhow::Result<()> {
+    if encryption_profile_uses_recommended_floor(encryption_profile) {
+        cokret_sdk::validate_history_visibility_content_scheme_values(
+            history_visibility,
+            Some(resolve_realm_content_scheme(content_scheme)),
+        )
+        .map_err(|reason| anyhow::anyhow!("{reason}"))?;
+    }
+    Ok(())
+}
+
 pub fn recommended_realm_policy_components_value(content_scheme: Option<&str>) -> Value {
     json!({
         "policy_revision": 1,
@@ -474,11 +494,13 @@ fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> anyhow::Result<
             match inferred_controller_organization_did(actor_id) {
                 Some(controller) => cokret_sdk::NotaryValue::single_did_with_org(
                     actor_did,
-                    vec![parse_derived_did(&derived_recovery_member_did(&controller))?],
-                    parse_derived_did(&controller)?,
-                    vec![parse_derived_did(&derived_recovery_controller_organization_did(
+                    vec![parse_derived_did(&derived_recovery_member_did(
                         &controller,
                     ))?],
+                    parse_derived_did(&controller)?,
+                    vec![parse_derived_did(
+                        &derived_recovery_controller_organization_did(&controller),
+                    )?],
                 ),
                 None => cokret_sdk::NotaryValue::single_did(actor_did),
             }

@@ -648,7 +648,9 @@ pub(crate) fn message_operations_from_events(
 
 fn message_event_is_ingestable(event: &Value) -> bool {
     let candidates = message_candidates(event);
-    candidates.iter().any(|candidate| message_kind_is_create(candidate))
+    candidates
+        .iter()
+        .any(|candidate| message_kind_is_create(candidate))
 }
 
 fn message_raw_operation_from_event(
