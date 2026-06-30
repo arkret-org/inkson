@@ -100,7 +100,7 @@ pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 2] = [
     ),
 ];
 
-// encryption-and-audit.md §2.10 — content scheme (the *capability* axis,
+// encryption-and-audit.md §2.10 — Realm `content_scheme` (the capability axis,
 // orthogonal to `history_visibility` which is the runtime delivery toggle).
 // `mls-exporter-aead-v1` makes every epoch's content structurally shareable to
 // late joiners (forward secrecy degrades to per-epoch, §2.10.5);
@@ -109,13 +109,13 @@ pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 2] = [
 pub(super) const CONTENT_SCHEME_OPTIONS: [(&str, &str, &str); 2] = [
     (
         "mls-exporter-aead-v1",
-        "History-capable",
-        "Recommended. New members can be granted history from before they joined. Forward secrecy is per-epoch.",
+        "MLS exporter AEAD",
+        "content_scheme=mls-exporter-aead-v1. New members can be granted history from before they joined. Forward secrecy is per-epoch.",
     ),
     (
         "mls-rfc9420",
-        "Forward-secret only",
-        "Maximum confidentiality: pre-join history can never be shared with late joiners. Per-message forward secrecy.",
+        "MLS PrivateMessage",
+        "content_scheme=mls-rfc9420. Pre-join history can never be shared with late joiners. Per-message forward secrecy.",
     ),
 ];
 

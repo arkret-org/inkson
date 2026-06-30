@@ -9,9 +9,8 @@ use super::data::{
     HISTORY_VISIBILITY_OPTIONS, JOIN_RULE_OPTIONS, SECURITY_CLASS_OPTIONS,
 };
 use super::helpers::{
-    history_content_scheme_constraint_hint, history_visibility_admits_prejoin,
-    normalize_history_content_scheme, parse_seed_members, plaintext_services_for_policy,
-    policy_combination_hint,
+    content_scheme_constraint_hint, history_visibility_admits_prejoin, normalize_content_scheme,
+    parse_seed_members, plaintext_services_for_policy, policy_combination_hint,
 };
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api::is_auth_expired_error;
@@ -85,9 +84,9 @@ pub(super) fn RealmsSection(
     let content_scheme_value = realm_content_scheme();
     let encryption_is_e2ee =
         crate::security_state::encryption_profile_is_encrypted(&encryption_profile_value);
-    let history_requires_history_capable =
+    let history_requires_exporter_aead =
         encryption_is_e2ee && history_visibility_admits_prejoin(&history_visibility_value);
-    let content_scheme_constraint_hint = history_content_scheme_constraint_hint(
+    let content_scheme_warning = content_scheme_constraint_hint(
         encryption_is_e2ee,
         &history_visibility_value,
         &content_scheme_value,
@@ -113,7 +112,7 @@ pub(super) fn RealmsSection(
     );
     let current_policy_error = matches!(current_visibility_hint, Some(("error", _, _)));
     let basics_ready = !title_value.trim().is_empty();
-    let boundary_ready = !current_policy_error && content_scheme_constraint_hint.is_none();
+    let boundary_ready = !current_policy_error && content_scheme_warning.is_none();
     let create_blocker = if !has_session {
         Some("Sign in before creating a Realm.")
     } else if !secure_store_ready {
@@ -402,15 +401,15 @@ pub(super) fn RealmsSection(
                                     }
                                 }
                             }
-                            // encryption-and-audit.md §2.10 — content-scheme
+                            // encryption-and-audit.md §2.10 — `content_scheme`
                             // capability axis. Only meaningful for E2EE realms;
                             // orthogonal to History visibility (the runtime
-                            // delivery toggle). Default "History-capable".
+                            // delivery toggle). Default exporter-AEAD.
                             if encryption_is_e2ee {
                                 div { class: "metric directory-axis-card",
-                                    strong { "History sharing" }
+                                    strong { "Content scheme" }
                                     div { class: "workflow-form setup-field",
-                                        label { "Can new members ever be granted pre-join history?" }
+                                        label { "Which MLS content scheme should this Realm use?" }
                                         Select::<String> {
                                             "data-testid": "realm-content-scheme-input",
                                             value: Some(realm_content_scheme_selected.into()),
@@ -432,7 +431,7 @@ pub(super) fn RealmsSection(
                                                     index: i,
                                                     value: option_value.to_string(),
                                                     text_value: "{label}",
-                                                    disabled: history_requires_history_capable
+                                                    disabled: history_requires_exporter_aead
                                                         && *option_value == "mls-rfc9420",
                                                     "{label}"
                                                 }
@@ -441,18 +440,18 @@ pub(super) fn RealmsSection(
                                         div { class: "muted",
                                             "{CONTENT_SCHEME_OPTIONS.iter().find(|(value, _, _)| *value == content_scheme_value).map(|(_, _, hint)| *hint).unwrap_or(\"Content scheme is not set.\")}"
                                         }
-                                        if history_requires_history_capable {
+                                        if history_requires_exporter_aead {
                                             div { class: "muted",
-                                                "Pre-join history uses the history-capable MLS scheme."
+                                                "Pre-join history uses content_scheme=mls-exporter-aead-v1."
                                             }
                                         }
-                                        if let Some(hint) = content_scheme_constraint_hint {
+                                        if let Some(hint) = content_scheme_warning {
                                             div { class: "inline-warn",
                                                 span { class: "body", "{hint}" }
                                             }
                                         }
                                         div { class: "muted",
-                                            "Capability only — actual delivery still follows History visibility. Locked after creation."
+                                            "Capability only — actual delivery still follows History visibility."
                                         }
                                     }
                                 }
@@ -679,7 +678,7 @@ pub(super) fn RealmsSection(
                                     move |_| {
                                         let history_visibility = realm_policy_history_visibility();
                                         let encryption_profile = realm_encryption_profile();
-                                        let content_scheme = normalize_history_content_scheme(
+                                        let content_scheme = normalize_content_scheme(
                                             crate::security_state::encryption_profile_is_encrypted(
                                                 &encryption_profile,
                                             ),

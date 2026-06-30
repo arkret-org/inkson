@@ -73,7 +73,7 @@ pub(super) fn history_visibility_admits_prejoin(history_visibility: &str) -> boo
     )
 }
 
-pub(super) fn normalize_history_content_scheme(
+pub(super) fn normalize_content_scheme(
     encryption_is_e2ee: bool,
     history_visibility: &str,
     content_scheme: &str,
@@ -85,7 +85,7 @@ pub(super) fn normalize_history_content_scheme(
     }
 }
 
-pub(super) fn history_content_scheme_constraint_hint(
+pub(super) fn content_scheme_constraint_hint(
     encryption_is_e2ee: bool,
     history_visibility: &str,
     content_scheme: &str,
@@ -94,7 +94,7 @@ pub(super) fn history_content_scheme_constraint_hint(
         && history_visibility_admits_prejoin(history_visibility)
         && content_scheme.trim() == "mls-rfc9420"
     {
-        Some("Pre-join history requires the history-capable MLS scheme.")
+        Some("Pre-join history requires content_scheme=mls-exporter-aead-v1.")
     } else {
         None
     }
@@ -116,26 +116,23 @@ mod tests {
     #[test]
     fn e2ee_prejoin_history_normalizes_to_exporter_scheme() {
         assert_eq!(
-            normalize_history_content_scheme(true, "shared", "mls-rfc9420"),
+            normalize_content_scheme(true, "shared", "mls-rfc9420"),
             "mls-exporter-aead-v1"
         );
         assert_eq!(
-            normalize_history_content_scheme(true, "joined", "mls-rfc9420"),
+            normalize_content_scheme(true, "joined", "mls-rfc9420"),
             "mls-rfc9420"
         );
         assert_eq!(
-            normalize_history_content_scheme(false, "shared", "mls-rfc9420"),
+            normalize_content_scheme(false, "shared", "mls-rfc9420"),
             "mls-rfc9420"
         );
     }
 
     #[test]
     fn invalid_history_content_scheme_hint_is_specific() {
-        assert!(history_content_scheme_constraint_hint(true, "shared", "mls-rfc9420").is_some());
-        assert!(
-            history_content_scheme_constraint_hint(true, "shared", "mls-exporter-aead-v1")
-                .is_none()
-        );
-        assert!(history_content_scheme_constraint_hint(true, "joined", "mls-rfc9420").is_none());
+        assert!(content_scheme_constraint_hint(true, "shared", "mls-rfc9420").is_some());
+        assert!(content_scheme_constraint_hint(true, "shared", "mls-exporter-aead-v1").is_none());
+        assert!(content_scheme_constraint_hint(true, "joined", "mls-rfc9420").is_none());
     }
 }
