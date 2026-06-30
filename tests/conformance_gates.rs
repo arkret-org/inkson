@@ -55,7 +55,7 @@ fn event_schema_validator() -> &'static jsonschema::Validator {
         let event_schema_id = event_schema
             .get("$id")
             .and_then(Value::as_str)
-            .unwrap_or("https://cokret.io/artifacts/schemas/event-envelope.schema.json")
+            .unwrap_or("https://cokret.org/v1/schemas/event-envelope.schema.json")
             .to_owned();
 
         let mut registry = Registry::new();
