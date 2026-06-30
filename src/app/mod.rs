@@ -956,9 +956,12 @@ pub fn RouterView() -> Element {
             };
             spawn(async move {
                 match crate::views::helpers::with_authed_api(&base, session, |api| async move {
-                    let policy = api.get_recovery_policy().await?;
-                    let backups = api.list_key_backups().await?;
-                    Ok((policy, backups))
+                    // The recovery-state reducer reads both payloads leniently via
+                    // `Value` accessors; serialize the typed SDK outcomes back to
+                    // their wire JSON.
+                    let policy = serde_json::to_value(&api.get_recovery_policy().await?)?;
+                    let backups = serde_json::to_value(&api.list_key_backups().await?)?;
+                    Ok::<(serde_json::Value, serde_json::Value), anyhow::Error>((policy, backups))
                 })
                 .await
                 {

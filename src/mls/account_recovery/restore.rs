@@ -101,10 +101,11 @@ pub struct RestoreReport {
 /// Recovery Key is required — this is the SAFE half that can run at silent boot
 /// to *detect* whether account-secret recovery is available.
 pub async fn fetch_mls_account_secret_backup(api: &crate::api::CokretApi) -> Result<Option<Value>> {
-    let payload = api
-        .list_key_backups()
-        .await
-        .map_err(|err| anyhow!("list key backups: {err}"))?;
+    let payload = serde_json::to_value(
+        &api.list_key_backups()
+            .await
+            .map_err(|err| anyhow!("list key backups: {err}"))?,
+    )?;
     Ok(select_preferred_mls_account_secret_backup(&payload))
 }
 
@@ -116,9 +117,11 @@ pub async fn fetch_mls_account_secret_backup(api: &crate::api::CokretApi) -> Res
 /// [`restore_mls_history_with_passphrase_from_payload`]. That keeps the local
 /// state write guard out of the network await.
 pub async fn fetch_mls_restore_payload(api: &crate::api::CokretApi) -> Result<Value> {
-    api.list_key_backups()
+    let backups = api
+        .list_key_backups()
         .await
-        .map_err(|err| anyhow!("list key backups: {err}"))
+        .map_err(|err| anyhow!("list key backups: {err}"))?;
+    Ok(serde_json::to_value(&backups)?)
 }
 
 pub async fn fetch_mls_restore_payload_with_unlock_proof(

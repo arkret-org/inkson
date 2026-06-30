@@ -727,7 +727,16 @@ async fn run_iteration(
                 match invite_api.invites().await {
                     Ok(response) => {
                         *deltas_since_invites = 0;
-                        Some(response.invites)
+                        // The notification pipeline folds invites through lenient
+                        // `Value` accessors; project the typed `Invite` rows back
+                        // to their wire JSON.
+                        Some(
+                            response
+                                .invites
+                                .into_iter()
+                                .filter_map(|invite| serde_json::to_value(invite).ok())
+                                .collect::<Vec<Value>>(),
+                        )
                     }
                     Err(error) if is_auth_expired_error(&error) => {
                         return IterationOutcome::AuthExpired;

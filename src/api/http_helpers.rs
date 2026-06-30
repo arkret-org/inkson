@@ -473,7 +473,7 @@ pub(crate) fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
     bytes
 }
 
-pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeView> {
+pub fn parse_sync_describe(value: Value) -> anyhow::Result<cokret_sdk::models::SyncDescription> {
     Ok(serde_json::from_value(value)?)
 }
 

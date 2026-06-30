@@ -220,6 +220,7 @@ pub fn SettingsDevicesPanel(
                     .await
                     {
                         Ok(value) => {
+                            let value = serde_json::to_value(&value).unwrap_or_default();
                             let (cur, rows) = parse_devices(&value);
                             if let Some(c) = cur {
                                 current_device.set(c);
@@ -259,6 +260,7 @@ pub fn SettingsDevicesPanel(
                 .await
                 {
                     Ok(value) => {
+                        let value = serde_json::to_value(&value).unwrap_or_default();
                         let (cur, rows) = parse_devices(&value);
                         if let Some(c) = cur {
                             current_device.set(c);
@@ -752,6 +754,8 @@ fn render_revoke_modal(
                                             )
                                             .await
                                             {
+                                                let value =
+                                                    serde_json::to_value(&value).unwrap_or_default();
                                                 let (_cur, rows) = parse_devices(&value);
                                                 let count = rows.len();
                                                 devices.set(rows);
@@ -866,6 +870,8 @@ fn render_rename_modal(
                                         )
                                         .await
                                         {
+                                            let value =
+                                                serde_json::to_value(&value).unwrap_or_default();
                                             let (cur, rows) = parse_devices(&value);
                                             if let Some(c) = cur {
                                                 current_device.set(c);
@@ -1071,7 +1077,7 @@ fn render_pair_strand(
                                                             );
                                                             pending_pair_requests.set(rows);
                                                             pending_pair_status.set(format!(
-                                                                "To-device pairing request approved. Server response: {value}"
+                                                                "To-device pairing request approved. Server response: {value:?}"
                                                             ));
                                                         }
                                                         Err(err) => {
@@ -1172,7 +1178,8 @@ fn render_pair_strand(
                                     requesting_device_id_for_delivery.clone();
                                 let actor = actor_for_delivery.clone();
                                 async move {
-                                    let devices_value = api.list_devices().await?;
+                                    let devices_value =
+                                        serde_json::to_value(&api.list_devices().await?)?;
                                     let (_, rows) = parse_devices(&devices_value);
                                     let expires_at = crate::clock::rfc3339_secs_in(10 * 60);
                                     let content = build_pairing_verification_content(
@@ -1344,7 +1351,7 @@ fn render_pair_strand(
                             {
                                 Ok(value) => {
                                     accept_status.set(format!(
-                                        "Sibling device paired. Server response: {value}"
+                                        "Sibling device paired. Server response: {value:?}"
                                     ));
                                 }
                                 Err(err) => {

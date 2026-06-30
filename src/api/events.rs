@@ -268,15 +268,11 @@ impl CokretApi {
         realm_id: &str,
     ) -> anyhow::Result<cokret_sdk::RealmSealFrontierView> {
         let realm_id_query = query_component(realm_id);
-        let body: Value = self
+        let state: cokret_sdk::EventsFrontierAccountClientState = self
             .get_json(&format!(
                 "_cokret/self/events/frontier?realm_id={realm_id_query}"
             ))
             .await?;
-        let state: cokret_sdk::EventsFrontierAccountClientState = serde_json::from_value(body)
-            .map_err(|err| {
-                anyhow::anyhow!("events/frontier account_client decode failed: {err}")
-            })?;
         let cokret_sdk::EventsFrontierView::RealmSealView(view) = state.frontier else {
             anyhow::bail!(
                 "events/frontier for realm_id={realm_id} did not return a Realm Seal view — \
@@ -300,15 +296,11 @@ impl CokretApi {
         actor_id: &str,
     ) -> anyhow::Result<cokret_sdk::ActorFrontierView> {
         let actor_id_query = query_component(actor_id);
-        let body: Value = self
+        let state: cokret_sdk::EventsFrontierAccountClientState = self
             .get_json(&format!(
                 "_cokret/self/events/frontier?actor_id={actor_id_query}"
             ))
             .await?;
-        let state: cokret_sdk::EventsFrontierAccountClientState = serde_json::from_value(body)
-            .map_err(|err| {
-                anyhow::anyhow!("events/frontier account_client decode failed: {err}")
-            })?;
         let cokret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
             anyhow::bail!(
                 "events/frontier for actor_id={actor_id} did not return an actor frontier"
@@ -560,7 +552,7 @@ impl CokretApi {
     pub async fn submit_ephemeral_envelope(
         &self,
         envelope: &cokret_sdk::EphemeralEnvelope,
-    ) -> anyhow::Result<EphemeralSubmitResult> {
+    ) -> anyhow::Result<cokret_sdk::EphemeralSubmitOutcome> {
         // Defensive re-validation. The constructor already enforced this,
         // but a caller could mutate a raw envelope in place between build
         // and submit. Fail fast with the canonical error code rather than

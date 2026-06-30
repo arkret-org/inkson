@@ -392,20 +392,9 @@ pub use cokret_sdk::models::{
     IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
-/// `ck.self.account.query.describe` response (lenient local read of the spec
-/// `ServiceDescribe` body; `frontier` is an authenticated extension field
-/// whose shape is deployment-defined, hence `Value`). Follows the local
-/// `*Outcome` DTO suffix convention (YOU-04-001).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SyncDescribeView {
-    pub service_did: String,
-    #[serde(default)]
-    pub supported_sync_profiles: Vec<String>,
-    #[serde(default)]
-    pub limits: Value,
-    #[serde(default)]
-    pub frontier: Value,
-}
+// `ck.self.account.query.describe` decodes into the SDK's authoritative
+// `cokret_sdk::models::SyncDescription`; the former yougen-local
+// `SyncDescribeView` mirror was removed in favor of the wire type.
 
 /// Directory `describe` response. The SDK's `DirectoryDescribeOutcome` is a
 /// transparent wrapper over this exact wire body, so yougen consumes the SDK
@@ -833,12 +822,11 @@ pub use cokret_sdk::models::AuthzCheckOutcome;
 /// local mirror.
 pub use cokret_sdk::models::GrantList;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InvitesView {
-    #[serde(default)]
-    pub invites: Vec<Value>,
-    pub next_cursor: Option<String>,
-}
+/// `ck.self.authz.invites` decodes into the SDK's authoritative
+/// `AuthzInviteList` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
+/// former yougen-local `InvitesView` mirror was removed in favor of the wire
+/// type.
+pub use cokret_sdk::models::AuthzInviteList;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PushRegisterView {
@@ -941,6 +929,38 @@ impl ResolveHandleView {
                 .and_then(|claim| claim.get("member_delivery_binding"))
                 .cloned()
         })
+    }
+}
+
+impl From<cokret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandleView {
+    fn from(outcome: cokret_sdk::models::DirectoryHandleResolutionOutcome) -> Self {
+        // The typed `handle_claim` / `member_delivery_binding` are folded back
+        // into `Value` so the existing lenient UI accessors keep working. The
+        // server-side `DirectoryHandleResolutionOutcome` has no `did_document`
+        // field (this resolve endpoint never emits one), so it is always `None`
+        // here — behavior-equivalent to the prior wire decode.
+        Self {
+            did: outcome.did.as_str().to_owned(),
+            handle: outcome.handle,
+            did_document: None,
+            verified: outcome.verified,
+            claims: outcome.claims,
+            audience: outcome.audience,
+            member_delivery_binding: outcome
+                .member_delivery_binding
+                .and_then(|binding| serde_json::to_value(binding).ok()),
+            handle_claim: outcome
+                .handle_claim
+                .and_then(|claim| serde_json::to_value(claim).ok()),
+            as_of: outcome
+                .as_of
+                .map(|as_of| as_of.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+            source_refs: outcome.source_refs,
+            policy_revision: outcome.policy_revision,
+            stale: outcome.stale,
+            divergent: outcome.divergent,
+            via_services: outcome.via_services,
+        }
     }
 }
 
@@ -1105,19 +1125,10 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
 }
 
 /// Round R2/R3 (T02) — server response shape for the
-/// `POST /_cokret/self/ephemeral` channel. The endpoint is fire-and-forget — the
-/// server's only obligation is to return `accepted: true` (signal entered
-/// the broadcast fanout) or surface a structured rejection. No event id is
-/// minted because ephemeral signals are never durable.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct EphemeralSubmitResult {
-    #[serde(default)]
-    pub accepted: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dispatched_to: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_received_at: Option<String>,
-}
+// The `POST /_cokret/self/ephemeral` channel is fire-and-forget; its response
+// decodes into the SDK's authoritative `cokret_sdk::EphemeralSubmitOutcome`
+// (`accepted`, `dispatched_to`, `server_received_at`). The former yougen-local
+// `EphemeralSubmitResult` mirror was removed in favor of the wire type.
 
 // ── Media ────────────────────────────────────────────────────────
 

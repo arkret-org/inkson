@@ -194,7 +194,9 @@ fn count_matching_did_recovery_first_backups(
 pub async fn fetch_active_recovery_policy(
     api: &CokretApi,
 ) -> anyhow::Result<Option<ActiveRecoveryPolicy>> {
-    let response = api.get_recovery_policy().await?;
+    // `parse_active_recovery_policy` reads `active_policy.*` leniently via
+    // `Value` accessors; serialize the typed outcome back to its wire JSON.
+    let response = serde_json::to_value(&api.get_recovery_policy().await?)?;
     Ok(parse_active_recovery_policy(&response))
 }
 
@@ -367,9 +369,12 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     recovery_key: &str,
 ) -> anyhow::Result<String> {
     let policy = ensure_active_recovery_policy(api, principal_id, device_id).await?;
-    let list = api
-        .list_key_backups_by_series(None, Some("did_recovery"))
-        .await?;
+    // `matching_did_recovery_first_backup_id` reads `backups[]` leniently via
+    // `Value` accessors; serialize the typed list back to its wire JSON.
+    let list = serde_json::to_value(
+        &api.list_key_backups_by_series(None, Some("did_recovery"))
+            .await?,
+    )?;
     if let Some(backup_id) = matching_did_recovery_first_backup_id(&list, &policy) {
         return Ok(backup_id);
     }
@@ -498,7 +503,11 @@ pub async fn open_recovery_session(
         ssk_generation,
         expected_recovery_policy_ref,
     )?;
-    api.create_recovery_session(&body).await
+    // Callers read `recovery_session_id` from the session via lenient `Value`
+    // accessors; serialize the typed session state back to its wire JSON.
+    Ok(serde_json::to_value(
+        &api.create_recovery_session(&body).await?,
+    )?)
 }
 
 /// 6.3 — sign a `principal_signing` proof for `session` (with the principal
@@ -519,7 +528,9 @@ pub async fn submit_principal_signing_proof(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("session missing recovery_session_id"))?;
     let body = RecoverySessionProofSubmitRequestBody { proof };
-    api.submit_recovery_proof(session_id, &body).await
+    Ok(serde_json::to_value(
+        &api.submit_recovery_proof(session_id, &body).await?,
+    )?)
 }
 
 /// 6.3 — complete a verified session by REFERENCING the durable control events
@@ -537,8 +548,10 @@ pub async fn complete_recovery_session(
         device_list_update_event_id: EventId::new(device_list_update_event_id.trim().to_owned())?,
         idempotency_key: None,
     };
-    api.complete_recovery_session(recovery_session_id, &body)
-        .await
+    Ok(serde_json::to_value(
+        &api.complete_recovery_session(recovery_session_id, &body)
+            .await?,
+    )?)
 }
 
 /// 6.3 — `principal_signing` recovery driver: open session → sign + submit proof

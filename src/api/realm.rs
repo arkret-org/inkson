@@ -964,7 +964,8 @@ impl CokretApi {
         // and alpha-digit are all pchar), so no percent-encoding needed.
         let realm_id = trim_realm_id(realm_id);
         let path = format!("_cokret/self/realms/{realm_id}/spaces");
-        self.get_json(&path).await
+        let list: cokret_sdk::ProjectionSpaceList = self.get_json(&path).await?;
+        Ok(list.into())
     }
 
     pub async fn list_strand_projections(
@@ -973,14 +974,15 @@ impl CokretApi {
     ) -> anyhow::Result<LifecycleProjectionView<StrandProjectionView>> {
         let realm_id = trim_realm_id(realm_id);
         let path = format!("_cokret/self/realms/{realm_id}/strands");
-        self.get_json(&path).await
+        let list: cokret_sdk::ProjectionStrandList = self.get_json(&path).await?;
+        Ok(list.into())
     }
 
     pub async fn document_projection(
         &self,
         realm_id: &str,
         morph_id: &str,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<cokret_sdk::DocumentMorphProjectionOutcome> {
         let realm_id = trim_realm_id(realm_id);
         self.get_json(&format!("_cokret/self/realms/{realm_id}/morphs/{morph_id}"))
             .await

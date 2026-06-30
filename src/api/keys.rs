@@ -264,7 +264,7 @@ impl CokretApi {
         recipient_hpke_public_key: &str,
         from_epoch: u64,
         to_epoch: u64,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<cokret_sdk::EphemeralSubmitOutcome> {
         let payload = cokret_sdk::RealmKeyRequestPayload {
             key_scope: cokret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "realm_id": crate::operation::trim_realm_id(realm_id) }),
@@ -369,7 +369,7 @@ impl CokretApi {
         &self,
         backup_id: &str,
         payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<cokret_sdk::KeysBackupsPutOutcome> {
         let (record, _) = self
             .prepare_key_backup_put_payload(backup_id, payload)
             .await?;
@@ -382,7 +382,7 @@ impl CokretApi {
         &self,
         backup_id: &str,
         payload: serde_json::Value,
-    ) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
+    ) -> anyhow::Result<(cokret_sdk::KeysBackupsPutOutcome, serde_json::Value)> {
         let (record, sent_body) = self
             .prepare_key_backup_put_payload(backup_id, payload)
             .await?;
@@ -432,6 +432,10 @@ impl CokretApi {
             Ok(viewer) => viewer,
             Err(_) => return Ok(()),
         };
+        // `key_backup_authorized_event_ref_for_device` reads the viewer's
+        // `devices[]` leniently via `Value` accessors; serialize the typed
+        // `AccountView` back to its wire JSON so the helper sees the same shape.
+        let viewer = serde_json::to_value(&viewer)?;
         let Some(event_id) = key_backup_authorized_event_ref_for_device(&viewer, &device_id) else {
             return Ok(());
         };
@@ -446,7 +450,7 @@ impl CokretApi {
         Ok(())
     }
 
-    pub async fn list_key_backups(&self) -> anyhow::Result<serde_json::Value> {
+    pub async fn list_key_backups(&self) -> anyhow::Result<cokret_sdk::KeysBackupsList> {
         self.get_json("_cokret/self/keys/backups").await
     }
 
@@ -454,15 +458,24 @@ impl CokretApi {
 
     /// 6.1 — read the principal's currently accepted recovery policy.
     /// Returns `{ "active_policy": <policy summary | null> }`.
-    pub async fn get_recovery_policy(&self) -> anyhow::Result<serde_json::Value> {
+    pub async fn get_recovery_policy(
+        &self,
+    ) -> anyhow::Result<cokret_sdk::RecoveryPolicyActiveOutcome> {
         self.get_json("_cokret/root/identity/recovery-policy").await
     }
 
     /// Publish or rotate the principal's signed recovery policy.
+    ///
+    /// `body` stays a raw `Value`: it is a fully-signed recovery policy
+    /// envelope built by `recovery_strand::build_signed_genesis_recovery_policy_*`,
+    /// and round-tripping it through `cokret_sdk::RecoveryPolicy` (which carries
+    /// a flattened `extra` map and an `auth_data` detached-JWS) risks
+    /// re-canonicalizing the signed bytes. The response is the typed
+    /// publish outcome.
     pub async fn put_recovery_policy(
         &self,
         body: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<cokret_sdk::RecoveryPolicyPublishOutcome> {
         self.post_json("_cokret/root/identity/recovery-policy", &body)
             .await
     }
@@ -474,7 +487,7 @@ impl CokretApi {
     pub async fn create_recovery_session(
         &self,
         body: &cokret_sdk::models::RecoverySessionCreateRequestBody,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<cokret_sdk::RecoverySessionState> {
         self.post_json("_cokret/root/identity/recovery-sessions", body)
             .await
     }
@@ -486,7 +499,7 @@ impl CokretApi {
         &self,
         recovery_session_id: &str,
         body: &cokret_sdk::models::RecoverySessionProofSubmitRequestBody,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<cokret_sdk::RecoverySessionProofSubmitOutcome> {
         self.post_json(
             &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
             body,
@@ -500,7 +513,7 @@ impl CokretApi {
         &self,
         recovery_session_id: &str,
         body: &cokret_sdk::models::RecoverySessionCompleteRequestBody,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<cokret_sdk::RecoverySessionCompleteOutcome> {
         self.post_json(
             &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/complete"),
             body,
@@ -525,7 +538,7 @@ impl CokretApi {
         &self,
         series_id: Option<&str>,
         backup_class: Option<&str>,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<cokret_sdk::KeysBackupsList> {
         let mut query: Vec<(String, String)> = Vec::new();
         if let Some(series_id) = series_id
             && !series_id.trim().is_empty()
@@ -553,7 +566,7 @@ impl CokretApi {
         &self,
         backup_id: &str,
         unlock_proof: &serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<cokret_sdk::KeyBackup> {
         let proof: cokret_sdk::KeyBackupUnlockProof = serde_json::from_value(unlock_proof.clone())?;
         let body = cokret_sdk::KeysBackupsUnlockRequestBody { proof };
         self.post_json(
@@ -567,7 +580,7 @@ impl CokretApi {
         &self,
         backup_id: &str,
         actor_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<cokret_sdk::KeysBackupsDeleteOutcome> {
         let proof = crate::key_backup::key_backup_delete_ownership_proof(actor_id, backup_id);
         let body = cokret_sdk::KeysBackupsDeleteRequestBody {
             proof: cokret_sdk::KeyBackupDeleteProof::Development(
@@ -630,7 +643,7 @@ impl CokretApi {
     /// shape with `devices[]`; the settings UI derives "current device" from
     /// the first device when the viewer projection has no explicit current
     /// marker.
-    pub async fn list_devices(&self) -> anyhow::Result<Value> {
+    pub async fn list_devices(&self) -> anyhow::Result<cokret_sdk::AccountView> {
         self.get_json("_cokret/self/account/viewer").await
     }
 
@@ -638,7 +651,7 @@ impl CokretApi {
     pub async fn account_device_pair(
         &self,
         body: &cokret_sdk::AccountDevicePairRequestBody,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<cokret_sdk::AccountDevicePairOutcome> {
         self.post_json("_cokret/gate/account/device-pair", body)
             .await
     }

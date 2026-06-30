@@ -3,6 +3,18 @@ use std::future::Future;
 use super::*;
 use crate::api::is_terminal_session_grant_error;
 
+/// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
+/// `Vec<serde_json::Value>` shape the bootstrap invite-notification pipeline
+/// folds through lenient JSON accessors.
+fn invite_rows_to_values(
+    invites: Vec<cokret_sdk::models::Invite>,
+) -> Vec<serde_json::Value> {
+    invites
+        .into_iter()
+        .filter_map(|invite| serde_json::to_value(invite).ok())
+        .collect()
+}
+
 #[cfg(target_arch = "wasm32")]
 const BOOTSTRAP_NETWORK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
@@ -402,7 +414,9 @@ async fn probe_device_authorization_with_auto_enroll(
     principal_api: &CokretApi,
     state_store: Signal<crate::local_state::LocalStateStore>,
 ) -> anyhow::Result<(bool, bool)> {
-    let viewer = principal_api.list_devices().await?;
+    // The account-viewer helpers read `devices[]` leniently via `Value`
+    // accessors; serialize the typed `AccountView` back to its wire JSON.
+    let viewer = serde_json::to_value(&principal_api.list_devices().await?)?;
     let mut has_other = account_has_other_active_devices_from_account_viewer(&viewer, device);
     let mut needs_authorization =
         device_authorization_required_from_account_viewer(&viewer, device);
@@ -411,6 +425,7 @@ async fn probe_device_authorization_with_auto_enroll(
         match enroll_current_session_device(base, actor, device, principal_api, state_store).await {
             Ok(()) => match principal_api.list_devices().await {
                 Ok(viewer) => {
+                    let viewer = serde_json::to_value(&viewer)?;
                     has_other =
                         account_has_other_active_devices_from_account_viewer(&viewer, device);
                     needs_authorization =
@@ -969,7 +984,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         let invite_notifications =
                             match bootstrap_request("invite notifications", authed.invites()).await
                             {
-                                Ok(response) => Some(response.invites),
+                                Ok(response) => Some(invite_rows_to_values(response.invites)),
                                 Err(error) if is_auth_expired_error(&error) => {
                                     match bootstrap_session_refresh().await {
                                         crate::session::CurrentSessionRefresh::Credential(
@@ -995,7 +1010,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             )
                                             .await
                                             .ok()
-                                            .map(|response| response.invites)
+                                            .map(|response| invite_rows_to_values(response.invites))
                                         }
                                         crate::session::CurrentSessionRefresh::SignInRequired {
                                             ..

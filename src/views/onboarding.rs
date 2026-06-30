@@ -597,11 +597,15 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
             let api_token = token();
             spawn(async move {
                 match with_authed_api(&base, api_token, |api| async move {
-                    let policy = api.get_recovery_policy().await?;
-                    let backups = api
-                        .list_key_backups_by_series(None, Some("did_recovery"))
-                        .await?;
-                    Ok::<_, anyhow::Error>((policy, backups))
+                    // The first-backup-gate reducer reads both payloads leniently
+                    // via `Value` accessors; serialize the typed SDK outcomes back
+                    // to their wire JSON.
+                    let policy = serde_json::to_value(&api.get_recovery_policy().await?)?;
+                    let backups = serde_json::to_value(
+                        &api.list_key_backups_by_series(None, Some("did_recovery"))
+                            .await?,
+                    )?;
+                    Ok::<(serde_json::Value, serde_json::Value), anyhow::Error>((policy, backups))
                 })
                 .await
                 {

@@ -22,7 +22,7 @@ impl CokretApi {
         blob_ref: &str,
         realm_id: Option<&str>,
         purpose: Option<&str>,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<cokret_sdk::BlobPresignOutcome> {
         let realm = realm_id
             .map(str::trim)
             .filter(|value| !value.is_empty())

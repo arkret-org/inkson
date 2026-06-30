@@ -649,7 +649,7 @@ impl CokretApi {
         Ok((account.did, realm_id.to_string()))
     }
 
-    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeView> {
+    pub async fn sync_describe(&self) -> anyhow::Result<cokret_sdk::models::SyncDescription> {
         self.get_json("_cokret/self/account/describe").await
     }
 
@@ -762,7 +762,7 @@ impl CokretApi {
         self.submit_sdk_event(&event).await
     }
 
-    pub async fn invites(&self) -> anyhow::Result<InvitesView> {
+    pub async fn invites(&self) -> anyhow::Result<cokret_sdk::AuthzInviteList> {
         self.get_json("_cokret/self/authz/invites").await
     }
 }

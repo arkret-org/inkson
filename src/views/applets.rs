@@ -645,7 +645,12 @@ pub fn AppletsPanel(
                                             })
                                             .await;
                                             match result {
-                                                Ok(plan) => match parse_install_plan(&plan) {
+                                                // `parse_install_plan` reads the plan via lenient
+                                                // `Value` accessors; serialize the typed
+                                                // `AppletInstallPlan` back to its wire JSON.
+                                                Ok(plan) => match parse_install_plan(
+                                                    &serde_json::to_value(&plan).unwrap_or_default(),
+                                                ) {
                                                     Ok((digest, scopes)) => {
                                                         let scope_count = scopes.len();
                                                         install_plan_digest.set(digest.clone());

@@ -19,14 +19,24 @@ use crate::local_state::LocalStateStore;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
+/// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
+/// `Vec<Value>` shape the local notification pipeline folds through lenient
+/// JSON accessors.
+fn invites_to_values(invites: Vec<cokret_sdk::models::Invite>) -> Vec<Value> {
+    invites
+        .into_iter()
+        .filter_map(|invite| serde_json::to_value(invite).ok())
+        .collect()
+}
+
 pub(crate) async fn optional_invite_notifications(api: &CokretApi) -> anyhow::Result<Vec<Value>> {
     match api.invites().await {
-        Ok(response) => Ok(response.invites),
+        Ok(response) => Ok(invites_to_values(response.invites)),
         Err(error) if is_auth_expired_error(&error) => {
             match crate::session::refresh_current_session().await {
                 crate::session::CurrentSessionRefresh::Credential(refreshed) => {
                     let refreshed_api = api.clone().with_bearer(refreshed);
-                    Ok(refreshed_api.invites().await?.invites)
+                    Ok(invites_to_values(refreshed_api.invites().await?.invites))
                 }
                 crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
                     Err(anyhow::anyhow!(

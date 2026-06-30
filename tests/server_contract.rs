@@ -366,9 +366,10 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(grants.grants.len(), 1);
 
-    let invites: yougen::models::InvitesView = serde_json::from_value(json!({
+    let invites: yougen::models::AuthzInviteList = serde_json::from_value(json!({
         "invites": [],
-        "next_cursor": null
+        "next_cursor": null,
+        "has_more": false
     }))
     .unwrap();
     assert!(invites.invites.is_empty());

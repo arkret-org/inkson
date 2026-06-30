@@ -265,6 +265,104 @@ impl From<cokret_sdk::CollectionProjectionView> for CollectionProjectionView {
     }
 }
 
+/// Serialize a small `serde`-snake_case enum (e.g. the SDK projection state
+/// enums) into its canonical wire string. Falls back to an empty string only
+/// if serialization unexpectedly fails (never for the unit enums here).
+fn projection_state_wire_string<T: Serialize>(state: &T) -> String {
+    serde_json::to_value(state)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_default()
+}
+
+impl From<cokret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
+    fn from(row: cokret_sdk::ProjectionSpaceRow) -> Self {
+        Self {
+            space_id: row.space_id.as_str().to_owned(),
+            realm_id: row.realm_id.as_str().to_owned(),
+            kind: row.kind,
+            title: row.title,
+            state: projection_state_wire_string(&row.state),
+            rank: row.rank,
+            parent_space_id: row
+                .parent_space_id
+                .map(|space_id| space_id.as_str().to_owned()),
+        }
+    }
+}
+
+impl From<cokret_sdk::ProjectionSpaceList> for LifecycleProjectionView<SpaceContainerProjectionView> {
+    fn from(list: cokret_sdk::ProjectionSpaceList) -> Self {
+        Self {
+            realm_id: list.realm_id.as_str().to_owned(),
+            total: list.total as u32,
+            items: list.spaces.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<cokret_sdk::ProjectionAssignedToRelation> for AssignedToRelationProjectionView {
+    fn from(relation: cokret_sdk::ProjectionAssignedToRelation) -> Self {
+        Self {
+            relation_id: relation.relation_id.as_str().to_owned(),
+            actor_id: relation.actor_id.as_str().to_owned(),
+        }
+    }
+}
+
+impl From<cokret_sdk::ProjectionStrandRow> for StrandProjectionView {
+    fn from(row: cokret_sdk::ProjectionStrandRow) -> Self {
+        Self {
+            strand_id: row.strand_id.as_str().to_owned(),
+            realm_id: row.realm_id.as_str().to_owned(),
+            title: row.title.unwrap_or_default(),
+            summary: row.summary,
+            // The SDK strand projection row carries no free-form `body` /
+            // `fields`; the server never emits them on this endpoint, so they
+            // default to empty (behavior-equivalent to the prior lenient
+            // decode against `ProjectionStrandList`).
+            body: None,
+            board_space_id: row
+                .board_space_id
+                .map(|space_id| space_id.as_str().to_owned()),
+            list_space_id: row
+                .list_space_id
+                .map(|space_id| space_id.as_str().to_owned()),
+            rank: row.rank,
+            assigned_actor_ids: row
+                .assigned_actor_ids
+                .into_iter()
+                .map(|actor_id| actor_id.as_str().to_owned())
+                .collect(),
+            assigned_to_relations: row
+                .assigned_to_relations
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            fields: serde_json::Map::new(),
+            state: projection_state_wire_string(&row.state),
+            created_by: row.created_by.map(|did| did.as_str().to_owned()),
+            created_at: row
+                .created_at
+                .map(|created_at| created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+            updated_by: row.updated_by.map(|did| did.as_str().to_owned()),
+            updated_at: row
+                .updated_at
+                .map(|updated_at| updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+        }
+    }
+}
+
+impl From<cokret_sdk::ProjectionStrandList> for LifecycleProjectionView<StrandProjectionView> {
+    fn from(list: cokret_sdk::ProjectionStrandList) -> Self {
+        Self {
+            realm_id: list.realm_id.as_str().to_owned(),
+            total: list.total as u32,
+            items: list.strands.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 /// Server-side Morph row from
 /// `GET /_cokret/self/realms/{realm_id}/morphs`. Same enum as Strand per spec §5.1.
 #[derive(Clone, Debug, Deserialize)]

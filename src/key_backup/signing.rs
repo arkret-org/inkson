@@ -289,8 +289,12 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
         requesting_device_id,
         None,
     )?;
-    api.get_key_backup_with_unlock_proof(&backup_id, &proof)
-        .await
+    let backup = api
+        .get_key_backup_with_unlock_proof(&backup_id, &proof)
+        .await?;
+    // Callers fold the full backup envelope through lenient `Value` accessors;
+    // serialize the typed `KeyBackup` back to its wire JSON.
+    Ok(serde_json::to_value(&backup)?)
 }
 
 #[cfg(test)]

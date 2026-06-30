@@ -26,7 +26,7 @@ impl CokretApi {
         signal_type: &str,
         seq: u64,
         data: Value,
-    ) -> anyhow::Result<EphemeralSubmitResult> {
+    ) -> anyhow::Result<cokret_sdk::EphemeralSubmitOutcome> {
         let mut envelope = build_call_signal_envelope_v1(
             realm_id,
             actor_id,

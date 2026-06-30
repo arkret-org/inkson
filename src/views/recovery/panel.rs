@@ -809,6 +809,8 @@ pub fn RecoveryPanel(
                                     .await
                                     {
                                         Ok(payload) => {
+                                            let payload =
+                                                serde_json::to_value(&payload).unwrap_or_default();
                                             let rows = parse_backup_list(&payload);
                                             let status = backup_inventory_status(&rows);
                                             backup_rows.set(rows);

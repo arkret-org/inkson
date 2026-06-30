@@ -444,8 +444,10 @@ impl CokretApi {
         context: ResolveHandleContext<'_>,
     ) -> anyhow::Result<ResolveHandleView> {
         let body = resolve_handle_request_body(handle, context)?;
-        self.post_json("_cokret/find/directory/resolve-handle", &body)
-            .await
+        let outcome: cokret_sdk::DirectoryHandleResolutionOutcome = self
+            .post_json("_cokret/find/directory/resolve-handle", &body)
+            .await?;
+        Ok(outcome.into())
     }
 
     pub async fn resolve_agent_selector_mention(

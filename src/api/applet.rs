@@ -25,7 +25,7 @@ impl CokretApi {
     pub async fn applet_install_preview(
         &self,
         body: &AppletInstallPreviewRequestBody,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<cokret_sdk::AppletInstallPlan> {
         self.post_json("_cokret/self/applets/install/preview", body)
             .await
     }
