@@ -194,31 +194,14 @@ pub fn LoginPanel(
         is_busy.set(false);
     });
 
-    // Account selection belongs to the Account Authority. Yougen chooses the
-    // Principal Server and either re-authenticates a returning account on its
-    // OWN stable device (`reuse = true`) or starts a fresh pending login that
-    // mints a brand-new device for a first/other account (`reuse = false`); the
+    // Account selection belongs to the Account Authority. Yougen chooses only
+    // the Principal Server; it must not turn the locally persisted account DID
+    // into a hidden account selection. Therefore an interactive OIDC sign-in
+    // omits `principal_id` and starts in the bootstrap device scope. The
     // callback adopts the DID returned by coauth as the authoritative account.
-    //
-    // Why the reuse branch exists: a `device_id` MUST be stable across
-    // re-authentication (crypto-media/device-lifecycle.md §4 — "每个设备 MUST 有
-    // 稳定 device_id"; §3.2 — a per-token/per-session device identity "会让该值在
-    // 每次 token 轮换时漂移，静默破坏所有按 (principal, device) 绑定的不变量").
-    // Minting a fresh device on every sign-in churns the protocol device_id, so
-    // each re-login publishes a new MLS KeyPackage under a new device and strands
-    // the to-device MLS Welcome addressed to the prior device — exactly the
-    // "Waiting for a Welcome message" dead-end for an invited member who simply
-    // signed in again.
-    let launch_sign_in = move |reuse: bool| {
+    let launch_sign_in = move || {
         let principal = base_url();
-        // Reuse: keep this account's persisted stable device_id + device key.
-        // Fresh: mint a brand-new device and forward no actor hint so the
-        // callback adopts whatever account the OIDC flow resolves to.
-        let (device, actor_hint) = if reuse {
-            (device_id(), account_did())
-        } else {
-            (crate::config::new_device_id(), String::new())
-        };
+        let device = crate::config::new_device_id();
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
         is_busy.set(true);
@@ -226,53 +209,34 @@ pub fn LoginPanel(
         spawn(async move {
             #[cfg(target_arch = "wasm32")]
             let _ = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await;
-            if reuse {
-                // Pin the active device-seed scope to the returning account so
-                // `ensure_device_key` (in `finish_oidc_callback`) loads that
-                // account's existing device key — the same `cnf.jkt` it has
-                // always used — instead of minting a bootstrap key. No
-                // `begin_pending_login`: the device already belongs to this
-                // account, so there is nothing to re-home, and
-                // `adopt_device_seed_scope_on_login` finds no bootstrap seed to
-                // overwrite the stable one with.
-                let scope = actor_hint.trim();
-                crate::secure_key_store::set_active_device_seed_scope(
-                    (!scope.is_empty()).then_some(scope),
-                );
-            } else {
-                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
-                    secure_store.as_ref(),
-                ) {
-                    tracing::warn!(%error, "reset device seed scope for sign-in failed");
-                }
-                // Drop the cached DPoP record so the device key is rebuilt from
-                // the freshly-scoped bootstrap seed.
-                reset_state_store.write().set_dpop_device_key(None);
-                // Pre-DID: record the freshly-minted device id as the pending
-                // login so the bootstrap wrap_seed / secrets land under the
-                // `pending.<device_id>` namespace until the principal DID
-                // resolves and `adopt_pending_login` re-homes them.
-                reset_state_store
-                    .write()
-                    .begin_pending_login(device.trim(), None);
-                // Persist the freshly-minted device_id under the bootstrap scope,
-                // paired with the bootstrap signing seed, so
-                // `adopt_device_seed_scope_on_login` re-homes BOTH under the
-                // account scope once the principal DID resolves. This is what
-                // keeps the device_id stable across later reloads (it is then
-                // recovered from the secure store, not re-minted from a phantom
-                // config blob) and matches the MLS KeyPackage published this
-                // sign-in.
-                if let Err(error) = crate::secure_key_store::store_device_id_scoped(
-                    secure_store.as_ref(),
-                    None,
-                    device.trim(),
-                ) {
-                    tracing::warn!(%error, "persist bootstrap device_id for sign-in failed");
-                }
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            if let Err(error) =
+                crate::secure_key_store::reset_device_seed_scope_for_signin(secure_store.as_ref())
+            {
+                tracing::warn!(%error, "reset device seed scope for sign-in failed");
             }
-            match start_oidc_strand(&principal, device.trim(), "", actor_hint.trim()).await {
+            // Drop the cached DPoP record so the device key is rebuilt from the
+            // freshly-scoped bootstrap seed.
+            reset_state_store.write().set_dpop_device_key(None);
+            // Pre-DID: record the freshly-minted device id as the pending login
+            // so the bootstrap wrap_seed / secrets land under the
+            // `pending.<device_id>` namespace until the principal DID resolves
+            // and `adopt_pending_login` re-homes them.
+            reset_state_store
+                .write()
+                .begin_pending_login(device.trim(), None);
+            // Persist the freshly-minted device_id under the bootstrap scope,
+            // paired with the bootstrap signing seed, so
+            // `adopt_device_seed_scope_on_login` re-homes BOTH under the account
+            // scope once the principal DID resolves.
+            if let Err(error) = crate::secure_key_store::store_device_id_scoped(
+                secure_store.as_ref(),
+                None,
+                device.trim(),
+            ) {
+                tracing::warn!(%error, "persist bootstrap device_id for sign-in failed");
+            }
+            match start_oidc_strand(&principal, device.trim(), "", "").await {
                 Ok(()) => {}
                 Err(error) => {
                     is_busy.set(false);
@@ -376,25 +340,15 @@ pub fn LoginPanel(
 
                 // A single sign-in action. Account selection is delegated to the
                 // Account Authority's OIDC screen — yougen only chooses the
-                // Principal Server. The device path is auto-selected to keep the
-                // protocol `device_id` stable: a returning account already
-                // persisted on this browser (known DID + valid stable
-                // `device_id`) re-authenticates on its OWN device (`reuse = true`)
-                // so the device_id never drifts; otherwise a fresh device is
-                // minted (`reuse = false`). See `returning_account_can_reuse_device`
-                // / crypto-media/device-lifecycle.md §4.
+                // Principal Server and does not assert a local account DID.
                 Button {
                     variant: ButtonVariant::Primary,
                     class: "auth-primary",
                     "data-testid": "start-server-login-button",
                     disabled: is_busy(),
                     onclick: move |_| {
-                        let reuse = returning_account_can_reuse_device(
-                            &account_did(),
-                            &device_id(),
-                        );
                         let mut go = launch_sign_in;
-                        go(reuse);
+                        go();
                     },
                     if is_busy() { "Working..." } else { "Continue" }
                 }
@@ -499,18 +453,6 @@ pub fn LoginPanel(
     }
 }
 
-/// Whether a sign-in for a known/returning account on this browser may
-/// re-authenticate on that account's OWN persisted device, instead of minting a
-/// fresh one. Both halves of the stable identity must be present: a non-empty
-/// account DID AND a syntactically valid `device_id` (`ck:device:<uuid>`). When
-/// either is missing the browser has no stable device to reuse, so the sign-in
-/// MUST take the fresh path. Reusing keeps the protocol `device_id` stable
-/// across re-authentication, which is what keeps to-device MLS Welcomes routable
-/// (crypto-media/device-lifecycle.md §4).
-fn returning_account_can_reuse_device(account_did: &str, device_id: &str) -> bool {
-    !account_did.trim().is_empty() && crate::config::is_valid_device_id(device_id.trim())
-}
-
 fn persist_completed_login_state(
     mut state_store: Signal<LocalStateStore>,
     session_grant: Option<PersistedSessionGrant>,
@@ -541,9 +483,6 @@ fn compute_session_status(
 fn discard_failed_oidc_callback(error: String) -> String {
     if let Err(clear_error) = clear_persisted_oidc_scaffold() {
         tracing::warn!(%clear_error, "clear failed OIDC scaffold failed");
-    }
-    if error.contains("principal binding mismatch") {
-        return "The account signed in at the Account Authority does not match the selected account. Use a different account, or sign in to the selected account again.".to_owned();
     }
     format!("{error} Start sign-in again.")
 }
@@ -719,14 +658,12 @@ async fn finish_oidc_callback(
     if scaffold.issuer.trim().is_empty() {
         return Err("Sign-in state is missing the OIDC issuer.".to_owned());
     }
-    // The canonical Account Authority session-grants endpoint binds the issued
-    // grant to `principal_id`; it MUST equal the DID the authenticated user
-    // resolves to. On re-auth we forward the actor hint persisted with the
-    // scaffold. On true first sign-in the DID is not yet known client-side, so
-    // we forward an empty hint (sent as `None`): the Account Authority derives
-    // the principal DID from the OIDC subject and returns it in
-    // `SessionGrantOutcome.principal_id` (② contract D5), which the code below
-    // adopts as the authoritative actor DID.
+    // `principal_id` is optional for Account Authority session-grants. Yougen's
+    // neutral interactive login leaves the scaffold actor hint blank (sent as
+    // `None`), so the Account Authority derives the principal DID from the OIDC
+    // subject and returns it in `SessionGrantOutcome.principal_id`. A non-empty
+    // scaffold value is an explicit binding request and coauth must reject it if
+    // it does not match the authenticated user.
     let outcome = gate_account
         .issue_session_grant_oidc(
             &actor_hint,
@@ -903,33 +840,6 @@ mod tests {
     }
 
     #[test]
-    fn returning_account_reuses_device_only_with_did_and_valid_device_id() {
-        let valid_device = "ck:device:01964137-0000-7000-8000-000000000001";
-        // Both present → reuse the stable device.
-        assert!(returning_account_can_reuse_device(
-            "did:web:bob.example",
-            valid_device
-        ));
-        // No persisted account → fresh sign-in (mint a device).
-        assert!(!returning_account_can_reuse_device("", valid_device));
-        assert!(!returning_account_can_reuse_device("   ", valid_device));
-        // Account known but no valid stable device_id → fresh sign-in.
-        assert!(!returning_account_can_reuse_device(
-            "did:web:bob.example",
-            ""
-        ));
-        assert!(!returning_account_can_reuse_device(
-            "did:web:bob.example",
-            "not-a-device-id"
-        ));
-        // Surrounding whitespace is trimmed before the validity check.
-        assert!(returning_account_can_reuse_device(
-            "  did:web:bob.example  ",
-            &format!("  {valid_device}  ")
-        ));
-    }
-
-    #[test]
     fn session_status_signed_out_without_token_or_grant() {
         assert_eq!(compute_session_status("", None), "signed-out");
         // Whitespace-only token counts as no token.
@@ -969,7 +879,7 @@ mod tests {
             discard_failed_oidc_callback(
                 "Account Authority session-grant issue failed: reason_code=proof_invalid; principal binding mismatch: the request principal_id does not match the authenticated user".to_owned()
             ),
-            "The account signed in at the Account Authority does not match the selected account. Use a different account, or sign in to the selected account again."
+            "The account signed in at the Account Authority does not match this local device session. Start sign-in again with the intended account."
         );
     }
 

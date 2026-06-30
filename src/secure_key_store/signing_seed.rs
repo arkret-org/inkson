@@ -265,9 +265,11 @@ pub fn delete_signing_seed_scoped(
 /// On login completion (the resolved principal DID is now known), re-home the
 /// bootstrap-scope seed — the one bound to the just-issued session grant
 /// (`cnf.jkt`) — under the account scope, then clear the bootstrap entry so the
-/// next account signed in on this browser cannot inherit it. Idempotent: if the
-/// account already holds a seed, the bootstrap one is simply cleared. Sets the
-/// active scope to `account`.
+/// next account signed in on this browser cannot inherit it. When a bootstrap
+/// seed exists, its paired bootstrap `device_id` is re-homed with it even for a
+/// returning DID: the freshly-issued grant is bound to that exact device tuple,
+/// so keeping an older account-scoped `device_id` would make the local session
+/// internally inconsistent. Sets the active scope to `account`.
 pub fn adopt_device_seed_scope_on_login(
     store: &dyn SecureKeyStore,
     account: &str,
@@ -285,15 +287,11 @@ pub fn adopt_device_seed_scope_on_login(
         store_signing_seed_scoped(store, Some(account), &material.seed)?;
         delete_signing_seed_scoped(store, None)?;
         // Re-home the paired bootstrap `device_id` under the account scope in
-        // lockstep with the seed it was minted with, so the account keeps one
-        // stable device identity (the MLS KeyPackage published during this
-        // sign-in is bound to it). Only adopt the bootstrap `device_id` when the
-        // account does not already hold one — a returning account keeps its
-        // existing stable id rather than inheriting this sign-in's fresh one.
+        // lockstep with the seed it was minted with. The session grant just
+        // issued is bound to this bootstrap tuple, so both halves must overwrite
+        // any prior account-scoped tuple together.
         if let Some(bootstrap_device_id) = load_device_id_scoped(store, None)? {
-            if load_device_id_scoped(store, Some(account))?.is_none() {
-                store_device_id_scoped(store, Some(account), &bootstrap_device_id)?;
-            }
+            store_device_id_scoped(store, Some(account), &bootstrap_device_id)?;
             delete_device_id_scoped(store, None)?;
         }
     }

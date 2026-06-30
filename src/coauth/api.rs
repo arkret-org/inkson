@@ -215,11 +215,11 @@ impl CoauthApi {
         requested_scope: Vec<String>,
         dpop_proof: &str,
     ) -> anyhow::Result<cokret_sdk::SessionGrantOutcome> {
-        // First sign-in (② contract D5) omits the principal DID: the client does
-        // not yet know it, and the Account Authority derives it from the OIDC
-        // subject (returned in `SessionGrantOutcome.principal_id`). A blank hint
-        // is therefore sent as `None`; only a non-empty hint is validated and
-        // forwarded for the re-auth binding check.
+        // A neutral interactive sign-in omits the principal DID: the client
+        // delegates account choice to the Account Authority, which derives the
+        // DID from the OIDC subject (returned in
+        // `SessionGrantOutcome.principal_id`). A blank hint is sent as `None`;
+        // only a non-empty hint becomes an explicit principal binding.
         let principal_id = {
             let trimmed = principal_id.trim();
             if trimmed.is_empty() {
@@ -261,11 +261,10 @@ impl CoauthApi {
             code_verifier: Some(code_verifier.to_owned()),
         };
         let body = cokret_sdk::SessionGrantRequestBody {
-            // ②(A+②) D5: `principal_id` is optional — on true first login the
-            // client may not know its DID and the Account Authority derives it
-            // (returned in `SessionGrantOutcome.principal_id`). We still forward
-            // the resolved/known DID when available (see above: `None` on first
-            // sign-in, `Some(did)` on re-auth).
+            // ②(A+②) D5: `principal_id` is optional. When omitted, the Account
+            // Authority derives it and returns it in
+            // `SessionGrantOutcome.principal_id`; when present, it is an
+            // explicit binding that must match the authenticated user.
             principal_id,
             device_id: Some(device_id),
             requested_scope,

@@ -1,5 +1,13 @@
 use super::*;
 
+struct SeedScopeReset;
+
+impl Drop for SeedScopeReset {
+    fn drop(&mut self) {
+        set_active_device_seed_scope(None);
+    }
+}
+
 /// T5.2 — store / load signing seed round-trips through a
 /// MemorySecureKeyStore. `load_signing_seed` returns None on a
 /// fresh store; `store_signing_seed` followed by
@@ -33,6 +41,46 @@ fn ensure_signing_seed_generates_and_is_idempotent() {
     let second = ensure_signing_seed(&store).expect("second");
     assert_eq!(first.seed, second.seed);
     assert_eq!(first.local_signing_did, second.local_signing_did);
+}
+
+#[test]
+fn login_adopt_rehomes_bootstrap_device_id_with_seed() {
+    let _reset = SeedScopeReset;
+    set_active_device_seed_scope(None);
+    let store = MemorySecureKeyStore::new();
+    let account = "did:web:alice.example";
+    let old_device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let bootstrap_device = "ck:device:01964137-0000-7000-8000-000000000002";
+    let old_seed = [1u8; 32];
+    let bootstrap_seed = [2u8; 32];
+
+    store_signing_seed_scoped(&store, Some(account), &old_seed).expect("old account seed");
+    store_device_id_scoped(&store, Some(account), old_device).expect("old account device id");
+    store_signing_seed_scoped(&store, None, &bootstrap_seed).expect("bootstrap seed");
+    store_device_id_scoped(&store, None, bootstrap_device).expect("bootstrap device id");
+
+    adopt_device_seed_scope_on_login(&store, account).expect("adopt login scope");
+
+    let adopted_seed = load_signing_seed_scoped(&store, Some(account))
+        .expect("load account seed")
+        .expect("account seed present");
+    assert_eq!(adopted_seed.seed, bootstrap_seed);
+    assert_eq!(
+        load_device_id_scoped(&store, Some(account))
+            .expect("load account device")
+            .as_deref(),
+        Some(bootstrap_device)
+    );
+    assert!(
+        load_signing_seed_scoped(&store, None)
+            .expect("load bootstrap seed")
+            .is_none()
+    );
+    assert!(
+        load_device_id_scoped(&store, None)
+            .expect("load bootstrap device")
+            .is_none()
+    );
 }
 
 /// Corrupt entry → backend error so the boot path surfaces a

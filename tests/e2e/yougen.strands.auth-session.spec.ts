@@ -88,6 +88,16 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
   expect(authorizeUrl.searchParams.get("prompt")).toBe("login");
   expect(authorizeUrl.searchParams.get("max_age")).toBe("0");
   expect(authorizeUrl.searchParams.get("redirect_uri")).toMatch(/\/auth\/callback$/);
+  const storageState = await page.context().storageState();
+  const oidcScaffoldEntry = storageState.origins
+    .flatMap((origin) => origin.localStorage)
+    .find((entry) => entry.name === "yougen.oidc_scaffold.v1");
+  expect(oidcScaffoldEntry).toBeTruthy();
+  const oidcScaffold = JSON.parse(oidcScaffoldEntry?.value ?? "{}");
+  expect(oidcScaffold.principal_actor_id).toBe("");
+  expect(oidcScaffold.device_id).toMatch(
+    /^ck:device:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
   await expect(page.getByText("coauth")).toBeVisible();
   await expect(page.getByText("Create account")).toBeVisible();
   await expect(page.getByText("Lost password or account")).toBeVisible();
