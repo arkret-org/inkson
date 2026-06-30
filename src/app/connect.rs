@@ -436,7 +436,7 @@ async fn probe_device_authorization_with_auto_enroll(
                         ?error,
                         "device authorization re-check failed after enrollment"
                     );
-                    needs_authorization = false;
+                    needs_authorization = true;
                 }
             },
             Err(error) => {
@@ -1375,7 +1375,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         sync_cursor.set(sync.cursor);
                     }
                     Err(error) if is_terminal_session_grant_error(&error) => {
-                        tracing::warn!(target: "session_boot", ?error, "connect: SYNC returned terminal session-grant error → invalidate_current_session + early return (boot_state stays pending = stuck 'Restoring session')");
+                        tracing::warn!(target: "session_boot", ?error, "connect: sync returned terminal session-grant error; invalidating current session");
                         crate::session::invalidate_current_session(
                             "session grant is no longer active",
                         );
@@ -1432,7 +1432,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut session_credential,
                     &mut authed,
                 );
-                tracing::warn!(target: "session_boot", "connect: post-sync, about to await events_describe() (if no 'events_describe returned' line follows, THIS await is the hang)");
+                tracing::debug!(target: "session_boot", "connect: post-sync, awaiting events_describe");
                 let events_result = match bootstrap_request(
                     "events describe",
                     authed.events_describe(),
@@ -1440,7 +1440,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 .await
                 {
                     Ok(events) => {
-                        tracing::warn!(target: "session_boot", "connect: events_describe returned Ok");
+                        tracing::debug!(target: "session_boot", "connect: events_describe returned Ok");
                         Ok(events)
                     }
                     Err(error) if is_auth_expired_error(&error) => {
@@ -1501,7 +1501,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         }
                     }
                     Err(error) if is_terminal_session_grant_error(&error) => {
-                        tracing::warn!(target: "session_boot", ?error, "connect: events_describe returned terminal session-grant error → invalidate_current_session + early return (boot_state stays pending = stuck 'Restoring session')");
+                        tracing::warn!(target: "session_boot", ?error, "connect: events_describe returned terminal session-grant error; invalidating current session");
                         crate::session::invalidate_current_session(
                             "session grant is no longer active",
                         );

@@ -97,7 +97,7 @@ pub(super) fn rehydrated_session_credential_for_active_config(
             want_account = %account_did,
             stored_device = %config.device_id,
             want_device = %device_id,
-            "rehydrate session credential: returning None (cannot restore session → stuck Restoring)"
+            "rehydrate session credential: returning None (credential does not match active config)"
         );
         None
     } else {
