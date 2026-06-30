@@ -774,6 +774,15 @@ fn projected_member_profiles_for_realm(
             }
         }
     }
+    let invitee_by_invite_id =
+        local_invitee_by_invite_id_for_realm(&state.raw_operations, realm_id);
+    for record in &state.raw_operations {
+        if let Some(profile) =
+            local_membership_profile_from_raw_operation(record, realm_id, &invitee_by_invite_id)
+        {
+            upsert_member_profile(&mut rows, profile);
+        }
+    }
     let locally_terminal_invites =
         local_terminal_invite_ids_for_realm(&state.raw_operations, realm_id);
     for record in &state.raw_operations {
@@ -801,13 +810,14 @@ fn local_terminal_invite_ids_for_realm(
 ) -> BTreeSet<String> {
     records
         .iter()
-        .filter(|record| record.realm_id.as_deref().map(str::trim) == Some(realm_id.trim()))
+        .filter(|record| raw_operation_realm_matches(record, realm_id))
         .filter_map(|record| {
             let payload = &record.payload;
-            match trimmed_string(payload.get("kind")).as_deref() {
-                Some("ck.invite.cancel" | "ck.invite.revoke") => {
-                    trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")))
+            match raw_operation_payload_kind(payload).as_deref() {
+                Some("ck.invite.accept") if raw_operation_is_accepted_fact(payload) => {
+                    raw_operation_invite_ref(payload)
                 }
+                Some("ck.invite.cancel" | "ck.invite.revoke") => raw_operation_invite_ref(payload),
                 _ => None,
             }
         })
@@ -952,12 +962,11 @@ fn local_pending_invite_profile_from_raw_operation(
     record: &RawOperationRecord,
     realm_id: &str,
 ) -> Option<MemberProfile> {
-    let record_realm = record.realm_id.as_deref().map(str::trim);
-    if record_realm != Some(realm_id.trim()) {
+    if !raw_operation_realm_matches(record, realm_id) {
         return None;
     }
     let payload = &record.payload;
-    if trimmed_string(payload.get("kind")).as_deref() != Some("ck.invite.create") {
+    if raw_operation_payload_kind(payload).as_deref() != Some("ck.invite.create") {
         return None;
     }
     let state = trimmed_string(payload.get("state").or_else(|| payload.get("status")))
@@ -988,6 +997,138 @@ fn local_pending_invite_profile_from_raw_operation(
         }
     }
     Some(profile)
+}
+
+fn raw_operation_realm_matches(record: &RawOperationRecord, realm_id: &str) -> bool {
+    record.realm_id.as_deref().map(str::trim) == Some(realm_id.trim())
+}
+
+fn raw_operation_payload_kind(payload: &Value) -> Option<String> {
+    trimmed_string(payload.get("kind").or_else(|| payload.get("wire_kind")))
+}
+
+fn raw_operation_path_string(payload: &Value, path: &[&str]) -> Option<String> {
+    let mut current = payload;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    trimmed_string(Some(current))
+}
+
+fn raw_operation_is_accepted_fact(payload: &Value) -> bool {
+    matches!(
+        raw_operation_path_string(payload, &["write_state"]).as_deref(),
+        Some("synced" | "accepted")
+    ) || raw_operation_path_string(payload, &["event_id"]).is_some()
+        || raw_operation_path_string(payload, &["body", "event_id"]).is_some()
+        || raw_operation_path_string(payload, &["payload", "event_id"]).is_some()
+}
+
+fn raw_operation_invite_ref(payload: &Value) -> Option<String> {
+    raw_operation_path_string(payload, &["body", "invite_ref"])
+        .or_else(|| raw_operation_path_string(payload, &["body", "invite_id"]))
+        .or_else(|| raw_operation_path_string(payload, &["payload", "invite_ref"]))
+        .or_else(|| raw_operation_path_string(payload, &["payload", "invite_id"]))
+        .or_else(|| {
+            trimmed_string(
+                payload
+                    .get("invite_ref")
+                    .or_else(|| payload.get("invite_id")),
+            )
+        })
+        .or_else(|| trimmed_string(payload.get("id")))
+}
+
+fn raw_member_actor_id(payload: &Value) -> Option<String> {
+    raw_operation_path_string(payload, &["body", "actor_id"])
+        .or_else(|| raw_operation_path_string(payload, &["body", "member"]))
+        .or_else(|| raw_operation_path_string(payload, &["body", "invitee"]))
+        .or_else(|| raw_operation_path_string(payload, &["payload", "actor_id"]))
+        .or_else(|| raw_operation_path_string(payload, &["payload", "member"]))
+        .or_else(|| raw_operation_path_string(payload, &["payload", "invitee"]))
+        .or_else(|| trimmed_string(payload.get("member").or_else(|| payload.get("invitee"))))
+        .or_else(|| trimmed_string(payload.get("actor_id")))
+}
+
+fn raw_member_membership(payload: &Value) -> Option<String> {
+    raw_operation_path_string(payload, &["body", "membership"])
+        .or_else(|| raw_operation_path_string(payload, &["payload", "membership"]))
+        .or_else(|| {
+            trimmed_string(
+                payload
+                    .get("membership")
+                    .or_else(|| payload.get("state"))
+                    .or_else(|| payload.get("status")),
+            )
+        })
+}
+
+fn raw_invite_create_invitee(payload: &Value) -> Option<String> {
+    raw_operation_path_string(payload, &["body", "invitee"])
+        .or_else(|| raw_operation_path_string(payload, &["payload", "invitee"]))
+        .or_else(|| trimmed_string(payload.get("invitee")))
+        .or_else(|| raw_member_actor_id(payload))
+}
+
+fn local_invitee_by_invite_id_for_realm(
+    records: &[RawOperationRecord],
+    realm_id: &str,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for record in records {
+        if !raw_operation_realm_matches(record, realm_id) {
+            continue;
+        }
+        let payload = &record.payload;
+        if raw_operation_payload_kind(payload).as_deref() != Some("ck.invite.create") {
+            continue;
+        }
+        let Some(invite_id) = raw_operation_invite_ref(payload) else {
+            continue;
+        };
+        let Some(invitee) = raw_invite_create_invitee(payload) else {
+            continue;
+        };
+        out.insert(invite_id, invitee);
+    }
+    out
+}
+
+fn local_membership_profile_from_raw_operation(
+    record: &RawOperationRecord,
+    realm_id: &str,
+    invitee_by_invite_id: &BTreeMap<String, String>,
+) -> Option<MemberProfile> {
+    if !raw_operation_realm_matches(record, realm_id) {
+        return None;
+    }
+    let payload = &record.payload;
+    if !raw_operation_is_accepted_fact(payload) {
+        return None;
+    }
+    match raw_operation_payload_kind(payload).as_deref()? {
+        "ck.member.state" => {
+            let actor_id = raw_member_actor_id(payload)?;
+            let membership = raw_member_membership(payload)?;
+            let mut profile = MemberProfile::bare(actor_id);
+            profile.membership = Some(membership);
+            profile.invite_id = raw_operation_invite_ref(payload);
+            Some(profile)
+        }
+        "ck.invite.accept" => {
+            let invite_id = raw_operation_invite_ref(payload);
+            let actor_id = raw_member_actor_id(payload).or_else(|| {
+                invite_id
+                    .as_ref()
+                    .and_then(|invite_id| invitee_by_invite_id.get(invite_id).cloned())
+            })?;
+            let mut profile = MemberProfile::bare(actor_id);
+            profile.membership = Some("join".to_owned());
+            profile.invite_id = invite_id;
+            Some(profile)
+        }
+        _ => None,
+    }
 }
 
 fn member_profile_matches(profile: &MemberProfile, query: &str) -> bool {
@@ -2241,6 +2382,96 @@ pub(crate) fn joined_member_signature_for_realm(store: &LocalStateStore, realm_i
     dids.join(",")
 }
 
+fn accepted_membership_profiles_for_realm(
+    store: &LocalStateStore,
+    realm_id: &str,
+) -> Vec<MemberProfile> {
+    let state = store.load();
+    let invitee_by_invite_id =
+        local_invitee_by_invite_id_for_realm(&state.raw_operations, realm_id);
+    let mut rows =
+        BTreeMap::<String, (chrono::DateTime<chrono::Utc>, String, MemberProfile)>::new();
+    for record in &state.raw_operations {
+        if let Some(profile) =
+            local_membership_profile_from_raw_operation(record, realm_id, &invitee_by_invite_id)
+        {
+            let actor_id = profile.actor_id.clone();
+            let event_time = raw_operation_event_time(record);
+            let operation_id = record.operation_id.clone();
+            match rows.get(&actor_id) {
+                Some((current_time, current_operation_id, _))
+                    if event_time < *current_time
+                        || (event_time == *current_time
+                            && operation_id.as_str() <= current_operation_id.as_str()) => {}
+                _ => {
+                    rows.insert(actor_id, (event_time, operation_id, profile));
+                }
+            }
+        }
+    }
+    rows.into_values().map(|(_, _, profile)| profile).collect()
+}
+
+fn raw_operation_event_time(record: &RawOperationRecord) -> chrono::DateTime<chrono::Utc> {
+    raw_operation_path_string(&record.payload, &["created_at"])
+        .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(&timestamp).ok())
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+        .unwrap_or(record.received_at)
+}
+
+fn accepted_joined_member_signature_for_realm(
+    store: &LocalStateStore,
+    realm_id: &str,
+) -> String {
+    let mut dids: Vec<String> = accepted_membership_profiles_for_realm(store, realm_id)
+        .into_iter()
+        .filter(|member| member.normalized_membership() == Some("join"))
+        .map(|member| member.actor_id)
+        .filter(|did| !did.trim().is_empty())
+        .collect();
+    dids.sort();
+    dids.dedup();
+    dids.join(",")
+}
+
+pub(crate) fn mls_admission_candidate_realms_for_actor(
+    store: &LocalStateStore,
+    actor_id: &str,
+) -> Vec<(String, String)> {
+    let actor_id = actor_id.trim();
+    if actor_id.is_empty() {
+        return Vec::new();
+    }
+    let state = store.load();
+    let mut realm_ids = BTreeSet::<String>::new();
+    for realm_id in state.realm_tree_projections.keys() {
+        if realm_id.starts_with("ck:realm:") {
+            realm_ids.insert(realm_id.clone());
+        }
+    }
+    for realm_id in store.mls_snapshots().keys() {
+        if realm_id.starts_with("ck:realm:") {
+            realm_ids.insert(realm_id.clone());
+        }
+    }
+    realm_ids
+        .into_iter()
+        .filter(|realm_id| {
+            store.mls_snapshot_for(realm_id).is_some()
+                && store.realm_projection_is_mls_encrypted(realm_id)
+        })
+        .filter_map(|realm_id| {
+            let joined_sig = accepted_joined_member_signature_for_realm(store, &realm_id);
+            let other_joined = joined_sig
+                .split(',')
+                .map(str::trim)
+                .filter(|did| !did.is_empty())
+                .any(|did| did != actor_id);
+            other_joined.then_some((realm_id, joined_sig))
+        })
+        .collect()
+}
+
 /// Admin-side admission reconciliation — closes the invite-time race.
 ///
 /// `submit_mls_admission_for_invitee` historically ran the instant an invite
@@ -2294,7 +2525,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     // Joined Realm members not yet represented in the MLS group, excluding self.
     let pending: Vec<String> = {
         let store = state_store.read();
-        projected_member_profiles_for_realm(&store, &realm_id)
+        accepted_membership_profiles_for_realm(&store, &realm_id)
             .into_iter()
             .filter(|member| member.normalized_membership() == Some("join"))
             .map(|member| member.actor_id)
@@ -4135,6 +4366,21 @@ mod tests {
         LocalStateStore::with_path(path)
     }
 
+    fn dummy_mls_snapshot(realm_id: &str) -> crate::mls::persistence::MlsSnapshotEnvelope {
+        crate::mls::persistence::MlsSnapshotEnvelope {
+            realm_id: realm_id.to_owned(),
+            group_id: "test-group".to_owned(),
+            epoch: 0,
+            salt_hex: String::new(),
+            ciphertext_hex: String::new(),
+            mac_hex: String::new(),
+            recorded_at: chrono::Utc::now(),
+            epoch_started_at: chrono::Utc::now(),
+            app_messages_observed: 0,
+            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        }
+    }
+
     #[test]
     fn splits_pending_invites_out_of_active_members() {
         let mut alice = member("did:web:alice.example");
@@ -4353,6 +4599,29 @@ mod tests {
     }
 
     #[test]
+    fn joined_member_signature_reads_raw_member_state_join() {
+        let realm_id = "ck:realm:test";
+        let mut store = temp_store("raw-member-state-join");
+        store.append_raw_operation(
+            "ck:event:member-join".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.member.state",
+                "write_state": "synced",
+                "body": {
+                    "actor_id": "did:web:bob.example",
+                    "membership": "join"
+                }
+            }),
+        );
+
+        assert_eq!(
+            joined_member_signature_for_realm(&store, realm_id),
+            "did:web:bob.example"
+        );
+    }
+
+    #[test]
     fn projected_join_membership_overrides_earlier_pending_projection() {
         let realm_id = "ck:realm:test";
         let mut store = temp_store("pending-then-joined-membership");
@@ -4403,6 +4672,99 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].actor_id, "did:web:bob.example");
         assert_eq!(pending[0].handles, vec!["bob:example.com"]);
+    }
+
+    #[test]
+    fn projected_member_profiles_promote_invite_accept_to_join_from_raw_operations() {
+        let realm_id = "ck:realm:test";
+        let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
+        let mut store = temp_store("raw-invite-accept-join");
+        store.append_raw_operation(
+            "ck:event:invite-local".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.invite.create",
+                "invite_id": invite_id,
+                "invitee": "did:web:bob.example",
+                "invitee_label": "bob:example.com",
+                "state": "pending"
+            }),
+        );
+        store.append_raw_operation(
+            "ck:event:invite-accept".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.invite.accept",
+                "write_state": "synced",
+                "body": {
+                    "invite_ref": invite_id
+                }
+            }),
+        );
+
+        let profiles = projected_member_profiles_for_realm(&store, realm_id);
+        let (active, pending) = split_member_profiles(profiles);
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].actor_id, "did:web:bob.example");
+        assert_eq!(active[0].membership.as_deref(), Some("join"));
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
+        let realm_id = "ck:realm:test";
+        let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
+        let mut store = temp_store("queued-invite-accept-no-admission");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "encrypted": true,
+                "members": [
+                    { "actor_id": "did:web:alice.example", "membership": "join" },
+                    { "actor_id": "did:web:bob.example", "membership": "invite" }
+                ]
+            }),
+        );
+        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
+        store.append_raw_operation(
+            "ck:event:invite-local".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.invite.create",
+                "invite_id": invite_id,
+                "invitee": "did:web:bob.example",
+                "invitee_label": "bob:example.com",
+                "state": "pending"
+            }),
+        );
+        store.append_raw_operation(
+            "local-accept-queued".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.invite.accept",
+                "write_state": "queued",
+                "body": {
+                    "invite_ref": invite_id
+                }
+            }),
+        );
+
+        let profiles = projected_member_profiles_for_realm(&store, realm_id);
+        let (active, pending) = split_member_profiles(profiles);
+
+        assert!(
+            active
+                .iter()
+                .all(|profile| profile.actor_id != "did:web:bob.example")
+        );
+        assert!(pending.iter().any(|profile| {
+            profile.actor_id == "did:web:bob.example"
+                && profile.membership.as_deref() == Some("invite")
+        }));
+        assert!(
+            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty()
+        );
     }
 
     #[test]
@@ -4468,6 +4830,130 @@ mod tests {
         assert_eq!(active[0].actor_id, "did:web:bob.example");
         assert_eq!(active[0].membership.as_deref(), Some("join"));
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn admission_candidate_realms_include_encrypted_snapshot_with_raw_join() {
+        let realm_id = "ck:realm:test";
+        let mut store = temp_store("admission-candidate-raw-join");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "encrypted": true,
+                "members": [
+                    { "actor_id": "did:web:alice.example", "membership": "join" },
+                    { "actor_id": "did:web:bob.example", "membership": "invite" }
+                ]
+            }),
+        );
+        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
+        assert!(
+            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty()
+        );
+
+        store.append_raw_operation(
+            "ck:event:member-join".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.member.state",
+                "write_state": "synced",
+                "body": {
+                    "actor_id": "did:web:bob.example",
+                    "membership": "join"
+                }
+            }),
+        );
+
+        let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, realm_id);
+        assert_eq!(candidates[0].1, "did:web:bob.example");
+    }
+
+    #[test]
+    fn admission_candidate_realms_follow_latest_accepted_membership_state() {
+        let realm_id = "ck:realm:test";
+        let mut store = temp_store("admission-candidate-latest-membership");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "encrypted": true,
+                "members": [
+                    { "actor_id": "did:web:alice.example", "membership": "join" },
+                    { "actor_id": "did:web:bob.example", "membership": "invite" }
+                ]
+            }),
+        );
+        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
+        store.append_raw_operation(
+            "ck:event:member-join-1".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.member.state",
+                "write_state": "synced",
+                "created_at": "2026-06-29T00:00:00Z",
+                "body": {
+                    "actor_id": "did:web:bob.example",
+                    "membership": "join"
+                }
+            }),
+        );
+        store.append_raw_operation(
+            "ck:event:member-leave".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.member.state",
+                "write_state": "synced",
+                "created_at": "2026-06-29T00:01:00Z",
+                "body": {
+                    "actor_id": "did:web:bob.example",
+                    "membership": "leave"
+                }
+            }),
+        );
+
+        assert!(
+            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty()
+        );
+
+        store.append_raw_operation(
+            "ck:event:member-join-2".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ck.member.state",
+                "write_state": "synced",
+                "created_at": "2026-06-29T00:02:00Z",
+                "body": {
+                    "actor_id": "did:web:bob.example",
+                    "membership": "join"
+                }
+            }),
+        );
+
+        let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].1, "did:web:bob.example");
+    }
+
+    #[test]
+    fn admission_candidate_realms_ignore_roster_only_join_hint() {
+        let realm_id = "ck:realm:test";
+        let mut store = temp_store("admission-candidate-roster-only-join");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "encrypted": true,
+                "members": [
+                    { "actor_id": "did:web:alice.example", "membership": "join" },
+                    { "actor_id": "did:web:bob.example", "membership": "join" }
+                ]
+            }),
+        );
+        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
+
+        assert!(
+            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty()
+        );
     }
 
     #[test]

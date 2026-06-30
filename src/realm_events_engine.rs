@@ -255,7 +255,9 @@ async fn run_realm_iteration(
                 crate::sync_engine::ingest_kanban_events(&mut guard, realm_id, &event_payloads);
             let message_changed =
                 crate::sync_engine::ingest_message_events(&mut guard, realm_id, &event_payloads);
-            kanban_changed + message_changed
+            let membership_changed =
+                crate::sync_engine::ingest_membership_events(&mut guard, realm_id, &event_payloads);
+            kanban_changed + message_changed + membership_changed
         };
         if changed > 0 {
             let mut realm_live_epoch = ctx.realm_live_epoch;

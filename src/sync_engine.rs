@@ -34,7 +34,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use dioxus::prelude::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::api::{
     AccountSubscribeSnapshotResult, CokretApi, MAX_RETRY_DELAY, is_auth_expired_error,
@@ -42,7 +42,7 @@ use crate::api::{
     rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
-use crate::local_state::{LocalSealView, LocalStateStore};
+use crate::local_state::{LocalSealView, LocalStateStore, RawOperationRecord};
 use crate::models::{
     ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNode, RealmTreeNodeKind,
 };
@@ -1240,6 +1240,7 @@ pub fn apply_response(
                 store.set_realm_seal_view(id.clone(), view);
                 store.ingest_move_event_states(id, body);
                 ingest_kanban_state_events_from_projection(store, id, body);
+                ingest_membership_events_from_projection(store, id, body);
                 // Fold the discussion timeline into `raw_operations` too so the
                 // card-detail Discussion tab renders local-first instead of
                 // refetching + redecrypting the realm on every open.
@@ -1530,6 +1531,97 @@ pub(crate) fn ingest_kanban_events(
         }
     }
     changed
+}
+
+fn sync_event_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
+    let mut current = value?;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    current
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn membership_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
+    let kind = sync_event_string(Some(event), &["event_kind"])
+        .or_else(|| sync_event_string(Some(event), &["kind"]))?;
+    if !matches!(kind.as_str(), "ck.member.state" | "ck.invite.accept") {
+        return None;
+    }
+    let body = event
+        .get("payload")
+        .or_else(|| event.get("content"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let event_id = sync_event_string(Some(event), &["event_id"])?;
+    let operation_id =
+        sync_event_string(Some(event), &["operation_id"]).unwrap_or_else(|| event_id.clone());
+    let actor_id = sync_event_string(Some(event), &["actor_id"])
+        .or_else(|| sync_event_string(Some(event), &["sender_actor_id"]))
+        .or_else(|| sync_event_string(Some(&body), &["actor_id"]))
+        .or_else(|| sync_event_string(Some(&body), &["sender_actor_id"]))
+        .or_else(|| sync_event_string(Some(&body), &["sender"]))
+        .unwrap_or_default();
+    let created_at = sync_event_string(Some(event), &["created_at"])
+        .or_else(|| sync_event_string(Some(&body), &["created_at"]))
+        .unwrap_or_default();
+    let received_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| chrono::Utc::now());
+    let mut payload = json!({
+        "kind": kind,
+        "operation_id": operation_id,
+        "actor_id": actor_id,
+        "created_at": created_at,
+        "write_state": "synced",
+        "body": body,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("event_id".to_owned(), Value::String(event_id));
+    }
+
+    Some(RawOperationRecord {
+        operation_id: payload
+            .get("operation_id")
+            .and_then(Value::as_str)
+            .unwrap_or("remote-membership")
+            .to_owned(),
+        realm_id: sync_event_string(Some(event), &["realm_id"])
+            .or_else(|| sync_event_string(payload.get("body"), &["realm_id"]))
+            .or_else(|| sync_event_string(payload.get("body"), &["object", "realm_id"])),
+        received_at,
+        payload,
+    })
+}
+
+pub(crate) fn ingest_membership_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[Value],
+) -> usize {
+    if events.is_empty() {
+        return 0;
+    }
+    let mut changed = 0;
+    for record in events.iter().filter_map(membership_operation_from_event) {
+        let operation_id = record.operation_id;
+        let record_realm_id = record.realm_id.or_else(|| Some(realm_id.to_owned()));
+        if store.upsert_raw_operation(operation_id, record_realm_id, record.payload) {
+            changed += 1;
+        }
+    }
+    changed
+}
+
+fn ingest_membership_events_from_projection(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    body: &Value,
+) -> usize {
+    ingest_membership_events(store, realm_id, &sync_realm_state_events(body))
 }
 
 fn ingest_member_identity_events_from_projection(
@@ -1919,6 +2011,69 @@ mod tests {
         let changed_again = ingest_kanban_events(&mut store, realm_id, &event_payloads);
         assert_eq!(changed_again, 0, "re-ingest is deduped by operation_id");
         assert_eq!(store.load().raw_operations.len(), 1);
+    }
+
+    #[test]
+    fn membership_events_ingest_into_raw_operations() {
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        let mut store = temp_store("membership-events");
+        let changed = ingest_membership_events(
+            &mut store,
+            realm_id,
+            &[
+                json!({
+                    "event_id": "ck:event:0196419b-0000-7000-8000-000000000201",
+                    "event_kind": "ck.member.state",
+                    "realm_id": realm_id,
+                    "actor_id": "did:web:alice.example",
+                    "created_at": "2026-06-29T00:00:00Z",
+                    "payload": {
+                        "actor_id": "did:web:bob.example",
+                        "membership": "join"
+                    }
+                }),
+                json!({
+                    "event_id": "ck:event:0196419b-0000-7000-8000-000000000202",
+                    "kind": "ck.invite.accept",
+                    "realm_id": realm_id,
+                    "actor_id": "did:web:carol.example",
+                    "created_at": "2026-06-29T00:00:01Z",
+                    "payload": {
+                        "invite_ref": "ck:invite:0196419b-0000-7000-8000-000000000301"
+                    }
+                }),
+                json!({
+                    "event_id": "ck:event:0196419b-0000-7000-8000-000000000203",
+                    "kind": "ck.mls.commit",
+                    "realm_id": realm_id,
+                    "payload": {}
+                }),
+                json!({
+                    "kind": "ck.member.state",
+                    "realm_id": realm_id,
+                    "actor_id": "did:web:dave.example",
+                    "created_at": "2026-06-29T00:00:02Z",
+                    "payload": {
+                        "actor_id": "did:web:dave.example",
+                        "membership": "join"
+                    }
+                }),
+            ],
+        );
+
+        assert_eq!(changed, 2);
+        let state = store.load();
+        assert_eq!(state.raw_operations.len(), 2);
+        assert_eq!(state.raw_operations[0].payload["kind"], "ck.member.state");
+        assert_eq!(
+            state.raw_operations[0].payload["body"]["membership"],
+            "join"
+        );
+        assert_eq!(state.raw_operations[1].payload["kind"], "ck.invite.accept");
+        assert_eq!(
+            state.raw_operations[1].payload["body"]["invite_ref"],
+            "ck:invite:0196419b-0000-7000-8000-000000000301"
+        );
     }
 
     fn to_device_message(kind: &str) -> Value {

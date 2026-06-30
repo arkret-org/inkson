@@ -726,6 +726,7 @@ pub fn RouterView() -> Element {
     // Admin-side counterpart of the Welcome bootstrap: serialize admission
     // reconciliation so per-sync retries cannot overlap and double-admit.
     let mls_admission_reconcile_in_flight = use_signal(|| false);
+    let mls_admission_reconcile_pending = use_signal(|| false);
     // Throttle key for the admission pre-filter diagnostic: only emit a WARN
     // when the (realm, blocking-reason) pair changes, so a genuinely stuck
     // admin gets ONE visible line per cause instead of one per sync tick.
@@ -1958,24 +1959,18 @@ pub fn RouterView() -> Element {
         // the invite-time race where admission ran before the invitee had
         // published a KeyPackage: re-runs each sync round (via `sync_cursor`)
         // so a member who publishes their KeyPackage after joining is picked up.
-        let admit_route_uses_realm_context = route_uses_realm_context;
-        let admit_context_realm_id = context_realm_id.clone();
+        // Also observes `realm_live_epoch`, because join/accept events may
+        // arrive through the per-Realm stream without advancing account sync.
         let admit_state_store = state_store;
         let admit_sync_cursor = sync_cursor;
+        let admit_realm_live_epoch = realm_live_epoch;
         let mut admit_in_flight = mls_admission_reconcile_in_flight;
+        let mut admit_pending = mls_admission_reconcile_pending;
         let mut admit_last_error = last_error;
         let mut admit_diag_last = mls_admission_diag_last;
         let secure_store_ready_for_admit = secure_store_bootstrap_ready;
         use_effect(move || {
-            if !secure_store_ready_for_admit() || !admit_route_uses_realm_context {
-                return;
-            }
-            let selected = selected_realm_id();
-            let realm_id = admit_context_realm_id
-                .clone()
-                .filter(|realm| !realm.trim().is_empty())
-                .unwrap_or(selected);
-            if realm_id.trim().is_empty() {
+            if !secure_store_ready_for_admit() {
                 return;
             }
             let description = server_description();
@@ -1994,79 +1989,138 @@ pub fn RouterView() -> Element {
             // Re-fire on every sync round so a late-published KeyPackage is
             // retried; cheap pre-filter avoids work when there is nothing to do.
             let _ = admit_sync_cursor();
-            let (has_snapshot, other_joined, is_mls, joined_sig) = {
+            let _ = admit_realm_live_epoch();
+            let _ = admit_pending();
+            let candidate_realms = {
                 let store = admit_state_store.read();
-                let joined_sig =
-                    crate::views::realm_admin::joined_member_signature_for_realm(&store, &realm_id);
-                let other_joined = joined_sig
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|did| !did.is_empty())
-                    .any(|did| did != actor.trim());
-                (
-                    store.mls_snapshot_for(&realm_id).is_some(),
-                    other_joined,
-                    store.realm_projection_is_mls_encrypted(&realm_id),
-                    joined_sig,
-                )
+                crate::views::realm_admin::mls_admission_candidate_realms_for_actor(&store, &actor)
             };
-            if !(has_snapshot && other_joined) {
+            if candidate_realms.is_empty() {
                 // Make a stuck admin observable: an encrypted Realm with an
                 // invitee waiting for a Welcome but the admin never admitting is
                 // exactly this branch. wasm tracing is capped at WARN, so INFO/
                 // DEBUG here would be invisible — emit a throttled WARN naming
                 // the blocking cause. (mls-admission-debug)
-                if is_mls {
-                    let diag = format!(
-                        "realm={realm_id} has_snapshot={has_snapshot} other_joined={other_joined} joined_sig=[{joined_sig}]"
-                    );
-                    if admit_diag_last() != diag {
-                        admit_diag_last.set(diag.clone());
-                        tracing::warn!(
-                            target: "mls_admission",
-                            %diag,
-                            "admission pre-filter blocked: admin not yet admit-capable for this encrypted Realm"
-                        );
+                let Some(diag) = ({
+                    let store = admit_state_store.read();
+                    let encrypted_local_realms = store
+                        .load()
+                        .realm_tree_projections
+                        .keys()
+                        .filter(|realm_id| {
+                            realm_id.starts_with("ck:realm:")
+                                && store.realm_projection_is_mls_encrypted(realm_id)
+                        })
+                        .count();
+                    if encrypted_local_realms == 0 {
+                        None
+                    } else {
+                        let encrypted_snapshot_realms = store
+                            .mls_snapshots()
+                            .keys()
+                            .filter(|realm_id| {
+                                realm_id.starts_with("ck:realm:")
+                                    && store.realm_projection_is_mls_encrypted(realm_id)
+                            })
+                            .count();
+                        Some(format!(
+                            "candidate_realms=0 encrypted_local_realms={encrypted_local_realms} encrypted_snapshot_realms={encrypted_snapshot_realms}"
+                        ))
                     }
+                }) else {
+                    return;
+                };
+                if admit_diag_last() != diag {
+                    admit_diag_last.set(diag.clone());
+                    tracing::warn!(
+                        target: "mls_admission",
+                        %diag,
+                        "admission pre-filter blocked: no joined non-self member is visible in any local encrypted Realm"
+                    );
                 }
                 return;
             }
-            // Read in-flight with `peek()` (NOT `()`) so this effect does NOT
-            // subscribe to it. Subscribing would turn the guard into a spin
-            // engine: `set(true)` here + the spawn's `set(false)` on completion
-            // each notify the effect, re-running it, which re-spawns — a
-            // self-driven loop that needs no external change. When reconcile
-            // short-circuits to `Ok(0)` (e.g. snapshot present but its roster is
-            // undecryptable, so `reconcile_mls_admissions_for_realm` returns
-            // before any network await) the cycle collapses to ~3ms/iteration,
-            // flooding the console and starving the main thread. `peek()` keeps
-            // the concurrency guard while leaving re-runs driven only by real
-            // dependency changes (`sync_cursor` / `state_store` per sync round).
+            let candidate_diag = candidate_realms
+                .iter()
+                .map(|(realm_id, joined_sig)| format!("{realm_id}:joined=[{joined_sig}]"))
+                .collect::<Vec<_>>()
+                .join("|");
+            if admit_diag_last() != candidate_diag {
+                admit_diag_last.set(candidate_diag.clone());
+                tracing::warn!(
+                    target: "mls_admission",
+                    candidate_count = candidate_realms.len(),
+                    diag = %candidate_diag,
+                    "admission pre-filter passed: reconciling local encrypted Realm candidates"
+                );
+            }
+            // Read in-flight with `peek()` (NOT `()`) so this effect does not
+            // subscribe to the guard and self-spin on set(true)/set(false).
+            // If a real sync/realm-stream edge arrives while a reconcile is
+            // running, remember one pending rerun; completion flips that bit
+            // back to false and lets the subscribed effect run once more.
             if *admit_in_flight.peek() {
+                admit_pending.set(true);
                 return;
             }
+            admit_pending.set(false);
             admit_in_flight.set(true);
             spawn(async move {
                 let outcome =
                     crate::views::helpers::with_authed_api(&base, session, |api| async move {
-                        crate::views::realm_admin::reconcile_mls_admissions_for_realm(
-                            &api,
-                            admit_state_store,
-                            realm_id,
-                            actor,
-                            device,
-                        )
-                        .await
+                        let mut admitted_total = 0_usize;
+                        let mut failures = Vec::<String>::new();
+                        for (realm_id, _) in candidate_realms {
+                            match crate::views::realm_admin::reconcile_mls_admissions_for_realm(
+                                &api,
+                                admit_state_store,
+                                realm_id.clone(),
+                                actor.clone(),
+                                device.clone(),
+                            )
+                            .await
+                            {
+                                Ok(admitted) => admitted_total += admitted,
+                                Err(error) => failures
+                                    .push(format!("{}: {error:?}", short_protocol_id(&realm_id))),
+                            }
+                        }
+                        Ok::<_, anyhow::Error>((admitted_total, failures))
                     })
                     .await;
                 admit_in_flight.set(false);
+                if *admit_pending.peek() {
+                    admit_pending.set(false);
+                }
                 match outcome {
-                    Ok(admitted) if admitted > 0 => {
+                    Ok((admitted, failures)) if admitted > 0 => {
                         tracing::warn!(
                             target: "mls_admission",
                             admitted,
                             "admitted joined members into MLS group"
                         );
+                        if !failures.is_empty() {
+                            tracing::warn!(
+                                target: "mls_admission",
+                                failures = %failures.join("; "),
+                                "MLS admission reconcile had per-Realm failures after admitting some members"
+                            );
+                            admit_last_error.set(Some(format!(
+                                "MLS admission reconcile: {}",
+                                failures.join("; ")
+                            )));
+                        }
+                    }
+                    Ok((_, failures)) if !failures.is_empty() => {
+                        tracing::warn!(
+                            target: "mls_admission",
+                            failures = %failures.join("; "),
+                            "MLS admission reconcile failed for all attempted Realm candidates"
+                        );
+                        admit_last_error.set(Some(format!(
+                            "MLS admission reconcile: {}",
+                            failures.join("; ")
+                        )));
                     }
                     Ok(_) => {}
                     Err(error) => {
