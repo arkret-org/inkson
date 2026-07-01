@@ -28,6 +28,7 @@ struct CompletedLogin {
     actor: String,
     personal_handle: Option<String>,
     device_id: String,
+    dpop_device_key: crate::local_state::DpopDeviceKeyRecord,
     session_credential: String,
     /// Persisted principal session grant. This is the live credential for
     /// `/_cokret/self/*`; refresh rotates this grant before its own expiry.
@@ -106,6 +107,7 @@ pub fn LoginPanel(
                     let previous = account_did();
                     !previous.trim().is_empty() && previous != completed.actor
                 };
+                let mut completed_dpop_error = None::<String>;
                 {
                     let mut store = state_store_write.write();
                     // Adopt the signed-in actor as the active account. With
@@ -130,14 +132,23 @@ pub fn LoginPanel(
                         store.clear_account_scoped();
                         store.set_session_grant(None);
                     }
-                    // Re-home the DPoP device-key record under the now-active
-                    // account scope. A returning account may already have an
-                    // older account-scoped DPoP record; ensure_device_key repairs
-                    // that stale record from the just-adopted signing seed, whose
-                    // jkt is the one bound into the newly-issued grant.
-                    if let Err(error) = crate::auth_dpop::ensure_device_key(&mut store) {
-                        tracing::warn!(%error, "re-home DPoP device key under account scope failed");
+                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    if let Err(error) = persist_completed_login_dpop_key(
+                        &mut store,
+                        secure_store.as_ref(),
+                        &completed.actor,
+                        &completed.device_id,
+                        &completed.dpop_device_key,
+                    ) {
+                        tracing::warn!(%error, "persist completed-login DPoP key under account scope failed");
+                        completed_dpop_error =
+                            Some(format!("Could not persist the session DPoP key: {error}"));
                     }
+                }
+                if let Some(error) = completed_dpop_error {
+                    auth_status.set(error);
+                    is_busy.set(false);
+                    return;
                 }
                 base_url.set(principal_server_url.clone());
                 account_did.set(completed.actor.clone());
@@ -461,6 +472,33 @@ fn persist_completed_login_state(
     store.set_session_grant(session_grant);
 }
 
+fn restore_oidc_callback_device_seed_scope(device_id: &str) {
+    crate::secure_key_store::set_active_device_seed_scope(None);
+    crate::secure_key_store::set_pending_login_device_id(Some(device_id));
+}
+
+fn persist_completed_login_dpop_key(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor: &str,
+    device_id: &str,
+    record: &crate::local_state::DpopDeviceKeyRecord,
+) -> Result<(), String> {
+    crate::secure_key_store::set_active_device_seed_scope(Some(actor));
+    crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
+        &record.seed_b64,
+        Some(secure_store),
+        Some(device_id),
+    )
+    .map_err(|error| format!("activate device signer: {error}"))?;
+    crate::secure_key_store::store_device_id_scoped(secure_store, Some(actor), device_id)
+        .map_err(|error| format!("store account-scoped device id: {error}"))?;
+    store
+        .set_dpop_device_key_with_secure_store(Some(record.clone()), secure_store)
+        .map_err(|error| format!("store account-scoped DPoP key: {error}"))?;
+    Ok(())
+}
+
 /// Compute the value of the `session-status` testid. The four states
 /// the cotest harness asserts against:
 ///
@@ -635,6 +673,7 @@ async fn finish_oidc_callback(
         return Err("No device identifier is available for this session.".to_owned());
     }
     let device = normalize_device_id(&device);
+    restore_oidc_callback_device_seed_scope(&device);
     // T1.Y1 — DPoP holder proof bound to the session-grants URL; this is what
     // makes the issued grant device-bound (cnf.jkt) at the Account Authority.
     let session_grants_url = gate_account
@@ -683,6 +722,9 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("Account Authority session-grant issue failed: {error}"))?;
     let session_grant = session_grant_info_from_outcome(&outcome, &dpop_handle)
         .map_err(|error| format!("Session grant outcome was incomplete: {error}"))?;
+    let dpop_device_key =
+        crate::auth_dpop::dpop_device_key_record_from_seed(dpop_handle.seed_b64().as_str())
+            .map_err(|error| format!("DPoP device key record failed: {error}"))?;
     let principal_target = principal_server_url;
     let principal = CokretApi::new(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
@@ -746,6 +788,7 @@ async fn finish_oidc_callback(
         actor: canonical_actor,
         personal_handle,
         device_id: resolved_device,
+        dpop_device_key,
         // The grant JWT is now the live credential carried in the `token` signal.
         session_credential: session_grant.grant_jwt.clone(),
         session_grant: persisted_session_grant,
@@ -822,7 +865,33 @@ fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
     use super::*;
+
+    fn seed_scope_test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("seed scope test lock")
+    }
+
+    struct SeedScopeReset;
+
+    impl Drop for SeedScopeReset {
+        fn drop(&mut self) {
+            crate::secure_key_store::set_active_device_seed_scope(None);
+            crate::secure_key_store::set_pending_login_device_id(None);
+        }
+    }
+
+    fn dpop_record_for_seed(seed: [u8; 32]) -> crate::local_state::DpopDeviceKeyRecord {
+        crate::auth_dpop::dpop_device_key_record_from_seed(&URL_SAFE_NO_PAD.encode(seed))
+            .expect("dpop record")
+    }
 
     fn dummy_grant() -> PersistedSessionGrant {
         let now = chrono::Utc::now();
@@ -881,6 +950,61 @@ mod tests {
             ),
             "The account signed in at the Account Authority does not match this local device session. Start sign-in again with the intended account."
         );
+    }
+
+    #[test]
+    fn oidc_callback_restores_bootstrap_device_seed_scope() {
+        let _lock = seed_scope_test_lock();
+        let _reset = SeedScopeReset;
+        crate::secure_key_store::set_active_device_seed_scope(Some("did:web:old.example"));
+
+        restore_oidc_callback_device_seed_scope("ck:device:01964137-0000-7000-8000-000000000001");
+
+        assert_eq!(crate::secure_key_store::active_device_seed_scope(), None);
+        assert_eq!(
+            crate::secure_key_store::pending_login_device_id().as_deref(),
+            Some("ck:device:01964137-0000-7000-8000-000000000001")
+        );
+    }
+
+    #[test]
+    fn completed_login_dpop_key_overwrites_returning_account_key_material() {
+        let _lock = seed_scope_test_lock();
+        let _reset = SeedScopeReset;
+        let mut store = crate::local_state::isolated_store_for_tests("completed-login-dpop-key");
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        let actor = "did:web:alice.example";
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let old_record = dpop_record_for_seed([3_u8; 32]);
+        let new_record = dpop_record_for_seed([7_u8; 32]);
+
+        crate::secure_key_store::set_active_device_seed_scope(Some(actor));
+        crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
+            &old_record.seed_b64,
+            Some(&secure_store),
+            Some(device),
+        )
+        .expect("old account seed");
+        store
+            .set_dpop_device_key_with_secure_store(Some(old_record), &secure_store)
+            .expect("old account dpop");
+
+        persist_completed_login_dpop_key(&mut store, &secure_store, actor, device, &new_record)
+            .expect("persist completed login dpop");
+
+        let loaded_seed =
+            crate::secure_key_store::load_signing_seed_scoped(&secure_store, Some(actor))
+                .expect("load account seed")
+                .expect("account seed");
+        assert_eq!(loaded_seed.seed, [7_u8; 32]);
+        let loaded_record = store
+            .load_dpop_device_key_with_secure_store(&secure_store)
+            .expect("load account dpop")
+            .expect("account dpop");
+        assert_eq!(loaded_record.jkt, new_record.jkt);
+        let public_record = store.dpop_device_key().expect("public dpop");
+        assert_eq!(public_record.jkt, new_record.jkt);
+        assert!(public_record.seed_b64.is_empty());
     }
 
     #[test]

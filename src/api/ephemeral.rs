@@ -149,6 +149,18 @@ pub fn build_receipt_read_envelope(
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.receipt.read: {err}"))?;
     let strand = cokret_sdk::StrandId::new(strand_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid strand_id for ck.receipt.read: {err}"))?;
+    let event = cokret_sdk::EventId::new(event_id.trim().to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid event_id for ck.receipt.read: {err}"))?;
+    let receipt = cokret_sdk::ReadReceipt {
+        receipt_type: "read".to_owned(),
+        schema: cokret_sdk::READ_RECEIPT_SCHEMA.to_owned(),
+        realm_id: realm.clone(),
+        actor_id: actor.clone(),
+        event_id: event,
+        hlc: None,
+        read_scope: cokret_sdk::ReadScope::strand(strand.as_str().to_owned(), Some("discussion")),
+        created_at: now,
+    };
     cokret_sdk::EphemeralEnvelope::new(
         "ck.receipt.read",
         realm,
@@ -156,19 +168,7 @@ pub fn build_receipt_read_envelope(
         None,
         now,
         expires_at,
-        json!({
-            "receipt_type": "read",
-            "schema": "ck.schema.read_receipt.v1",
-            "realm_id": realm_id_wire,
-            "actor_id": actor_id,
-            "read_scope": {
-                "kind": "strand",
-                "ref": strand.as_str(),
-                "track_name": "discussion"
-            },
-            "event_id": event_id,
-            "created_at": now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        }),
+        serde_json::to_value(receipt)?,
         None,
     )
     .map_err(|err| anyhow::anyhow!("read receipt envelope rejected: {err}"))

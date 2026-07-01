@@ -5,7 +5,8 @@ use coauth_account_types::passkey::{
     PasskeyRegisterStartOutcome,
 };
 use reqwest::Client;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use url::Url;
 

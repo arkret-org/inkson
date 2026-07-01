@@ -388,14 +388,9 @@ impl ServerDescriptionExt for ServerDescription {
 // newtype around it. We re-export the inner struct under the yougen-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
-pub use cokret_sdk::models::{
-    IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
-};
-
 // `ck.self.account.query.describe` decodes into the SDK's authoritative
 // `cokret_sdk::models::SyncDescription`; the former yougen-local
 // `SyncDescribeView` mirror was removed in favor of the wire type.
-
 /// Directory `describe` response. The SDK's `DirectoryDescribeOutcome` is a
 /// transparent wrapper over this exact wire body, so yougen consumes the SDK
 /// authority directly instead of maintaining a flat local mirror.
@@ -416,6 +411,9 @@ pub use cokret_sdk::models::SyncOutcome as ClientSyncOutcome;
 // those fields. The SDK type is the single source of truth.
 pub use cokret_sdk::models::{
     DirectoryRealmResolutionOutcome as ResolveRealmOutcome, RealmJoinCandidate,
+};
+pub use cokret_sdk::models::{
+    IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
@@ -816,17 +814,16 @@ impl From<cokret_sdk::EventsQueryOutcome> for BackfillView {
 // `ck.schema.snapshot.v1` manifest. See `api::CokretApi::snapshot_head`.
 
 pub use cokret_sdk::models::AuthzCheckOutcome;
-/// `ck.self.authz.grants.query.effective` response. soland serialises the SDK
-/// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
-/// decodes the same authoritative wire contract instead of a weakly-typed
-/// local mirror.
-pub use cokret_sdk::models::GrantList;
-
 /// `ck.self.authz.invites` decodes into the SDK's authoritative
 /// `AuthzInviteList` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
 /// former yougen-local `InvitesView` mirror was removed in favor of the wire
 /// type.
 pub use cokret_sdk::models::AuthzInviteList;
+/// `ck.self.authz.grants.query.effective` response. soland serialises the SDK
+/// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
+/// decodes the same authoritative wire contract instead of a weakly-typed
+/// local mirror.
+pub use cokret_sdk::models::GrantList;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PushRegisterView {

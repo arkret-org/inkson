@@ -291,7 +291,9 @@ impl From<cokret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
     }
 }
 
-impl From<cokret_sdk::ProjectionSpaceList> for LifecycleProjectionView<SpaceContainerProjectionView> {
+impl From<cokret_sdk::ProjectionSpaceList>
+    for LifecycleProjectionView<SpaceContainerProjectionView>
+{
     fn from(list: cokret_sdk::ProjectionSpaceList) -> Self {
         Self {
             realm_id: list.realm_id.as_str().to_owned(),
