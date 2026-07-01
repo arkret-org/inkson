@@ -1,7 +1,12 @@
 use anyhow::Context;
+use coauth_account_types::passkey::{
+    PasskeyAccountHint, PasskeyAuthFinishOutcome, PasskeyAuthFinishRequestBody,
+    PasskeyAuthStartOutcome, PasskeyRegisterFinishOutcome, PasskeyRegisterFinishRequestBody,
+    PasskeyRegisterStartOutcome,
+};
 use reqwest::Client;
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use url::Url;
 
 use super::proof::oidc_request_canonical_digest;
@@ -53,86 +58,71 @@ impl CoauthApi {
     }
 
     /// G3.Y0 — POST coauth's self-serve `passkey/register/start`
-    /// ceremony. Returns the `CreationChallengeResponse` JSON the
-    /// browser feeds into `navigator.credentials.create({ publicKey: ... })`.
+    /// ceremony. Returns the typed [`PasskeyRegisterStartOutcome`]; its
+    /// `challenge` field is the `CreationChallengeResponse` JSON the browser
+    /// feeds into `navigator.credentials.create({ publicKey: ... })`.
     pub async fn passkey_register_start(
         &self,
         passkey_register_start_path: &str,
         handle: Option<&str>,
         display_name: Option<&str>,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            passkey_register_start_path,
-            json!({
-                "handle": handle,
-                "display_name": display_name,
-            }),
-        )
-        .await
+    ) -> anyhow::Result<PasskeyRegisterStartOutcome> {
+        let body = PasskeyAccountHint {
+            handle: handle.map(str::to_owned),
+            display_name: display_name.map(str::to_owned),
+            ..Default::default()
+        };
+        self.post_json(passkey_register_start_path, body).await
     }
 
     /// G3.Y0 — POST coauth's `passkey/register/finish` ceremony with
     /// the attestation produced by the browser authenticator. Returns
-    /// the persisted credential id (base64url) on success.
-    ///
-    /// The response is typed as JSON because deployments can return
-    /// either a credential-only admin result or a self-serve login
-    /// result that also includes session material. The login UI
-    /// ships the OIDC browser path locally and leaves passkeys to the
-    /// coauth/IdP sign-in page.
+    /// the typed [`PasskeyRegisterFinishOutcome`] (persisted credential id in
+    /// `credential_id_b64`, plus any first-credential StarID mint details).
     pub async fn passkey_register_finish(
         &self,
         passkey_register_finish_path: &str,
         attestation: serde_json::Value,
         label: Option<&str>,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            passkey_register_finish_path,
-            json!({
-                "attestation": attestation,
-                "label": label,
-            }),
-        )
-        .await
+    ) -> anyhow::Result<PasskeyRegisterFinishOutcome> {
+        let body = PasskeyRegisterFinishRequestBody {
+            hint: PasskeyAccountHint::default(),
+            label: label.map(str::to_owned),
+            attestation,
+        };
+        self.post_json(passkey_register_finish_path, body).await
     }
 
-    /// G3.Y0 — POST coauth's `passkey/auth/start` ceremony. Returns
-    /// the `RequestChallengeResponse` JSON the browser feeds into
+    /// G3.Y0 — POST coauth's `passkey/auth/start` ceremony. Returns the typed
+    /// [`PasskeyAuthStartOutcome`]; its `challenge` field is the
+    /// `RequestChallengeResponse` JSON the browser feeds into
     /// `navigator.credentials.get({ publicKey: ... })`.
     pub async fn passkey_auth_start(
         &self,
         passkey_auth_start_path: &str,
         login_hint: Option<&str>,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            passkey_auth_start_path,
-            json!({
-                "login_hint": login_hint,
-            }),
-        )
-        .await
+    ) -> anyhow::Result<PasskeyAuthStartOutcome> {
+        let body = PasskeyAccountHint {
+            login_hint: login_hint.map(str::to_owned),
+            ..Default::default()
+        };
+        self.post_json(passkey_auth_start_path, body).await
     }
 
     /// G3.Y0 — POST coauth's `passkey/auth/finish` ceremony with the
-    /// assertion produced by the browser. Returns the credential id
-    /// on success.
-    ///
-    /// The response is typed as JSON for the same reason as
-    /// `passkey_register_finish`: some deployments return only the
-    /// credential id, while the local shipped sign-in path receives
-    /// tokens through the OIDC browser exchange.
+    /// assertion produced by the browser. Returns the typed
+    /// [`PasskeyAuthFinishOutcome`] carrying the credential id that satisfied
+    /// the assertion.
     pub async fn passkey_auth_finish(
         &self,
         passkey_auth_finish_path: &str,
         assertion: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            passkey_auth_finish_path,
-            json!({
-                "assertion": assertion,
-            }),
-        )
-        .await
+    ) -> anyhow::Result<PasskeyAuthFinishOutcome> {
+        let body = PasskeyAuthFinishRequestBody {
+            hint: PasskeyAccountHint::default(),
+            assertion,
+        };
+        self.post_json(passkey_auth_finish_path, body).await
     }
 
     /// Rotate a near-expiry, DPoP-bound session grant onto a fresh one without
@@ -155,14 +145,14 @@ impl CoauthApi {
             .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?;
         // Build the POST body from the spec's strong type so the `oneOf` /
         // required-field contract is enforced at compile time, not by hand.
-        let body = serde_json::to_value(cokret_sdk::SessionGrantRefreshRequestBody {
+        let body = cokret_sdk::SessionGrantRefreshRequestBody {
             grant_jwt: grant_jwt.to_owned(),
             audience: audience
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned),
             device_id: Some(device_id),
             proof: Some(proof),
-        })?;
+        };
         self.post_json_with_dpop("session-grants/refresh", body, Some(dpop_proof))
             .await
     }
@@ -273,12 +263,8 @@ impl CoauthApi {
             applet_delegation: None,
             proof,
         };
-        self.post_json_with_dpop(
-            "session-grants",
-            serde_json::to_value(&body)?,
-            Some(dpop_proof),
-        )
-        .await
+        self.post_json_with_dpop("session-grants", body, Some(dpop_proof))
+            .await
     }
 
     /// T1.Y3 — single client-visible hard logout (account-lifecycle §4.1).
@@ -359,20 +345,29 @@ impl CoauthApi {
         not_before: Option<&str>,
     ) -> anyhow::Result<Value> {
         let endpoint = self.endpoint("device-enroll")?;
-        let mut body = json!({
-            "device_id": device_id,
-            "device_public_key": device_public_key,
-            "actor_seq": actor_seq,
-        });
-        if let Some(not_before) = not_before.filter(|value| !value.trim().is_empty()) {
-            body["not_before"] = Value::String(not_before.to_owned());
-        }
+        // Parse the optional `not_before` gate (RFC 3339) into a typed instant,
+        // matching the SDK request body. Empty/blank strings are treated as absent.
+        let not_before = match not_before.filter(|value| !value.trim().is_empty()) {
+            Some(value) => Some(
+                chrono::DateTime::parse_from_rfc3339(value.trim())
+                    .context("parse device-enroll `not_before` as RFC 3339")?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+        let request_body = cokret_sdk::AccountDeviceEnrollRequestBody {
+            device_id: cokret_sdk::DeviceId::new(device_id.trim().to_owned())
+                .context("device-enroll `device_id`")?,
+            device_public_key: device_public_key.to_owned(),
+            actor_seq,
+            not_before,
+        };
         let response = self
             .http
             .post(endpoint)
             .bearer_auth(grant_jwt)
             .header("DPoP", dpop_proof)
-            .json(&body)
+            .json(&request_body)
             .send()
             .await?;
         let status = response.status();
@@ -386,26 +381,30 @@ impl CoauthApi {
                 text.chars().take(512).collect::<String>(),
             );
         }
-        // coauth returns `DeviceAuthorizeOutcome { principal_id, device_id,
-        // authority_did, event }`; the signed Event to submit is nested under
-        // `event`. Extract it so the caller submits the envelope verbatim (not
-        // the outcome wrapper, which has no `kind`/`proofs` and fails the
+        // coauth returns `AccountDeviceEnrollOutcome { principal_id, device_id,
+        // authority_did, authorized_event }`; the signed Event to submit is
+        // carried in `authorized_event`. Decode strongly-typed, then re-emit the
+        // Event as a `Value` so the caller submits the envelope verbatim (not the
+        // outcome wrapper, which has no `kind`/`proofs` and would fail the
         // `parse_signed_device_authorize` envelope decode).
-        let outcome: Value = serde_json::from_str(&text).context("parse device-enroll response")?;
-        outcome
-            .get("authorized_event")
-            .cloned()
-            .context("device-enroll response missing `authorized_event`")
+        let outcome: cokret_sdk::AccountDeviceEnrollOutcome =
+            serde_json::from_str(&text).context("parse device-enroll response")?;
+        serde_json::to_value(outcome.authorized_event)
+            .context("serialize device-enroll `authorized_event`")
     }
 
-    async fn post_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
+    async fn post_json<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: B,
+    ) -> anyhow::Result<T> {
         self.post_json_with_dpop(path, body, None).await
     }
 
-    async fn post_json_with_dpop<T: DeserializeOwned>(
+    async fn post_json_with_dpop<T: DeserializeOwned, B: Serialize>(
         &self,
         path: &str,
-        body: Value,
+        body: B,
         dpop_proof: Option<&str>,
     ) -> anyhow::Result<T> {
         let mut request = self.http.post(self.endpoint(path)?).json(&body);

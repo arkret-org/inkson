@@ -163,8 +163,8 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
 }
 
 /// COR-05: read/connect timeout for the (untrusted) push-gateway describe
-/// fetchers. Mirrors `mls::mimi_client`'s 10s cap so a slow / half-open / stalled
-/// gateway can't hang push registration indefinitely.
+/// fetchers. A 10s cap so a slow / half-open / stalled gateway can't hang
+/// push registration indefinitely.
 #[cfg(not(target_arch = "wasm32"))]
 const PUSH_DESCRIBE_TIMEOUT_SECS: u64 = 10;
 

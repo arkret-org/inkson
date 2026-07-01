@@ -12,6 +12,12 @@ inherits = "dev"
 opt-level = 1
 debug = 0
 strip = "debuginfo"
+# opt-level >= 1 + incremental on wasm32 makes LLVM internalize cross-CGU
+# `.llvm.`/`anon.*` symbols that rust-lld then reports as "undefined symbol"
+# at link time (rust-lang/rust#115297). `cargo check` never links, so it
+# passes while `dx build/serve --platform web` fails. Disabling incremental
+# for this profile is the standard workaround.
+incremental = false
 
 [features]
 # No default features. `OperationBuilder::build()` always emits
@@ -99,6 +105,11 @@ bip39 = {workspace = true}
 chacha20poly1305 = {workspace = true,default-features = false,features = ["alloc"]}
 chime = {workspace = true,features = ["http"]}
 chrono = {workspace = true,features = ["serde"]}
+# Client-facing serde wire types for coauth's `/_coauth/account/auth/*`
+# surface (passkey ceremonies etc.). Default feature set only — the
+# server-only `schema` feature (which pulls in salvo) is NOT enabled so this
+# stays wasm-safe.
+coauth-account-types = {path = "../coauth/crates/account-types"}
 dioxus-icons = {workspace = true,default-features = false}
 dioxus-primitives = {workspace = true,default-features = false}
 dioxus-router = {workspace = true}

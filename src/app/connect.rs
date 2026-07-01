@@ -6,9 +6,7 @@ use crate::api::is_terminal_session_grant_error;
 /// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
 /// `Vec<serde_json::Value>` shape the bootstrap invite-notification pipeline
 /// folds through lenient JSON accessors.
-fn invite_rows_to_values(
-    invites: Vec<cokret_sdk::models::Invite>,
-) -> Vec<serde_json::Value> {
+fn invite_rows_to_values(invites: Vec<cokret_sdk::models::Invite>) -> Vec<serde_json::Value> {
     invites
         .into_iter()
         .filter_map(|invite| serde_json::to_value(invite).ok())
@@ -67,9 +65,9 @@ async fn bootstrap_session_refresh() -> crate::session::CurrentSessionRefresh {
 /// base/actor/device from their signals (so it always targets the active
 /// session), then either adopts the current grant JWT or rotates the grant.
 /// On success it writes the current credential into the `token` signal and
-/// persisted config and returns it. When the 401 recovery path has no refresh
-/// material left, the stale live credential is invalidated instead of being
-/// kept around for the next reload.
+/// persisted config and returns it. Missing local refresh material is not a
+/// terminal grant failure: if a live credential is still loaded, keep it and
+/// let the caller decide from the server response whether it is actually dead.
 ///
 /// Concurrency is handled by `crate::session`: callers coalesce onto one
 /// in-flight invocation, so this never runs twice in parallel for a single
@@ -169,11 +167,7 @@ pub(super) async fn refresh_session_credential_for_active_context(
             crate::session::invalidate_current_session(reason.clone());
             crate::session::CurrentSessionRefresh::LoginRequired { reason }
         }
-        crate::session_refresh::RefreshOutcome::NoGrant => {
-            let reason = "no session grant is available".to_owned();
-            crate::session::invalidate_current_session(reason.clone());
-            crate::session::CurrentSessionRefresh::LoginRequired { reason }
-        }
+        crate::session_refresh::RefreshOutcome::NoGrant => no_grant_refresh_result(token()),
         crate::session_refresh::RefreshOutcome::Transient { reason } => {
             crate::session::CurrentSessionRefresh::RetryLater { reason }
         }
@@ -187,6 +181,16 @@ pub(super) async fn refresh_session_credential_for_active_context(
                 crate::session::CurrentSessionRefresh::Credential(current)
             }
         }
+    }
+}
+
+fn no_grant_refresh_result(current_credential: String) -> crate::session::CurrentSessionRefresh {
+    if current_credential.trim().is_empty() {
+        crate::session::CurrentSessionRefresh::SignInRequired {
+            reason: "no session grant is available".to_owned(),
+        }
+    } else {
+        crate::session::CurrentSessionRefresh::Credential(current_credential)
     }
 }
 
@@ -1548,4 +1552,27 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         });
         sync_bootstrap_complete.set(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_grant_refresh_keeps_loaded_credential() {
+        assert_eq!(
+            no_grant_refresh_result("live.ck.session.grant".to_owned()),
+            crate::session::CurrentSessionRefresh::Credential("live.ck.session.grant".to_owned())
+        );
+    }
+
+    #[test]
+    fn no_grant_refresh_without_credential_asks_for_sign_in_without_terminal_logout() {
+        assert_eq!(
+            no_grant_refresh_result("   ".to_owned()),
+            crate::session::CurrentSessionRefresh::SignInRequired {
+                reason: "no session grant is available".to_owned(),
+            }
+        );
+    }
 }
