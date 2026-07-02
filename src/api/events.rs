@@ -205,11 +205,12 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor: &str,
-        device_id: Option<&str>,
+        device_id: &str,
         strand_id: &str,
         typing: bool,
     ) -> anyhow::Result<TypingResult> {
-        let envelope = build_typing_envelope(realm_id, actor, device_id, strand_id, typing)?;
+        let mut envelope = build_typing_envelope(realm_id, actor, device_id, strand_id, typing)?;
+        super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(TypingResult {
             ok: response.accepted,
@@ -220,10 +221,13 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor: &str,
+        device_id: &str,
         state: &str,
         last_active_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> anyhow::Result<PresenceResult> {
-        let envelope = build_presence_envelope(realm_id, actor, state, last_active_at)?;
+        let mut envelope =
+            build_presence_envelope(realm_id, actor, device_id, state, last_active_at)?;
+        super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(PresenceResult {
             ok: response.accepted,
@@ -238,6 +242,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor: &str,
+        device_id: &str,
         strand_id: &str,
         event_id: &str,
         receipt_type: &str,
@@ -248,7 +253,9 @@ impl CokretApi {
         if receipt_type != "ck.receipt.read" {
             anyhow::bail!("unsupported ephemeral receipt_type {receipt_type:?}");
         }
-        let envelope = build_receipt_read_envelope(realm_id, actor, strand_id, event_id)?;
+        let mut envelope =
+            build_receipt_read_envelope(realm_id, actor, device_id, strand_id, event_id)?;
+        super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(ReceiptResult {
             ok: response.accepted,

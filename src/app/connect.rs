@@ -394,6 +394,20 @@ async fn enroll_current_session_device(
         }
     };
 
+    // §5.4: the enrollment authority attests the device verify key, HPKE
+    // sealing key AND the canonical algorithm set. Advertise this device's
+    // stable X25519 HPKE public key (same keypair the history-sharing /
+    // secret-send paths open with).
+    let hpke_key = {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let (_privkey, pubkey) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+            secure_store.as_ref(),
+            actor,
+            device,
+        )
+        .map_err(|error| anyhow::anyhow!("load device HPKE keypair for enrollment: {error}"))?;
+        crate::did_key::encode_x25519_multibase(&pubkey)
+    };
     let request = crate::device_enrollment::DeviceEnrollmentRequest {
         grant_jwt: grant.grant_jwt,
         dpop_proof,
@@ -401,6 +415,8 @@ async fn enroll_current_session_device(
         device_public_key,
         actor_seq,
         not_before: None,
+        hpke_key,
+        algorithms: crate::device_enrollment::yougen_device_algorithms(),
     };
     crate::device_enrollment::enroll_current_device(&coauth, principal_api, &request, device).await
 }

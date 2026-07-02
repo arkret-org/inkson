@@ -270,10 +270,12 @@ pub fn ChatPanel(
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
         let actor = account_did.clone();
+        let device = device_id.clone();
         let state_store_for_presence = state_store;
         use_effect(move || {
             let realm = trim_realm_id(&realm);
             let actor = actor.trim().to_owned();
+            let device = device.clone();
             let visibility = state_store_for_presence.read().presence_visibility();
             let api_token = token();
             let announce_key = format!("{realm}|{actor}|{}", visibility.as_wire());
@@ -292,7 +294,7 @@ pub fn ChatPanel(
             spawn(async move {
                 let _ =
                     crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        api.send_presence(&realm, &actor, "online", None).await
+                        api.send_presence(&realm, &actor, &device, "online", None).await
                     })
                     .await;
             });
@@ -583,6 +585,7 @@ pub fn ChatPanel(
             let realm = selected_realm_id.clone();
             let event_id = top_event.clone();
             let actor = account_did.clone();
+            let device = device_id.clone();
             let strand_id = if selected_channel_value.trim().is_empty() {
                 default_discussion_strand_id(&realm)
             } else {
@@ -592,8 +595,15 @@ pub fn ChatPanel(
             spawn(async move {
                 let _ =
                     crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        api.send_receipt(&realm, &actor, &strand_id, &event_id, "ck.receipt.read")
-                            .await
+                        api.send_receipt(
+                            &realm,
+                            &actor,
+                            &device,
+                            &strand_id,
+                            &event_id,
+                            "ck.receipt.read",
+                        )
+                        .await
                     })
                     .await;
             });
@@ -3771,6 +3781,7 @@ pub fn ChatPanel(
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
+                            let typing_device_id = device_id.clone();
                             let selected_strand = selected_channel_value.clone();
                             move |event: FormEvent| {
                                 let value = event.value();
@@ -3793,6 +3804,7 @@ pub fn ChatPanel(
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let actor = actor.clone();
+                                let device = typing_device_id.clone();
                                 let strand_id = if selected_strand.trim().is_empty() {
                                     default_discussion_strand_id(&realm)
                                 } else {
@@ -3802,6 +3814,7 @@ pub fn ChatPanel(
                                     let base = base.clone();
                                     let realm = realm.clone();
                                     let actor = actor.clone();
+                                    let device = device.clone();
                                     let strand_id = strand_id.clone();
                                     let api_token = token();
                                     spawn(async move {
@@ -3812,7 +3825,7 @@ pub fn ChatPanel(
                                                 api.send_typing(
                                                     &realm,
                                                     &actor,
-                                                    None,
+                                                    &device,
                                                     &strand_id,
                                                     is_typing,
                                                 )

@@ -336,12 +336,15 @@ impl CoauthApi {
     /// `self` MUST be rooted at the resolved `gate_account_base`. `grant_jwt` is
     /// the active `ck.session.grant`; `dpop_proof` is the device holder proof
     /// bound to the grant's `cnf.jkt`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn device_enroll_signed_event(
         &self,
         grant_jwt: &str,
         dpop_proof: &str,
         device_id: &str,
         device_public_key: &str,
+        hpke_key: &str,
+        algorithms: &[String],
         actor_seq: u64,
         not_before: Option<&str>,
     ) -> anyhow::Result<Value> {
@@ -360,6 +363,8 @@ impl CoauthApi {
             device_id: cokret_sdk::DeviceId::new(device_id.trim().to_owned())
                 .context("device-enroll `device_id`")?,
             device_public_key: device_public_key.to_owned(),
+            hpke_key: hpke_key.to_owned(),
+            algorithms: algorithms.to_vec(),
             actor_seq,
             not_before,
         };

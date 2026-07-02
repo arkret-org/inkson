@@ -94,7 +94,7 @@ const TYPING_EPHEMERAL_TTL_SECS: i64 = 5;
 pub fn build_typing_envelope(
     realm_id: &str,
     actor_id: &str,
-    device_id: Option<&str>,
+    device_id: &str,
     strand_id: &str,
     typing: bool,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
@@ -107,13 +107,12 @@ pub fn build_typing_envelope(
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.typing: {err}"))?;
     let strand = cokret_sdk::StrandId::new(strand_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid strand_id for ck.typing: {err}"))?;
-    let device = device_id
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| {
-            cokret_sdk::DeviceId::new(s)
-                .map_err(|err| anyhow::anyhow!("invalid device_id for ck.typing: {err}"))
-        })
-        .transpose()?;
+    // ephemeral-envelope.schema.json: device_id is REQUIRED for every
+    // broadcast ephemeral kind; the proof binds to `{actor_id}#{device_id}`.
+    let device = Some(
+        cokret_sdk::DeviceId::new(device_id)
+            .map_err(|err| anyhow::anyhow!("invalid device_id for ck.typing: {err}"))?,
+    );
     cokret_sdk::EphemeralEnvelope::new(
         "ck.typing",
         realm,
@@ -137,6 +136,7 @@ pub fn build_typing_envelope(
 pub fn build_receipt_read_envelope(
     realm_id: &str,
     actor_id: &str,
+    device_id: &str,
     strand_id: &str,
     event_id: &str,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
@@ -161,11 +161,13 @@ pub fn build_receipt_read_envelope(
         read_scope: cokret_sdk::ReadScope::strand(strand.as_str().to_owned(), Some("discussion")),
         created_at: now,
     };
+    let device = cokret_sdk::DeviceId::new(device_id)
+        .map_err(|err| anyhow::anyhow!("invalid device_id for ck.receipt.read: {err}"))?;
     cokret_sdk::EphemeralEnvelope::new(
         "ck.receipt.read",
         realm,
         actor,
-        None,
+        Some(device),
         now,
         expires_at,
         serde_json::to_value(receipt)?,
@@ -178,6 +180,7 @@ pub fn build_receipt_read_envelope(
 pub fn build_presence_envelope(
     realm_id: &str,
     actor_id: &str,
+    device_id: &str,
     state: &str,
     last_active_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
@@ -205,11 +208,13 @@ pub fn build_presence_envelope(
         "ttl_ms".into(),
         Value::Number((EPHEMERAL_DEFAULT_TTL_SECS * 1000).into()),
     );
+    let device = cokret_sdk::DeviceId::new(device_id)
+        .map_err(|err| anyhow::anyhow!("invalid device_id for ck.presence: {err}"))?;
     cokret_sdk::EphemeralEnvelope::new(
         "ck.presence",
         realm,
         actor,
-        None,
+        Some(device),
         now,
         expires_at,
         Value::Object(payload),
@@ -291,4 +296,58 @@ pub fn build_call_signal_envelope_v1(
         None,
     )
     .map_err(|err| anyhow::anyhow!("call signal envelope rejected: {err}"))
+}
+
+/// Attach the broadcast ephemeral `proof` required by
+/// `ephemeral-envelope.schema.json` for all four broadcast kinds: a detached
+/// JWS from the active device signer whose `verification_method` is
+/// `{actor_id}#{device_id}` (fragment = the full `ck:device:<uuidv7>` id) and
+/// whose `event_digest` covers the canonical envelope bytes without `proof`.
+/// Fails closed when no signer is installed — an unsigned broadcast ephemeral
+/// never goes on the wire.
+pub(crate) fn attach_broadcast_ephemeral_proof(
+    envelope: &mut cokret_sdk::EphemeralEnvelope,
+) -> anyhow::Result<()> {
+    let kind = envelope.kind.clone();
+    let device_id = envelope
+        .device_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("{kind} proof requires envelope.device_id"))?
+        .as_str()
+        .to_owned();
+    let actor_id = envelope.actor_id.as_str().to_owned();
+    let signer = crate::event_signer::active_signer().ok_or_else(|| {
+        anyhow::anyhow!("no active signer configured — cannot submit {kind} without device proof")
+    })?;
+    let mut canonical = serde_json::to_value(&*envelope)?;
+    if let Value::Object(object) = &mut canonical {
+        object.remove("proof");
+    }
+    let canonical_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
+        .canonical_bytes(&canonical)
+        .map_err(|err| anyhow::anyhow!("{kind} canonical encoding failed: {err}"))?;
+    let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
+    let verification_method = format!("{actor_id}#{device_id}");
+    let created_at = crate::clock::now_rfc3339_secs();
+    let binding = json!({
+        "event_digest": event_digest,
+        "actor_id": actor_id,
+        "verification_method": verification_method,
+        "created_at": created_at,
+    });
+    let binding_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
+        .canonical_bytes(&binding)
+        .map_err(|err| anyhow::anyhow!("{kind} binding encoding failed: {err}"))?;
+    let jws = signer
+        .detached_jws_over(&binding_bytes)
+        .map_err(|err| anyhow::anyhow!("{kind} proof signing failed: {err}"))?;
+    envelope.proof = Some(json!({
+        "kind": "detached_jws",
+        "alg": signer.algorithm(),
+        "verification_method": verification_method,
+        "event_digest": event_digest,
+        "created_at": created_at,
+        "jws": jws,
+    }));
+    Ok(())
 }

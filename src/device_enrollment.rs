@@ -39,6 +39,25 @@ pub struct DeviceEnrollmentRequest {
     pub actor_seq: u64,
     /// Optional `not_before` RFC 3339 timestamp; coauth defaults to now when absent.
     pub not_before: Option<String>,
+    /// This device's HPKE sealing public key (multibase, §5.4).
+    pub hpke_key: String,
+    /// Canonical sorted unique algorithm ids the device supports (§5.2/§5.4).
+    pub algorithms: Vec<String>,
+}
+
+/// Canonical algorithm ids a yougen device advertises in its
+/// `ck.device.authorize` record: the default-MUST HPKE suite (secret / key
+/// envelope sealing) plus the MLS v1 group algorithm. UTF-8 bytewise sorted.
+pub const YOUGEN_DEVICE_ALGORITHMS: &[&str] = &[
+    "ck.hpke_x25519_aead_xchacha20poly1305.v1",
+    "ck.mls.v1",
+];
+
+pub fn yougen_device_algorithms() -> Vec<String> {
+    YOUGEN_DEVICE_ALGORITHMS
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect()
 }
 
 /// Multibase Ed25519 `device_public_key` for the device described by `material`.
@@ -100,6 +119,8 @@ pub async fn enroll_current_device(
             &request.dpop_proof,
             &request.device_id,
             &request.device_public_key,
+            &request.hpke_key,
+            &request.algorithms,
             request.actor_seq,
             request.not_before.as_deref(),
         )

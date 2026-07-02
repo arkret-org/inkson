@@ -37,48 +37,11 @@ impl CokretApi {
             data,
         )?;
 
-        // webrtc-signaling.md §5.1: the ephemeral `proof` is detached-JWS and
-        // **isomorphic to the persistent Event proof**. The receiver verifies
-        // it with the SAME SDK verifier (`verify_eddsa_detached_jws_proof`), so
-        // the JWS MUST sign the canonical proof *binding object*
-        // `{event_digest, actor_id, verification_method, created_at}` — NOT the
-        // raw envelope bytes — and the proof MUST carry `event_digest`
-        // (= canonical hash of the envelope without `proof`) and `created_at`.
-        let signer = crate::event_signer::active_signer().ok_or_else(|| {
-            anyhow::anyhow!(
-                "no active signer configured \u{2014} cannot submit ck.call.signal without device proof"
-            )
-        })?;
-        let mut canonical = serde_json::to_value(&envelope)?;
-        if let Value::Object(object) = &mut canonical {
-            object.remove("proof");
-        }
-        let canonical_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
-            .canonical_bytes(&canonical)
-            .map_err(|err| anyhow::anyhow!("ck.call.signal canonical encoding failed: {err}"))?;
-        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        let verification_method = format!("{actor_id}#device");
-        let created_at = crate::clock::now_rfc3339_secs();
-        let binding = json!({
-            "event_digest": event_digest,
-            "actor_id": actor_id,
-            "verification_method": verification_method,
-            "created_at": created_at,
-        });
-        let binding_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
-            .canonical_bytes(&binding)
-            .map_err(|err| anyhow::anyhow!("ck.call.signal binding encoding failed: {err}"))?;
-        let jws = signer
-            .detached_jws_over(&binding_bytes)
-            .map_err(|err| anyhow::anyhow!("ck.call.signal proof signing failed: {err}"))?;
-        envelope.proof = Some(json!({
-            "kind": "detached_jws",
-            "alg": signer.algorithm(),
-            "verification_method": verification_method,
-            "event_digest": event_digest,
-            "created_at": created_at,
-            "jws": jws,
-        }));
+        // ephemeral-envelope.schema.json / webrtc-signaling.md §5.1: the proof
+        // is detached-JWS, isomorphic to the persistent Event proof, with
+        // verification_method `{actor_id}#{device_id}` (fragment = the full
+        // ck:device id) over the canonical envelope bytes without `proof`.
+        super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
 
         self.submit_ephemeral_envelope(&envelope).await
     }

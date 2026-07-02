@@ -69,7 +69,7 @@ fn typing_envelope_uses_spec_ephemeral_shape() {
     let envelope = build_typing_envelope(
         "ck:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
-        Some("ck:device:01904100-0000-7000-8000-a11ce0000001"),
+        "ck:device:01904100-0000-7000-8000-a11ce0000001",
         "ck:strand:01964200-0000-7000-8000-000000000001",
         true,
     )
@@ -105,6 +105,7 @@ fn read_receipt_envelope_uses_actor_not_event_as_sender() {
     let envelope = build_receipt_read_envelope(
         "ck:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
+        "ck:device:01904100-0000-7000-8000-a11ce0000001",
         "ck:strand:01964200-0000-7000-8000-000000000001",
         "ck:event:01904100-0000-7000-8000-4a4116cba4e8",
     )
@@ -147,6 +148,7 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
     let envelope = build_presence_envelope(
         "ck:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
+        "ck:device:01904100-0000-7000-8000-a11ce0000001",
         "online",
         Some(last_active_at),
     )

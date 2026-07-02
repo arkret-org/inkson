@@ -9,6 +9,16 @@ pub fn encode_ed25519_did_key_multibase(verifying_key: &VerifyingKey) -> String 
     cokret_sdk::ed25519_pubkey_to_did_key_multibase(verifying_key.as_bytes())
 }
 
+/// Encode an X25519 public key as the multibase form used for device
+/// `hpke_key` records (`z<base58btc(0xec 0x01 || pubkey32)>`,
+/// multicodec x25519-pub).
+pub fn encode_x25519_multibase(public_key: &[u8]) -> String {
+    let mut bytes = Vec::with_capacity(2 + public_key.len());
+    bytes.extend_from_slice(&[0xec, 0x01]);
+    bytes.extend_from_slice(public_key);
+    cokret_sdk::encode_multibase_base58btc(bytes)
+}
+
 /// Compose a full `did:key` DID URL from a verifying key
 /// (`did:key:z<...>`).
 pub fn did_key_from_verifying_key(verifying_key: &VerifyingKey) -> String {

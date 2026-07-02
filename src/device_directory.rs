@@ -337,6 +337,8 @@ pub fn verify_tier2_chain(
     actor: &Did,
     device: &DeviceId,
     device_signing_key_multibase: &str,
+    hpke_key: &str,
+    trust_algorithms: &[String],
 ) -> DeviceTrustState {
     let Some(publish_content) = publish_content_from_directory(publish) else {
         return DeviceTrustState::Unverified;
@@ -355,6 +357,8 @@ pub fn verify_tier2_chain(
         actor,
         device,
         device_signing_key_multibase,
+        hpke_key,
+        trust_algorithms,
         &anchored_psk,
     )
 }
@@ -393,7 +397,21 @@ fn tier2_accepted_key(
     // §8.3 step 5: verify the chain over the SAME bare multibase key the
     // directory exposed (and which we will use for proof verification).
     let multibase = directory_signing_key_multibase(record.device_signing_key.as_deref()?)?;
-    match verify_tier2_chain(did_document, publish, binding, actor, device, &multibase) {
+    // §5.2/§8.2: the trust binding transcript also covers the device HPKE
+    // sealing key and the canonical algorithms array — a directory record
+    // missing either cannot be chain-verified (fail closed).
+    let hpke_key = record.hpke_key.as_deref()?;
+    let trust_algorithms = record.trust_algorithms.as_deref()?;
+    match verify_tier2_chain(
+        did_document,
+        publish,
+        binding,
+        actor,
+        device,
+        &multibase,
+        hpke_key,
+        trust_algorithms,
+    ) {
         DeviceTrustState::CrossSigned => Some(directory_key),
         _ => None,
     }
@@ -944,9 +962,15 @@ mod tests {
 
         // SSK signs the device binding over the bare multibase device key
         // (§8.3 step 5: the same key the directory exposes).
-        let device_input =
-            DeviceTrustBinding::canonical_input(&actor, &device, &device_multibase, binding_gen)
-                .unwrap();
+        let device_input = DeviceTrustBinding::canonical_input(
+            &actor,
+            &device,
+            &device_multibase,
+            TIER2_HPKE_KEY,
+            &tier2_algorithms(),
+            binding_gen,
+        )
+        .unwrap();
         let binding = QueryDeviceCrossSigningBinding {
             verification_method: ssk_kid,
             alg: Some("EdDSA".to_owned()),
@@ -978,6 +1002,8 @@ mod tests {
                         self.device.as_str(): {
                             "algorithms": {},
                             "device_signing_key": self.device_signing_key,
+                            "hpke_key": TIER2_HPKE_KEY,
+                            "trust_algorithms": tier2_algorithms(),
                             "device_status": "active",
                             "cross_signing_binding": serde_json::to_value(&self.binding).unwrap(),
                         }
@@ -989,6 +1015,15 @@ mod tests {
             }))
             .unwrap()
         }
+    }
+
+    const TIER2_HPKE_KEY: &str = "z6LSTier2TestHpkeKey";
+
+    fn tier2_algorithms() -> Vec<String> {
+        vec![
+            "ck.hpke_x25519_aead_xchacha20poly1305.v1".to_owned(),
+            "ck.mls.v1".to_owned(),
+        ]
     }
 
     const TIER2_ACTOR: &str = "did:web:tier2-alice.example";
@@ -1004,6 +1039,8 @@ mod tests {
             &fx.actor,
             &fx.device,
             &fx.device_multibase(),
+            TIER2_HPKE_KEY,
+            &tier2_algorithms(),
         );
         assert_eq!(state, DeviceTrustState::CrossSigned);
     }
@@ -1036,6 +1073,8 @@ mod tests {
                 &fx.actor,
                 &fx.device,
                 &fx.device_multibase(),
+                TIER2_HPKE_KEY,
+                &tier2_algorithms(),
             ),
             DeviceTrustState::Unverified
         );
@@ -1062,6 +1101,8 @@ mod tests {
                 &fx.actor,
                 &fx.device,
                 &fx.device_multibase(),
+                TIER2_HPKE_KEY,
+                &tier2_algorithms(),
             ),
             DeviceTrustState::Unverified
         );
@@ -1092,6 +1133,8 @@ mod tests {
                 &fx.actor,
                 &fx.device,
                 &fx.device_multibase(),
+                TIER2_HPKE_KEY,
+                &tier2_algorithms(),
             ),
             DeviceTrustState::NeedsReverification
         );
