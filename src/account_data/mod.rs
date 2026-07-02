@@ -38,6 +38,10 @@ pub enum AccountDataKey {
     ClientReadReceipts,
     /// `ck.presence.visibility` — principal-private presence fanout policy.
     ClientPresence,
+    /// `ck.presence.preference` — principal-private manual presence
+    /// preference (pinned state / status message / expiry), enforced on
+    /// the send side (profiles-presence.md §3.6).
+    ClientPresencePreference,
     /// `ck.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
     /// `ck.push_rules` — per-Realm mute, sound, push routing.
@@ -56,6 +60,7 @@ impl AccountDataKey {
             Self::ClientUi => "client.ui",
             Self::ClientReadReceipts => "ck.read_receipt.preferences",
             Self::ClientPresence => "ck.presence.visibility",
+            Self::ClientPresencePreference => "ck.presence.preference",
             Self::ClientBlocklist => "ck.account.blocklist",
             Self::ClientNotifications => "ck.push_rules",
             Self::ClientDndSchedule => "ck.dnd_schedule",
@@ -69,6 +74,7 @@ impl AccountDataKey {
             "client.ui" => Self::ClientUi,
             "ck.read_receipt.preferences" => Self::ClientReadReceipts,
             "ck.presence.visibility" => Self::ClientPresence,
+            "ck.presence.preference" => Self::ClientPresencePreference,
             "ck.account.blocklist" => Self::ClientBlocklist,
             "ck.push_rules" => Self::ClientNotifications,
             "ck.dnd_schedule" => Self::ClientDndSchedule,

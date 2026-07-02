@@ -255,6 +255,18 @@ impl LocalStateStore {
         self.presence_visibility().allows_presence_send()
     }
 
+    // ── Manual presence preference (profiles-presence.md §3.6) ─
+
+    pub fn presence_preference(&self) -> PresencePreferenceState {
+        self.load().presence_preference
+    }
+
+    pub fn set_presence_preference(&mut self, preference: PresencePreferenceState) {
+        self.ensure_cached_loaded();
+        self.cached.presence_preference = preference;
+        let _ = self.flush();
+    }
+
     // ── Read receipt preferences (spec client-preferences.md §3.6) ─
 
     pub fn read_receipt_default_send(&self) -> bool {

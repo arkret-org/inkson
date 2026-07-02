@@ -1204,6 +1204,23 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     store.set_presence_visibility(visibility);
                                     continue;
                                 }
+                                // ck.presence.preference — manual presence
+                                // preference (profiles-presence.md §3.6).
+                                // Plaintext-readable bodies only appear from
+                                // same-account devices in dev / test
+                                // deployments; opaque ciphertext entries are
+                                // skipped (local state authoritative).
+                                if data_type == "ck.presence.preference" {
+                                    if let Some(content) = entry.get("content")
+                                        && content.get("ciphertext").is_none()
+                                        && let Ok(preference) = serde_json::from_value::<
+                                            crate::local_state::PresencePreferenceState,
+                                        >(content.clone())
+                                    {
+                                        store.set_presence_preference(preference);
+                                    }
+                                    continue;
+                                }
                                 if data_type == "ck.account.blocklist" {
                                     let Some(content) = entry.get("content") else {
                                         continue;

@@ -107,7 +107,13 @@ pub mod pending_logout;
 /// Input-path perf helpers — draft-save debounce + typing throttle for the
 /// composer hot paths. See [`perf`] for the rationale.
 pub mod perf;
-pub mod presence_rx;
+// Presence/typing receive-side helpers formerly lived in `presence_rx`;
+// after refactor a37e1b9 routed ephemeral signals through the soland sync
+// projection the module was dead code. Its fail-closed `last_active_at`
+// bucket validation moved into the shared SDK
+// (`cokret_sdk::validate_last_active_at`), which soland now enforces at
+// admission — the receive path here consumes the already-validated
+// projection.
 pub mod push;
 pub mod rank;
 pub mod realm_events_engine;

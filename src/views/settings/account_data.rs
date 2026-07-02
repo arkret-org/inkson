@@ -7,10 +7,11 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use super::{
-    DND_ACCOUNT_DATA_KEY, PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, PUSH_RULES_ACCOUNT_DATA_KEY,
+    DND_ACCOUNT_DATA_KEY, PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY,
+    PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, PUSH_RULES_ACCOUNT_DATA_KEY,
     READ_RECEIPT_ACCOUNT_DATA_KEY, build_read_receipt_preferences_body,
 };
-use crate::local_state::{LocalStateStore, PresenceVisibility};
+use crate::local_state::{LocalStateStore, PresencePreferenceState, PresenceVisibility};
 use crate::models::AccountDataSetResult;
 use crate::notification_rules::{WatchLevel, parse_dnd_settings};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -84,6 +85,84 @@ pub(super) fn push_read_receipt_account_data(
             Err(err) => {
                 tracing::warn!(
                     "ck.account_data.set for read-receipt prefs failed: {}",
+                    err.display()
+                );
+            }
+        }
+    });
+}
+
+pub(super) fn build_presence_preference_body(
+    preference: &PresencePreferenceState,
+) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    if let Some(state) = preference.manual_state.as_deref() {
+        body.insert("manual_state".into(), json!(state));
+    }
+    if let Some(message) = preference.status_message.as_deref() {
+        body.insert("status_message".into(), json!(message));
+    }
+    if let Some(clears_at) = preference.clears_at.as_deref() {
+        body.insert("clears_at".into(), json!(clears_at));
+    }
+    serde_json::Value::Object(body)
+}
+
+/// Best-effort cross-device sync of `ck.presence.preference`
+/// (profiles-presence.md §3.6). Local state stays authoritative; the
+/// payload goes up encrypted because servers MUST NOT read or project
+/// this key (unlike the minimal `ck.presence.visibility` projection).
+/// An empty preference deletes the key instead of storing an empty body.
+pub(super) fn push_presence_preference_account_data(
+    base_url: String,
+    api_token: String,
+    state_store: Signal<LocalStateStore>,
+) {
+    if api_token.trim().is_empty() {
+        return;
+    }
+    let preference = state_store.read().presence_preference();
+    if preference.is_empty() {
+        spawn(async move {
+            if let Err(err) = with_authed_api(&base_url, api_token, |api| async move {
+                api.delete_account_data(PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY)
+                    .await
+            })
+            .await
+            {
+                tracing::debug!(
+                    "account_data DELETE for ck.presence.preference failed: {}; local state still authoritative",
+                    err.display()
+                );
+            }
+        });
+        return;
+    }
+    let plaintext = build_presence_preference_body(&preference);
+    let body = match encrypted_account_data_marker(PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY, &plaintext)
+    {
+        Ok(body) => body,
+        Err(err) => {
+            tracing::warn!("ck.account_data.set for ck.presence.preference skipped: {err}");
+            return;
+        }
+    };
+    spawn(async move {
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.set_account_data(PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY, body)
+                .await
+        })
+        .await
+        {
+            Ok(AccountDataSetResult::Stored { .. }) => {}
+            Ok(AccountDataSetResult::Unsupported { status }) => {
+                tracing::debug!(
+                    "soland ck.account_data.set for ck.presence.preference returned {status}; local preference remains authoritative"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "ck.account_data.set for ck.presence.preference failed: {}",
                     err.display()
                 );
             }

@@ -125,6 +125,9 @@ pub fn build_typing_envelope(
             "actor_id": actor_id,
             "realm_id": realm_id_wire,
             "strand_id": strand.as_str(),
+            // ephemeral-envelope.schema.json ck.typing branch: optional, const
+            // "discussion" in v1 — the only writable Message timeline.
+            "track_name": "discussion",
             "typing": typing,
             "ttl_ms": TYPING_EPHEMERAL_TTL_SECS * 1000
         }),
@@ -183,9 +186,10 @@ pub fn build_presence_envelope(
     actor_id: &str,
     device_id: &str,
     state: &str,
+    status_message: Option<&str>,
     last_active_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
-    if !matches!(state, "online" | "idle" | "offline" | "dnd") {
+    if cokret_sdk::PresenceStatus::parse_wire(state).is_none() {
         anyhow::bail!("ck.presence state {state:?} is not a canonical presence state");
     }
     let now = chrono::Utc::now();
@@ -199,6 +203,15 @@ pub fn build_presence_envelope(
     payload.insert("realm_id".into(), Value::String(realm_id_wire));
     payload.insert("actor_id".into(), Value::String(actor_id.to_owned()));
     payload.insert("state".into(), Value::String(state.to_owned()));
+    if let Some(message) = status_message.map(str::trim).filter(|m| !m.is_empty()) {
+        // Sender-side fail-closed: the same constraint the server
+        // enforces at admission (≤256 code points, NFC, no control
+        // chars). NFC-normalize proactively for free-typed text.
+        let message = cokret_sdk::canonical::to_nfc(message);
+        cokret_sdk::validate_status_message(&message)
+            .map_err(|err| anyhow::anyhow!("ck.presence status_message rejected: {err}"))?;
+        payload.insert("status_message".into(), Value::String(message));
+    }
     if let Some(ts) = last_active_at {
         payload.insert(
             "last_active_at".into(),

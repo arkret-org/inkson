@@ -223,10 +223,17 @@ impl CokretApi {
         actor: &str,
         device_id: &str,
         state: &str,
+        status_message: Option<&str>,
         last_active_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> anyhow::Result<PresenceResult> {
-        let mut envelope =
-            build_presence_envelope(realm_id, actor, device_id, state, last_active_at)?;
+        let mut envelope = build_presence_envelope(
+            realm_id,
+            actor,
+            device_id,
+            state,
+            status_message,
+            last_active_at,
+        )?;
         super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(PresenceResult {

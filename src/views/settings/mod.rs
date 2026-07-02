@@ -70,6 +70,28 @@ pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ck.dnd_schedule";
 /// `ck.account_data` key used by the principal-private presence policy.
 pub(crate) const PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY: &str = "ck.presence.visibility";
 
+/// `ck.account_data` key used by the manual presence preference
+/// (profiles-presence.md §3.6). Send-side enforced; pushed encrypted —
+/// servers MUST NOT require a projection of this key.
+pub(crate) const PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY: &str = "ck.presence.preference";
+
+/// Resolve the relative expiry picker choice into an absolute RFC 3339
+/// UTC `clears_at` (profiles-presence.md §3.6). `never` (and anything
+/// unrecognized) means no expiry.
+pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<String> {
+    let now = chrono::Utc::now();
+    let clears_at = match choice {
+        "30m" => now + chrono::Duration::minutes(30),
+        "1h" => now + chrono::Duration::hours(1),
+        "today" => {
+            let next_midnight = now.date_naive().succ_opt()?.and_hms_opt(0, 0, 0)?;
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(next_midnight, chrono::Utc)
+        }
+        _ => return None,
+    };
+    Some(clears_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+}
+
 pub(crate) fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
     crate::views::helpers::identity_avatar_initial(handles, account_did)
 }
@@ -403,12 +425,32 @@ pub fn SettingsPanel(
     let mut diagnostics_mode =
         use_signal(|| route_diagnostics_mode.unwrap_or(DiagnosticsMode::Developer));
     let active_diagnostics_mode = route_diagnostics_mode.unwrap_or(diagnostics_mode());
-    let mut presence_visible = use_signal(|| {
+    let mut presence_visibility_choice = use_signal(|| {
         state_store
             .read()
             .presence_visibility()
-            .allows_presence_send()
+            .as_wire()
+            .to_owned()
     });
+    let presence_visibility_selected = use_memo(move || Some(presence_visibility_choice()));
+    // Manual presence preference editor state (profiles-presence.md
+    // §3.6). Hydrated from persisted local state; the expiry picker is
+    // relative so it always starts at "never".
+    let initial_presence_preference = state_store.read().presence_preference();
+    let initial_presence_manual_state = initial_presence_preference
+        .manual_state
+        .clone()
+        .unwrap_or_else(|| "auto".to_owned());
+    let initial_presence_status_message = initial_presence_preference
+        .status_message
+        .clone()
+        .unwrap_or_default();
+    let mut presence_manual_state = use_signal(move || initial_presence_manual_state);
+    let presence_manual_state_selected = use_memo(move || Some(presence_manual_state()));
+    let mut presence_status_message = use_signal(move || initial_presence_status_message);
+    let mut presence_expiry_choice = use_signal(|| "never".to_owned());
+    let presence_expiry_selected = use_memo(move || Some(presence_expiry_choice()));
+    let mut presence_status_feedback = use_signal(String::new);
     let mut dnd_enabled = use_signal(|| false);
     let mut dnd_mode = use_signal(|| "off".to_owned());
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
@@ -1951,32 +1993,117 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "privacy-settings",
                     div { class: "event-head", span { "Privacy" } span { "visibility controls" } }
-                    label {
-                        Checkbox {
-                            checked: if presence_visible() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                            on_checked_change: move |state: CheckboxState| {
-                                let visible = bool::from(state);
-                                presence_visible.set(visible);
-                                state_store.write().set_presence_visibility(
-                                    if visible {
-                                        crate::local_state::PresenceVisibility::Public
-                                    } else {
-                                        crate::local_state::PresenceVisibility::Nobody
-                                    },
-                                );
-                                status.set(format!(
-                                    "Presence: {}",
-                                    if visible { "public" } else { "hidden" }
-                                ));
+                    // Presence visibility — the full three-tier policy
+                    // (profiles-presence.md §3.4), not a binary toggle.
+                    div { class: "actions",
+                        span { "Presence visibility" }
+                        Select::<String> {
+                            "data-testid": "presence-visibility-select",
+                            value: Some(presence_visibility_selected.into()),
+                            on_value_change: move |v: Option<String>| {
+                                let Some(v) = v else { return; };
+                                let visibility = match crate::local_state::PresenceVisibility::try_from_wire(&v) {
+                                    Some(visibility) => visibility,
+                                    None => return,
+                                };
+                                presence_visibility_choice.set(v);
+                                state_store.write().set_presence_visibility(visibility);
+                                status.set(format!("Presence visibility: {}", visibility.as_wire()));
                                 push_presence_visibility_account_data(
                                     base_url(),
                                     token(),
                                     state_store,
                                 );
                             },
+                            SelectOption::<String> { index: 0usize, value: "public".to_string(), text_value: "Everyone in shared Realms", "Everyone in shared Realms" }
+                            SelectOption::<String> { index: 1usize, value: "contacts_only".to_string(), text_value: "Contacts only", "Contacts only" }
+                            SelectOption::<String> { index: 2usize, value: "nobody".to_string(), text_value: "Nobody (appear offline)", "Nobody (appear offline)" }
                         }
-                        " Show presence to others"
                     }
+                    // My status — manual presence preference
+                    // (profiles-presence.md §3.6): pinned state, transient
+                    // status message and relative expiry, applied by every
+                    // device of this account at send time.
+                    div { class: "event-head", span { "My status" } span { "manual presence" } }
+                    div { class: "actions",
+                        Select::<String> {
+                            "data-testid": "presence-manual-state-select",
+                            value: Some(presence_manual_state_selected.into()),
+                            on_value_change: move |v: Option<String>| { if let Some(v) = v { presence_manual_state.set(v); } },
+                            SelectOption::<String> { index: 0usize, value: "auto".to_string(), text_value: "Automatic", "Automatic" }
+                            SelectOption::<String> { index: 1usize, value: "online".to_string(), text_value: "Online", "Online" }
+                            SelectOption::<String> { index: 2usize, value: "idle".to_string(), text_value: "Idle", "Idle" }
+                            SelectOption::<String> { index: 3usize, value: "dnd".to_string(), text_value: "Do not disturb (busy)", "Do not disturb (busy)" }
+                        }
+                        Input {
+                            r#type: "text",
+                            "data-testid": "presence-status-message-input",
+                            placeholder: "Status message (e.g. In a meeting)",
+                            value: "{presence_status_message()}",
+                            oninput: move |event: FormEvent| presence_status_message.set(event.value()),
+                        }
+                        Select::<String> {
+                            "data-testid": "presence-status-expiry-select",
+                            value: Some(presence_expiry_selected.into()),
+                            on_value_change: move |v: Option<String>| { if let Some(v) = v { presence_expiry_choice.set(v); } },
+                            SelectOption::<String> { index: 0usize, value: "never".to_string(), text_value: "Don't clear", "Don't clear" }
+                            SelectOption::<String> { index: 1usize, value: "30m".to_string(), text_value: "Clear in 30 minutes", "Clear in 30 minutes" }
+                            SelectOption::<String> { index: 2usize, value: "1h".to_string(), text_value: "Clear in 1 hour", "Clear in 1 hour" }
+                            SelectOption::<String> { index: 3usize, value: "today".to_string(), text_value: "Clear today", "Clear today" }
+                        }
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "presence-status-save-button",
+                            onclick: move |_| {
+                                let manual_state = presence_manual_state();
+                                let message = presence_status_message().trim().to_owned();
+                                if message.chars().count() > 256 {
+                                    presence_status_feedback.set(
+                                        "Status message is limited to 256 characters.".to_owned(),
+                                    );
+                                    return;
+                                }
+                                let preference = crate::local_state::PresencePreferenceState {
+                                    manual_state: (manual_state != "auto").then_some(manual_state),
+                                    status_message: (!message.is_empty()).then_some(message),
+                                    clears_at: presence_expiry_to_clears_at(&presence_expiry_choice()),
+                                };
+                                let cleared = preference.is_empty();
+                                state_store.write().set_presence_preference(preference);
+                                presence_status_feedback.set(if cleared {
+                                    "Status cleared.".to_owned()
+                                } else {
+                                    "Status saved.".to_owned()
+                                });
+                                push_presence_preference_account_data(
+                                    base_url(),
+                                    token(),
+                                    state_store,
+                                );
+                            },
+                            "Save status"
+                        }
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "presence-status-clear-button",
+                            onclick: move |_| {
+                                presence_manual_state.set("auto".to_owned());
+                                presence_status_message.set(String::new());
+                                presence_expiry_choice.set("never".to_owned());
+                                state_store.write().set_presence_preference(
+                                    crate::local_state::PresencePreferenceState::default(),
+                                );
+                                presence_status_feedback.set("Status cleared.".to_owned());
+                                push_presence_preference_account_data(
+                                    base_url(),
+                                    token(),
+                                    state_store,
+                                );
+                            },
+                            "Clear"
+                        }
+                    }
+                    div { class: "muted", "data-testid": "presence-status-feedback", "{presence_status_feedback}" }
                     div { class: "event-head",
                         span { "Read receipts" }
                         span { "Default" }

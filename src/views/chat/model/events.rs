@@ -1092,12 +1092,30 @@ pub(crate) fn sync_presence_actor(event: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Presence state from a sync projection event. soland's projection
+/// emits `presence` / `status`; `state` is kept for raw-envelope-shaped
+/// fixtures. Values outside the closed v1 set (`online` / `idle` /
+/// `dnd` / `offline`) fail closed to `None` — the caller renders
+/// `offline`, never a guessed nearby state (profiles-presence.md §3.2).
 pub(crate) fn sync_presence_state(event: &Value) -> Option<String> {
+    ["state", "status", "presence"]
+        .iter()
+        .find_map(|field| event.get(*field).and_then(Value::as_str))
+        .map(str::trim)
+        .and_then(cokret_sdk::PresenceStatus::parse_wire)
+        .map(|state| state.as_wire().to_owned())
+}
+
+/// Transient status message carried by a presence projection event
+/// (profiles-presence.md §3.3). Fail-closed: values violating the wire
+/// constraint are dropped rather than truncated.
+pub(crate) fn sync_presence_status_message(event: &Value) -> Option<String> {
     event
-        .get("state")
+        .get("status_message")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|state| !state.is_empty())
+        .filter(|message| !message.is_empty())
+        .filter(|message| cokret_sdk::validate_status_message(message).is_ok())
         .map(ToOwned::to_owned)
 }
 
@@ -1107,6 +1125,7 @@ pub(crate) fn presence_maps_from_sync_events(
     account_did: &str,
     account_label: &str,
 ) -> Option<(
+    std::collections::BTreeMap<String, String>,
     std::collections::BTreeMap<String, String>,
     std::collections::BTreeMap<String, String>,
 )> {
@@ -1119,6 +1138,7 @@ pub(crate) fn presence_maps_from_sync_events(
         .collect::<std::collections::BTreeSet<_>>();
     let mut states = std::collections::BTreeMap::<String, String>::new();
     let mut labels = std::collections::BTreeMap::<String, String>::new();
+    let mut status_messages = std::collections::BTreeMap::<String, String>::new();
     for did in participants {
         states.insert(
             did.clone(),
@@ -1145,12 +1165,15 @@ pub(crate) fn presence_maps_from_sync_events(
         if actor != account_did {
             matched_remote = true;
         }
+        if let Some(message) = sync_presence_status_message(event) {
+            status_messages.insert(actor.clone(), message);
+        }
         states.insert(
             actor,
             sync_presence_state(event).unwrap_or_else(|| "offline".to_owned()),
         );
     }
-    matched_remote.then_some((states, labels))
+    matched_remote.then_some((states, labels, status_messages))
 }
 
 pub(crate) fn chat_messages_from_local_state_with_sidecar(

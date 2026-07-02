@@ -70,8 +70,8 @@ pub struct MemberHandleCacheEntry {
 }
 
 /// Structurally identical, pending merge (05-5): the fields match
-/// `discovery::ReadMarkerScope` and `presence_rx::ReadScopeEvent`; these
-/// should later converge into a single read_scope type.
+/// `discovery::ReadMarkerScope`; these should later converge into a
+/// single read_scope type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadScope {
@@ -211,6 +211,62 @@ impl PresenceVisibility {
 
     pub fn allows_presence_send(self) -> bool {
         !matches!(self, Self::Nobody)
+    }
+}
+
+/// Local mirror of the `ck.presence.preference` account-data payload
+/// (profiles-presence.md §3.6): the user's pinned manual presence state,
+/// transient status message and expiry. Enforced on the send side — the
+/// broadcast loop reads this before every `ck.presence`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresencePreferenceState {
+    /// `online` / `idle` / `dnd`; `None` = automatic detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_message: Option<String>,
+    /// RFC 3339 UTC expiry; past it the whole preference reads as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clears_at: Option<String>,
+}
+
+impl PresencePreferenceState {
+    pub fn is_empty(&self) -> bool {
+        self.manual_state.is_none() && self.status_message.is_none()
+    }
+
+    pub fn is_active(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        match self.clears_at.as_deref() {
+            None => true,
+            Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
+                Ok(clears_at) => now < clears_at.with_timezone(&chrono::Utc),
+                // Unparseable expiry fails closed to "expired" so a
+                // corrupted value can never pin a stale manual state.
+                Err(_) => false,
+            },
+        }
+    }
+
+    /// The state to pin broadcasts to at `now`, if the preference is
+    /// active and carries a valid manual state.
+    pub fn effective_manual_state(&self, now: chrono::DateTime<chrono::Utc>) -> Option<&str> {
+        if !self.is_active(now) {
+            return None;
+        }
+        self.manual_state
+            .as_deref()
+            .filter(|state| matches!(*state, "online" | "idle" | "dnd"))
+    }
+
+    /// The status-message override to broadcast at `now`, if any.
+    pub fn effective_status_message(&self, now: chrono::DateTime<chrono::Utc>) -> Option<&str> {
+        if !self.is_active(now) {
+            return None;
+        }
+        self.status_message
+            .as_deref()
+            .map(str::trim)
+            .filter(|message| !message.is_empty())
     }
 }
 
@@ -535,6 +591,11 @@ pub struct ClientLocalState {
     pub presence_projection: Vec<Value>,
     #[serde(default)]
     pub presence_visibility: PresenceVisibility,
+    /// Manual presence preference (`ck.presence.preference`,
+    /// profiles-presence.md §3.6). Local state is authoritative; the
+    /// account-data push is best-effort and encrypted.
+    #[serde(default)]
+    pub presence_preference: PresencePreferenceState,
     /// Persisted per-device to-device inbox. Both account.subscribe
     /// `delta.to_device.messages[]` and explicit `device_messages` pulls are
     /// funneled through this queue before protocol-specific handlers consume
@@ -1001,6 +1062,7 @@ impl Default for ClientLocalState {
             notification_projection: Vec::new(),
             presence_projection: Vec::new(),
             presence_visibility: PresenceVisibility::Public,
+            presence_preference: PresencePreferenceState::default(),
             to_device_inbox: Vec::new(),
             notification_client_state: BTreeMap::new(),
             realm_watch_levels: BTreeMap::new(),

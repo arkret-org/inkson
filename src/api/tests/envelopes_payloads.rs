@@ -90,6 +90,7 @@ fn typing_envelope_uses_spec_ephemeral_shape() {
         "ck:realm:0196419b-0000-7000-8000-000000000000"
     );
     assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
+    assert_eq!(envelope.payload["track_name"], "discussion");
     assert_eq!(envelope.payload["typing"], true);
     assert!(
         !serde_json::to_value(&envelope)
@@ -150,6 +151,7 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
         "did:web:alice.example",
         "ck:device:01904100-0000-7000-8000-a11ce0000001",
         "online",
+        Some("On vacation until May 5"),
         Some(last_active_at),
     )
     .unwrap();
@@ -162,10 +164,43 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
     assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
     assert_eq!(envelope.payload["state"], "online");
     assert_eq!(
+        envelope.payload["status_message"],
+        "On vacation until May 5"
+    );
+    assert_eq!(
         envelope.payload["last_active_at"],
         "2026-06-22T10:00:00Z/PT1H"
     );
     assert_eq!(envelope.payload["ttl_ms"], 30000);
+}
+
+#[test]
+fn presence_envelope_rejects_non_canonical_state_and_bad_status_message() {
+    // Matrix-legacy `unavailable` is not a closed-set v1 state.
+    assert!(
+        build_presence_envelope(
+            "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-a11ce0000001",
+            "unavailable",
+            None,
+            None,
+        )
+        .is_err()
+    );
+    // status_message over 256 code points fails closed at build time.
+    let long = "字".repeat(257);
+    assert!(
+        build_presence_envelope(
+            "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-a11ce0000001",
+            "dnd",
+            Some(long.as_str()),
+            None,
+        )
+        .is_err()
+    );
 }
 
 #[test]

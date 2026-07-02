@@ -86,6 +86,7 @@ fn key_round_trip() {
         "client.ui",
         "ck.read_receipt.preferences",
         "ck.presence.visibility",
+        "ck.presence.preference",
         "ck.account.blocklist",
         "ck.push_rules",
         "ck.dnd_schedule",

@@ -1788,7 +1788,14 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
         json!({
             "actor_id": "did:web:bob.example",
             "state": "online",
+            "status_message": "On vacation until May 5",
             "updated_at": "2026-05-29T04:12:43Z"
+        }),
+        json!({
+            "actor_id": "did:web:carol.example",
+            // Projection field names (`status` / `presence`) resolve too;
+            // Matrix-legacy `unavailable` fails closed to offline.
+            "status": "unavailable"
         }),
         json!({
             "actor_id": "did:web:mallory.example",
@@ -1796,7 +1803,7 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
         }),
     ];
 
-    let (states, labels) =
+    let (states, labels, status_messages) =
         presence_maps_from_sync_events(&events, &participants, "did:web:alice.example", "Alice")
             .expect("presence events should match participants");
 
@@ -1815,6 +1822,10 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
     assert_eq!(
         labels.get("did:web:alice.example"),
         Some(&"Alice".to_owned())
+    );
+    assert_eq!(
+        status_messages.get("did:web:bob.example"),
+        Some(&"On vacation until May 5".to_owned())
     );
     assert!(!states.contains_key("did:web:mallory.example"));
 }

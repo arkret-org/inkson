@@ -1874,6 +1874,22 @@ fn apply_account_data(
             store.set_presence_visibility(visibility);
             continue;
         }
+        // ck.presence.preference — manual presence preference
+        // (profiles-presence.md §3.6). Normally pushed encrypted, so a
+        // plaintext-readable body only appears from same-account devices
+        // in dev / test deployments; opaque ciphertext entries are
+        // silently skipped (local state stays authoritative).
+        if data_type == "ck.presence.preference" {
+            if let Some(content) = entry.get("content")
+                && content.get("ciphertext").is_none()
+                && let Ok(preference) = serde_json::from_value::<
+                    crate::local_state::PresencePreferenceState,
+                >(content.clone())
+            {
+                store.set_presence_preference(preference);
+            }
+            continue;
+        }
         if data_type == "ck.account.blocklist" {
             let Some(content) = entry.get("content") else {
                 continue;

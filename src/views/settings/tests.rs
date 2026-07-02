@@ -97,6 +97,38 @@ fn presence_visibility_account_data_matches_spec() {
 }
 
 #[test]
+fn presence_preference_account_data_matches_spec() {
+    assert_eq!(
+        PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY,
+        "ck.presence.preference"
+    );
+    let body = build_presence_preference_body(&crate::local_state::PresencePreferenceState {
+        manual_state: Some("dnd".to_owned()),
+        status_message: Some("In a meeting".to_owned()),
+        clears_at: Some("2026-07-03T12:00:00Z".to_owned()),
+    });
+    assert_eq!(body["manual_state"], "dnd");
+    assert_eq!(body["status_message"], "In a meeting");
+    assert_eq!(body["clears_at"], "2026-07-03T12:00:00Z");
+    // Absent fields stay absent (delta-friendly payload).
+    let empty = build_presence_preference_body(&Default::default());
+    assert!(empty.as_object().unwrap().is_empty());
+}
+
+#[test]
+fn presence_expiry_choice_resolves_to_future_clears_at() {
+    assert_eq!(presence_expiry_to_clears_at("never"), None);
+    for choice in ["30m", "1h", "today"] {
+        let clears_at = presence_expiry_to_clears_at(choice)
+            .unwrap_or_else(|| panic!("{choice} must resolve to a clears_at"));
+        let parsed: chrono::DateTime<chrono::Utc> = clears_at
+            .parse()
+            .unwrap_or_else(|_| panic!("{choice} clears_at must be RFC 3339 UTC: {clears_at}"));
+        assert!(parsed > chrono::Utc::now(), "{choice} must be in the future");
+    }
+}
+
+#[test]
 fn blocklist_account_data_key_matches_spec() {
     assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "ck.account.blocklist");
 }

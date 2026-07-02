@@ -246,6 +246,9 @@ pub fn ChatPanel(
     // when `sync_cursor` advances.
     let presence_states = use_signal(std::collections::BTreeMap::<String, String>::new);
     let presence_labels = use_signal(std::collections::BTreeMap::<String, String>::new);
+    // Transient status messages (`actor_id -> status_message`) carried by
+    // the presence projection (profiles-presence.md §3.3).
+    let presence_status_messages = use_signal(std::collections::BTreeMap::<String, String>::new);
     let mut presence_sync_key_seen = use_signal(String::new);
     let mut presence_announce_key_seen = use_signal(String::new);
     // G3.Y2 — discussion promote modal. Holds the source message id
@@ -277,8 +280,24 @@ pub fn ChatPanel(
             let actor = actor.trim().to_owned();
             let device = device.clone();
             let visibility = state_store_for_presence.read().presence_visibility();
+            // Manual presence preference (profiles-presence.md §3.6):
+            // while active it pins the broadcast state on every device
+            // and supplies the transient status message.
+            let preference = state_store_for_presence.read().presence_preference();
+            let now = chrono::Utc::now();
+            let state = preference
+                .effective_manual_state(now)
+                .unwrap_or("online")
+                .to_owned();
+            let status_message = preference
+                .effective_status_message(now)
+                .map(str::to_owned);
             let api_token = token();
-            let announce_key = format!("{realm}|{actor}|{}", visibility.as_wire());
+            let announce_key = format!(
+                "{realm}|{actor}|{}|{state}|{}",
+                visibility.as_wire(),
+                status_message.as_deref().unwrap_or("")
+            );
             if presence_announce_key_seen.peek().as_str() == announce_key {
                 return;
             }
@@ -294,7 +313,15 @@ pub fn ChatPanel(
             spawn(async move {
                 let _ =
                     crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        api.send_presence(&realm, &actor, &device, "online", None).await
+                        api.send_presence(
+                            &realm,
+                            &actor,
+                            &device,
+                            &state,
+                            status_message.as_deref(),
+                            None,
+                        )
+                        .await
                     })
                     .await;
             });
@@ -678,6 +705,7 @@ pub fn ChatPanel(
         let mut typing_next_expires_at_ms_for_sync = typing_next_expires_at_ms;
         let mut presence_states_for_sync = presence_states;
         let mut presence_labels_for_sync = presence_labels;
+        let mut presence_status_messages_for_sync = presence_status_messages;
         let self_label_for_sync = account_display_label.clone();
         use_effect(move || {
             if token().trim().is_empty() || realm.trim().is_empty() || !has_remote_presence {
@@ -707,34 +735,42 @@ pub fn ChatPanel(
                 typing_next_expires_at_ms_for_sync.set(active_typing.next_expires_at_ms);
             }
 
-            let (next_presence, next_labels) = presence_maps_from_sync_events(
-                &snapshot.presence_projection,
-                &participants_for_sync,
-                &actor,
-                &self_label_for_sync,
-            )
-            .unwrap_or_else(|| {
-                let mut next_presence = std::collections::BTreeMap::<String, String>::new();
-                let mut next_labels = std::collections::BTreeMap::<String, String>::new();
-                for did in &participants_for_sync {
-                    if did == &actor {
-                        next_presence.insert(did.clone(), "online".to_owned());
-                        if let Some(label) =
-                            clean_participant_display_name(&self_label_for_sync, Some(did))
-                        {
-                            next_labels.insert(did.clone(), label);
+            let (next_presence, next_labels, next_status_messages) =
+                presence_maps_from_sync_events(
+                    &snapshot.presence_projection,
+                    &participants_for_sync,
+                    &actor,
+                    &self_label_for_sync,
+                )
+                .unwrap_or_else(|| {
+                    let mut next_presence = std::collections::BTreeMap::<String, String>::new();
+                    let mut next_labels = std::collections::BTreeMap::<String, String>::new();
+                    for did in &participants_for_sync {
+                        if did == &actor {
+                            next_presence.insert(did.clone(), "online".to_owned());
+                            if let Some(label) =
+                                clean_participant_display_name(&self_label_for_sync, Some(did))
+                            {
+                                next_labels.insert(did.clone(), label);
+                            }
+                        } else {
+                            next_presence.insert(did.clone(), "offline".to_owned());
                         }
-                    } else {
-                        next_presence.insert(did.clone(), "offline".to_owned());
                     }
-                }
-                (next_presence, next_labels)
-            });
+                    (
+                        next_presence,
+                        next_labels,
+                        std::collections::BTreeMap::new(),
+                    )
+                });
             if *presence_states_for_sync.peek() != next_presence {
                 presence_states_for_sync.set(next_presence);
             }
             if *presence_labels_for_sync.peek() != next_labels {
                 presence_labels_for_sync.set(next_labels);
+            }
+            if *presence_status_messages_for_sync.peek() != next_status_messages {
+                presence_status_messages_for_sync.set(next_status_messages);
             }
         });
     }
@@ -2616,20 +2652,17 @@ pub fn ChatPanel(
                                 // G3.Y2 — per-message read-receipt
                                 // indicator. Surfaces the set of actors
                                 // who have published a `ck.read_cursor.advance`
-                                // covering this message via
-                                // `presence_aggregate`. Empty (`hidden`)
+                                // covering this message. Empty (`hidden`)
                                 // until the receive path is wired.
                                 //
-                                // TODO(G3.Y2-followup): subscribe to
-                                // `ck.read_cursor.advance` ephemeral channel +
-                                // populate from
-                                // `presence_rx::PresenceAggregate`.
+                                // TODO(G3.Y2-followup): populate from the
+                                // soland sync projection once it carries
+                                // per-message `ck.read_cursor.advance`
+                                // coverage.
                                 {
-                                    // TODO(G3.Y2-followup): wire to
-                                    // `presence_rx::PresenceAggregate`
-                                    // once the chat view subscribes to
-                                    // soland's ephemeral channel for
-                                    // `ck.read_cursor.advance`. For now the
+                                    // TODO(G3.Y2-followup): fill from the
+                                    // sync projection read-cursor coverage
+                                    // when available. For now the
                                     // list is empty — the testid still
                                     // mounts when there is data so
                                     // cotest can assert against it.
@@ -3257,6 +3290,10 @@ pub fn ChatPanel(
                                             }
                                         });
                                     let state_for_class = state.clone();
+                                    let status_message = presence_status_messages
+                                        .read()
+                                        .get(&participant.did)
+                                        .cloned();
                                     rsx! {
                                         div {
                                             class: "presence-row presence-row-{state_for_class}",
@@ -3266,6 +3303,13 @@ pub fn ChatPanel(
                                             span { class: "presence-dot presence-dot-{state}" }
                                             span { class: "presence-name", title: "{did_attr}", "{display}" }
                                             span { class: "muted", " ({state})" }
+                                            if let Some(status_message) = status_message {
+                                                span {
+                                                    class: "muted presence-status-message",
+                                                    "data-testid": "presence-status-message",
+                                                    " — {status_message}"
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -3801,6 +3845,19 @@ pub fn ChatPanel(
                                 // / 3s) and `typing=false` after the user stops,
                                 // instead of one POST per keystroke. The
                                 // receiving side TTL-expires stale entries.
+                                // Typing follows a visibility policy at
+                                // least as strict as presence
+                                // (profiles-presence.md §3.5): with
+                                // `presence_visibility="nobody"` the
+                                // client MUST NOT send `ck.typing`,
+                                // symmetric with the presence send gate.
+                                if !state_store
+                                    .read()
+                                    .presence_visibility()
+                                    .allows_presence_send()
+                                {
+                                    return;
+                                }
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let actor = actor.clone();
