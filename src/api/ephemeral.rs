@@ -7,6 +7,7 @@
 //! builders are re-exported from the parent module so existing `crate::api::*`
 //! / sibling `super::*` paths resolve unchanged.
 
+use chrono::Timelike as _;
 use super::*;
 
 pub(crate) fn validate_outgoing_registered_event_payload(
@@ -315,39 +316,39 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
         .ok_or_else(|| anyhow::anyhow!("{kind} proof requires envelope.device_id"))?
         .as_str()
         .to_owned();
-    let actor_id = envelope.actor_id.as_str().to_owned();
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured — cannot submit {kind} without device proof")
     })?;
-    let mut canonical = serde_json::to_value(&*envelope)?;
-    if let Value::Object(object) = &mut canonical {
-        object.remove("proof");
-    }
+
+    // event_digest covers the canonical envelope bytes without `proof`.
+    envelope.proof = None;
     let canonical_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
-        .canonical_bytes(&canonical)
+        .canonical_bytes(&serde_json::to_value(&*envelope)?)
         .map_err(|err| anyhow::anyhow!("{kind} canonical encoding failed: {err}"))?;
-    let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-    let verification_method = format!("{actor_id}#{device_id}");
-    let created_at = crate::clock::now_rfc3339_secs();
-    let binding = json!({
-        "event_digest": event_digest,
-        "actor_id": actor_id,
-        "verification_method": verification_method,
-        "created_at": created_at,
-    });
-    let binding_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
-        .canonical_bytes(&binding)
+    let event_digest = cokret_sdk::Hash::new(crate::canonical::sha256_digest(&canonical_bytes))
+        .map_err(|err| anyhow::anyhow!("{kind} event digest is not a typed Hash: {err}"))?;
+
+    // Typed `Proof` + the SDK's canonical binding-object constructor — the
+    // same transcript the receiver-side verifier rebuilds, so producer and
+    // verifier can never drift.
+    let mut proof = cokret_sdk::Proof {
+        kind: cokret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        alg: signer.algorithm().to_owned(),
+        verification_method: format!("{}#{device_id}", envelope.actor_id),
+        event_digest,
+        created_at: crate::clock::now_utc()
+            .with_nanosecond(0)
+            .unwrap_or_else(crate::clock::now_utc),
+        domain: None,
+        audience: None,
+        jws: String::new(),
+    };
+    let binding_bytes = proof
+        .canonical_binding_bytes(&envelope.actor_id)
         .map_err(|err| anyhow::anyhow!("{kind} binding encoding failed: {err}"))?;
-    let jws = signer
+    proof.jws = signer
         .detached_jws_over(&binding_bytes)
         .map_err(|err| anyhow::anyhow!("{kind} proof signing failed: {err}"))?;
-    envelope.proof = Some(json!({
-        "kind": "detached_jws",
-        "alg": signer.algorithm(),
-        "verification_method": verification_method,
-        "event_digest": event_digest,
-        "created_at": created_at,
-        "jws": jws,
-    }));
+    envelope.proof = Some(serde_json::to_value(&proof)?);
     Ok(())
 }
