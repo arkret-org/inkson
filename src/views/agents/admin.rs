@@ -72,8 +72,8 @@ fn open_url_in_new_tab(url: &str) {
 // CKP-0008 / CKP-0009 - Personal Agent admin panel (B-A / P3-A).
 //
 // Surfaces the 11 soland personal-agent HTTP operations as a single
-// admin view. Each soland endpoint has a matching reqwest call below
-// — that's the load-bearing bit of this commit. The form layouts
+// admin view. Each soland endpoint has a matching `CokretApi` call via
+// `with_authed_api`. The form layouts
 // themselves are intentionally minimal: deeper UI work (per-agent
 // inspector, grant catalog, sidecar projection viewer) lives under
 // `// TODO(P3-impl)` markers and lands once soland's reducer stamps

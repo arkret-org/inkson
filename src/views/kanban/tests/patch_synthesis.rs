@@ -349,7 +349,7 @@ fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
 fn projection_synthesis_revision_leaves_multi_author_card_unattributed() {
     // Multi-author card with no per-entry provenance (no raw ops, no fetched
     // history): the projection fallback must NOT guess `updated_by` for every
-    // entry — that was the "张冠李戴" attribution bug. It leaves the entry
+    // entry, which was the cross-member misattribution bug. It leaves the entry
     // unattributed ("Unknown author") instead, which option B then fills in by
     // fetching the strand event history on card open.
     let mut card = test_card("ck:strand:edit-me", "U");

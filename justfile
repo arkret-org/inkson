@@ -4,7 +4,7 @@ default:
 
 # Start the Dioxus web dev server.
 web:
-    dx serve --platform web
+    dx serve --platform web --port 8080
 
 # Start the Dioxus desktop dev server.
 desktop:

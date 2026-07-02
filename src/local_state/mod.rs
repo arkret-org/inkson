@@ -700,7 +700,8 @@ impl LocalStateStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let bytes = serde_json::to_vec_pretty(state)?;
+        let persisted = e2ee_safe_persist_state(state);
+        let bytes = serde_json::to_vec_pretty(&persisted)?;
         let tmp_path = path.with_extension("json.tmp");
         {
             let mut tmp = fs::File::create(&tmp_path)?;
@@ -716,15 +717,14 @@ impl LocalStateStore {
         let Some(storage) = browser_storage() else {
             return Ok(());
         };
-        // E2EE-at-rest T1: never persist raw `history_secret` key material in
-        // the plaintext localStorage blob. When the hardened SecureKeyStore is
-        // ready, lift the inline secrets there first and serialize a stripped
-        // copy; otherwise serialize as-is (transitional — retried once the
-        // async upgrade lands).
-        let stripped = maybe_strip_inline_history_secrets(state);
-        let to_persist = stripped.as_ref().unwrap_or(state);
+        // E2EE-at-rest: never persist raw history key material or decrypted MLS
+        // plaintext in the account-state blob.
+        let to_persist = e2ee_safe_persist_state(state);
         storage
-            .set_item(&account_state_key(did), &serde_json::to_string(to_persist)?)
+            .set_item(
+                &account_state_key(did),
+                &serde_json::to_string(&to_persist)?,
+            )
             .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
         Ok(())
     }
@@ -822,24 +822,19 @@ fn sanitize_did_for_filename(did: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(did.as_bytes())
 }
 
-/// E2EE-at-rest T1 — if `state` carries inline `history_secret`s and the
-/// hardened SecureKeyStore is ready, persist them to the IndexedDB-only tier
-/// and return a clone with the inline copy cleared (so the localStorage blob
-/// holds no raw key material). Returns `None` — meaning "serialize `state`
-/// unchanged" — when there is nothing to strip, or the secure store is not yet
-/// upgraded (the migration is retried on the next flush), or persistence
-/// failed (never drop key material we have not durably re-homed).
-#[cfg(target_arch = "wasm32")]
-fn maybe_strip_inline_history_secrets(state: &ClientLocalState) -> Option<ClientLocalState> {
-    if state.history_secrets.is_empty() {
-        return None;
-    }
-    if !crate::secure_key_store::persist_inline_history_secrets(&state.history_secrets) {
-        return None;
-    }
+/// Build the only form of account state that may be written to plaintext
+/// localStorage / JSON files. The runtime cache keeps these maps in memory so
+/// the active session stays usable, but the durable account-state blob never
+/// contains E2EE plaintext or raw MLS history keys.
+fn e2ee_safe_persist_state(state: &ClientLocalState) -> ClientLocalState {
     let mut stripped = state.clone();
-    stripped.history_secrets.clear();
-    Some(stripped)
+    if !stripped.history_secrets.is_empty() {
+        let _ = crate::secure_key_store::persist_inline_history_secrets(&stripped.history_secrets);
+        stripped.history_secrets.clear();
+    }
+    stripped.mls_private_plaintext.clear();
+    stripped.mls_decrypted_plaintext.clear();
+    stripped
 }
 
 #[cfg(test)]

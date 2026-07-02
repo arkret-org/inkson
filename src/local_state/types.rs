@@ -679,11 +679,12 @@ pub struct ClientLocalState {
     /// re-projection (refresh / board switch / live poll) is this local
     /// plaintext sidecar.
     ///
-    /// CRITICAL: this MUST NEVER leave the device. It is written only by
-    /// [`LocalStateStore::save_private_plaintext`] and never enters any
-    /// upstream op / `ck.strand.update` payload. (Cross-device backup of the
-    /// sidecar is a separate later task — not implemented here.)
-    #[serde(default)]
+    /// CRITICAL: this MUST NEVER leave the device or enter plaintext durable
+    /// account-state storage. It is written only by
+    /// [`LocalStateStore::save_private_plaintext`], kept as an in-memory cache
+    /// for the current process, and exported only through the dedicated
+    /// encrypted sidecar-backup path.
+    #[serde(default, skip_serializing)]
     pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     /// YOU-02-004 — local-only decrypted-plaintext cache for REMOTE members'
     /// MLS application messages, keyed `realm_id -> payload_digest ->
@@ -699,8 +700,9 @@ pub struct ClientLocalState {
     /// Like [`Self::mls_private_plaintext`] (the author-side sidecar) this
     /// MUST NEVER leave the device; eviction is deliberate non-behavior —
     /// once the ratchet has advanced past a message, the cache entry is the
-    /// only remaining way to render it.
-    #[serde(default)]
+    /// only remaining way to render it during this process lifetime. It is not
+    /// serialized into plaintext account-state storage.
+    #[serde(default, skip_serializing)]
     pub mls_decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
     /// Per-(realm, epoch) MLS `history_secret`s installed from an inbound
     /// `ck.realm_key.share` (encryption-and-audit.md history-sharing). Each
@@ -708,16 +710,17 @@ pub struct ClientLocalState {
     /// decrypt `mls-exporter-aead-v1` content authored at that epoch — even
     /// epochs that predate this device's join (tier-3 history decrypt).
     ///
-    /// Keyed `realm_id -> epoch -> secret`. Persisted so a joiner that has been
-    /// granted history keeps read access across restarts. Like the other MLS
-    /// sidecars this is device-local: the secrets arrive HPKE-sealed to this
-    /// device and are never re-shared from here.
+    /// Keyed `realm_id -> epoch -> secret`. Durable persistence must go through
+    /// the hardened secure store; this inline field is only a transient memory
+    /// fallback and is never serialized into plaintext account-state storage.
+    /// Like the other MLS sidecars this is device-local: the secrets arrive
+    /// HPKE-sealed to this device and are never re-shared from here.
     ///
     /// Nested string-keyed maps (not a `(String, u64)` tuple key) because
     /// `serde_json` rejects non-string map keys — the store flushes to JSON, so
     /// a tuple key would silently fail to persist. `u64` epoch keys serialize as
     /// strings, which round-trips cleanly.
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub history_secrets: BTreeMap<String, BTreeMap<u64, Vec<u8>>>,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland

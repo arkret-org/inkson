@@ -113,10 +113,11 @@ coauth-account-types = {path = "../coauth/crates/account-types"}
 dioxus-icons = {workspace = true,default-features = false}
 dioxus-primitives = {workspace = true,default-features = false}
 dioxus-router = {workspace = true}
-# C3: Cokret 共享前端组件库。yougen 原 `src/ui/` 的 13 个 css_module 封装已
-# 原样迁入 yoface 并 re-export `dioxus_primitives`/`dioxus_icons`;yougen 改用
-# `yoface::ui::*`(`src/lib.rs` 把 `pub mod ui` 改为 `pub use yoface::ui`)。
-# patch 段与 yoface README 单一真相源完全一致(见本文件 [patch] 两段)。
+# C3: shared Cokret frontend component crate. The former `src/ui/`
+# css-module wrappers now live in yoface, which re-exports
+# `dioxus_primitives` and `dioxus_icons`; yougen imports
+# `yoface::ui::*` through the SDK-local `pub use yoface::ui`.
+# Keep the patch sections below aligned with the yoface README.
 yoface = {path = "../yoface"}
 ed25519-dalek = {workspace = true,features = ["pem", "pkcs8", "zeroize"]}
 getrandom = {workspace = true,features = ["wasm_js"]}
@@ -238,8 +239,8 @@ web-sys = {workspace = true,features = [
     "HtmlAnchorElement",
     "HtmlElement",
     "Url",
-    # Sprint Q1 第二十二增量 (H6): IndexedDB-backed secure key store
-    # — `IndexedDbSecureKeyStore` opens an IDB database, derives an
+    # Sprint Q1 increment 22 (H6): IndexedDB-backed secure key store.
+    # `IndexedDbSecureKeyStore` opens an IDB database, derives an
     # AES-GCM key via SubtleCrypto.deriveKey (`extractable: false`),
     # and persists entries under structured keys.
     "IdbFactory",
@@ -292,7 +293,7 @@ jsonschema = {workspace = true,default-features = false,features = ["resolve-fil
 rand_core = {workspace = true}
 rand_core_06 = {workspace = true}
 regex = {workspace = true}
-# rev 钉死,升级时手工 bump。
+# Pinned by rev; bump deliberately when upgrading.
 [patch."https://github.com/DioxusLabs/components"]
 dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", rev = "3510aeee2d14f0ca2c11682c9b826650cb557d2f" }
 
@@ -311,7 +312,7 @@ dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", rev =
 # crate would exist under two sources and `GenerationalBox<T>` would mismatch
 # across the registry `dioxus-signals`/`dioxus-web` and the patched core.
 # See https://github.com/cokret/dioxus/commit/e59f9f24a5c27c9303cd61edd0452b44161374ab
-# rev 钉死,升级时手工 bump。
+# Pinned by rev; bump deliberately when upgrading.
 [patch.crates-io]
 dioxus-core       = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
 dioxus-core-types = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
@@ -341,9 +342,6 @@ getrandom_02 = {package = "getrandom",version = "0.2.17"}
 gloo-timers = "0.4"
 hkdf = "0.13"
 hmac = "0.13"
-hpke-rs = "0.6"
-hpke-rs-crypto = "0.6"
-hpke-rs-rust-crypto = "0.6"
 x25519-dalek = "2.0.1"
 image = {version = "0.25.10",default-features = false}
 js-sys = "0.3"

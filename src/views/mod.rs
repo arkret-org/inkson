@@ -40,10 +40,6 @@ pub mod audit;
 pub mod call;
 pub mod call_signals;
 pub mod chat;
-/// CKP-0007 P3B.2.5 — Circle detail panel (member list + leave /
-/// archive / scope-rotate controls). Rendered at `/circles/:circle_id`
-/// (route added by the follow-up commit that wires it into the router).
-pub mod circle;
 pub mod contacts;
 pub mod dashboard;
 /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
@@ -137,8 +133,6 @@ pub enum AppView {
     /// `/settings/recovery` renders through `AppView::Settings` so the Settings
     /// sidebar remains visible.
     SettingsRecovery,
-    /// CKP-0007 P3B.2.5 — Circle detail panel at `/circles/:circle_id`.
-    Circle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -491,7 +491,7 @@ pub(super) fn projection_synthesis_revision(
     // `ck.strand.update` op, or whose decrypted body didn't match the replay).
     // The card-level `updated_by` is only the LATEST editor, so attributing
     // every such entry to it mis-labels other authors' entries as the last
-    // editor — the cross-member "张冠李戴" attribution bug. Only attribute when
+    // editor: a cross-member misattribution bug. Only attribute when
     // the card is unambiguously single-author; otherwise leave it unattributed
     // so the UI shows "Unknown author" rather than a confidently-wrong name.
     let created = card.created_by.trim();

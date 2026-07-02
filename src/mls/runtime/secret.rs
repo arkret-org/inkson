@@ -251,24 +251,6 @@ pub fn mls_key_package_identity_state_key(
     ))
 }
 
-// =====================================================================
-// DIAGNOSTIC MODE (2026-06-29): the MLS KeyPackage init private key is the
-// secret whose disappearance produces "no local KeyPackage identity state".
-// To isolate whether the fault is the encrypted IndexedDB tier (wrapping-key
-// instability) or upstream (wrong store/lookup key, never written), the wasm
-// path TEMPORARILY stores it in PLAINTEXT localStorage and logs every store /
-// load with the full key. If the Welcome decrypts once this is plaintext, the
-// encryption layer is the culprit; if it still fails, compare the logged store
-// key vs load key to find the mismatch. NOT a shipping configuration — the init
-// key is a real secret and MUST return to the encrypted tier once the root is
-// fixed. (native keeps the OS keychain.)
-// =====================================================================
-
-#[cfg(target_arch = "wasm32")]
-fn mls_identity_local_storage() -> Option<web_sys::Storage> {
-    web_sys::window().and_then(|window| window.local_storage().ok().flatten())
-}
-
 pub fn store_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
     actor_id: &str,
@@ -283,29 +265,10 @@ pub fn store_mls_key_package_identity_state(
     }
     let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
     let encoded = URL_SAFE_NO_PAD.encode(serialized_state);
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = store;
-        tracing::warn!(target: "mls_diag", key = %key, bytes = encoded.len(), "DIAG STORE MLS identity-state -> PLAINTEXT localStorage");
-        match mls_identity_local_storage() {
-            Some(storage) => storage.set_item(&key, &encoded).map_err(|err| {
-                SecureKeyStoreError::Backend(format!("localStorage mls identity set: {err:?}"))
-            }),
-            None => {
-                tracing::warn!(target: "mls_diag", "DIAG STORE MLS identity-state: NO localStorage available");
-                Ok(())
-            }
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        store.store_secret(&key, &encoded)
-    }
+    store.store_secret(&key, &encoded)
 }
 
-/// Durable variant of [`store_mls_key_package_identity_state`]. On wasm the
-/// DIAGNOSTIC plaintext-localStorage path is already synchronously durable
-/// (`localStorage.setItem` commits before returning), so this just delegates.
+/// Durable variant of [`store_mls_key_package_identity_state`].
 pub async fn store_mls_key_package_identity_state_durable(
     store: &dyn SecureKeyStore,
     actor_id: &str,
@@ -318,23 +281,10 @@ pub async fn store_mls_key_package_identity_state_durable(
             "MLS KeyPackage identity state must not be empty".to_owned(),
         ));
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        store_mls_key_package_identity_state(
-            store,
-            actor_id,
-            device_id,
-            key_package_id,
-            serialized_state,
-        )
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
-        store
-            .store_secret_durable(&key, &URL_SAFE_NO_PAD.encode(serialized_state))
-            .await
-    }
+    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    store
+        .store_secret_durable(&key, &URL_SAFE_NO_PAD.encode(serialized_state))
+        .await
 }
 
 pub fn load_mls_key_package_identity_state(
@@ -344,15 +294,6 @@ pub fn load_mls_key_package_identity_state(
     key_package_id: &str,
 ) -> Result<Option<Vec<u8>>, SecureKeyStoreError> {
     let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
-    #[cfg(target_arch = "wasm32")]
-    let secret = {
-        let _ = store;
-        let value =
-            mls_identity_local_storage().and_then(|storage| storage.get_item(&key).ok().flatten());
-        tracing::warn!(target: "mls_diag", key = %key, found = value.is_some(), "DIAG LOAD MLS identity-state <- PLAINTEXT localStorage");
-        value
-    };
-    #[cfg(not(target_arch = "wasm32"))]
     let secret = store.get_secret(&key)?;
     let Some(secret) = secret else {
         return Ok(None);
@@ -376,19 +317,7 @@ pub fn delete_mls_key_package_identity_state(
     key_package_id: &str,
 ) -> Result<(), SecureKeyStoreError> {
     let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = store;
-        tracing::warn!(target: "mls_diag", key = %key, "DIAG DELETE MLS identity-state (PLAINTEXT localStorage)");
-        if let Some(storage) = mls_identity_local_storage() {
-            let _ = storage.remove_item(&key);
-        }
-        Ok(())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        store.delete_secret(&key)
-    }
+    store.delete_secret(&key)
 }
 
 fn secure_key_component(value: &str, label: &str) -> Result<String, SecureKeyStoreError> {

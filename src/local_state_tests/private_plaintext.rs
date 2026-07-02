@@ -72,10 +72,9 @@ fn merge_private_plaintext_map_keeps_local_value_on_conflict() {
 }
 
 #[test]
-fn private_plaintext_sidecar_round_trips_through_store() {
-    // X5.1 — save → reload via a fresh reader → read back. The local
-    // plaintext sidecar must survive a reload (serde-persisted), since
-    // it is the only place the author's own encrypted content lives.
+fn private_plaintext_sidecar_stays_memory_only_in_account_state() {
+    // X5.1: save into the current process cache, but never serialize the
+    // plaintext sidecar into account-state JSON.
     let path = temp_state_path("private-plaintext-sidecar");
     let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
     let strand = "ck:strand:0196419b-0000-7000-8000-0000000000aa";
@@ -83,23 +82,41 @@ fn private_plaintext_sidecar_round_trips_through_store() {
         let mut store = LocalStateStore::with_path(path.clone());
         store.save_private_plaintext(realm, strand, "body", "\"author body\"");
         store.save_private_plaintext(realm, strand, "synthesis", "\"author synthesis\"");
+        assert_eq!(
+            store
+                .private_plaintext_for(realm, strand, "body")
+                .as_deref(),
+            Some("\"author body\"")
+        );
+        assert_eq!(
+            store
+                .private_plaintext_for(realm, strand, "synthesis")
+                .as_deref(),
+            Some("\"author synthesis\"")
+        );
+        let fields = store.private_plaintext_fields(realm, strand);
+        assert_eq!(fields.len(), 2);
+        let account_path = store.account_state_path(&store.effective_account_key());
+        let raw = std::fs::read_to_string(&account_path).expect("account state written");
+        assert!(!raw.contains("author body"));
+        assert!(!raw.contains("author synthesis"));
+        assert!(!raw.contains("mls_private_plaintext"));
+        assert!(!raw.contains("mls_decrypted_plaintext"));
     }
     // Fresh reader (simulating a process restart / reload).
     let reader = LocalStateStore::with_path(path.clone());
-    assert_eq!(
+    assert!(
         reader
             .private_plaintext_for(realm, strand, "body")
-            .as_deref(),
-        Some("\"author body\"")
+            .is_none()
     );
-    assert_eq!(
+    assert!(
         reader
             .private_plaintext_for(realm, strand, "synthesis")
-            .as_deref(),
-        Some("\"author synthesis\"")
+            .is_none()
     );
     let fields = reader.private_plaintext_fields(realm, strand);
-    assert_eq!(fields.len(), 2);
+    assert!(fields.is_empty());
     // Missing keys return None.
     assert!(
         reader
@@ -121,11 +138,10 @@ fn private_plaintext_sidecar_round_trips_through_store() {
             .private_plaintext_for(realm, strand, "body")
             .is_none()
     );
-    assert_eq!(
+    assert!(
         reader
             .private_plaintext_for(realm, strand, "synthesis")
-            .as_deref(),
-        Some("\"author synthesis\"")
+            .is_none()
     );
 }
 

@@ -785,28 +785,44 @@ fn ingest_realm_key_share_accepts_projected_payload_envelope() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn history_secrets_survive_json_persistence_round_trip() {
-    // The store flushes to JSON; a granted history_secret must survive a
-    // "restart" (fresh store over the same backing file). Regression guard for
-    // the map key type — `serde_json` cannot serialize a non-string map key, so
-    // this would fail loudly if `history_secrets` reverted to a tuple key.
+fn history_secrets_do_not_land_in_account_state_json() {
+    use base64::Engine as _;
+
     let path = std::env::temp_dir().join(format!(
-        "yougen-test-history-secret-persist-{}.json",
+        "yougen-test-history-secret-at-rest-{}.json",
         crate::operation::uuid_v7()
     ));
     let realm = "ck:realm:01904100-0000-7000-8000-0000000000d9";
+    let secret = vec![9u8; 32];
+    let store = crate::secure_key_store::default_secure_key_store("yougen");
+    let key = crate::secure_key_store::mls_history_secret_store_key(realm);
+    let _ = store.delete_secret(&key);
     {
         let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
-        state.save_history_secret(realm.to_owned(), 7, vec![9u8; 32]);
-        state.save_history_secret(realm.to_owned(), 8, vec![8u8; 32]);
-        assert!(
-            state.persist_error().is_none(),
-            "history secrets must persist"
-        );
+        state.save_history_secret(realm.to_owned(), 7, secret.clone());
+        assert_eq!(state.history_secret_for(realm, 7), Some(secret.clone()));
     }
-    let restarted = crate::local_state::LocalStateStore::with_path(path.clone());
-    assert_eq!(restarted.history_secret_for(realm, 7), Some(vec![9u8; 32]));
-    assert_eq!(restarted.history_secrets_for(realm).len(), 2);
+
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap();
+    let mut combined_json = String::new();
+    for entry in std::fs::read_dir(parent).unwrap() {
+        let path = entry.unwrap().path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name.starts_with(stem)
+            && name.ends_with(".json")
+            && let Ok(raw) = std::fs::read_to_string(&path)
+        {
+            combined_json.push_str(&raw);
+        }
+    }
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);
+    assert!(!combined_json.contains("history_secrets"));
+    assert!(!combined_json.contains(&encoded));
+
+    let _ = store.delete_secret(&key);
     let _ = std::fs::remove_file(path);
 }
 

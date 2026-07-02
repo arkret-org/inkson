@@ -79,7 +79,7 @@ impl CircleScope {
 
 /// Lightweight projection of a Circle for sidebar / picker / modal
 /// rendering. The full canonical struct is
-/// [`cokret_sdk::cokret_core::modelss::circle::Circle`].
+/// [`cokret_sdk::cokret_core::models::circle::Circle`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircleSummary {
     /// `ck:circle:…`
