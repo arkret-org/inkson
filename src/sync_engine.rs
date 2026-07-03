@@ -97,7 +97,8 @@ pub struct SyncEngineContext {
     pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub projection_events: Signal<Vec<crate::views::account_projection::ProjectionEvent>>,
     pub sync_cursor: Signal<String>,
-    pub status: Signal<String>,
+    /// Connection-lifecycle label; never used for operation feedback.
+    pub connection_status: Signal<String>,
     pub network_state: Signal<String>,
     pub last_error: Signal<Option<String>>,
     pub device_queue: Signal<usize>,
@@ -1187,7 +1188,7 @@ pub fn apply_response(
     let realm_tree_nodes = ctx.realm_tree_nodes;
     let mut projection_events = ctx.projection_events;
     let mut sync_cursor = ctx.sync_cursor;
-    let mut status = ctx.status;
+    let mut status = ctx.connection_status;
     let mut network_state = ctx.network_state;
     let mut last_error = ctx.last_error;
     let mut device_queue = ctx.device_queue;

@@ -103,7 +103,6 @@ fn organization_preview_value(preview: cokret_sdk::models::OrganizationPreview) 
 pub fn DirectoryPanel(
     base_url: String,
     selected_realm_id: Signal<String>,
-    status: Signal<String>,
     token: Signal<String>,
     view: Signal<super::AppView>,
     // F-REMARK-FANOUT-1: needed so handle resolution can prefer the
@@ -437,7 +436,6 @@ pub fn DirectoryPanel(
                                         match tab {
                                             DirectoryTab::ProtocolObjects => {
                                                 object_results.set(protocol_object_results(&q));
-                                                status.set("loaded protocol object diagnostic results".to_owned());
                                             }
                                                     DirectoryTab::Realms => {
                                                         match api.search_realms(&q, None).await {
@@ -448,11 +446,13 @@ pub fn DirectoryPanel(
                                                             .into_iter()
                                                             .map(realm_tree_node_from_preview)
                                                             .collect::<Vec<_>>();
-                                                        let count = results.len();
                                                         realm_results.set(results);
-                                                        status.set(format!("loaded {count} realm result(s)"));
                                                     }
-                                                    Err(error) => status.set(format!("search failed: {error}")),
+                                                    Err(error) => crate::components::feedback::toast_error(
+                                                        "feedback.directory_search_failed",
+                                                        vec![],
+                                                        Some(error.to_string()),
+                                                    ),
                                                 }
                                             }
                                             DirectoryTab::Organizations => {
@@ -467,7 +467,11 @@ pub fn DirectoryPanel(
                                                                 .collect(),
                                                         );
                                                     }
-                                                    Err(error) => status.set(format!("org search failed: {error}")),
+                                                    Err(error) => crate::components::feedback::toast_error(
+                                                        "feedback.directory_search_failed",
+                                                        vec![],
+                                                        Some(error.to_string()),
+                                                    ),
                                                 }
                                             }
                                             DirectoryTab::Actors => {
@@ -482,13 +486,21 @@ pub fn DirectoryPanel(
                                                                 .collect(),
                                                         );
                                                     }
-                                                    Err(error) => status.set(format!("actor search failed: {error}")),
+                                                    Err(error) => crate::components::feedback::toast_error(
+                                                        "feedback.directory_search_failed",
+                                                        vec![],
+                                                        Some(error.to_string()),
+                                                    ),
                                                 }
                                             }
                                             DirectoryTab::Handles => {
                                                 match api.resolve_handle(&q).await {
                                                     Ok(resolved) => handle_result.set(Some(resolved)),
-                                                    Err(error) => status.set(format!("resolve failed: {error}")),
+                                                    Err(error) => crate::components::feedback::toast_error(
+                                                        "feedback.directory_resolve_failed",
+                                                        vec![],
+                                                        Some(error.to_string()),
+                                                    ),
                                                 }
                                             }
                                         }
@@ -518,7 +530,6 @@ pub fn DirectoryPanel(
                                             match tab {
                                                 DirectoryTab::ProtocolObjects => {
                                                     object_results.set(protocol_object_results(&q));
-                                                    status.set("loaded protocol object diagnostic results".to_owned());
                                                 }
                                                 DirectoryTab::Realms => {
                                                     match api.search_realms(&q, None).await {
@@ -529,11 +540,13 @@ pub fn DirectoryPanel(
                                                                 .into_iter()
                                                                 .map(realm_tree_node_from_preview)
                                                                 .collect::<Vec<_>>();
-                                                            let count = results.len();
                                                             realm_results.set(results);
-                                                            status.set(format!("loaded {count} realm result(s)"));
                                                         }
-                                                        Err(error) => status.set(format!("search failed: {error}")),
+                                                        Err(error) => crate::components::feedback::toast_error(
+                                                            "feedback.directory_search_failed",
+                                                            vec![],
+                                                            Some(error.to_string()),
+                                                        ),
                                                     }
                                                 }
                                                 DirectoryTab::Organizations => {
@@ -548,7 +561,11 @@ pub fn DirectoryPanel(
                                                                     .collect(),
                                                             );
                                                         }
-                                                        Err(error) => status.set(format!("org search failed: {error}")),
+                                                        Err(error) => crate::components::feedback::toast_error(
+                                                            "feedback.directory_search_failed",
+                                                            vec![],
+                                                            Some(error.to_string()),
+                                                        ),
                                                     }
                                                 }
                                                 DirectoryTab::Actors => {
@@ -563,13 +580,21 @@ pub fn DirectoryPanel(
                                                                     .collect(),
                                                             );
                                                         }
-                                                        Err(error) => status.set(format!("actor search failed: {error}")),
+                                                        Err(error) => crate::components::feedback::toast_error(
+                                                            "feedback.directory_search_failed",
+                                                            vec![],
+                                                            Some(error.to_string()),
+                                                        ),
                                                     }
                                                 }
                                                 DirectoryTab::Handles => {
                                                     match api.resolve_handle(&q).await {
                                                         Ok(resolved) => handle_result.set(Some(resolved)),
-                                                        Err(error) => status.set(format!("resolve failed: {error}")),
+                                                        Err(error) => crate::components::feedback::toast_error(
+                                                            "feedback.directory_resolve_failed",
+                                                            vec![],
+                                                            Some(error.to_string()),
+                                                        ),
                                                     }
                                                 }
                                             }
@@ -601,14 +626,19 @@ pub fn DirectoryPanel(
                                                     selected_realm_id.set(
                                                         resolved.realm_preview.realm_id.as_str().to_owned(),
                                                     );
-                                                    status.set(format!(
-                                                        "resolved {:?}",
-                                                        resolved.join_rule
-                                                    ));
+                                                    crate::components::feedback::toast_success(
+                                                        "feedback.realm_resolved",
+                                                        vec![(
+                                                            "join_rule",
+                                                            format!("{:?}", resolved.join_rule),
+                                                        )],
+                                                    );
                                                 }
-                                                Err(err) => status.set(format!(
-                                                    "resolve failed: {}", err.display()
-                                                )),
+                                                Err(err) => crate::components::feedback::toast_error(
+                                                    "feedback.directory_resolve_failed",
+                                                    vec![],
+                                                    Some(err.display()),
+                                                ),
                                             }
                                         });
                                     }
@@ -656,14 +686,18 @@ pub fn DirectoryPanel(
                                 let opened = match OpenedLink::parse(&raw) {
                                     Ok(opened) => opened,
                                     Err(_) => {
-                                        status.set(crate::i18n::tr("object_link.error.invalid"));
+                                        crate::components::feedback::toast_error(
+                                            "object_link.error.invalid",
+                                            vec![],
+                                            None,
+                                        );
                                         return;
                                     }
                                 };
                                 let base = base.clone();
                                 let api_token = token();
                                 let navigator = navigator;
-                                status.set(crate::i18n::tr("object_link.opening"));
+                                crate::components::feedback::toast_info("object_link.opening", vec![]);
                                 spawn(async move {
                                     let address = opened.resolve_address();
                                     let token_arg = opened.token.clone();
@@ -679,8 +713,11 @@ pub fn DirectoryPanel(
                                         }
                                         // Anti-enumeration: every failure is the
                                         // same friendly message.
-                                        Err(_) => status
-                                            .set(crate::i18n::tr("object_link.error.unavailable")),
+                                        Err(_) => crate::components::feedback::toast_error(
+                                            "object_link.error.unavailable",
+                                            vec![],
+                                            None,
+                                        ),
                                     }
                                 });
                             }
@@ -800,9 +837,11 @@ pub fn DirectoryPanel(
                                                         );
                                                         realm_results.set(current);
                                                     }
-                                                    Err(err) => status.set(format!(
-                                                        "load more failed: {}", err.display()
-                                                    )),
+                                                    Err(err) => crate::components::feedback::toast_error(
+                                                        "feedback.directory_load_more_failed",
+                                                        vec![],
+                                                        Some(err.display()),
+                                                    ),
                                                 }
                                                 pagination.write().loading_more = false;
                                             });
@@ -977,7 +1016,11 @@ pub fn DirectoryPanel(
                                                     );
                                                     org_results.set(current);
                                                 }
-                                                Err(err) => status.set(format!("load more failed: {}", err.display())),
+                                                Err(err) => crate::components::feedback::toast_error(
+                                                    "feedback.directory_load_more_failed",
+                                                    vec![],
+                                                    Some(err.display()),
+                                                ),
                                             }
                                             pagination.write().loading_more = false;
                                         });
@@ -1158,7 +1201,11 @@ pub fn DirectoryPanel(
                                                     );
                                                     actor_results.set(current);
                                                 }
-                                                Err(err) => status.set(format!("load more failed: {}", err.display())),
+                                                Err(err) => crate::components::feedback::toast_error(
+                                                    "feedback.directory_load_more_failed",
+                                                    vec![],
+                                                    Some(err.display()),
+                                                ),
                                             }
                                             pagination.write().loading_more = false;
                                         });

@@ -276,7 +276,10 @@ pub fn RouterView() -> Element {
     if *realm_events_route_enabled.peek() != current_route_uses_realm_context {
         realm_events_route_enabled.set(current_route_uses_realm_context);
     }
-    let mut status = use_signal(|| ConnectionState::Offline.label().to_owned());
+    // Connection-lifecycle status only (offline / restoring / online / session
+    // expired). Operation feedback now goes through the toast queue in
+    // `crate::components::feedback` — never through this signal.
+    let connection_status = use_signal(|| ConnectionState::Offline.label().to_owned());
     let initial_sync_cursor = initial_local_state
         .sync_cursor
         .clone()
@@ -715,7 +718,6 @@ pub fn RouterView() -> Element {
     let manage_realm_selection = use_signal(BTreeSet::<String>::new);
     let manage_contact_selection = use_signal(BTreeSet::<String>::new);
     let manage_bulk_busy = use_signal(|| false);
-    let manage_bulk_status = use_signal(String::new);
     let direct_contact_rows = use_signal(Vec::<crate::models::ContactListRow>::new);
     let direct_contacts_loaded = use_signal(|| false);
     let mut sidebar_row_menu_open = use_signal(|| Option::<String>::None);
@@ -840,7 +842,7 @@ pub fn RouterView() -> Element {
     // (`crate::session`), so this poller and any reactive 401-retry can
     // never fire two competing refreshes for the same rollover.
     use_future({
-        let mut status = status;
+        let mut status = connection_status;
         let mut last_error = last_error;
         let state_store = state_store;
         let token = token;
@@ -1007,7 +1009,7 @@ pub fn RouterView() -> Element {
         let mut invalidator_projection_events = projection_events;
         let mut invalidator_device_queue = device_queue;
         let mut invalidator_crypto_state = crypto_state;
-        let mut invalidator_status = status;
+        let mut invalidator_status = connection_status;
         let mut invalidator_network_state = network_state;
         let mut invalidator_last_error = last_error;
         let mut invalidator_session_boot_state = session_boot_state;
@@ -1149,7 +1151,7 @@ pub fn RouterView() -> Element {
                 account_did(),
                 device_id(),
                 ConnectContext {
-                    status,
+                    connection_status,
                     sync_cursor,
                     token,
                     account_did,
@@ -1230,7 +1232,7 @@ pub fn RouterView() -> Element {
             realm_tree_nodes,
             projection_events,
             sync_cursor,
-            status,
+            connection_status,
             network_state,
             last_error,
             device_queue,
@@ -2944,7 +2946,7 @@ pub fn RouterView() -> Element {
                                 account_did,
                                 device_id,
                                 token,
-                                status,
+                                connection_status,
                                 config_store,
                                 state_store,
                                 account_primary_handle,
@@ -2975,7 +2977,7 @@ pub fn RouterView() -> Element {
                                 div {
                                     class: "auth-status",
                                     "data-testid": "session-restore-status",
-                                    "{status()}"
+                                    "{connection_status()}"
                                 }
                             }
                         },
@@ -2985,7 +2987,7 @@ pub fn RouterView() -> Element {
                                 account_did,
                                 device_id,
                                 token,
-                                status,
+                                connection_status,
                                 config_store,
                                 state_store,
                                 account_primary_handle,
@@ -3158,18 +3160,23 @@ pub fn RouterView() -> Element {
                 }
                 sidebar_resizing.set(false);
             },
-            // G3.Y3 — global policy-deny banner. Floats above the shell
-            // so any 403 with a policy-shaped envelope is surfaced
-            // without each call site wiring its own error UI. The
-            // banner is pulled from a process-wide queue populated by
-            // `api::decode_cokret_error`'s `maybe_dispatch_policy_deny`.
-            crate::components::PolicyDenyBanner {}
+            // Unified feedback (docs/design/unified-feedback-system.md
+            // Wave 0). AppBanner: single-slot persistent banner; the
+            // offline condition is derived from the sync engine's
+            // network state ("offline"/"reconnecting"/"online") and
+            // gated on an active session so the pre-connect boot frame
+            // does not flash the banner.
+            crate::components::AppBanner {
+                offline: !token().is_empty() && network_state() == "offline",
+            }
+            // ToastHost: stacked transient toasts. Drains the generic
+            // toast queue plus the policy-deny queue (fed by
+            // `api::decode_cokret_error`'s `maybe_dispatch_policy_deny`,
+            // G3.Y3) and the CKP-0007 circle-error queue (fed by
+            // `maybe_dispatch_circle_error`), so any 403 / Circle error
+            // is surfaced without each call site wiring its own UI.
+            crate::components::ToastHost {}
             crate::components::DidResolutionHealthBanner { health: did_resolution_health }
-            // CKP-0007 P3B.3 — global Circle-error toast, fed by the
-            // HTTP layer's `maybe_dispatch_circle_error` next to the
-            // policy-deny dispatcher. Renders nothing when no error
-            // is queued.
-            crate::components::CircleErrorToast { i18n: i18n_signal }
             Outlet::<Route> {}
             crate::components::DeviceAuthorizationPrompt {
                 needs_device_authorization,
@@ -3373,7 +3380,7 @@ pub fn RouterView() -> Element {
                 class: if mobile_nav_open() { "mobile-drawer open" } else { "mobile-drawer" },
                 "data-testid": "mobile-nav-drawer",
                 div { class: "mobile-status", "data-testid": "mobile-connection-status",
-                    span { "data-testid": "mobile-status-label", "{status}" }
+                    span { "data-testid": "mobile-status-label", "{connection_status}" }
                     span { class: "muted mono", "data-testid": "mobile-sync-cursor", "cursor {sync_cursor}" }
                     Button {
                         variant: ButtonVariant::Primary,
@@ -3388,7 +3395,7 @@ pub fn RouterView() -> Element {
                                 account_did(),
                                 device_id(),
                                 ConnectContext {
-                                    status,
+                                    connection_status,
                                     sync_cursor,
                                     token,
                                     account_did,
@@ -3555,7 +3562,7 @@ pub fn RouterView() -> Element {
                                                     last_error,
                                                     server_description,
                                                     server_probe_status,
-                                                    status,
+                                                    connection_status,
                                                     account_did,
                                                     device_id,
                                                     account_primary_handle,
@@ -3571,7 +3578,7 @@ pub fn RouterView() -> Element {
                                                     account_did(),
                                                     device_id(),
                                                     ConnectContext {
-                                                        status,
+                                                        connection_status,
                                                         sync_cursor,
                                                         token,
                                                         account_did,
@@ -3658,7 +3665,6 @@ pub fn RouterView() -> Element {
                                             token(),
                                             direct_contact_rows,
                                             direct_contacts_loaded,
-                                            status,
                                         );
                                     }
                                 },
@@ -3699,7 +3705,6 @@ pub fn RouterView() -> Element {
                                                     token(),
                                                     direct_contact_rows,
                                                     direct_contacts_loaded,
-                                                    status,
                                                 );
                                             }
                                         }
@@ -3753,7 +3758,6 @@ pub fn RouterView() -> Element {
                                                 token(),
                                                 direct_contact_rows,
                                                 direct_contacts_loaded,
-                                                status,
                                             );
                                         }
                                     },
@@ -3816,8 +3820,7 @@ pub fn RouterView() -> Element {
                                     let contact_remark =
                                         contact_remarks_for_sidebar.get(&peer).cloned();
                                     let display_name = display_name_for_did(&state_store.read(), &peer);
-                                    let unavailable_label = display_name.clone();
-                                    let has_contact_remark = contact_remark
+                                                                        let has_contact_remark = contact_remark
                                         .as_ref()
                                         .is_some_and(|remark| !remark.local_name.trim().is_empty());
                                     let is_pinned_contact =
@@ -3851,7 +3854,7 @@ pub fn RouterView() -> Element {
                                                         event.prevent_default();
                                                         event.stop_propagation();
                                                         if !can_resolve {
-                                                            status.set(format!("{}: {}", crate::i18n::tr("direct.unavailable"), unavailable_label));
+                                                            crate::components::feedback::toast_info("direct.unavailable", vec![]);
                                                             return;
                                                         }
                                                         if let Some(summary) = direct.clone()
@@ -3888,10 +3891,18 @@ pub fn RouterView() -> Element {
                                                                             strand_id: strand_id.to_string(),
                                                                         });
                                                                     } else {
-                                                                        status.set(format!("direct conversation: {:?}", response.state));
+                                                                        crate::components::feedback::toast_error(
+                                                                            "feedback.direct_open_failed",
+                                                                            vec![],
+                                                                            Some(format!("state: {:?}", response.state)),
+                                                                        );
                                                                     }
                                                                 }
-                                                                Err(err) => status.set(format!("direct conversation: {}", err.display())),
+                                                                Err(err) => crate::components::feedback::toast_error(
+                                                                    "feedback.direct_open_failed",
+                                                                    vec![],
+                                                                    Some(err.display()),
+                                                                ),
                                                             }
                                                         });
                                                     }
@@ -3974,7 +3985,6 @@ pub fn RouterView() -> Element {
                                                                         state_store,
                                                                         base_url(),
                                                                         token(),
-                                                                        status,
                                                                     );
                                                                     sidebar_row_menu_open.set(None);
                                                                 }
@@ -4002,7 +4012,6 @@ pub fn RouterView() -> Element {
                                                                         state_store,
                                                                         direct_contact_rows,
                                                                         direct_contacts_loaded,
-                                                                        status,
                                                                     );
                                                                     sidebar_row_menu_open.set(None);
                                                                 }
@@ -4033,7 +4042,7 @@ pub fn RouterView() -> Element {
                                 "data-testid": "realm-tree-empty-state-status",
                                 style: "padding: 4px 12px; font-size: 11px; line-height: 1.4; opacity: 0.7;",
                                 {
-                                    let status_text = status();
+                                    let status_text = connection_status();
                                     let error_text = last_error();
                                     let trimmed_status = if status_text.len() > 96 {
                                         format!("{}…", &status_text[..96])
@@ -4293,7 +4302,6 @@ pub fn RouterView() -> Element {
                                                             state_store,
                                                             base_url(),
                                                             token(),
-                                                            status,
                                                         );
                                                         sidebar_row_menu_open.set(None);
                                                     }
@@ -4382,7 +4390,6 @@ pub fn RouterView() -> Element {
                                                             realm_tree_nodes,
                                                             selected_realm_id,
                                                             sync_cursor,
-                                                            status,
                                                         );
                                                         sidebar_row_menu_open.set(None);
                                                     }
@@ -4640,7 +4647,7 @@ pub fn RouterView() -> Element {
                             }
                         }
                         div { class: "sr-only", "data-testid": "connection-status", role: "status", "aria-live": "polite",
-                            span { "data-testid": "status-label", "{status}" }
+                            span { "data-testid": "status-label", "{connection_status}" }
                             span { "data-testid": "network-state-badge", "{network_state}" }
                             span { class: "mono", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
                             if let Some(ref err) = last_error() {
@@ -5195,7 +5202,7 @@ pub fn RouterView() -> Element {
                             account_did,
                             device_id,
                             token,
-                            status,
+                            connection_status,
                             config_store,
                             state_store,
                             account_primary_handle,
@@ -5211,7 +5218,7 @@ pub fn RouterView() -> Element {
                             account_did,
                             device_id,
                             token,
-                            status,
+                            connection_status,
                             config_store,
                             state_store,
                             account_primary_handle,
@@ -5324,7 +5331,6 @@ pub fn RouterView() -> Element {
                         crate::views::directory::DirectoryPanel {
                             base_url: base_url(),
                             selected_realm_id,
-                            status,
                             token,
                             view,
                             state_store,
@@ -5344,7 +5350,6 @@ pub fn RouterView() -> Element {
                             query: realm_manage_query,
                             selection: manage_realm_selection,
                             busy: manage_bulk_busy,
-                            status: manage_bulk_status,
                         }
                     },
                     Route::ContactsManage => rsx! {
@@ -5355,11 +5360,9 @@ pub fn RouterView() -> Element {
                             contact_rows: direct_contact_rows,
                             contacts_loaded: direct_contacts_loaded,
                             state_store,
-                            app_status: status,
                             query: contact_manage_query,
                             selection: manage_contact_selection,
                             busy: manage_bulk_busy,
-                            status: manage_bulk_status,
                         }
                     },
                     Route::Contacts => rsx! {
@@ -5384,7 +5387,6 @@ pub fn RouterView() -> Element {
                                     realm_tree_nodes,
                                     selected_realm_id,
                                     new_space_context_node,
-                                    status,
                                     section: route.setup_section().map(str::to_owned),
                                 }
                             }
@@ -5415,7 +5417,6 @@ pub fn RouterView() -> Element {
                             push_state,
                             locale,
                             theme,
-                            status,
                         }
                     },
                     Route::VerifyDevice => {

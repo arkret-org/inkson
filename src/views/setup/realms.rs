@@ -35,7 +35,6 @@ pub(super) fn RealmsSection(
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
     mut selected_realm_id: Signal<String>,
-    mut status: Signal<String>,
     // State signals are owned by the parent `SetupPanel` so the wizard's
     // in-progress draft survives switching between setup sections (the
     // sections are conditionally rendered, so locally-owned hooks would reset
@@ -694,7 +693,11 @@ pub(super) fn RealmsSection(
                                         {
                                             let message = error.to_string();
                                             realm_state.set(message.clone());
-                                            status.set(message);
+                                            crate::components::feedback::toast_error(
+                                                "feedback.realm_create_failed",
+                                                vec![],
+                                                Some(message),
+                                            );
                                             return;
                                         }
                                         // S6 soft-gate: block encrypted-Realm creation when
@@ -720,7 +723,6 @@ pub(super) fn RealmsSection(
                                         }
                                         realm_create_busy.set(true);
                                         realm_state.set("Creating Realm...".to_owned());
-                                        status.set("Creating Realm...".to_owned());
                                         let api_token = token();
                                         let base = base.clone();
                                         let backup_trigger_signal =
@@ -749,7 +751,11 @@ pub(super) fn RealmsSection(
                                                         );
                                                         realm_create_busy.set(false);
                                                         realm_state.set(message.clone());
-                                                        status.set(message);
+                                                        crate::components::feedback::toast_error(
+                                                            "feedback.realm_create_failed",
+                                                            vec![],
+                                                            Some(message),
+                                                        );
                                                         return;
                                                     }
                                                 }
@@ -894,7 +900,11 @@ pub(super) fn RealmsSection(
                                                                         );
                                                                         realm_create_busy.set(false);
                                                                         realm_state.set(message.clone());
-                                                                        status.set(message);
+                                                                        crate::components::feedback::toast_error(
+                                                                            "feedback.realm_create_failed",
+                                                                            vec![],
+                                                                            Some(message),
+                                                                        );
                                                                         return;
                                                                     }
                                                                 }
@@ -1049,8 +1059,7 @@ pub(super) fn RealmsSection(
 
                                                         let message = steps.join(" · ");
                                                         realm_create_busy.set(false);
-                                                        realm_state.set(message.clone());
-                                                        status.set(message);
+                                                        realm_state.set(message);
                                                         create_step.set(NewRealmStep::Done);
                                                         if crate::security_state::encryption_profile_is_encrypted(
                                                             &encryption_profile,
@@ -1100,7 +1109,11 @@ pub(super) fn RealmsSection(
                                                         };
                                                         realm_create_busy.set(false);
                                                         realm_state.set(message.clone());
-                                                        status.set(message);
+                                                        crate::components::feedback::toast_error(
+                                                            "feedback.realm_create_failed",
+                                                            vec![],
+                                                            Some(message),
+                                                        );
                                                     }
                                                 }
                                                 }
@@ -1108,7 +1121,11 @@ pub(super) fn RealmsSection(
                                                     let message = format!("invalid server URL: {error}");
                                                     realm_create_busy.set(false);
                                                     realm_state.set(message.clone());
-                                                    status.set(message);
+                                                    crate::components::feedback::toast_error(
+                                                        "feedback.realm_create_failed",
+                                                        vec![],
+                                                        Some(message),
+                                                    );
                                                 }
                                             }
                                         });

@@ -64,7 +64,6 @@ pub(super) fn load_direct_contacts_for_sidebar(
     api_token: String,
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
-    mut status: Signal<String>,
 ) {
     if api_token.trim().is_empty() {
         direct_contact_rows.set(Vec::new());
@@ -82,7 +81,11 @@ pub(super) fn load_direct_contacts_for_sidebar(
             Ok(response) => direct_contact_rows.set(response.contacts),
             Err(err) => {
                 direct_contacts_loaded.set(false);
-                status.set(format!("direct conversations: {}", err.display()));
+                crate::components::feedback::toast_error(
+                    "feedback.contacts_load_failed",
+                    vec![],
+                    Some(err.display()),
+                );
             }
         }
     });
@@ -95,7 +98,6 @@ pub(super) fn toggle_sidebar_realm_pin(
     mut state_store: Signal<LocalStateStore>,
     base_url: String,
     api_token: String,
-    mut status: Signal<String>,
 ) {
     let now_rfc3339 = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
@@ -107,14 +109,16 @@ pub(super) fn toggle_sidebar_realm_pin(
     state_store
         .write()
         .set_realm_remark(realm_id.clone(), next.clone());
-    let action_status = if next_pinned {
-        crate::i18n::tr("realm.pinned")
-    } else {
-        crate::i18n::tr("realm.unpin")
-    };
-    status.set(format!("{action_status}: {}", short_protocol_id(&realm_id)));
-    crate::views::settings::push_realm_remark_account_data_with_failure_status(
-        base_url, api_token, realm_id, next, status,
+    crate::components::feedback::toast_success(
+        if next_pinned {
+            "realm.pinned"
+        } else {
+            "realm.unpinned"
+        },
+        vec![],
+    );
+    crate::views::settings::push_realm_remark_account_data_with_failure_toast(
+        base_url, api_token, realm_id, next,
     );
 }
 
@@ -125,7 +129,6 @@ pub(super) fn toggle_sidebar_contact_pin(
     mut state_store: Signal<LocalStateStore>,
     base_url: String,
     api_token: String,
-    mut status: Signal<String>,
 ) {
     let now_rfc3339 = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let next = crate::account_data::ContactRemark::with_pinned_preserving_fields(
@@ -137,13 +140,14 @@ pub(super) fn toggle_sidebar_contact_pin(
     state_store
         .write()
         .set_contact_remark(actor_id.clone(), next.clone());
-    let action_status = if next_pinned {
-        crate::i18n::tr("contact.pinned")
-    } else {
-        crate::i18n::tr("contact.unpinned")
-    };
-    let actor_label = crate::views::helpers::display_name_for_did(&state_store.read(), &actor_id);
-    status.set(format!("{action_status}: {actor_label}"));
+    crate::components::feedback::toast_success(
+        if next_pinned {
+            "contact.pinned"
+        } else {
+            "contact.unpinned"
+        },
+        vec![],
+    );
     crate::views::settings::push_contact_remark_account_data(base_url, api_token, actor_id, next);
 }
 
@@ -156,7 +160,6 @@ pub(super) fn leave_sidebar_realm(
     mut realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     mut selected_realm_id: Signal<String>,
     mut sync_cursor: Signal<String>,
-    mut status: Signal<String>,
 ) {
     // Realm membership events are authored by the account/principal DID — the
     // server rejects any event whose `actor_id` differs from the authenticated
@@ -165,7 +168,7 @@ pub(super) fn leave_sidebar_realm(
     // session actor, so it must not be used here.
     let actor_id = account_did.trim().to_owned();
     if actor_id.is_empty() {
-        status.set("Leave Realm failed: account is not connected".to_owned());
+        crate::components::feedback::toast_error("feedback.account_not_connected", vec![], None);
         return;
     }
     let current_nodes = realm_tree_nodes();
@@ -174,7 +177,10 @@ pub(super) fn leave_sidebar_realm(
         ids_to_forget.push(realm_id.clone());
     }
     let realm_label = short_protocol_id(&realm_id);
-    status.set(format!("Leaving Realm: {realm_label}"));
+    crate::components::feedback::toast_info(
+        "feedback.realm_leaving",
+        vec![("realm", realm_label.clone())],
+    );
     spawn(async move {
         let realm_for_api = realm_id.clone();
         match crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
@@ -197,12 +203,16 @@ pub(super) fn leave_sidebar_realm(
                     selected_realm_id.set(String::new());
                 }
                 sync_cursor.set("-".to_owned());
-                status.set(format!("Left Realm: {realm_label}"));
+                crate::components::feedback::toast_success(
+                    "feedback.realm_left",
+                    vec![("realm", realm_label)],
+                );
             }
-            Err(err) => status.set(format!(
-                "Leave Realm failed for {realm_label}: {}",
-                err.display()
-            )),
+            Err(err) => crate::components::feedback::toast_error(
+                "feedback.realm_leave_failed",
+                vec![("realm", realm_label)],
+                Some(err.display()),
+            ),
         }
     });
 }
@@ -287,10 +297,12 @@ pub(super) fn delete_sidebar_contact(
     state_store: Signal<LocalStateStore>,
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
-    mut status: Signal<String>,
 ) {
     let peer_label = crate::views::helpers::display_name_for_did(&state_store.read(), &peer);
-    status.set(format!("Deleting contact: {peer_label}"));
+    crate::components::feedback::toast_info(
+        "feedback.contact_deleting",
+        vec![("name", peer_label.clone())],
+    );
     spawn(async move {
         let peer_for_api = peer.clone();
         match crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
@@ -306,12 +318,16 @@ pub(super) fn delete_sidebar_contact(
                         .collect(),
                 );
                 direct_contacts_loaded.set(true);
-                status.set(format!("Deleted contact: {peer_label}"));
+                crate::components::feedback::toast_success(
+                    "feedback.contact_deleted",
+                    vec![("name", peer_label)],
+                );
             }
-            Err(err) => status.set(format!(
-                "Delete contact failed for {peer_label}: {}",
-                err.display()
-            )),
+            Err(err) => crate::components::feedback::toast_error(
+                "feedback.contact_delete_failed",
+                vec![("name", peer_label)],
+                Some(err.display()),
+            ),
         }
     });
 }

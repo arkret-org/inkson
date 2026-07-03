@@ -405,7 +405,7 @@ pub(super) fn push_realm_remark_account_data_impl(
     api_token: String,
     realm_id: String,
     remark: crate::account_data::RealmRemark,
-    mut failure_status: Option<(Signal<String>, String)>,
+    notify_failure: bool,
 ) {
     let key = crate::account_data::realm_remark_account_data_key(&realm_id);
     spawn(async move {
@@ -421,8 +421,12 @@ pub(super) fn push_realm_remark_account_data_impl(
                     "account_data DELETE for {key_for_log} failed: {}; local state still authoritative",
                     err.display()
                 );
-                if let Some((status, label)) = failure_status.as_mut() {
-                    status.set(format!("{label}: {}", err.display()));
+                if notify_failure {
+                    crate::components::feedback::toast_error(
+                        "realm.pin_failed",
+                        vec![],
+                        Some(err.display()),
+                    );
                 }
             }
             return;
@@ -431,8 +435,12 @@ pub(super) fn push_realm_remark_account_data_impl(
             key = %key,
             "skipping plaintext Realm remark account_data upload; encrypted envelope is unavailable"
         );
-        if let Some((status, label)) = failure_status.as_mut() {
-            status.set(format!("{label}: encrypted account-data sync unavailable"));
+        if notify_failure {
+            crate::components::feedback::toast_error(
+                "realm.pin_failed",
+                vec![],
+                Some("encrypted account-data sync unavailable".to_owned()),
+            );
         }
     });
 }

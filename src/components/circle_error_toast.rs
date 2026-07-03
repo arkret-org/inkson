@@ -1,19 +1,19 @@
-//! Circle-error toast (CKP-0007 / P3B.3).
+//! Circle-error event queue (CKP-0007 / P3B.3).
 //!
 //! Surfaces CKP-0007 reason / error codes as user-facing toasts.
 //! Uses the same process-wide queue pattern as
 //! [`crate::components::policy_deny_banner`]: API call sites push a
-//! [`CircleErrorKind`] via [`push_circle_error`]; the [`CircleErrorToast`]
-//! component, mounted once near the app shell, drains the queue each
-//! render and displays a dismissible card with the localized message.
+//! [`CircleErrorKind`] via [`push_circle_error`]; the unified
+//! [`crate::components::feedback::ToastHost`], mounted once near the
+//! app shell, drains the queue each render and surfaces the localized
+//! message as an Error toast. The former dedicated `CircleErrorToast`
+//! component was folded into that host (unified-feedback-system
+//! Wave 0), which also upgraded the "newest overwrites" display
+//! semantics to normal stacking on the consumer side.
 
 use std::sync::Mutex;
 
-use dioxus::prelude::*;
-
 use crate::circle::CircleErrorKind;
-use crate::i18n::{I18nSignal, t};
-use crate::ui::button::{Button, ButtonVariant};
 
 /// Process-wide circle-error slot. Newer kinds overwrite older ones —
 /// a deny storm should not stack ten toasts.
@@ -52,55 +52,11 @@ pub fn maybe_dispatch_circle_error(code: &str, reason: Option<&str>) -> bool {
     false
 }
 
-/// Props for the visible toast surface.
-#[derive(Clone, PartialEq, Props)]
-pub struct CircleErrorToastProps {
-    /// App-wide i18n signal so the toast can pick the localized
-    /// `error.circle.*` string.
-    pub i18n: I18nSignal,
-}
-
-#[component]
-pub fn CircleErrorToast(props: CircleErrorToastProps) -> Element {
-    let mut current = use_signal(|| Option::<CircleErrorKind>::None);
-
-    if current.read().is_none()
-        && let Some(kind) = take_circle_error()
-    {
-        current.set(Some(kind));
-    }
-
-    let Some(kind) = *current.read() else {
-        return rsx! {};
-    };
-
-    let key = kind.i18n_key();
-    let translated = t(&props.i18n, key);
-    let message = if translated == key {
-        kind.english_fallback().to_owned()
-    } else {
-        translated
-    };
-
-    rsx! {
-        div {
-            class: "toast circle-error-toast",
-            "data-testid": "circle-error-toast",
-            "data-i18n-key": "{key}",
-            div { class: "toast-body",
-                strong { "Circle error" }
-                p { "{message}" }
-            }
-            Button {
-                variant: ButtonVariant::Secondary,
-                class: "icon-only",
-                "data-testid": "circle-error-toast-dismiss",
-                onclick: move |_| current.set(None),
-                "×"
-            }
-        }
-    }
-}
+// The former `CircleErrorToast` component was removed in the
+// unified-feedback-system Wave 0: queued kinds now surface through
+// `crate::components::feedback::ToastHost` as Error toasts (i18n key
+// from `CircleErrorKind::i18n_key()`, English fallback from
+// `CircleErrorKind::english_fallback()`).
 
 #[cfg(test)]
 mod tests {

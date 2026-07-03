@@ -16,7 +16,6 @@ pub(super) fn render_notification_kind_toggle(
     kind: &'static str,
     label: &'static str,
     mut state_store: Signal<LocalStateStore>,
-    mut status: Signal<String>,
 ) -> Element {
     let enabled = state_store.read().notification_kind_enabled(kind);
     rsx! {
@@ -28,11 +27,14 @@ pub(super) fn render_notification_kind_toggle(
                     on_checked_change: move |state: CheckboxState| {
                         let enabled = bool::from(state);
                         state_store.write().set_notification_kind_enabled(kind, enabled);
-                        status.set(format!(
-                            "{} {}.",
-                            label,
-                            if enabled { "enabled" } else { "muted" }
-                        ));
+                        crate::components::feedback::toast_success(
+                            if enabled {
+                                "feedback.notification_kind_enabled"
+                            } else {
+                                "feedback.notification_kind_muted"
+                            },
+                            vec![("label", label.to_owned())],
+                        );
                     },
                 }
                 if enabled { " Enabled" } else { " Muted" }
@@ -52,7 +54,6 @@ pub(super) fn RealmOverrideRow(
     mut state_store: Signal<LocalStateStore>,
     base_url: Signal<String>,
     token: Signal<String>,
-    mut status: Signal<String>,
 ) -> Element {
     let level = state_store.read().realm_watch_level(&realm_id);
     let selected = use_memo({
@@ -92,11 +93,13 @@ pub(super) fn RealmOverrideRow(
                             token(),
                             state_store.read().realm_watch_levels(),
                         );
-                        status.set(format!(
-                            "Set {} to {}.",
-                            short_protocol_id(&realm_id),
-                            watch_level_label(next)
-                        ));
+                        crate::components::feedback::toast_success(
+                            "feedback.watch_level_set",
+                            vec![
+                                ("realm", short_protocol_id(&realm_id)),
+                                ("level", watch_level_label(next).to_owned()),
+                            ],
+                        );
                     }
                 },
                 SelectOption::<String> { index: 0usize, value: "all".to_string(), text_value: "All messages", "All messages" }
@@ -116,10 +119,10 @@ pub(super) fn RealmOverrideRow(
                             token(),
                             state_store.read().realm_watch_levels(),
                         );
-                        status.set(format!(
-                            "Removed override for {}.",
-                            short_protocol_id(&realm_id)
-                        ));
+                        crate::components::feedback::toast_success(
+                            "feedback.override_removed",
+                            vec![("realm", short_protocol_id(&realm_id))],
+                        );
                     }
                 },
                 "Remove"

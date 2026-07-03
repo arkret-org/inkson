@@ -165,8 +165,8 @@ pub fn decode_cokret_error_with_header(
 
 /// G3.Y3 — on a 403 with a policy-shaped envelope, push a
 /// [`crate::components::PolicyDenyEvent`] onto the global queue so the
-/// `PolicyDenyBanner` mounted near the app shell surfaces it without
-/// each call site needing to plumb its own error UI.
+/// unified `feedback::ToastHost` mounted near the app shell surfaces it
+/// without each call site needing to plumb its own error UI.
 ///
 /// Skips auth-expired codes (those have their own session-death
 /// redirect path) and any non-403 statuses.

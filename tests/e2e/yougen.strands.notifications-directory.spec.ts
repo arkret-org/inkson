@@ -41,7 +41,11 @@ test("notifications are derived from index projections and respect per-realm mut
     DEMO_REALM,
   );
   await page.getByTestId("settings-realm-override-remove").click();
-  await expect(page.getByTestId("status-label")).toContainText("Removed");
+  // Operation feedback now surfaces as a toast (unified feedback system
+  // Wave 1); the sr-only status-label is connection-status only.
+  await expect(
+    page.locator('[data-testid="toast-item"][data-i18n-key="feedback.override_removed"]'),
+  ).toBeVisible();
 
   await page.getByTestId("topbar-notifications-button").click();
   await expect(page.getByTestId("notifications-panel")).toContainText(
@@ -174,9 +178,10 @@ test("directory search resolve and space selection strand works", async ({
 
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
-  await expect(page.getByTestId("status-label")).toContainText(
-    "resolved public",
-  );
+  // Resolve feedback is a toast now; the message carries the join rule.
+  await expect(
+    page.locator('[data-testid="toast-item"][data-i18n-key="feedback.realm_resolved"]'),
+  ).toContainText("public");
   await expect(page.getByTestId("directory-result").first()).toContainText(
     "Cokret Demo Realm",
   );

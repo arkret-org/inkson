@@ -783,6 +783,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm.pin", "Pin Realm");
     dict.set("realm.unpin", "Unpin Realm");
     dict.set("realm.pinned", "Pinned Realm");
+    dict.set("realm.unpinned", "Unpinned Realm");
     dict.set("realm.pin_failed", "Realm pin account-data save failed");
     // Actor-private contact list pinning.
     dict.set("contact.pin", "Pin Contact");
@@ -1121,7 +1122,171 @@ pub fn english_translations() -> TranslationDict {
     // in `chinese_translations()`.
     add_contacts_keys(&mut dict);
 
+    // Unified feedback system (toast host + app banner), Wave 0.
+    add_feedback_keys(&mut dict);
+
     dict
+}
+
+/// English strings for the unified feedback surface
+/// (`components::feedback` — toast host + app banner). zh follows in
+/// `add_feedback_keys_zh`; other locales fall back through the
+/// `xx → en → key` chain.
+fn add_feedback_keys(dict: &mut TranslationDict) {
+    dict.set(
+        "feedback.policy_denied",
+        "Action blocked by server policy: {code} — {message}",
+    );
+    dict.set(
+        "feedback.banner_offline",
+        "You are offline. Changes will sync once the connection is restored.",
+    );
+    dict.set("feedback.toast_overflow", "+{count} more");
+    dict.set("feedback.copy_detail", "Copy details");
+    dict.set("feedback.dismiss", "Dismiss");
+
+    // Wave 1 — operation-feedback toasts (former global status writes).
+    dict.set(
+        "feedback.account_not_connected",
+        "Account is not connected; sign in first",
+    );
+    dict.set("feedback.contacts_load_failed", "Failed to load contacts");
+    dict.set("feedback.realm_leaving", "Leaving Realm: {realm}");
+    dict.set("feedback.realm_left", "Left Realm: {realm}");
+    dict.set("feedback.realm_leave_failed", "Failed to leave Realm {realm}");
+    dict.set("feedback.contact_deleting", "Deleting contact: {name}");
+    dict.set("feedback.contact_deleted", "Deleted contact: {name}");
+    dict.set(
+        "feedback.contact_delete_failed",
+        "Failed to delete contact {name}",
+    );
+    dict.set(
+        "feedback.direct_open_failed",
+        "Could not open the direct conversation",
+    );
+    dict.set("feedback.bulk_realms_leaving", "Leaving {total} Realm(s)…");
+    dict.set("feedback.bulk_realms_left", "Left {done} of {total} Realm(s)");
+    dict.set(
+        "feedback.bulk_realms_leave_failed",
+        "Left {done} of {total} Realm(s); some failed",
+    );
+    dict.set(
+        "feedback.bulk_contacts_deleting",
+        "Deleting {total} contact(s)…",
+    );
+    dict.set(
+        "feedback.bulk_contacts_deleted",
+        "Deleted {done} of {total} contact(s)",
+    );
+    dict.set(
+        "feedback.bulk_contacts_delete_failed",
+        "Deleted {done} of {total} contact(s); some failed",
+    );
+    dict.set("feedback.directory_search_failed", "Directory search failed");
+    dict.set(
+        "feedback.directory_resolve_failed",
+        "Directory resolve failed",
+    );
+    dict.set(
+        "feedback.directory_load_more_failed",
+        "Loading more results failed",
+    );
+    dict.set(
+        "feedback.realm_resolved",
+        "Realm resolved (join rule: {join_rule})",
+    );
+    dict.set("feedback.realm_create_failed", "Realm creation failed");
+    dict.set("feedback.copied_did", "DID copied");
+    dict.set("feedback.copied_handles", "Handles copied");
+    dict.set("feedback.copied_device_id", "Device ID copied");
+    dict.set("feedback.copied_invite_url", "Invite locator URL copied");
+    dict.set(
+        "feedback.invite_locator_refreshed",
+        "Invite locator refreshed",
+    );
+    dict.set("feedback.avatar_updated", "Avatar updated");
+    dict.set("feedback.mimi_failed", "MIMI request failed");
+    dict.set("feedback.notification_kind_enabled", "{label} enabled");
+    dict.set("feedback.notification_kind_muted", "{label} muted");
+    dict.set(
+        "feedback.override_pick_realm",
+        "Pick a Realm before adding an override",
+    );
+    dict.set("feedback.watch_level_set", "Set {realm} to {level}");
+    dict.set("feedback.override_removed", "Removed override for {realm}");
+    dict.set(
+        "feedback.overrides_cleared",
+        "Cleared all per-realm overrides",
+    );
+    dict.set("feedback.push_registered", "Push registered: {label}");
+    dict.set("feedback.push_register_failed", "Push registration failed");
+    dict.set("feedback.push_unregistered", "Push unregistered");
+    dict.set("feedback.push_unregister_failed", "Push unregister failed");
+    dict.set(
+        "feedback.presence_visibility_set",
+        "Presence visibility: {visibility}",
+    );
+    dict.set(
+        "feedback.read_receipt_default_send_on",
+        "Read receipts: send by default",
+    );
+    dict.set(
+        "feedback.read_receipt_default_send_off",
+        "Read receipts: skip by default",
+    );
+    dict.set(
+        "feedback.read_receipt_default_display_on",
+        "Read receipts: shown in conversations",
+    );
+    dict.set(
+        "feedback.read_receipt_default_display_off",
+        "Read receipts: hidden in conversations",
+    );
+    dict.set(
+        "feedback.read_receipt_override_send",
+        "Read receipts for {realm}: send",
+    );
+    dict.set(
+        "feedback.read_receipt_override_skip",
+        "Read receipts for {realm}: skip",
+    );
+    dict.set(
+        "feedback.read_receipt_override_inherit",
+        "Read receipts for {realm}: inherit default",
+    );
+    dict.set("feedback.enter_realm_id", "Enter a Realm ID first");
+    dict.set(
+        "feedback.realm_remark_saved",
+        "Realm remark saved: {realm} \u{2192} {name}",
+    );
+    dict.set(
+        "feedback.realm_remark_cleared",
+        "Realm remark cleared for {realm}",
+    );
+    dict.set(
+        "feedback.enter_realm_and_name",
+        "Enter both a Realm ID and a local name",
+    );
+    dict.set(
+        "feedback.invalid_realm_id",
+        "Realm ID must start with ck:realm:",
+    );
+    dict.set(
+        "feedback.contact_remark_saved",
+        "Contact remark saved: {name} \u{2192} {local_name}",
+    );
+    dict.set(
+        "feedback.contact_remark_cleared",
+        "Contact remark cleared for {name}",
+    );
+    dict.set(
+        "feedback.invalid_actor_identifier",
+        "Enter an actor DID or handle like alice:example.com",
+    );
+    dict.set(
+        "feedback.enter_actor_and_name",
+        "Enter both an actor identifier and a local name",
+    );
 }
 
 /// English strings for the contacts surfaces (contact-request panel, contact

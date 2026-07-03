@@ -352,23 +352,18 @@ pub(crate) fn push_realm_remark_account_data(
     realm_id: String,
     remark: crate::account_data::RealmRemark,
 ) {
-    push_realm_remark_account_data_impl(base_url, api_token, realm_id, remark, None);
+    push_realm_remark_account_data_impl(base_url, api_token, realm_id, remark, false);
 }
 
-pub(crate) fn push_realm_remark_account_data_with_failure_status(
+/// Variant of [`push_realm_remark_account_data`] that surfaces sync failures
+/// to the user via an error toast (`realm.pin_failed`).
+pub(crate) fn push_realm_remark_account_data_with_failure_toast(
     base_url: String,
     api_token: String,
     realm_id: String,
     remark: crate::account_data::RealmRemark,
-    failure_status: Signal<String>,
 ) {
-    push_realm_remark_account_data_impl(
-        base_url,
-        api_token,
-        realm_id,
-        remark,
-        Some((failure_status, crate::i18n::tr("realm.pin_failed"))),
-    );
+    push_realm_remark_account_data_impl(base_url, api_token, realm_id, remark, true);
 }
 
 pub(crate) fn push_contact_remark_account_data(
@@ -416,7 +411,6 @@ pub fn SettingsPanel(
     push_state: Signal<String>,
     mut locale: Signal<Locale>,
     mut theme: Signal<String>,
-    status: Signal<String>,
 ) -> Element {
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());
@@ -970,14 +964,15 @@ pub fn SettingsPanel(
                                                                                             .load_private_data(&account_did(), "avatar_blob_ref")
                                                                                             .filter(|value| !value.trim().is_empty())
                                                                                             .unwrap_or_else(|| blob_ref.clone());
-                                                                                        profile_avatar_blob_ref.set(refreshed.clone());
+                                                                                        profile_avatar_blob_ref.set(refreshed);
                                                                                         avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
                                                                                         avatar_uploading.set(false);
                                                                                         pending_avatar_crop.set(None);
                                                                                         avatar_upload_status.set(String::new());
-                                                                                        status.set(format!(
-                                                                                            "Avatar updated ({refreshed})"
-                                                                                        ));
+                                                                                        crate::components::feedback::toast_success(
+                                                                                            "feedback.avatar_updated",
+                                                                                            vec![],
+                                                                                        );
                                                                                     }
                                                                                     Err(err) => {
                                                                                         avatar_uploading.set(false);
@@ -1113,7 +1108,7 @@ pub fn SettingsPanel(
                                                     let value = principal_label.clone();
                                                     move |_| {
                                                         copy_text_to_clipboard(&value);
-                                                        status.set("DID copied".to_owned());
+                                                        crate::components::feedback::toast_success("feedback.copied_did", vec![]);
                                                     }
                                                 },
                                                 UiIcon { name: "copy" }
@@ -1140,7 +1135,7 @@ pub fn SettingsPanel(
                                                     let value = account_handles_title.clone();
                                                     move |_| {
                                                         copy_text_to_clipboard(&value);
-                                                        status.set("Handles copied".to_owned());
+                                                        crate::components::feedback::toast_success("feedback.copied_handles", vec![]);
                                                     }
                                                 },
                                                 UiIcon { name: "copy" }
@@ -1167,7 +1162,7 @@ pub fn SettingsPanel(
                                                     let value = device_label.clone();
                                                     move |_| {
                                                         copy_text_to_clipboard(&value);
-                                                        status.set("Device ID copied".to_owned());
+                                                        crate::components::feedback::toast_success("feedback.copied_device_id", vec![]);
                                                     }
                                                 },
                                                 UiIcon { name: "copy" }
@@ -1192,7 +1187,7 @@ pub fn SettingsPanel(
                                                     let invite_url = invite_locator_url.clone();
                                                     move |_| {
                                                         copy_text_to_clipboard(&invite_url);
-                                                        status.set("Invite locator URL copied".to_owned());
+                                                        crate::components::feedback::toast_success("feedback.copied_invite_url", vec![]);
                                                     }
                                                 },
                                                 UiIcon { name: "copy" }
@@ -1210,7 +1205,7 @@ pub fn SettingsPanel(
                                                     } else {
                                                         build_invite_locator_token(&did)
                                                     });
-                                                    status.set("Invite locator refreshed".to_owned());
+                                                    crate::components::feedback::toast_success("feedback.invite_locator_refreshed", vec![]);
                                                 },
                                                 UiIcon { name: "refresh" }
                                                 span { "Refresh" }
@@ -1456,15 +1451,16 @@ pub fn SettingsPanel(
                                                     directory.providers.len(),
                                                     features,
                                                 ));
-                                                status.set(
-                                                    "MIMI provider directory refreshed".to_owned(),
-                                                );
                                             }
                                             Err(err) => {
                                                 let message =
                                                     format!("MIMI directory: {}", err.display());
                                                 mimi_directory.set(message.clone());
-                                                status.set(message);
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.mimi_failed",
+                                                    vec![],
+                                                    Some(message),
+                                                );
                                             }
                                         }
                                     });
@@ -1500,12 +1496,15 @@ pub fn SettingsPanel(
                                                         .unwrap_or_else(|| "none".to_owned()),
                                                     response.proofs.len()
                                                 ));
-                                                status.set("MIMI groupInfo loaded".to_owned());
                                             }
                                             Err(err) => {
                                                 let message = format!("MIMI groupInfo failed: {}", err.display());
                                                 mimi_receipt.set(message.clone());
-                                                status.set(message);
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.mimi_failed",
+                                                    vec![],
+                                                    Some(message),
+                                                );
                                             }
                                         }
                                     });
@@ -1546,12 +1545,15 @@ pub fn SettingsPanel(
                                                     response.matches.len(),
                                                     first
                                                 ));
-                                                status.set("MIMI identifier query completed".to_owned());
                                             }
                                             Err(err) => {
                                                 let message = format!("MIMI identifier query failed: {}", err.display());
                                                 mimi_receipt.set(message.clone());
-                                                status.set(message);
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.mimi_failed",
+                                                    vec![],
+                                                    Some(message),
+                                                );
                                             }
                                         }
                                     });
@@ -1596,12 +1598,15 @@ pub fn SettingsPanel(
                                                         .unwrap_or_else(|| "no-event".to_owned()),
                                                     response.rejected.len()
                                                 ));
-                                                status.set("MIMI test message submitted".to_owned());
                                             }
                                             Err(err) => {
                                                 let message = format!("MIMI submit failed: {}", err.display());
                                                 mimi_receipt.set(message.clone());
-                                                status.set(message);
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.mimi_failed",
+                                                    vec![],
+                                                    Some(message),
+                                                );
                                             }
                                         }
                                     });
@@ -1636,12 +1641,15 @@ pub fn SettingsPanel(
                                                     response.download_ref,
                                                     response.headers.len()
                                                 ));
-                                                status.set("MIMI proxy download prepared".to_owned());
                                             }
                                             Err(err) => {
                                                 let message = format!("MIMI proxy download failed: {}", err.display());
                                                 mimi_receipt.set(message.clone());
-                                                status.set(message);
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.mimi_failed",
+                                                    vec![],
+                                                    Some(message),
+                                                );
                                             }
                                         }
                                     });
@@ -1674,10 +1682,10 @@ pub fn SettingsPanel(
                                     "Apply to every Realm unless you add a per-Realm override below."
                                 }
                                 div { class: "metric-grid",
-                                    {render_notification_kind_toggle("mention", "Mention notifications", state_store, status)}
-                                    {render_notification_kind_toggle("reaction", "Reaction notifications", state_store, status)}
-                                    {render_notification_kind_toggle("invite", "Invite notifications", state_store, status)}
-                                    {render_notification_kind_toggle("message", "Message notifications", state_store, status)}
+                                    {render_notification_kind_toggle("mention", "Mention notifications", state_store)}
+                                    {render_notification_kind_toggle("reaction", "Reaction notifications", state_store)}
+                                    {render_notification_kind_toggle("invite", "Invite notifications", state_store)}
+                                    {render_notification_kind_toggle("message", "Message notifications", state_store)}
                                 }
                                 div { class: "actions",
                                     label {
@@ -1821,7 +1829,7 @@ pub fn SettingsPanel(
                                         onclick: move |_| {
                                             let realm_id = new_override_realm().trim().to_owned();
                                             if realm_id.is_empty() {
-                                                status.set("Pick a Realm before adding an override.".to_owned());
+                                                crate::components::feedback::toast_info("feedback.override_pick_realm", vec![]);
                                                 return;
                                             }
                                             let level = WatchLevel::from_wire(&new_override_level())
@@ -1832,11 +1840,13 @@ pub fn SettingsPanel(
                                                 token(),
                                                 state_store.read().realm_watch_levels(),
                                             );
-                                            status.set(format!(
-                                                "Set {} to {}.",
-                                                short_protocol_id(&realm_id),
-                                                watch_level_label(level)
-                                            ));
+                                            crate::components::feedback::toast_success(
+                                                "feedback.watch_level_set",
+                                                vec![
+                                                    ("realm", short_protocol_id(&realm_id)),
+                                                    ("level", watch_level_label(level).to_owned()),
+                                                ],
+                                            );
                                             new_override_realm.set(String::new());
                                         },
                                         "Add override"
@@ -1862,7 +1872,6 @@ pub fn SettingsPanel(
                                                     state_store,
                                                     base_url,
                                                     token,
-                                                    status,
                                                 }
                                             }
                                         }
@@ -1886,7 +1895,7 @@ pub fn SettingsPanel(
                                                 token(),
                                                 state_store.read().realm_watch_levels(),
                                             );
-                                            status.set("Cleared all per-realm overrides.".to_owned());
+                                            crate::components::feedback::toast_success("feedback.overrides_cleared", vec![]);
                                         },
                                         "Clear all overrides"
                                     }
@@ -1934,12 +1943,19 @@ pub fn SettingsPanel(
                                                     .registration_id
                                                     .unwrap_or_else(|| "registered".to_owned());
                                                 push_state.set(label.clone());
-                                                status.set(format!("Push registered: {label}"));
+                                                crate::components::feedback::toast_success(
+                                                    "feedback.push_registered",
+                                                    vec![("label", label)],
+                                                );
                                             }
                                             Err(err) => {
                                                 let message = format!("push register failed: {err}");
                                                 push_state.set(message.clone());
-                                                status.set(message);
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.push_register_failed",
+                                                    vec![],
+                                                    Some(message),
+                                                );
                                             }
                                         }
                                     });
@@ -1960,7 +1976,11 @@ pub fn SettingsPanel(
                                         let request = match crate::push::build_unregister_request(&dev, existing.as_ref()) {
                                             Ok(r) => r,
                                             Err(error) => {
-                                                status.set(format!("push unregister unavailable: {error}"));
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.push_unregister_failed",
+                                                    vec![],
+                                                    Some(format!("push unregister unavailable: {error}")),
+                                                );
                                                 return;
                                             }
                                         };
@@ -1972,12 +1992,16 @@ pub fn SettingsPanel(
                                             Ok(_) => {
                                                 state_store.write().clear_push_registration();
                                                 push_state.set("Not registered".to_owned());
-                                                status.set("Push unregistered".to_owned());
+                                                crate::components::feedback::toast_success("feedback.push_unregistered", vec![]);
                                             }
                                             Err(err) => {
                                                 let message = format!("push unregister failed: {}", err.display());
                                                 push_state.set(message.clone());
-                                                status.set(message);
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.push_unregister_failed",
+                                                    vec![],
+                                                    Some(message),
+                                                );
                                             }
                                         }
                                     });
@@ -2010,7 +2034,10 @@ pub fn SettingsPanel(
                                 };
                                 presence_visibility_choice.set(v);
                                 state_store.write().set_presence_visibility(visibility);
-                                status.set(format!("Presence visibility: {}", visibility.as_wire()));
+                                crate::components::feedback::toast_success(
+                                    "feedback.presence_visibility_set",
+                                    vec![("visibility", visibility.as_wire().to_owned())],
+                                );
                                 push_presence_visibility_account_data(
                                     base_url(),
                                     token(),
@@ -2125,10 +2152,14 @@ pub fn SettingsPanel(
                                 let send = bool::from(state);
                                 read_receipt_default_send.set(send);
                                 state_store.write().set_read_receipt_default_send(send);
-                                status.set(format!(
-                                    "Read receipts: default = {}",
-                                    if send { "send" } else { "skip" }
-                                ));
+                                crate::components::feedback::toast_success(
+                                    if send {
+                                        "feedback.read_receipt_default_send_on"
+                                    } else {
+                                        "feedback.read_receipt_default_send_off"
+                                    },
+                                    vec![],
+                                );
                                 // Also push to soland's ck.account_data.set
                                 // so other devices pick up the change.
                                 // Endpoint may 404/501 — we swallow and keep
@@ -2150,10 +2181,14 @@ pub fn SettingsPanel(
                                 let display = bool::from(state);
                                 read_receipt_default_display.set(display);
                                 state_store.write().set_read_receipt_default_display(display);
-                                status.set(format!(
-                                    "Read receipts: display = {}",
-                                    if display { "show" } else { "hide" }
-                                ));
+                                crate::components::feedback::toast_success(
+                                    if display {
+                                        "feedback.read_receipt_default_display_on"
+                                    } else {
+                                        "feedback.read_receipt_default_display_off"
+                                    },
+                                    vec![],
+                                );
                                 push_read_receipt_account_data(
                                     base_url(),
                                     token(),
@@ -2218,11 +2253,14 @@ pub fn SettingsPanel(
                                                     read_receipt_realm_overrides.set(
                                                         state_store.read().read_receipt_realm_overrides(),
                                                     );
-                                                    status.set(format!(
-                                                        "Read receipts for {}: {}",
-                                                        short_protocol_id(&realm_id),
-                                                        if next { "send" } else { "skip" }
-                                                    ));
+                                                    crate::components::feedback::toast_success(
+                                                        if next {
+                                                            "feedback.read_receipt_override_send"
+                                                        } else {
+                                                            "feedback.read_receipt_override_skip"
+                                                        },
+                                                        vec![("realm", short_protocol_id(&realm_id))],
+                                                    );
                                                     push_read_receipt_account_data(
                                                         base_url(),
                                                         token(),
@@ -2249,10 +2287,10 @@ pub fn SettingsPanel(
                                                     read_receipt_realm_overrides.set(
                                                         state_store.read().read_receipt_realm_overrides(),
                                                     );
-                                                    status.set(format!(
-                                                        "Read receipts for {}: inherit default",
-                                                        short_protocol_id(&realm_id)
-                                                    ));
+                                                    crate::components::feedback::toast_success(
+                                                        "feedback.read_receipt_override_inherit",
+                                                        vec![("realm", short_protocol_id(&realm_id))],
+                                                    );
                                                     push_read_receipt_account_data(
                                                         base_url(),
                                                         token(),
@@ -2285,7 +2323,7 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let realm_id = read_receipt_override_input().trim().to_owned();
                                 if realm_id.is_empty() {
-                                    status.set("Enter a Realm ID first".to_owned());
+                                    crate::components::feedback::toast_info("feedback.enter_realm_id", vec![]);
                                     return;
                                 }
                                 state_store.write().set_read_receipt_realm_override(
@@ -2296,10 +2334,10 @@ pub fn SettingsPanel(
                                     state_store.read().read_receipt_realm_overrides(),
                                 );
                                 read_receipt_override_input.set(String::new());
-                                status.set(format!(
-                                    "Skipping read receipts in {}",
-                                    short_protocol_id(&realm_id)
-                                ));
+                                crate::components::feedback::toast_success(
+                                    "feedback.read_receipt_override_skip",
+                                    vec![("realm", short_protocol_id(&realm_id))],
+                                );
                                 push_read_receipt_account_data(
                                     base_url(),
                                     token(),
@@ -2314,7 +2352,7 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let realm_id = read_receipt_override_input().trim().to_owned();
                                 if realm_id.is_empty() {
-                                    status.set("Enter a Realm ID first".to_owned());
+                                    crate::components::feedback::toast_info("feedback.enter_realm_id", vec![]);
                                     return;
                                 }
                                 state_store.write().set_read_receipt_realm_override(
@@ -2325,10 +2363,10 @@ pub fn SettingsPanel(
                                     state_store.read().read_receipt_realm_overrides(),
                                 );
                                 read_receipt_override_input.set(String::new());
-                                status.set(format!(
-                                    "Sending read receipts in {}",
-                                    short_protocol_id(&realm_id)
-                                ));
+                                crate::components::feedback::toast_success(
+                                    "feedback.read_receipt_override_send",
+                                    vec![("realm", short_protocol_id(&realm_id))],
+                                );
                                 push_read_receipt_account_data(
                                     base_url(),
                                     token(),
@@ -2417,21 +2455,15 @@ pub fn SettingsPanel(
                                                             realm_remarks_snapshot.set(
                                                                 state_store.read().realm_remarks(),
                                                             );
-                                                            let action_status = if next_pinned {
-                                                                crate::i18n::tr("realm.pinned")
-                                                            } else {
-                                                                crate::i18n::tr("realm.unpin")
-                                                            };
-                                                            status.set(format!(
-                                                                "{action_status}: {}",
-                                                                short_protocol_id(&id)
-                                                            ));
-                                                            push_realm_remark_account_data_with_failure_status(
+                                                            crate::components::feedback::toast_success(
+                                                                if next_pinned { "realm.pinned" } else { "realm.unpinned" },
+                                                                vec![],
+                                                            );
+                                                            push_realm_remark_account_data_with_failure_toast(
                                                                 base_url(),
                                                                 token(),
                                                                 id,
                                                                 next,
-                                                                status,
                                                             );
                                                         }
                                                     },
@@ -2466,15 +2498,18 @@ pub fn SettingsPanel(
                                                                 state_store.read().realm_remarks(),
                                                             );
                                                             if next.is_empty() {
-                                                                status.set(format!(
-                                                                    "Realm remark cleared for {}",
-                                                                    short_protocol_id(&id)
-                                                                ));
+                                                                crate::components::feedback::toast_success(
+                                                                    "feedback.realm_remark_cleared",
+                                                                    vec![("realm", short_protocol_id(&id))],
+                                                                );
                                                             } else {
-                                                                status.set(format!(
-                                                                    "Realm remark saved: {} → {}",
-                                                                    short_protocol_id(&id), next.local_name
-                                                                ));
+                                                                crate::components::feedback::toast_success(
+                                                                    "feedback.realm_remark_saved",
+                                                                    vec![
+                                                                        ("realm", short_protocol_id(&id)),
+                                                                        ("name", next.local_name.clone()),
+                                                                    ],
+                                                                );
                                                             }
                                                             push_realm_remark_account_data(
                                                                 base_url(),
@@ -2500,10 +2535,10 @@ pub fn SettingsPanel(
                                                             realm_remarks_snapshot.set(
                                                                 state_store.read().realm_remarks(),
                                                             );
-                                                            status.set(format!(
-                                                                "Realm remark cleared for {}",
-                                                                short_protocol_id(&id)
-                                                            ));
+                                                            crate::components::feedback::toast_success(
+                                                                "feedback.realm_remark_cleared",
+                                                                vec![("realm", short_protocol_id(&id))],
+                                                            );
                                                             push_realm_remark_account_data(
                                                                 base_url(),
                                                                 token(),
@@ -2543,15 +2578,11 @@ pub fn SettingsPanel(
                                 let realm_id = new_realm_remark_id().trim().to_owned();
                                 let local_name = new_realm_remark_name().trim().to_owned();
                                 if realm_id.is_empty() || local_name.is_empty() {
-                                    status.set(
-                                        "Enter both a Realm ID and a local name".to_owned(),
-                                    );
+                                    crate::components::feedback::toast_info("feedback.enter_realm_and_name", vec![]);
                                     return;
                                 }
                                 if !realm_id.starts_with("ck:realm:") {
-                                    status.set(
-                                        "Realm ID must start with ck:realm:".to_owned(),
-                                    );
+                                    crate::components::feedback::toast_error("feedback.invalid_realm_id", vec![], None);
                                     return;
                                 }
                                 let now_rfc3339 = chrono::Utc::now()
@@ -2568,10 +2599,13 @@ pub fn SettingsPanel(
                                 realm_remarks_snapshot.set(state_store.read().realm_remarks());
                                 new_realm_remark_id.set(String::new());
                                 new_realm_remark_name.set(String::new());
-                                status.set(format!(
-                                    "Realm remark saved: {} → {local_name}",
-                                    short_protocol_id(&realm_id)
-                                ));
+                                crate::components::feedback::toast_success(
+                                    "feedback.realm_remark_saved",
+                                    vec![
+                                        ("realm", short_protocol_id(&realm_id)),
+                                        ("name", local_name.clone()),
+                                    ],
+                                );
                                 push_realm_remark_account_data(
                                     base_url(),
                                     token(),
@@ -2654,17 +2688,20 @@ pub fn SettingsPanel(
                                                             );
                                                             let did_label =
                                                                 display_name_for_did(&state_store.read(), &did);
-                                                            status.set(if next.is_empty() {
-                                                                format!(
-                                                                    "Contact remark cleared for {}",
-                                                                    did_label
-                                                                )
+                                                            if next.is_empty() {
+                                                                crate::components::feedback::toast_success(
+                                                                    "feedback.contact_remark_cleared",
+                                                                    vec![("name", did_label)],
+                                                                );
                                                             } else {
-                                                                format!(
-                                                                    "Contact remark saved: {} → {}",
-                                                                    did_label, next.local_name
-                                                                )
-                                                            });
+                                                                crate::components::feedback::toast_success(
+                                                                    "feedback.contact_remark_saved",
+                                                                    vec![
+                                                                        ("name", did_label),
+                                                                        ("local_name", next.local_name.clone()),
+                                                                    ],
+                                                                );
+                                                            }
                                                             push_contact_remark_account_data(
                                                                 base_url(),
                                                                 token(),
@@ -2691,10 +2728,10 @@ pub fn SettingsPanel(
                                                             );
                                                             let did_label =
                                                                 display_name_for_did(&state_store.read(), &did);
-                                                            status.set(format!(
-                                                                "Contact remark cleared for {}",
-                                                                did_label
-                                                            ));
+                                                            crate::components::feedback::toast_success(
+                                                                "feedback.contact_remark_cleared",
+                                                                vec![("name", did_label)],
+                                                            );
                                                             push_contact_remark_account_data(
                                                                 base_url(),
                                                                 token(),
@@ -2735,17 +2772,12 @@ pub fn SettingsPanel(
                                 let Some(actor_id) =
                                     crate::identity_handle::principal_did_from_identifier(&raw_actor)
                                 else {
-                                    status.set(
-                                        "Enter an actor DID or handle like alice:example.com"
-                                            .to_owned(),
-                                    );
+                                    crate::components::feedback::toast_error("feedback.invalid_actor_identifier", vec![], None);
                                     return;
                                 };
                                 let local_name = new_contact_remark_name().trim().to_owned();
                                 if local_name.is_empty() {
-                                    status.set(
-                                        "Enter both an actor identifier and a local name".to_owned(),
-                                    );
+                                    crate::components::feedback::toast_info("feedback.enter_actor_and_name", vec![]);
                                     return;
                                 }
                                 let now_rfc3339 = chrono::Utc::now()
@@ -2766,10 +2798,13 @@ pub fn SettingsPanel(
                                 new_contact_remark_name.set(String::new());
                                 let actor_label =
                                     display_name_for_did(&state_store.read(), &actor_id);
-                                status.set(format!(
-                                    "Contact remark saved: {} → {local_name}",
-                                    actor_label
-                                ));
+                                crate::components::feedback::toast_success(
+                                    "feedback.contact_remark_saved",
+                                    vec![
+                                        ("name", actor_label),
+                                        ("local_name", local_name.clone()),
+                                    ],
+                                );
                                 push_contact_remark_account_data(
                                     base_url(),
                                     token(),
@@ -2906,12 +2941,6 @@ pub fn SettingsPanel(
                                                 "settings.privacy.blocked_users.added"
                                             )
                                         ));
-                                        status.set(format!(
-                                            "{} {did_label}",
-                                            crate::i18n::tr(
-                                                "settings.privacy.blocked_users.added"
-                                            )
-                                        ));
                                         push_blocklist_account_data(base(), token(), entries);
                                     } else {
                                         let did_label =
@@ -2993,12 +3022,6 @@ pub fn SettingsPanel(
                                                             let did_label =
                                                                 display_name_for_did(&state_store.read(), &did);
                                                             blocklist_status.set(format!(
-                                                                "{} {did_label}",
-                                                                crate::i18n::tr(
-                                                                    "settings.privacy.blocked_users.removed"
-                                                                )
-                                                            ));
-                                                            status.set(format!(
                                                                 "{} {did_label}",
                                                                 crate::i18n::tr(
                                                                     "settings.privacy.blocked_users.removed"
@@ -3089,7 +3112,6 @@ pub fn SettingsPanel(
                                 theme.set("light".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "light");
                                 push_client_ui_account_data(base_url(), token(), "light".to_owned());
-                                status.set("Theme set to light".to_owned());
                             },
                             UiIcon { name: "sun" }
                         }
@@ -3104,7 +3126,6 @@ pub fn SettingsPanel(
                                 theme.set("night".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "night");
                                 push_client_ui_account_data(base_url(), token(), "night".to_owned());
-                                status.set("Theme set to night".to_owned());
                             },
                             UiIcon { name: "moon" }
                         }
@@ -3119,7 +3140,6 @@ pub fn SettingsPanel(
                                 theme.set("system".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "system");
                                 push_client_ui_account_data(base_url(), token(), "system".to_owned());
-                                status.set("Theme set to system".to_owned());
                             },
                             UiIcon { name: "monitor" }
                         }
@@ -3136,8 +3156,7 @@ pub fn SettingsPanel(
                             let api_token = token();
                             EventHandler::new(move |next: String| {
                                 state_store.write().save_private_data(&account_did(), "theme", next.clone());
-                                push_client_ui_account_data(base.clone(), api_token.clone(), next.clone());
-                                status.set(format!("Theme set to {next}"));
+                                push_client_ui_account_data(base.clone(), api_token.clone(), next);
                             })
                         },
                     }
@@ -3154,7 +3173,6 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 locale.set(Locale::En);
                                 state_store.write().save_private_data(&account_did(), "locale", Locale::En.code());
-                                status.set("Language set to en (ltr)".to_owned());
                             },
                             "English"
                         }
@@ -3164,7 +3182,6 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 locale.set(Locale::Zh);
                                 state_store.write().save_private_data(&account_did(), "locale", Locale::Zh.code());
-                                status.set("Language set to zh (ltr)".to_owned());
                             },
                             "中文"
                         }
@@ -3174,7 +3191,6 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 locale.set(Locale::Ar);
                                 state_store.write().save_private_data(&account_did(), "locale", Locale::Ar.code());
-                                status.set("Language set to ar (rtl)".to_owned());
                             },
                             "العربية"
                         }

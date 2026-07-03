@@ -806,6 +806,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm.pin", "置顶 Realm");
     dict.set("realm.unpin", "取消置顶 Realm");
     dict.set("realm.pinned", "已置顶 Realm");
+    dict.set("realm.unpinned", "已取消置顶 Realm");
     dict.set("realm.add_member", "添加成员");
     dict.set("realm.settings", "设置");
     dict.set("realm.pin_failed", "Realm 置顶 account-data 写入失败");
@@ -1035,7 +1036,142 @@ pub fn chinese_translations() -> TranslationDict {
     // Contacts / invite-receive policy / realm invite-from-contacts.
     add_contacts_keys_zh(&mut dict);
 
+    // Unified feedback system (toast host + app banner), Wave 0.
+    add_feedback_keys_zh(&mut dict);
+
     dict
+}
+
+/// Chinese strings for the unified feedback surface — mirrors
+/// [`super::en`]'s `add_feedback_keys`.
+fn add_feedback_keys_zh(dict: &mut TranslationDict) {
+    dict.set(
+        "feedback.policy_denied",
+        "操作被服务器策略拒绝:{code} — {message}",
+    );
+    dict.set(
+        "feedback.banner_offline",
+        "当前处于离线状态,网络恢复后改动将自动同步。",
+    );
+    dict.set("feedback.toast_overflow", "还有 {count} 条");
+    dict.set("feedback.copy_detail", "复制详情");
+    dict.set("feedback.dismiss", "关闭");
+
+    // Wave 1 — operation-feedback toasts (former global status writes).
+    dict.set("feedback.account_not_connected", "账号未连接,请先登录");
+    dict.set("feedback.contacts_load_failed", "联系人加载失败");
+    dict.set("feedback.realm_leaving", "正在退出 Realm:{realm}");
+    dict.set("feedback.realm_left", "已退出 Realm:{realm}");
+    dict.set("feedback.realm_leave_failed", "退出 Realm 失败:{realm}");
+    dict.set("feedback.contact_deleting", "正在删除联系人:{name}");
+    dict.set("feedback.contact_deleted", "已删除联系人:{name}");
+    dict.set("feedback.contact_delete_failed", "删除联系人失败:{name}");
+    dict.set("feedback.direct_open_failed", "无法打开私聊会话");
+    dict.set("feedback.bulk_realms_leaving", "正在退出 {total} 个 Realm…");
+    dict.set(
+        "feedback.bulk_realms_left",
+        "已退出 {done}/{total} 个 Realm",
+    );
+    dict.set(
+        "feedback.bulk_realms_leave_failed",
+        "已退出 {done}/{total} 个 Realm,部分失败",
+    );
+    dict.set("feedback.bulk_contacts_deleting", "正在删除 {total} 个联系人…");
+    dict.set(
+        "feedback.bulk_contacts_deleted",
+        "已删除 {done}/{total} 个联系人",
+    );
+    dict.set(
+        "feedback.bulk_contacts_delete_failed",
+        "已删除 {done}/{total} 个联系人,部分失败",
+    );
+    dict.set("feedback.directory_search_failed", "目录搜索失败");
+    dict.set("feedback.directory_resolve_failed", "目录解析失败");
+    dict.set("feedback.directory_load_more_failed", "加载更多结果失败");
+    dict.set("feedback.realm_resolved", "Realm 已解析(加入规则:{join_rule})");
+    dict.set("feedback.realm_create_failed", "Realm 创建失败");
+    dict.set("feedback.copied_did", "已复制 DID");
+    dict.set("feedback.copied_handles", "已复制 Handle");
+    dict.set("feedback.copied_device_id", "已复制设备 ID");
+    dict.set("feedback.copied_invite_url", "已复制邀请链接");
+    dict.set("feedback.invite_locator_refreshed", "邀请链接已刷新");
+    dict.set("feedback.avatar_updated", "头像已更新");
+    dict.set("feedback.mimi_failed", "MIMI 请求失败");
+    dict.set("feedback.notification_kind_enabled", "已启用:{label}");
+    dict.set("feedback.notification_kind_muted", "已静音:{label}");
+    dict.set(
+        "feedback.override_pick_realm",
+        "请先选择一个 Realm 再添加覆盖项",
+    );
+    dict.set("feedback.watch_level_set", "已将 {realm} 设为 {level}");
+    dict.set("feedback.override_removed", "已移除 {realm} 的通知覆盖项");
+    dict.set("feedback.overrides_cleared", "已清除所有按 Realm 通知覆盖项");
+    dict.set("feedback.push_registered", "推送已注册:{label}");
+    dict.set("feedback.push_register_failed", "推送注册失败");
+    dict.set("feedback.push_unregistered", "推送已注销");
+    dict.set("feedback.push_unregister_failed", "推送注销失败");
+    dict.set(
+        "feedback.presence_visibility_set",
+        "在线状态可见范围:{visibility}",
+    );
+    dict.set("feedback.read_receipt_default_send_on", "已读回执:默认发送");
+    dict.set(
+        "feedback.read_receipt_default_send_off",
+        "已读回执:默认不发送",
+    );
+    dict.set(
+        "feedback.read_receipt_default_display_on",
+        "已读回执:在会话中显示",
+    );
+    dict.set(
+        "feedback.read_receipt_default_display_off",
+        "已读回执:在会话中隐藏",
+    );
+    dict.set(
+        "feedback.read_receipt_override_send",
+        "{realm} 的已读回执:发送",
+    );
+    dict.set(
+        "feedback.read_receipt_override_skip",
+        "{realm} 的已读回执:不发送",
+    );
+    dict.set(
+        "feedback.read_receipt_override_inherit",
+        "{realm} 的已读回执:跟随默认",
+    );
+    dict.set("feedback.enter_realm_id", "请先输入 Realm ID");
+    dict.set(
+        "feedback.realm_remark_saved",
+        "Realm 备注已保存:{realm} \u{2192} {name}",
+    );
+    dict.set(
+        "feedback.realm_remark_cleared",
+        "已清除 {realm} 的 Realm 备注",
+    );
+    dict.set(
+        "feedback.enter_realm_and_name",
+        "请同时输入 Realm ID 和本地名称",
+    );
+    dict.set(
+        "feedback.invalid_realm_id",
+        "Realm ID 必须以 ck:realm: 开头",
+    );
+    dict.set(
+        "feedback.contact_remark_saved",
+        "联系人备注已保存:{name} \u{2192} {local_name}",
+    );
+    dict.set(
+        "feedback.contact_remark_cleared",
+        "已清除 {name} 的联系人备注",
+    );
+    dict.set(
+        "feedback.invalid_actor_identifier",
+        "请输入 DID 或形如 alice:example.com 的 handle",
+    );
+    dict.set(
+        "feedback.enter_actor_and_name",
+        "请同时输入联系人标识和本地名称",
+    );
 }
 
 /// Chinese translations for the contacts surfaces — mirrors

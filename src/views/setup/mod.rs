@@ -40,7 +40,6 @@ pub fn SetupPanel(
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     selected_realm_id: Signal<String>,
     new_space_context_node: Signal<String>,
-    status: Signal<String>,
     section: Option<String>,
 ) -> Element {
     let active_section = SetupSection::from_slug(section.as_deref());
@@ -103,7 +102,6 @@ pub fn SetupPanel(
                     config_store,
                     state_store,
                     selected_realm_id,
-                    status,
                     create_step,
                     seed_members,
                     realm_title,

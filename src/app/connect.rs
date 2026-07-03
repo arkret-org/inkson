@@ -200,7 +200,8 @@ fn invalidate_bootstrap_session(
 
 #[derive(Clone, Copy)]
 pub(super) struct ConnectContext {
-    pub(super) status: Signal<String>,
+    /// Connection-lifecycle label (offline / loading / online / error).
+    pub(super) connection_status: Signal<String>,
     pub(super) sync_cursor: Signal<String>,
     pub(super) token: Signal<String>,
     pub(super) account_did: Signal<String>,
@@ -466,7 +467,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
     let device = normalize_device_id(&device);
     spawn(async move {
         let mut sync_bootstrap_complete = ctx.sync_bootstrap_complete;
-        let mut status = ctx.status;
+        // Connection-lifecycle status only; operation feedback goes through
+        // `crate::components::feedback` toasts.
+        let mut status = ctx.connection_status;
         let mut sync_cursor = ctx.sync_cursor;
         let token = ctx.token;
         let mut account_did = ctx.account_did;

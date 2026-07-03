@@ -5,9 +5,9 @@ use dioxus::prelude::*;
 /// fires typed `on_switch` plus `on_add_account` handlers.
 pub mod account_switcher;
 pub mod avatar_uploader;
-/// CKP-0007 P3B.2 — Circle error toast surfaced from the app shell.
-/// Consumes [`crate::circle::CircleErrorKind`] and renders the
-/// localized user-facing string.
+/// CKP-0007 P3B.2 — Circle error queue. Producers push
+/// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
+/// drains it and renders the localized user-facing string.
 pub mod circle_error_toast;
 /// CKP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
 /// discussion-of cross-link banner. Shared between the new-Strand form,
@@ -34,6 +34,11 @@ pub mod encryption_floor_prompt;
 /// retry callback so users can copy the soland trace ID into bug
 /// reports without leaving the failing surface.
 pub mod error_boundary;
+/// Unified feedback surface (docs/design/unified-feedback-system.md
+/// Wave 0): process-wide toast queue + `ToastHost` (stacked toasts,
+/// drains the policy-deny and circle-error queues too) + `AppBanner`
+/// (single-slot persistent banner, offline state).
+pub mod feedback;
 /// One-time account-MLS-secret BACKUP prompt — the mirror of `mls_unlock`.
 /// Mounted once near the app shell; renders only when boot/per-Realm
 /// detection flags `needs_mls_backup` (local secret exists, no server backup).
@@ -49,9 +54,9 @@ pub mod mls_unlock;
 pub mod recovery_key_setup_prompt;
 // YOU-02-008: the P3B.5 `offline_pending_badge` component was removed
 // together with the unwired offline-queue modules (see `src/lib.rs`).
-/// G3.Y3 — global policy-deny toast / banner. Mounted once near the
-/// app shell so any view inherits the 403 surface without needing to
-/// thread its own error UI.
+/// G3.Y3 — global policy-deny event queue. Producers (the HTTP layer)
+/// push denies; the unified `feedback::ToastHost` mounted near the app
+/// shell surfaces them so no view needs to thread its own error UI.
 pub mod policy_deny_banner;
 /// P3B.8 — "Report a problem" dialog + crash telemetry opt-in
 /// toggle. Crash reports are off by default.
@@ -72,10 +77,7 @@ pub mod write_state;
 
 pub use account_switcher::AccountSwitcher;
 pub use avatar_uploader::{AvatarUploader, AvatarUploaderProps};
-pub use circle_error_toast::{
-    CircleErrorToast, CircleErrorToastProps, maybe_dispatch_circle_error, push_circle_error,
-    take_circle_error,
-};
+pub use circle_error_toast::{maybe_dispatch_circle_error, push_circle_error, take_circle_error};
 pub use circle_scope_picker::{
     CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };
@@ -87,6 +89,10 @@ pub use durability_banner::DurabilityDisclosureBanner;
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use encryption_floor_prompt::EncryptionFloorPrompt;
 pub use error_boundary::{ErrorBoundary, RetryableError};
+pub use feedback::{
+    AppBanner, AppBannerKind, FeedbackSeverity, Toast, ToastHost, push_toast, toast_error,
+    toast_info, toast_success, toast_warning,
+};
 pub use mls_backup_prompt::{
     MlsBackupPrompt, MlsBackupSignal, maybe_auto_backup_mls_after_encrypted_write,
     maybe_flag_mls_backup_after_encrypted_write, try_needs_mls_backup_signal,
@@ -101,8 +107,7 @@ pub(crate) use mls_history_backup::{
 };
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
 pub use policy_deny_banner::{
-    POLICY_DENY_AUTODISMISS_MS, PolicyDenyBanner, PolicyDenyEvent, is_policy_deny_code,
-    push_policy_deny, take_policy_deny,
+    PolicyDenyEvent, is_policy_deny_code, push_policy_deny, take_policy_deny,
 };
 pub use recovery_key_setup_prompt::RecoveryKeySetupPrompt;
 pub use report_problem::{

@@ -34,7 +34,6 @@ pub(super) fn RealmsManagePage(
     mut query: Signal<String>,
     mut selection: Signal<BTreeSet<String>>,
     mut busy: Signal<bool>,
-    mut status: Signal<String>,
 ) -> Element {
     let normalized_query = query().trim().to_ascii_lowercase();
     let filtered_rows = realm_rows
@@ -130,7 +129,11 @@ pub(super) fn RealmsManagePage(
                                         // or the server rejects them with `actor_session_mismatch`.
                                         let actor_id = actor_account_did.clone();
                                         if actor_id.trim().is_empty() {
-                                            status.set("Leave selected failed: account is not connected".to_owned());
+                                            crate::components::feedback::toast_error(
+                                                "feedback.account_not_connected",
+                                                vec![],
+                                                None,
+                                            );
                                             return;
                                         }
                                         let current_nodes = realm_tree_nodes();
@@ -148,7 +151,10 @@ pub(super) fn RealmsManagePage(
                                         let api_token = token();
                                         let base = base.clone();
                                         busy.set(true);
-                                        status.set(format!("Leaving {total} Realm(s)..."));
+                                        crate::components::feedback::toast_info(
+                                            "feedback.bulk_realms_leaving",
+                                            vec![("total", total.to_string())],
+                                        );
                                         spawn(async move {
                                             let mut succeeded = BTreeSet::<String>::new();
                                             let mut forgotten_ids = BTreeSet::<String>::new();
@@ -204,28 +210,28 @@ pub(super) fn RealmsManagePage(
 
                                             busy.set(false);
                                             if failed.is_empty() {
-                                                status.set(format!(
-                                                    "Left {} of {total} Realm(s).",
-                                                    succeeded.len()
-                                                ));
+                                                crate::components::feedback::toast_success(
+                                                    "feedback.bulk_realms_left",
+                                                    vec![
+                                                        ("done", succeeded.len().to_string()),
+                                                        ("total", total.to_string()),
+                                                    ],
+                                                );
                                             } else {
-                                                status.set(format!(
-                                                    "Left {} of {total}; failed: {}",
-                                                    succeeded.len(),
-                                                    failed.join(", ")
-                                                ));
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.bulk_realms_leave_failed",
+                                                    vec![
+                                                        ("done", succeeded.len().to_string()),
+                                                        ("total", total.to_string()),
+                                                    ],
+                                                    Some(failed.join(", ")),
+                                                );
                                             }
                                         });
                                     }
                                 },
                                 if busy() { "Leaving..." } else { "Leave selected" }
                             }
-                        }
-                    }
-
-                    if !status.read().is_empty() {
-                        div { class: "event workspace-manage-status", "data-testid": "realms-manage-status",
-                            "{status}"
                         }
                     }
 
@@ -304,11 +310,9 @@ pub(super) fn ContactsManagePage(
     mut contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut contacts_loaded: Signal<bool>,
     state_store: Signal<LocalStateStore>,
-    mut app_status: Signal<String>,
     mut query: Signal<String>,
     mut selection: Signal<BTreeSet<String>>,
     mut busy: Signal<bool>,
-    mut status: Signal<String>,
 ) -> Element {
     {
         let base = base_url.clone();
@@ -316,13 +320,7 @@ pub(super) fn ContactsManagePage(
             if contacts_loaded() || token().trim().is_empty() {
                 return;
             }
-            load_direct_contacts_for_sidebar(
-                base.clone(),
-                token(),
-                contact_rows,
-                contacts_loaded,
-                app_status,
-            );
+            load_direct_contacts_for_sidebar(base.clone(), token(), contact_rows, contacts_loaded);
         });
     }
 
@@ -422,7 +420,10 @@ pub(super) fn ContactsManagePage(
                                         let api_token = token();
                                         let base = base.clone();
                                         busy.set(true);
-                                        status.set(format!("Deleting {total} contact(s)..."));
+                                        crate::components::feedback::toast_info(
+                                            "feedback.bulk_contacts_deleting",
+                                            vec![("total", total.to_string())],
+                                        );
                                         spawn(async move {
                                             let mut succeeded = BTreeSet::<String>::new();
                                             let mut failed = Vec::<String>::new();
@@ -468,37 +469,40 @@ pub(super) fn ContactsManagePage(
                                                         contact_rows.set(response.contacts);
                                                         contacts_loaded.set(true);
                                                     }
-                                                    Err(err) => app_status.set(format!(
-                                                        "contacts refresh: {}",
-                                                        err.display()
-                                                    )),
+                                                    Err(err) => {
+                                                        crate::components::feedback::toast_error(
+                                                            "feedback.contacts_load_failed",
+                                                            vec![],
+                                                            Some(err.display()),
+                                                        )
+                                                    }
                                                 }
                                             }
 
                                             busy.set(false);
                                             if failed.is_empty() {
-                                                status.set(format!(
-                                                    "Deleted {} of {total} contact(s).",
-                                                    succeeded.len()
-                                                ));
+                                                crate::components::feedback::toast_success(
+                                                    "feedback.bulk_contacts_deleted",
+                                                    vec![
+                                                        ("done", succeeded.len().to_string()),
+                                                        ("total", total.to_string()),
+                                                    ],
+                                                );
                                             } else {
-                                                status.set(format!(
-                                                    "Deleted {} of {total}; failed: {}",
-                                                    succeeded.len(),
-                                                    failed.join(", ")
-                                                ));
+                                                crate::components::feedback::toast_error(
+                                                    "feedback.bulk_contacts_delete_failed",
+                                                    vec![
+                                                        ("done", succeeded.len().to_string()),
+                                                        ("total", total.to_string()),
+                                                    ],
+                                                    Some(failed.join(", ")),
+                                                );
                                             }
                                         });
                                     }
                                 },
                                 if busy() { "Deleting..." } else { "Delete selected" }
                             }
-                        }
-                    }
-
-                    if !status.read().is_empty() {
-                        div { class: "event workspace-manage-status", "data-testid": "contacts-manage-status",
-                            "{status}"
                         }
                     }
 

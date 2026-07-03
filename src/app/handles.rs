@@ -133,7 +133,7 @@ pub(super) struct ServerSelectionContext {
     pub(super) last_error: Signal<Option<String>>,
     pub(super) server_description: Signal<Option<ServerDescription>>,
     pub(super) server_probe_status: Signal<String>,
-    pub(super) status: Signal<String>,
+    pub(super) connection_status: Signal<String>,
     pub(super) account_did: Signal<String>,
     pub(super) device_id: Signal<String>,
     pub(super) account_primary_handle: Signal<String>,
@@ -160,7 +160,7 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
     let mut last_error = ctx.last_error;
     let mut server_description = ctx.server_description;
     let mut server_probe_status = ctx.server_probe_status;
-    let mut status = ctx.status;
+    let mut status = ctx.connection_status;
     let mut state_store = ctx.state_store;
     let mut sync_generation = ctx.sync_generation;
     let mut account_primary_handle = ctx.account_primary_handle;

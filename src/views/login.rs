@@ -53,7 +53,9 @@ pub fn LoginPanel(
     account_did: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
-    status: Signal<String>,
+    /// Connection-lifecycle label owned by the app shell; the only write
+    /// here is the post-sign-in "Online" transition.
+    connection_status: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
     account_primary_handle: Signal<String>,
@@ -196,7 +198,7 @@ pub fn LoginPanel(
                     completed.session_credential.clone(),
                 );
                 persist_completed_login_state(state_store_write, completed.session_grant);
-                status.set("Online".to_owned());
+                connection_status.set("Online".to_owned());
                 auth_status.set("Signed in".to_owned());
                 on_login.call(());
             }

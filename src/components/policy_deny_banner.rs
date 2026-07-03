@@ -1,15 +1,16 @@
-//! Global policy-deny banner.
+//! Global policy-deny event queue.
 //!
 //! G3.Y3 — when ANY server-side operation returns a 403 with a
 //! policy-shaped envelope (`{ error: { code, message, ... }, ... }`),
-//! the HTTP layer dispatches a [`PolicyDenyEvent`] here. The
-//! `PolicyDenyBanner` component, mounted once near the app shell, polls
-//! this in-process queue from a use_effect every tick and renders the
-//! most recent deny for ~8 seconds.
+//! the HTTP layer dispatches a [`PolicyDenyEvent`] here. The unified
+//! [`crate::components::feedback::ToastHost`] (mounted once near the
+//! app shell) drains this queue each render and surfaces the deny as a
+//! Warning toast — the former dedicated `PolicyDenyBanner` component
+//! was folded into that host (unified-feedback-system Wave 0).
 //!
 //! The queue lives in a `std::sync::Mutex` static so the producer side
 //! (`crate::api`) does not need to thread a Dioxus `Signal` through
-//! every `CokretApi` call. The consumer side (this component) drains
+//! every `CokretApi` call. The consumer side (`ToastHost`) drains
 //! the queue at the top of each render — Dioxus is single-threaded on
 //! the renderer thread, so the lock is uncontended in practice.
 //!
@@ -22,10 +23,7 @@
 
 use std::sync::Mutex;
 
-use dioxus::prelude::*;
 use serde_json::Value;
-
-use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 
 /// One denial event captured from the HTTP layer.
 #[derive(Clone, Debug)]
@@ -77,13 +75,13 @@ fn policy_deny_now_ms() -> u64 {
 }
 
 /// Process-wide event sink. The HTTP layer's 403 decoder calls
-/// [`push_policy_deny`]; the banner component polls [`take_policy_deny`]
+/// [`push_policy_deny`]; the toast host polls [`take_policy_deny`]
 /// each render to surface the most recent event.
 static POLICY_DENY_QUEUE: Mutex<Option<PolicyDenyEvent>> = Mutex::new(None);
 
-/// HTTP-layer entry point: record the latest deny so the banner can
-/// pick it up. Newer denies overwrite older ones — we only show the
-/// most recent because a deny storm should not stack ten banners.
+/// HTTP-layer entry point: record the latest deny so the toast host can
+/// pick it up. Newer denies overwrite older ones — we only surface the
+/// most recent because a deny storm should not stack ten toasts.
 pub fn push_policy_deny(event: PolicyDenyEvent) {
     if let Ok(mut slot) = POLICY_DENY_QUEUE.lock() {
         *slot = Some(event);
@@ -91,7 +89,7 @@ pub fn push_policy_deny(event: PolicyDenyEvent) {
 }
 
 /// Consumer entry point: drain (take) the most recent deny if any.
-/// Called by the banner component each render tick. Returning by value
+/// Called by the toast host each render tick. Returning by value
 /// keeps the lock window minimal.
 pub fn take_policy_deny() -> Option<PolicyDenyEvent> {
     POLICY_DENY_QUEUE.lock().ok()?.take()
@@ -122,111 +120,11 @@ pub fn is_policy_deny_code(code: &str) -> bool {
         )
 }
 
-/// Auto-dismiss window in milliseconds. The banner hides itself after
-/// this duration; clicking the close button dismisses earlier.
-pub const POLICY_DENY_AUTODISMISS_MS: u64 = 8_000;
-
-/// The visible banner. Mount once near the top of the app shell so it
-/// floats above any view. Pulls events from the global queue via a
-/// `use_effect` polling loop; renders nothing when no deny is active.
-#[component]
-pub fn PolicyDenyBanner() -> Element {
-    let mut current = use_signal(|| Option::<PolicyDenyEvent>::None);
-
-    // Each render, opportunistically drain the queue. Dioxus reruns
-    // the component when other signals tick, so a long-lived deny will
-    // still be picked up within milliseconds of the producing call.
-    if current.read().is_none()
-        && let Some(event) = take_policy_deny()
-    {
-        current.set(Some(event));
-    }
-
-    // Auto-dismiss: spawn a one-shot task that clears the signal after
-    // POLICY_DENY_AUTODISMISS_MS. We re-spawn whenever a *new* event
-    // lands so consecutive denies each get their own 8s window.
-    let captured_at = current.read().as_ref().map(|e| e.captured_at_ms);
-    use_effect(move || {
-        let Some(captured_at) = captured_at else {
-            return;
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(POLICY_DENY_AUTODISMISS_MS))
-                    .await;
-                // Only clear if the displayed event is still the one
-                // we scheduled the dismissal for; otherwise a newer
-                // event has replaced it and owns its own timer.
-                let still_same = current
-                    .read()
-                    .as_ref()
-                    .map(|e| e.captured_at_ms == captured_at)
-                    .unwrap_or(false);
-                if still_same {
-                    current.set(None);
-                }
-            });
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = captured_at;
-        }
-    });
-
-    let Some(event) = current.read().clone() else {
-        return rsx! {};
-    };
-
-    let obligation_count = event.obligations.len();
-
-    rsx! {
-        div {
-            class: "policy-deny-banner",
-            role: "alert",
-            "aria-live": "assertive",
-            "data-testid": "policy-deny-banner",
-            div { class: "policy-deny-row",
-                strong {
-                    "data-testid": "policy-deny-code",
-                    "{event.code}"
-                }
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::IconSm,
-                    class: "btn",
-                    "data-testid": "policy-deny-dismiss",
-                    "aria-label": "Dismiss policy deny notice",
-                    onclick: move |_| current.set(None),
-                    "×"
-                }
-            }
-            div {
-                "data-testid": "policy-deny-message",
-                "{event.message}"
-            }
-            if obligation_count > 0 {
-                ul {
-                    class: "policy-deny-obligations",
-                    "data-testid": "policy-deny-obligations",
-                    for (idx, obligation) in event.obligations.iter().enumerate() {
-                        li {
-                            "data-testid": "policy-deny-obligation",
-                            "data-obligation-index": "{idx}",
-                            "data-obligation-kind": {
-                                obligation
-                                    .get("kind")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("unknown")
-                            },
-                            "{obligation}"
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+// The former `PolicyDenyBanner` component (and its
+// `POLICY_DENY_AUTODISMISS_MS` window) was removed in the
+// unified-feedback-system Wave 0: queued events now surface through
+// `crate::components::feedback::ToastHost` as Warning toasts with the
+// obligations transcript behind the copy-detail affordance.
 
 #[cfg(test)]
 mod tests {
