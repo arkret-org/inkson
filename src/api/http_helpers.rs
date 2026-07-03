@@ -212,7 +212,13 @@ pub(crate) fn is_retryable_reqwest_error(error: &reqwest::Error) -> bool {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            false
+            // The wasm fetch backend exposes no `is_connect()`. A `Request`-
+            // kind error carrying no HTTP status is the browser's fetch
+            // rejecting before any response arrived (network unreachable /
+            // DNS failure / connection reset — the same class `is_connect()`
+            // covers natively), so treat it as retryable to keep the two
+            // targets' request-level retry semantics aligned.
+            error.is_request() && error.status().is_none()
         }
     }
 }

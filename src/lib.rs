@@ -114,6 +114,9 @@ pub mod perf;
 // (`cokret_sdk::validate_last_active_at`), which soland now enforces at
 // admission — the receive path here consumes the already-validated
 // projection.
+/// Sync projection layer (account/realm wire payloads -> local projection
+/// models); moved out of `views/` (YGN-ARCH-01 step 3).
+pub mod projection;
 pub mod push;
 pub mod rank;
 pub mod realm_events_engine;

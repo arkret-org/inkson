@@ -92,7 +92,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn mls_key_package_upload_value_includes_digest_alias() {
+fn mls_key_package_upload_entry_carries_digest_and_ref() {
     let identity = cokret_sdk::CokretMlsIdentity::new_basic(
         cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
         cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001".to_owned())
@@ -101,15 +101,16 @@ fn mls_key_package_upload_value_includes_digest_alias() {
     .unwrap();
     let record = identity.key_package_record().unwrap();
 
-    let value = super::super::mls::mls_key_package_record_upload_value(&record).unwrap();
+    let entry = super::super::mls::mls_key_package_record_upload_entry(&record).unwrap();
 
     assert_eq!(
-        value["keypackage_digest"].as_str(),
-        Some(record.keypackage_ref.as_str())
+        entry.keypackage_digest.as_str(),
+        record.keypackage_ref.as_str()
     );
+    assert_eq!(entry.keypackage_ref, record.keypackage_ref.as_str());
     assert_eq!(
-        value["keypackage_ref"].as_str(),
-        Some(record.keypackage_ref.as_str())
+        entry.key_package.as_str(),
+        Some(record.key_package.as_str())
     );
 }
 

@@ -95,7 +95,7 @@ pub struct SyncEngineContext {
     pub token: Signal<String>,
     pub state_store: Signal<LocalStateStore>,
     pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    pub projection_events: Signal<Vec<crate::views::account_projection::ProjectionEvent>>,
+    pub projection_events: Signal<Vec<crate::projection::ProjectionEvent>>,
     pub sync_cursor: Signal<String>,
     /// Connection-lifecycle label; never used for operation feedback.
     pub connection_status: Signal<String>,
@@ -375,7 +375,7 @@ async fn run_circle_scope_rotate_pass(
         if generation() != start_generation {
             return;
         }
-        let circles = match crate::views::helpers::with_authed_api(&base, token.clone(), {
+        let circles = match crate::api::with_authed_api(&base, token.clone(), {
             let realm_id = realm_id.clone();
             move |api| async move { api.list_circles(&realm_id).await }
         })
@@ -475,7 +475,7 @@ async fn run_circle_scope_rotate_pass(
                 let post_commit_snapshot = draft.post_commit_snapshot;
                 let removed_leaves = draft.removed_leaves;
                 let removed_principals = draft.removed_principals;
-                let outcome = match crate::views::helpers::with_authed_api(&base, token.clone(), {
+                let outcome = match crate::api::with_authed_api(&base, token.clone(), {
                     let circle_id = circle_id.clone();
                     move |api| async move {
                         api.submit_circle_scope_rotate_events(&circle_id, &events, None)
@@ -588,7 +588,7 @@ async fn run_idle_self_update_pass(
                 None => Ok(None),
                 Some((commit_envelope, snapshot)) => {
                     let schedule_hash = commit_envelope.commit_digest.clone();
-                    crate::views::kanban::kanban_mls_commit_event_from_store(
+                    crate::mls::group_events::mls_commit_event_from_store(
                         &store,
                         &realm_id,
                         &actor_id,
@@ -618,7 +618,7 @@ async fn run_idle_self_update_pass(
         // way the epoch advances, so a rejection is fine — we simply do NOT
         // persist the local snapshot (persist-on-accept).
         let submit_token = token.clone();
-        match crate::views::helpers::with_authed_api(&base, submit_token, |api| async move {
+        match crate::api::with_authed_api(&base, submit_token, |api| async move {
             api.submit_sdk_event(&commit_event).await
         })
         .await
@@ -678,7 +678,7 @@ async fn run_iteration(
     // ②(A+②): `token` is the `ck.session.grant`; every self-path sync request
     // must include the device DPoP holder key instead of falling back to a bare
     // bearer request that the server will reject.
-    let api = match crate::views::helpers::authed_api(&base, token.clone()) {
+    let api = match crate::api::authed_api(&base, token.clone()) {
         Ok(api) => api,
         Err(error) => {
             return IterationOutcome::Transient(format!(
@@ -1076,7 +1076,7 @@ fn refresh_projection_events_from_sync_response(
     let device_id = ctx.device_id.read().clone();
     let synced_projection_events = {
         let store_guard = state_store.read();
-        crate::views::account_projection::projection_events_from_sync_realms(
+        crate::projection::projection_events_from_sync_realms(
             &response.realms,
             Some(&store_guard),
             Some((&account_did, &device_id)),
@@ -1323,7 +1323,7 @@ pub fn apply_response(
     let device_id = ctx.device_id.read().clone();
     let synced_projection_events = {
         let store_guard = state_store.read();
-        crate::views::account_projection::projection_events_from_sync_realms(
+        crate::projection::projection_events_from_sync_realms(
             &response.realms,
             Some(&store_guard),
             Some((&account_did, &device_id)),
@@ -1500,7 +1500,7 @@ pub(crate) fn ingest_message_events(
     if events.is_empty() {
         return 0;
     }
-    let records = crate::views::chat::message_operations_from_events(realm_id, events);
+    let records = crate::projection::message_ops::message_operations_from_events(realm_id, events);
     let mut changed = 0;
     for record in records {
         if store.upsert_raw_operation(record.operation_id, record.realm_id, record.payload) {
@@ -1531,7 +1531,7 @@ pub(crate) fn ingest_kanban_events(
     // sees the full log. The prior code ingested only strand.update +
     // space.create, which silently dropped remote `ck.strand.create` — the
     // root cause of cross-member cards never appearing.
-    let records = crate::views::kanban::kanban_operations_from_events(events);
+    let records = crate::projection::kanban_ops::kanban_operations_from_events(events);
     let mut changed = 0;
     for record in records {
         let operation_id = record.operation_id;

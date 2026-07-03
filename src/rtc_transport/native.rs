@@ -316,7 +316,7 @@ impl MediaTransport for NativeRtcTransport {
                             let _ = event_bridge.send(json!({
                                 "cmd": "set_e2ee_key",
                                 "identity": identity,
-                                "key": remote_key,
+                                "key": remote_key.as_slice(),
                                 "keyIndex": 0,
                             }));
                         }
@@ -454,7 +454,7 @@ mod tests {
                     .with_timezone(&chrono::Utc),
             },
             ice_config: ice_config(),
-            frame_key: vec![7u8; 32],
+            frame_key: zeroize::Zeroizing::new(vec![7u8; 32]),
             desired_media: DesiredMedia::audio_video(),
             device_id: "ck:device:01904100-0000-7000-8000-000000000005".to_owned(),
             realm_id: "ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),

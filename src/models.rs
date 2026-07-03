@@ -1116,7 +1116,19 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
     where
         D: serde::Deserializer<'de>,
     {
-        let outcome = cokret_sdk::EventsSubmitOutcome::deserialize(deserializer)?;
+        let value = Value::deserialize(deserializer)?;
+        // renames.json rejection policy: the SDK `EventsSubmitOutcome` does
+        // not deny unknown fields (and defaults `accepted`), so the removed
+        // flat `{event_id, sync_token, …}` legacy shape would otherwise decode
+        // as an empty canonical outcome. Reject its marker keys explicitly so
+        // the canonical-only guarantee holds.
+        if value.get("event_id").is_some() || value.get("sync_token").is_some() {
+            return Err(serde::de::Error::custom(
+                "removed flat submit-outcome wire shape (event_id/sync_token) is not accepted",
+            ));
+        }
+        let outcome = cokret_sdk::EventsSubmitOutcome::deserialize(value)
+            .map_err(serde::de::Error::custom)?;
         Ok(outcome.into())
     }
 }

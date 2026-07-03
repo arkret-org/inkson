@@ -478,7 +478,7 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
         app_state_ref: None,
     };
 
-    let event = kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
+    let event = crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
         &state,
         TEST_REALM_ID,
         None,

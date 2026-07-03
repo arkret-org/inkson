@@ -35,7 +35,7 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::ConnectionState;
-use crate::views::account_projection::ProjectionEvent;
+use crate::projection::ProjectionEvent;
 use crate::views::helpers::{display_name_for_did, persist_config, short_protocol_id};
 
 // YOU-07-001: post-login / startup-check effects and small types moved to

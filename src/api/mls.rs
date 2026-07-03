@@ -31,12 +31,22 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
     signer: &crate::event_signer::YougenEventSigner,
     device_id: &str,
     key_packages: &[Value],
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<cokret_sdk::KeyOperationSignature> {
     let input = keypackage_upload_signing_input(device_id, key_packages)?;
-    super::keys::device_signature_tuple_for_input(signer, &input, "keypackages/upload")
+    let sig = signer
+        .sign_raw(&input)
+        .map_err(|err| anyhow::anyhow!("keypackages/upload device_signature sign failed: {err}"))?;
+    Ok(cokret_sdk::KeyOperationSignature {
+        kid: signer.verification_method().to_owned(),
+        alg: Some(signer.algorithm().to_owned()),
+        sig: URL_SAFE_NO_PAD.encode(sig),
+    })
 }
 
-fn sign_keypackage_upload_batch(device_id: &str, key_packages: &[Value]) -> anyhow::Result<Value> {
+fn sign_keypackage_upload_batch(
+    device_id: &str,
+    key_packages: &[Value],
+) -> anyhow::Result<cokret_sdk::KeyOperationSignature> {
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!(
             "keypackages/upload device_signature requires an active event-signer (fail-closed)"
@@ -45,17 +55,29 @@ fn sign_keypackage_upload_batch(device_id: &str, key_packages: &[Value]) -> anyh
     sign_keypackage_upload_batch_with_signer(&signer, device_id, key_packages)
 }
 
-pub(crate) fn mls_key_package_record_upload_value(
+/// Convert a local `MlsKeyPackageRecord` into the typed wire entry for
+/// `keypackages/upload`
+/// (`keypackage-operations.schema.json#/$defs/keypackage_upload_entry`).
+/// `keypackage_ref` (ObjectRef) and `keypackage_digest` (Hash) both carry the
+/// canonical KeyPackage hash; a missing `expires_at` falls back to the SDK
+/// default KeyPackage lifetime (`created_at` + 7 days).
+pub(crate) fn mls_key_package_record_upload_entry(
     record: &cokret_sdk::MlsKeyPackageRecord,
-) -> anyhow::Result<Value> {
-    let mut value = serde_json::to_value(record)?;
-    let Some(object) = value.as_object_mut() else {
-        anyhow::bail!("MLS KeyPackage record did not serialize to an object");
-    };
-    object
-        .entry("keypackage_digest".to_owned())
-        .or_insert_with(|| json!(record.keypackage_ref.as_str()));
-    Ok(value)
+) -> anyhow::Result<cokret_sdk::KeyPackageUploadEntry> {
+    Ok(cokret_sdk::KeyPackageUploadEntry {
+        keypackage_id: record.keypackage_id.clone(),
+        keypackage_ref: record.keypackage_ref.as_str().to_owned(),
+        keypackage_digest: record.keypackage_ref.clone(),
+        key_package: Value::String(record.key_package.clone()),
+        cipher_suites: record.cipher_suites.clone(),
+        capabilities: record.capabilities.clone(),
+        expires_at: record
+            .expires_at
+            .unwrap_or(record.created_at + chrono::Duration::days(7)),
+        created_at: record.created_at,
+        device_signature: None,
+        last_resort: record.last_resort.then_some(true),
+    })
 }
 
 pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {
@@ -66,7 +88,7 @@ pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {
 }
 
 pub(crate) fn keypackage_claim_record_to_mls_record(
-    claim: &cokret_sdk::KeypackageClaimRecord,
+    claim: &cokret_sdk::KeyPackageClaimRecord,
 ) -> anyhow::Result<cokret_sdk::MlsKeyPackageRecord> {
     Ok(cokret_sdk::MlsKeyPackageRecord {
         keypackage_id: claim.keypackage_ref.as_str().to_owned(),
@@ -143,12 +165,15 @@ impl CokretApi {
         record: &cokret_sdk::MlsKeyPackageRecord,
     ) -> anyhow::Result<cokret_sdk::KeyPackagesUploadOutcome> {
         let device_id = device_id.trim();
-        let key_packages = vec![mls_key_package_record_upload_value(record)?];
-        let device_signature = sign_keypackage_upload_batch(device_id, &key_packages)?;
+        let entry = mls_key_package_record_upload_entry(record)?;
+        // The signing input covers the exact serialized wire entries so the
+        // server can recompute it from the received body.
+        let key_package_values = vec![serde_json::to_value(&entry)?];
+        let device_signature = sign_keypackage_upload_batch(device_id, &key_package_values)?;
         let body = cokret_sdk::KeyPackagesUploadRequestBody {
             principal_id: record.principal_id.clone(),
             device_id: cokret_sdk::DeviceId::new(device_id.to_owned())?,
-            key_packages,
+            key_packages: vec![entry],
             device_signature,
             expires_at: None,
             strand_id: None,

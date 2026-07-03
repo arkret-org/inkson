@@ -26,44 +26,6 @@
 
 use super::*;
 
-/// Every kanban-relevant event kind the client folds into the board.
-pub(crate) const KANBAN_EVENT_KINDS: &[&str] = &[
-    "ck.space.create",
-    "ck.space.update",
-    "ck.space.archive",
-    "ck.space.restore",
-    "ck.strand.create",
-    "ck.strand.update",
-    "ck.strand.move",
-    "ck.strand.reorder",
-    "ck.strand.archive",
-    "ck.strand.restore",
-    "ck.relation.create",
-    "ck.relation.tombstone",
-];
-
-/// Normalize a batch of canonical realm events (from `backfill` /
-/// `events/subscribe`) into [`RawOperationRecord`]s for EVERY kanban-relevant
-/// kind — the single ingest funnel that replaces the old per-kind extractors
-/// (`strand_update_operations_from_events` only saw updates,
-/// `space_create_operations_from_events` only saw space-creates; remote
-/// `ck.strand.create` had no recovery path).
-pub(crate) fn kanban_operations_from_events(events: &[Value]) -> Vec<RawOperationRecord> {
-    events
-        .iter()
-        .filter_map(kanban_operation_from_event)
-        .collect()
-}
-
-fn kanban_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
-    let kind = json_path_string(Some(event), &["event_kind"])
-        .or_else(|| json_path_string(Some(event), &["kind"]))?;
-    if !KANBAN_EVENT_KINDS.contains(&kind.as_str()) {
-        return None;
-    }
-    raw_operation_from_event(event, &kind)
-}
-
 /// Causally-ordered view of the operations: by `received_at` (HLC-free fallback)
 /// then `operation_id` for determinism. Returns borrows so callers fold without
 /// cloning the whole set.

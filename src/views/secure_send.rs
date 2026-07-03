@@ -27,6 +27,7 @@ use serde_json::json;
 
 use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 use crate::operation::{OperationBuilder, trim_realm_id, uuid_v7};
+use crate::operation::sdk_event_local_operation_id;
 
 /// The structured MLS payload + the canonical AAD it was bound to.
 pub(crate) type LocalEncryptedMessage = (
@@ -99,20 +100,9 @@ pub(crate) fn run_local_mls_encrypt(
 
 /// Normalise a seal/state reference to a bare `sha256:<hex>` hash when it is
 /// one (peeling `ck:seal:` / `ck:state:` prefixes), else `None`.
-pub(crate) fn mls_sha256_hash_from_ref(value: &str) -> Option<String> {
-    // Leaf digest grammar is validated by the single canonical validator
-    // `cokret_sdk::Hash::new`; restrict to the `sha256:` form this MLS surface
-    // uses (Hash::new also accepts blake3, which is not a state/seal ref here).
-    if value.starts_with("sha256:") && cokret_sdk::Hash::new(value).is_ok() {
-        return Some(value.to_owned());
-    }
-    for prefix in ["ck:seal:", "ck:state:"] {
-        if let Some(rest) = value.strip_prefix(prefix) {
-            return mls_sha256_hash_from_ref(rest);
-        }
-    }
-    None
-}
+// Single canonical digest-grammar validator; moved to the MLS core layer
+// (YGN-ARCH-01 step 2) and re-exported for this module's callers.
+pub(crate) use crate::mls::group_events::mls_sha256_hash_from_ref;
 
 /// Derive the base group-state ref (the MLS commit's `base_group_state_ref` /
 /// the encrypted envelope's `group_state_ref` when no commit is forced) from
@@ -458,12 +448,4 @@ pub(crate) async fn submit_secure_send(
             message: format!("Message send failed: {err}"),
         },
     }
-}
-
-pub(crate) fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
-    event
-        .unsigned
-        .get("local_operation_idempotency_alias")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_else(|| event.event_id.as_str())
 }

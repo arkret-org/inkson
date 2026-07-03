@@ -68,7 +68,7 @@ pub(crate) fn decrypt_private_strand_value(
     value: &Value,
 ) -> Option<Value> {
     let envelope = mls_envelope_value(value)?;
-    let plaintext = crate::views::account_projection::try_local_mls_decrypt_core(
+    let plaintext = crate::projection::try_local_mls_decrypt_core(
         ctx.state_store,
         ctx.realm_id,
         ctx.actor_id,

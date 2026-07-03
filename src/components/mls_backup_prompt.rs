@@ -13,6 +13,8 @@ use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::with_authed_api;
+// Shared JS-interop helper (single source, YGN-DRY-04).
+pub(crate) use yoface::utils::dom::copy_text_to_clipboard;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
 const MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
@@ -33,35 +35,6 @@ fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
     if let Ok(mut slot) = status.try_write() {
         *slot = value.into();
     }
-}
-
-/// Copy the recovery words to the clipboard so the user never has to manually
-/// select the textarea (a partial selection would silently drop words). Prefers
-/// the async Clipboard API, falling back to `execCommand` on insecure contexts.
-pub(crate) fn copy_text_to_clipboard(text: &str) {
-    let Ok(encoded) = serde_json::to_string(text) else {
-        return;
-    };
-    let script = format!(
-        r#"(async () => {{
-    const text = {encoded};
-    if (navigator.clipboard && window.isSecureContext) {{
-        await navigator.clipboard.writeText(text);
-        return true;
-    }}
-    const node = document.createElement("textarea");
-    node.value = text;
-    node.setAttribute("readonly", "");
-    node.style.position = "fixed";
-    node.style.left = "-9999px";
-    document.body.appendChild(node);
-    node.select();
-    const copied = document.execCommand("copy");
-    document.body.removeChild(node);
-    return copied;
-}})()"#
-    );
-    let _ = document::eval(&script);
 }
 
 /// Download the recovery words as a plain-text file. Same goal as the copy

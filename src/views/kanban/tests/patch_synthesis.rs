@@ -719,8 +719,10 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
         DEMO_STRAND_ONBOARDING_COPY_ID,
         DEMO_STRAND_SECURITY_SIGNOFF_ID,
     ] {
+        // SDK RealmId is strictly `ck:realm:<uuid7>` now; the realm arg can
+        // no longer be the demo Space id.
         let event = crate::operation::ck_ops::strand_update_patch(
-            DEMO_BOARD_SPACE_ID,
+            "ck:realm:0196419b-0000-7000-8000-00000000b0a0",
             "did:web:acme.example:users:alice",
             strand_id,
             json!({"synthesis": {"$op": "set", "value": "demo synthesis"}}),

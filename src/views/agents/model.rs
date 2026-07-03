@@ -5,7 +5,9 @@
 //! endpoint registry, the personal-agent admin, and the handoff
 //! surfaces.
 
-use cokret_sdk::models::{AgentKeyScope, AgentParticipation, AgentView};
+use cokret_sdk::models::{
+    AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation, AgentView,
+};
 use serde_json::{Value, json};
 
 // ─────────────────────────────────────────────────────────────────────
@@ -122,16 +124,6 @@ impl AgentGrantPreset {
         }
     }
 
-    /// The coarse agent-key scope this preset implies for the provision
-    /// call. Read/draft presets are `Limited`; write-capable presets run
-    /// at `Realm` scope.
-    pub fn key_scope(self) -> AgentKeyScope {
-        match self {
-            Self::ReadOnly | Self::DraftOnly => AgentKeyScope::Limited,
-            Self::ReplyAsAgent | Self::ActOnBehalf | Self::Organizer => AgentKeyScope::Realm,
-        }
-    }
-
     /// Registered capability actions for this preset (CKP-0008 §4.7 /
     /// §4.9). Only actions present in `capability-action-registry.json`
     /// are emitted so soland never fail-closes on an unknown action.
@@ -174,20 +166,41 @@ pub fn is_pairing_request_expired(expires_at: &str, now: &str) -> bool {
     now > expires_at
 }
 
-/// Combine the `requested_scope` (`AgentKeyScope`) for the provision
-/// call from the selected presets. The widest implied key scope wins:
-/// `Realm` ⊃ `Limited`. Returns `None` when no preset is selected so the
-/// provision body omits `requested_scope` and soland picks its default.
-pub fn requested_scope_for_presets(presets: &[AgentGrantPreset]) -> Option<AgentKeyScope> {
-    let mut widest: Option<AgentKeyScope> = None;
-    for preset in presets {
-        let scope = preset.key_scope();
-        widest = Some(match (widest, scope) {
-            (Some(AgentKeyScope::Realm), _) | (_, AgentKeyScope::Realm) => AgentKeyScope::Realm,
-            _ => AgentKeyScope::Limited,
-        });
+/// Combine the `requested_scope` (`AgentKeyScope`, the spec object
+/// `{actions, resources, constraints}`) for the provision call from the
+/// selected presets: the union of every preset's registered actions,
+/// scoped to the selected Realm. The schema requires `resources` to be
+/// non-empty, so `None` is returned (and the provision body omits
+/// `requested_scope`, letting soland pick its default) when no preset is
+/// selected or no Realm is chosen.
+pub fn requested_scope_for_presets(
+    presets: &[AgentGrantPreset],
+    realm_id: Option<&str>,
+) -> Option<AgentKeyScope> {
+    if presets.is_empty() {
+        return None;
     }
-    widest
+    let realm = realm_id.map(str::trim).filter(|value| !value.is_empty())?;
+    let realm_id = cokret_sdk::RealmId::new(realm.to_owned()).ok()?;
+    let mut actions: Vec<String> = Vec::new();
+    for preset in presets {
+        for action in preset.actions() {
+            if !actions.iter().any(|existing| existing == action) {
+                actions.push((*action).to_owned());
+            }
+        }
+    }
+    Some(AgentKeyScope {
+        actions,
+        resources: vec![AgentKeyScopeResource {
+            kind: AgentKeyScopeResourceKind::Realm,
+            realm_id: Some(realm_id),
+            r#ref: None,
+            operation: None,
+            service_did: None,
+        }],
+        constraints: Vec::new(),
+    })
 }
 
 /// Expand one preset into a canonical `ck.capability.grant` object for

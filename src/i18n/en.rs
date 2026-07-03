@@ -813,6 +813,70 @@ pub fn english_translations() -> TranslationDict {
         "notifications.filtered_body",
         "All loaded notifications are currently hidden by archive, type, or per-Realm mute rules.",
     );
+    // Default titles / actions per notification kind (the model stores these
+    // keys; render translates via tr()).
+    dict.set("notifications.default_title.invite", "Realm invite");
+    dict.set("notifications.default_title.reaction", "New reaction");
+    dict.set("notifications.default_title.mention", "You were mentioned");
+    dict.set("notifications.default_title.message", "New message");
+    dict.set("notifications.default_action.accept", "Accept");
+    dict.set("notifications.default_action.view", "View");
+    // Watch-level suppression hints (T4.4).
+    dict.set(
+        "notifications.watch_hint.not_mentioned",
+        "You're not getting notifications for this discussion — change watch level",
+    );
+    dict.set(
+        "notifications.watch_hint.not_participating",
+        "You're only being notified about threads you've joined — change watch level",
+    );
+    dict.set(
+        "notifications.watch_hint.limited",
+        "Notifications for this discussion are limited by your watch level",
+    );
+    // Dashboard projection collection labels (helpers return these keys;
+    // render translates via tr()).
+    dict.set("dashboard.node_kind.realm", "Realm");
+    dict.set("dashboard.node_kind.space", "Space");
+    dict.set("dashboard.collection.realms_and_spaces", "Realms & Spaces");
+    dict.set("dashboard.collection.spaces", "Spaces");
+    dict.set("dashboard.collection.realms", "Realms");
+    dict.set(
+        "dashboard.collection.recent_realms_and_spaces",
+        "Recent Realms & Spaces",
+    );
+    dict.set("dashboard.collection.recent_spaces", "Recent Spaces");
+    dict.set("dashboard.collection.recent_realms", "Recent Realms");
+    dict.set(
+        "dashboard.collection.browse_realm_or_space",
+        "Search or join a Realm or Space",
+    );
+    dict.set("dashboard.collection.browse_space", "Search or join a Space");
+    dict.set("dashboard.collection.browse_realm", "Search or join a Realm");
+    dict.set(
+        "dashboard.collection.signin_realms_and_spaces",
+        "Sign in to load realms and Spaces",
+    );
+    dict.set("dashboard.collection.signin_spaces", "Sign in to load Spaces");
+    dict.set("dashboard.collection.signin_realms", "Sign in to load realms");
+    dict.set(
+        "dashboard.collection.empty_realms_and_spaces",
+        "No realms or Spaces loaded",
+    );
+    dict.set("dashboard.collection.empty_spaces", "No Spaces loaded");
+    dict.set("dashboard.collection.empty_realms", "No realms loaded");
+    dict.set(
+        "dashboard.collection.empty_help_realms_and_spaces",
+        "The connected server did not return realms or Spaces yet.",
+    );
+    dict.set(
+        "dashboard.collection.empty_help_spaces",
+        "The connected server did not return Spaces yet.",
+    );
+    dict.set(
+        "dashboard.collection.empty_help_realms",
+        "The connected server did not return realms yet.",
+    );
 
     // Verify Device (cross-signing / SAS)
     dict.set("verify_device.title", "Device Verification");
@@ -884,7 +948,7 @@ pub fn english_translations() -> TranslationDict {
     // submit-time guard when the input still doesn't look like a DID.
     dict.set(
         "settings.privacy.blocked_users.did_invalid",
-        "DID must start with did: (e.g. did:web:alice.example).",
+        "DID must start with did: (e.g. did:webvh:alice.example).",
     );
     dict.set("settings.privacy.unblock", "Unblock");
     // A4b — avatar upload UI keys.
@@ -942,11 +1006,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("content.attachment.download", "Download");
 
     // T7.1 — friendly product-language terms surfaced in the main strand.
-    // Raw protocol identifiers (did:web:, ck.*, schema ids, profile ids)
+    // Raw protocol identifiers (did:webvh:, ck.*, schema ids, profile ids)
     // are only shown inside Developer Tools / Diagnostics surfaces.
     dict.set(
         "friendly.identifier.placeholder",
-        "john:example.com or did:web:...",
+        "john:example.com or did:webvh:...",
     );
     dict.set(
         "friendly.identifier.placeholder_multiline",
@@ -1321,7 +1385,7 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "contacts.new.recipient_service_placeholder",
-        "did:web:ps.bob.example (leave blank if same server)",
+        "did:webvh:ps.bob.example (leave blank if same server)",
     );
     dict.set(
         "contacts.new.recipient_service_hint",

@@ -1031,7 +1031,7 @@ pub fn RealmAdminPanel(
                                     .map_err(|err| err.user_message())
                                     .and_then(|(commit_envelope, snapshot)| {
                                         let schedule_hash = commit_envelope.commit_digest.clone();
-                                        crate::views::kanban::kanban_mls_commit_event_from_store(
+                                        crate::mls::group_events::mls_commit_event_from_store(
                                             &store,
                                             &realm,
                                             &actor_id,

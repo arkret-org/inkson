@@ -8,6 +8,7 @@ use super::{
 use crate::local_state::{LocalStateStore, RawOperationRecord};
 use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::operation::sdk_event_local_operation_id;
 
 pub(super) fn route_card_strand_id(route: &Route) -> Option<String> {
     match route {
@@ -404,13 +405,6 @@ pub(super) fn save_card_calendar_edit(
     }
 }
 
-fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
-    event
-        .unsigned
-        .get("local_operation_idempotency_alias")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_else(|| event.event_id.as_str())
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_calendar_rsvp(

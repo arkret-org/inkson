@@ -595,7 +595,9 @@ mod tests {
                 "ck.server.query.describe",
             ],
             "supported_bindings": [],
-            "auth_metadata": {},
+            // SDK AuthMetadata.mode is required (no default) — the fixture
+            // must carry a concrete auth mode.
+            "auth_metadata": {"mode": "development"},
             "limits": {},
             "plaintext_visibility": {"default": "encrypted"},
             "implemented_features": [],

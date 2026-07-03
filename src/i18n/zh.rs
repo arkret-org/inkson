@@ -836,6 +836,68 @@ pub fn chinese_translations() -> TranslationDict {
         "notifications.filtered_body",
         "已加载的通知全部被归档、类型或空间静音规则过滤掉了。",
     );
+    // Default titles / actions per notification kind (keys resolved via tr()).
+    dict.set("notifications.default_title.invite", "Realm 邀请");
+    dict.set("notifications.default_title.reaction", "新表情回应");
+    dict.set("notifications.default_title.mention", "有人提到了你");
+    dict.set("notifications.default_title.message", "新消息");
+    dict.set("notifications.default_action.accept", "接受");
+    dict.set("notifications.default_action.view", "查看");
+    // Watch-level suppression hints (T4.4).
+    dict.set(
+        "notifications.watch_hint.not_mentioned",
+        "你不会收到这个讨论的通知 — 可修改关注级别",
+    );
+    dict.set(
+        "notifications.watch_hint.not_participating",
+        "你只会收到已参与话题的通知 — 可修改关注级别",
+    );
+    dict.set(
+        "notifications.watch_hint.limited",
+        "这个讨论的通知受关注级别限制",
+    );
+    // Dashboard projection collection labels (keys resolved via tr()).
+    dict.set("dashboard.node_kind.realm", "Realm");
+    dict.set("dashboard.node_kind.space", "Space");
+    dict.set("dashboard.collection.realms_and_spaces", "Realm 与 Space");
+    dict.set("dashboard.collection.spaces", "Space");
+    dict.set("dashboard.collection.realms", "Realm");
+    dict.set(
+        "dashboard.collection.recent_realms_and_spaces",
+        "最近的 Realm 与 Space",
+    );
+    dict.set("dashboard.collection.recent_spaces", "最近的 Space");
+    dict.set("dashboard.collection.recent_realms", "最近的 Realm");
+    dict.set(
+        "dashboard.collection.browse_realm_or_space",
+        "搜索或加入 Realm 或 Space",
+    );
+    dict.set("dashboard.collection.browse_space", "搜索或加入 Space");
+    dict.set("dashboard.collection.browse_realm", "搜索或加入 Realm");
+    dict.set(
+        "dashboard.collection.signin_realms_and_spaces",
+        "登录后加载 Realm 与 Space",
+    );
+    dict.set("dashboard.collection.signin_spaces", "登录后加载 Space");
+    dict.set("dashboard.collection.signin_realms", "登录后加载 Realm");
+    dict.set(
+        "dashboard.collection.empty_realms_and_spaces",
+        "没有已加载的 Realm 或 Space",
+    );
+    dict.set("dashboard.collection.empty_spaces", "没有已加载的 Space");
+    dict.set("dashboard.collection.empty_realms", "没有已加载的 Realm");
+    dict.set(
+        "dashboard.collection.empty_help_realms_and_spaces",
+        "已连接的服务器尚未返回 Realm 或 Space。",
+    );
+    dict.set(
+        "dashboard.collection.empty_help_spaces",
+        "已连接的服务器尚未返回 Space。",
+    );
+    dict.set(
+        "dashboard.collection.empty_help_realms",
+        "已连接的服务器尚未返回 Realm。",
+    );
 
     // Verify Device
     dict.set("verify_device.title", "设备验证");
@@ -894,7 +956,7 @@ pub fn chinese_translations() -> TranslationDict {
     // F-BLOCKLIST-VALID-1: live format validation hints synced with the en dict.
     dict.set(
         "settings.privacy.blocked_users.did_invalid",
-        "DID 必须以 did: 开头（如 did:web:alice.example）。",
+        "DID 必须以 did: 开头（如 did:webvh:alice.example）。",
     );
     dict.set("settings.privacy.unblock", "取消屏蔽");
     // A4b - avatar upload.
@@ -941,7 +1003,7 @@ pub fn chinese_translations() -> TranslationDict {
     // T7.1 - friendly product terminology for Chinese.
     dict.set(
         "friendly.identifier.placeholder",
-        "john:example.com 或 did:web:...",
+        "john:example.com 或 did:webvh:...",
     );
     dict.set(
         "friendly.identifier.placeholder_multiline",
@@ -1204,7 +1266,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set(
         "contacts.new.recipient_service_placeholder",
-        "did:web:ps.bob.example(同服务器留空)",
+        "did:webvh:ps.bob.example(同服务器留空)",
     );
     dict.set(
         "contacts.new.recipient_service_hint",

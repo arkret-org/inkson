@@ -157,7 +157,7 @@ async fn run_realm_iteration(
         };
     }
 
-    let api = match crate::views::helpers::authed_api(&base, token) {
+    let api = match crate::api::authed_api(&base, token) {
         Ok(api) => api,
         Err(_) => {
             return RealmIterationOutcome::Backoff {
@@ -247,6 +247,10 @@ async fn run_realm_iteration(
             EventsSubscribeFrameKind::Unauthorized => {
                 return RealmIterationOutcome::AuthExpired;
             }
+            // Fail-closed for unknown future frame kinds (`EventsSubscribeFrameKind`
+            // is #[non_exhaustive]): no interpretable payload for this engine, so
+            // skip the frame without advancing the cursor.
+            _ => {}
         }
     }
 

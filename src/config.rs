@@ -545,6 +545,11 @@ fn is_loopback_host(host: &str) -> bool {
 #[derive(Clone, Debug)]
 pub struct LocalConfigStore {
     cached: Option<ClientConfig>,
+    /// Same persist-health latch pattern as `LocalStateStore::persist_health`:
+    /// fire-and-forget `save()` drops the flush `Result`, so a failed write
+    /// (localStorage quota, file IO error) latches here for the UI to read via
+    /// [`Self::persist_error`]. Shared across clones.
+    persist_health: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -553,6 +558,7 @@ impl Default for LocalConfigStore {
     fn default() -> Self {
         Self {
             cached: None,
+            persist_health: std::sync::Arc::new(std::sync::Mutex::new(None)),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_config_path(),
         }
@@ -642,6 +648,8 @@ impl LocalConfigStore {
         let mut config = config.normalized();
         self.preserve_principal_servers_for_runtime_save(&mut config);
         self.cached = Some(config);
+        // Fire-and-forget by design; a failed flush is latched (and logged)
+        // by `flush` itself so the UI can still surface it.
         let _ = self.flush();
     }
 
@@ -669,10 +677,40 @@ impl LocalConfigStore {
     }
 
     pub fn flush(&self) -> anyhow::Result<()> {
-        if let Some(config) = &self.cached {
-            self.write_persisted_config(config)?;
+        let result = match &self.cached {
+            Some(config) => self.write_persisted_config(config),
+            None => Ok(()),
+        };
+        self.record_persist_result(&result);
+        result
+    }
+
+    /// Latch the outcome of a persist attempt (same pattern as
+    /// `LocalStateStore::record_persist_result`) so fire-and-forget callers
+    /// that drop the `Result` still leave a durable signal for the UI.
+    fn record_persist_result(&self, result: &anyhow::Result<()>) {
+        let mut health = self
+            .persist_health
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match result {
+            Ok(()) => {
+                health.take();
+            }
+            Err(error) => {
+                tracing::warn!(%error, "local config persist failed (latched for UI)");
+                *health = Some(error.to_string());
+            }
         }
-        Ok(())
+    }
+
+    /// Current config persistence-health message, if the last flush failed.
+    /// `None` once a subsequent flush succeeds.
+    pub fn persist_error(&self) -> Option<String> {
+        self.persist_health
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub fn save_fields(
@@ -694,6 +732,7 @@ impl LocalConfigStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: None,
+            persist_health: std::sync::Arc::new(std::sync::Mutex::new(None)),
             path: path.into(),
         }
     }

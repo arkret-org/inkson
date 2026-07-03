@@ -7,7 +7,12 @@ fn raw_operation_kind(payload: &Value) -> Option<&str> {
         .or_else(|| payload.get("type").and_then(Value::as_str))
 }
 
-fn raw_operation_realm_matches(
+/// Realm filter with fail-OPEN semantics: a record whose realm ownership is
+/// unknown (no `realm_id` on the record or in the payload) still matches, so
+/// local optimistic operations without a realm annotation stay visible.
+/// Contrast with `members_panel::raw_operation_realm_matches_exact`, which
+/// fail-closes on unknown ownership.
+fn raw_operation_realm_matches_or_unscoped(
     record: &crate::local_state::RawOperationRecord,
     realm_id: &str,
 ) -> bool {
@@ -147,7 +152,7 @@ pub(crate) fn agent_metadata_from_raw_operations(
         if raw_operation_kind(&record.payload) != Some("ck.agent.endpoint") {
             continue;
         }
-        if !raw_operation_realm_matches(record, realm_id) {
+        if !raw_operation_realm_matches_or_unscoped(record, realm_id) {
             continue;
         }
         let Some(agent_id) = agent_endpoint_agent_id(&record.payload) else {

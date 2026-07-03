@@ -23,6 +23,8 @@ use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, display_name_for_did, handle_display_from_did,
     short_protocol_id,
 };
+// Shared JS-interop helpers (single source, YGN-DRY-04).
+use yoface::utils::dom::{copy_text_to_clipboard, open_url_in_new_tab};
 
 /// Number of member rows the list renders per page. The member list is
 /// hydrated from the full local sync projection (which can hold tens of
@@ -810,7 +812,7 @@ fn local_terminal_invite_ids_for_realm(
 ) -> BTreeSet<String> {
     records
         .iter()
-        .filter(|record| raw_operation_realm_matches(record, realm_id))
+        .filter(|record| raw_operation_realm_matches_exact(record, realm_id))
         .filter_map(|record| {
             let payload = &record.payload;
             match raw_operation_payload_kind(payload).as_deref() {
@@ -962,7 +964,7 @@ fn local_pending_invite_profile_from_raw_operation(
     record: &RawOperationRecord,
     realm_id: &str,
 ) -> Option<MemberProfile> {
-    if !raw_operation_realm_matches(record, realm_id) {
+    if !raw_operation_realm_matches_exact(record, realm_id) {
         return None;
     }
     let payload = &record.payload;
@@ -999,7 +1001,11 @@ fn local_pending_invite_profile_from_raw_operation(
     Some(profile)
 }
 
-fn raw_operation_realm_matches(record: &RawOperationRecord, realm_id: &str) -> bool {
+/// Realm filter with fail-CLOSED semantics: only records whose `realm_id`
+/// exactly matches are included; unknown ownership is excluded. Contrast with
+/// `chat::model::agents::raw_operation_realm_matches_or_unscoped`, which
+/// fail-opens for unscoped local operations.
+fn raw_operation_realm_matches_exact(record: &RawOperationRecord, realm_id: &str) -> bool {
     record.realm_id.as_deref().map(str::trim) == Some(realm_id.trim())
 }
 
@@ -1076,7 +1082,7 @@ fn local_invitee_by_invite_id_for_realm(
 ) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for record in records {
-        if !raw_operation_realm_matches(record, realm_id) {
+        if !raw_operation_realm_matches_exact(record, realm_id) {
             continue;
         }
         let payload = &record.payload;
@@ -1099,7 +1105,7 @@ fn local_membership_profile_from_raw_operation(
     realm_id: &str,
     invitee_by_invite_id: &BTreeMap<String, String>,
 ) -> Option<MemberProfile> {
-    if !raw_operation_realm_matches(record, realm_id) {
+    if !raw_operation_realm_matches_exact(record, realm_id) {
         return None;
     }
     let payload = &record.payload;
@@ -1190,40 +1196,6 @@ fn member_agent_default_presets() -> Vec<AgentGrantPreset> {
 
 fn member_agent_grant_expires_at(now: chrono::DateTime<chrono::Utc>) -> String {
     (now + chrono::Duration::days(30)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-fn copy_text_to_clipboard(text: &str) {
-    let Ok(encoded) = serde_json::to_string(text) else {
-        return;
-    };
-    let script = format!(
-        r#"(async () => {{
-    const text = {encoded};
-    if (navigator.clipboard && window.isSecureContext) {{
-        await navigator.clipboard.writeText(text);
-        return true;
-    }}
-    const node = document.createElement("textarea");
-    node.value = text;
-    node.setAttribute("readonly", "");
-    node.style.position = "fixed";
-    node.style.left = "-9999px";
-    document.body.appendChild(node);
-    node.select();
-    const copied = document.execCommand("copy");
-    document.body.removeChild(node);
-    return copied;
-}})()"#
-    );
-    let _ = document::eval(&script);
-}
-
-fn open_url_in_new_tab(url: &str) {
-    let Ok(encoded) = serde_json::to_string(url) else {
-        return;
-    };
-    let script = format!("window.open({encoded}, \"_blank\", \"noopener,noreferrer\");");
-    let _ = document::eval(&script);
 }
 
 fn member_avatar_initial_from_value(value: &str) -> String {
@@ -2759,7 +2731,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     )
     .await?;
 
-    let mut claims = Vec::<(cokret_sdk::KeypackageClaimRecord, String)>::new();
+    let mut claims = Vec::<(cokret_sdk::KeyPackageClaimRecord, String)>::new();
     for invitee_did in invitees {
         let claim_nonce = crate::api::generate_mls_claim_nonce()?;
         let claim_outcome = api
@@ -2877,7 +2849,7 @@ async fn ensure_mls_genesis_frontier_for_invite(
     })?;
     let genesis_event = {
         let mut store = state_store.write();
-        crate::views::kanban::build_creator_mls_genesis_event(
+        crate::mls::group_events::build_creator_mls_genesis_event(
             &mut store,
             realm_id,
             actor_id,
@@ -4038,7 +4010,7 @@ pub fn RealmMembersPanel(
                                                             let body = AgentProvisionRequestBody {
                                                                 display_name: Some(display.clone()),
                                                                 agent_slug: if slug.is_empty() { None } else { Some(slug) },
-                                                                requested_scope: requested_scope_for_presets(&presets),
+                                                                requested_scope: requested_scope_for_presets(&presets, Some(realm_for_grants.as_str())),
                                                                 accountability: Value::Null,
                                                                 pairing_ttl_ms: None,
                                                             };
@@ -4454,7 +4426,6 @@ pub fn RealmMembersPanel(
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::models::AgentKeyScope;
 
     use super::*;
 
@@ -5304,9 +5275,22 @@ mod tests {
             presets,
             vec![AgentGrantPreset::ReadOnly, AgentGrantPreset::DraftOnly]
         );
+        // The spec AgentKeyScope object requires a Realm-scoped resource
+        // selector; the conservative default presets carry only read/draft
+        // actions and (without a Realm) no requested_scope at all.
+        assert!(requested_scope_for_presets(&presets, None).is_none());
+        let scope = requested_scope_for_presets(
+            &presets,
+            Some("ck:realm:01904100-0000-7000-8000-000000000001"),
+        )
+        .expect("realm-scoped presets produce a scope");
         assert_eq!(
-            requested_scope_for_presets(&presets),
-            Some(AgentKeyScope::Limited)
+            scope.actions,
+            vec![
+                "ck.event.read",
+                "ck.agent.draft.propose",
+                "ck.agent.action_request"
+            ]
         );
     }
 

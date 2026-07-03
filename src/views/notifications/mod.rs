@@ -15,10 +15,11 @@ mod panel;
 #[cfg(test)]
 mod tests;
 
-// Crate-internal projection helpers consumed by `app.rs` and
-// `sync_engine.rs` via `crate::views::notifications::*`.
+// Crate-internal projection helpers consumed by `app.rs`,
+// `sync_engine.rs` and the dashboard via `crate::views::notifications::*`.
 pub(crate) use model::{
-    is_notification_account_data, merge_invite_notifications, notification_items_from_value,
-    notification_value_read_by_cursor, realm_title_hints_from_values,
+    default_notification_title, is_notification_account_data, merge_invite_notifications,
+    notification_items_from_value, notification_value_read_by_cursor,
+    realm_title_hints_from_values, value_string,
 };
 pub use panel::NotificationsPanel;

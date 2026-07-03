@@ -8,6 +8,7 @@ use crate::move_builder::{
     StrandPositionEffect, StrandPositionExpectation, strand_position_cell_id,
 };
 use crate::rank::RankError;
+use crate::operation::sdk_event_local_operation_id;
 
 pub(super) fn submit_kanban_operation_event(
     base_url: String,
@@ -90,13 +91,6 @@ pub(super) fn submit_kanban_operation_event(
     });
 }
 
-fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
-    event
-        .unsigned
-        .get("local_operation_idempotency_alias")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_else(|| event.event_id.as_str())
-}
 
 pub(super) fn submit_column_order_updates(
     base_url: String,

@@ -68,13 +68,21 @@ mod tests {
             hydrate_notifications(raw.clone(), &ClientLocalState::default(), None, None);
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].kind, "invite");
-        assert_eq!(notifications[0].title, "Realm invite");
+        // Default titles / action labels are stored as i18n keys and
+        // translated at render via tr().
+        assert_eq!(
+            notifications[0].title,
+            "notifications.default_title.invite"
+        );
         assert_eq!(
             notifications[0].realm_id,
             "ck:realm:01904100-0000-7000-8000-000000000002"
         );
         assert_eq!(notifications[0].body, "You were invited to join a Realm.");
-        assert_eq!(notifications[0].action_label.as_deref(), Some("Accept"));
+        assert_eq!(
+            notifications[0].action_label.as_deref(),
+            Some("notifications.default_action.accept")
+        );
         assert!(matches!(
             notifications[0].action.as_ref(),
             Some(UiNotificationAction::AcceptInvite { .. })

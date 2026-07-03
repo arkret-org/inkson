@@ -119,7 +119,7 @@ pub fn build_circle_remove_scope_rotate_draft(
         events.push(proposal_event);
     }
     let commit_event =
-        crate::views::kanban::kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
+        crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
             state_store,
             realm_id,
             Some(circle),

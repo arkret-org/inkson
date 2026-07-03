@@ -297,6 +297,15 @@ impl OperationBuilder {
     }
 }
 
+/// Free-function form of [`EventEnvelopeExt::local_operation_id`]: the local
+/// reconciliation/dedupe key for an SDK event — the optimistic write chain's
+/// `unsigned.local_operation_idempotency_alias` when present, else the event
+/// id. Single source (YGN-DRY-03); every view consumes this one definition so
+/// the dedupe fallback rule can never drift between surfaces.
+pub(crate) fn sdk_event_local_operation_id(event: &EventEnvelope) -> &str {
+    event.local_operation_id()
+}
+
 pub trait EventEnvelopeExt {
     fn local_operation_idempotency_alias(&self) -> Option<&str>;
     fn local_operation_id(&self) -> &str;

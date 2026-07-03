@@ -925,7 +925,7 @@ pub(super) fn RealmsSection(
                                                                     if store.mls_genesis_emitted_for(&realm_id) {
                                                                         return None;
                                                                     }
-                                                                    match crate::views::kanban::build_creator_mls_genesis_event(
+                                                                    match crate::mls::group_events::build_creator_mls_genesis_event(
                                                                         &mut store,
                                                                         &realm_id,
                                                                         &actor,

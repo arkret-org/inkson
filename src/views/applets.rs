@@ -970,7 +970,7 @@ mod tests {
     #[test]
     fn applet_registration_body_keys_pin_canonical_wire() {
         let op = crate::operation::ck_ops::applet_registration(
-            "ck:space:test",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "did:web:applet.example",
             "extensions",

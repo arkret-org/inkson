@@ -1,5 +1,16 @@
 use super::*;
 
+// YGN-ARCH-01 step 3: the message-candidate walkers + raw-operation
+// extraction moved to `crate::projection::message_ops` (they are the sync
+// engine's ingest step, not chat rendering). Re-exported so every existing
+// chat-model consumer keeps resolving through this module.
+pub(crate) use crate::projection::message_ops::{
+    first_string_in_candidates, message_actor_from_candidates, message_candidates,
+    message_kind_is_create, value_string_at,
+};
+#[cfg(test)]
+pub(crate) use crate::projection::message_ops::message_operations_from_events;
+
 pub(crate) fn chat_reply_quote_preview(
     messages: &[ChatMessage],
     reply_id: &str,
@@ -76,60 +87,6 @@ pub(crate) fn plaintext_services_for_policy(
         services.push(service_did.to_owned());
     }
     services
-}
-
-pub(crate) fn value_string_at<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter()
-        .find_map(|key| value.get(*key).and_then(Value::as_str))
-}
-
-pub(crate) fn collect_message_candidates<'a>(
-    value: &'a Value,
-    out: &mut Vec<&'a Value>,
-    depth: usize,
-) {
-    if depth > 4 || !value.is_object() {
-        return;
-    }
-    out.push(value);
-    for key in [
-        "event",
-        "envelope",
-        "operation",
-        "raw",
-        "record",
-        "payload",
-        "body",
-        "content",
-        "data",
-    ] {
-        if let Some(child) = value.get(key).filter(|child| child.is_object()) {
-            collect_message_candidates(child, out, depth + 1);
-        }
-    }
-}
-
-pub(crate) fn message_candidates(event: &Value) -> Vec<&Value> {
-    let mut candidates = Vec::new();
-    collect_message_candidates(event, &mut candidates, 0);
-    candidates
-}
-
-pub(crate) fn first_string_in_candidates<'a>(
-    candidates: &[&'a Value],
-    keys: &[&str],
-) -> Option<&'a str> {
-    candidates
-        .iter()
-        .find_map(|candidate| value_string_at(candidate, keys))
-}
-
-pub(crate) fn message_actor_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a str> {
-    first_string_in_candidates(candidates, &["actor_id", "sender_actor_id", "actor"])
-}
-
-pub(crate) fn message_kind_is_create(value: &Value) -> bool {
-    value_string_at(value, &["kind", "type", "op_type", "event_type"]) == Some("ck.message.create")
 }
 
 /// Detect the per-message redaction tombstone surfaced by soland on the sync
@@ -250,7 +207,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
         serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
             .ok()?;
     let payload_value = serde_json::to_value(envelope.to_payload().ok()?).ok()?;
-    let plaintext = crate::views::account_projection::try_local_mls_decrypt_core(
+    let plaintext = crate::projection::try_local_mls_decrypt_core(
         state_store,
         realm_id,
         actor_id,
@@ -389,7 +346,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     let candidates = message_candidates(event);
     if poll_content_from_candidates(&candidates)
         .and_then(|content| content.get("kind").and_then(Value::as_str))
-        .is_some_and(|kind| matches!(kind, "ck.content.poll.response" | "ck.content.poll.close"))
+        .is_some_and(|kind| kind == "ck.content.poll.response")
     {
         return None;
     }
@@ -636,56 +593,6 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
 /// decrypted plaintext is NEVER stored here (it stays in the author sidecar /
 /// decrypt-on-read path), preserving the encrypted-send at-rest invariant
 /// (chat X10.6).
-pub(crate) fn message_operations_from_events(
-    realm_id: &str,
-    events: &[Value],
-) -> Vec<crate::local_state::RawOperationRecord> {
-    events
-        .iter()
-        .filter_map(|event| message_raw_operation_from_event(realm_id, event))
-        .collect()
-}
-
-fn message_event_is_ingestable(event: &Value) -> bool {
-    let candidates = message_candidates(event);
-    candidates
-        .iter()
-        .any(|candidate| message_kind_is_create(candidate))
-}
-
-fn message_raw_operation_from_event(
-    realm_id: &str,
-    event: &Value,
-) -> Option<crate::local_state::RawOperationRecord> {
-    if !message_event_is_ingestable(event) {
-        return None;
-    }
-    let candidates = message_candidates(event);
-    // Dedup key: the canonical event id. A later redaction/expiry tombstone
-    // carrying the same `event_id` upserts over the create, so the local-first
-    // render folds the tombstone (not the original body).
-    let operation_id = value_string_at(event, &["event_id", "id"])
-        .or_else(|| first_string_in_candidates(&candidates, &["event_id", "message_id", "id"]))?
-        .trim()
-        .to_owned();
-    if operation_id.is_empty() {
-        return None;
-    }
-    let record_realm_id = first_string_in_candidates(&candidates, &["realm_id"])
-        .unwrap_or(realm_id)
-        .to_owned();
-    let received_at = first_string_in_candidates(&candidates, &["created_at"])
-        .and_then(|created_at| chrono::DateTime::parse_from_rfc3339(created_at).ok())
-        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
-        .unwrap_or_else(chrono::Utc::now);
-    Some(crate::local_state::RawOperationRecord {
-        operation_id,
-        realm_id: Some(record_realm_id),
-        received_at,
-        payload: event.clone(),
-    })
-}
-
 pub(crate) fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a Value> {
     candidates
         .iter()
@@ -694,10 +601,7 @@ pub(crate) fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Opti
                 .get("kind")
                 .and_then(Value::as_str)
                 .is_some_and(|kind| {
-                    matches!(
-                        kind,
-                        "ck.content.poll" | "ck.content.poll.response" | "ck.content.poll.close"
-                    )
+                    matches!(kind, "ck.content.poll" | "ck.content.poll.response")
                 })
         })
         .copied()
@@ -711,27 +615,26 @@ pub(crate) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
         let Some(content) = poll_content_from_candidates(&candidates) else {
             continue;
         };
-        if let Some((poll_id, choices)) =
+        if let Some((poll_ref, selections)) =
             crate::messaging::polls::poll_response_from_content(content)
         {
             let actor = message_actor_from_candidates(&candidates).unwrap_or("did:web:unknown");
-            if let Some(index) = by_poll_id.get(&poll_id).copied() {
-                cards[index].vote_choices(actor, &choices);
-            }
-            continue;
-        }
-        if let Some(poll_id) = crate::messaging::polls::poll_close_id_from_content(content) {
-            if let Some(index) = by_poll_id.get(&poll_id).copied() {
-                cards[index].close();
+            if let Some(index) = by_poll_id.get(&poll_ref).copied() {
+                cards[index].vote_choices(actor, &selections);
             }
             continue;
         }
         let Some(message) = chat_message_from_event("", event) else {
             continue;
         };
-        if let Some(card) =
-            crate::messaging::polls::PollCard::from_content(message.id.clone(), content)
-        {
+        // The card's tally identity is the wire message id (`ck:message:…`,
+        // what `poll_response.poll_ref` points at); the event id stays the
+        // local render identity.
+        if let Some(card) = crate::messaging::polls::PollCard::from_content(
+            message.id.clone(),
+            message.protocol_message_id.as_deref(),
+            content,
+        ) {
             by_poll_id.insert(card.poll_id.clone(), cards.len());
             cards.push(card);
         }

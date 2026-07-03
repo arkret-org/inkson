@@ -205,7 +205,9 @@ fn invite_notification_from_value(invite: &Value) -> Option<Value> {
         "notification_kind": "invite",
         "notification_type": "invite",
         "kind": "invite",
-        "title": "Realm invite",
+        // i18n key — translated at render via `tr()` (see
+        // `default_notification_title`).
+        "title": default_notification_title("invite"),
         "body": body,
         "realm_id": realm_id,
         "realm_label": realm_title,
@@ -377,8 +379,8 @@ fn notification_from_value(
         &["notification_type", "notification_kind", "type", "kind"],
     )
     .unwrap_or_else(|| "message".to_owned());
-    let title =
-        value_string(&value, &["title"]).unwrap_or_else(|| default_notification_title(&kind));
+    let title = value_string(&value, &["title"])
+        .unwrap_or_else(|| default_notification_title(&kind).to_owned());
     let body = value_string(&value, &["body", "preview", "summary"])
         .unwrap_or_else(|| "Notification".to_owned());
     let realm_id = value_string(&value, &["realm_id"]).unwrap_or_default();
@@ -583,30 +585,41 @@ fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
     // yougen evaluator's richer rules), still surface a generic
     // change-watch-level hint so the UI stays consistent with what
     // the user observed.
+    //
+    // Returns an i18n KEY (not final copy): model helpers must stay
+    // runtime-free, so translation happens at render via `tr()`.
     match (decision, reason) {
         (ShouldNotify::DontNotify, push_rule_reason_code::NOT_MENTIONED) => {
-            "You're not getting notifications for this discussion — change watch level".to_owned()
+            "notifications.watch_hint.not_mentioned".to_owned()
         }
         (ShouldNotify::DontNotify, push_rule_reason_code::NOT_PARTICIPATING) => {
-            "You're only being notified about threads you've joined — change watch level".to_owned()
+            "notifications.watch_hint.not_participating".to_owned()
         }
-        _ => "Notifications for this discussion are limited by your watch level".to_owned(),
+        _ => "notifications.watch_hint.limited".to_owned(),
     }
 }
 
-fn default_notification_title(kind: &str) -> String {
+/// i18n KEY for the default notification title of `kind`. The model layer
+/// stores the key in `UiNotification::title` (server-provided titles are
+/// stored verbatim); render sites pass the field through `tr()`, which
+/// translates dictionary keys and returns unknown strings unchanged.
+/// Shared with the dashboard's recent-notifications card (single source for
+/// the kind → default-title table).
+pub(crate) fn default_notification_title(kind: &str) -> &'static str {
     match kind {
-        "invite" => "Realm invite".to_owned(),
-        "reaction" => "New reaction".to_owned(),
-        "mention" => "You were mentioned".to_owned(),
-        _ => "New message".to_owned(),
+        "invite" => "notifications.default_title.invite",
+        "reaction" => "notifications.default_title.reaction",
+        "mention" => "notifications.default_title.mention",
+        _ => "notifications.default_title.message",
     }
 }
 
+/// i18n KEY for the default action button label of `kind` (see
+/// [`default_notification_title`] for the key-through-`tr()` convention).
 fn default_notification_action(kind: &str) -> &'static str {
     match kind {
-        "invite" => "Accept",
-        _ => "View",
+        "invite" => "notifications.default_action.accept",
+        _ => "notifications.default_action.view",
     }
 }
 
@@ -618,7 +631,9 @@ pub(crate) fn notification_scope_kind(notification: &UiNotification) -> &'static
     }
 }
 
-fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
+/// First string field found under any of `keys`. Shared with the dashboard's
+/// recent-notifications card (single source, see YGN-DRY-05).
+pub(crate) fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         value
             .get(*key)

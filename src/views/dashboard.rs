@@ -78,16 +78,27 @@ pub fn DashboardPanel(
     let has_product_spaces = realm_tree_snapshot
         .iter()
         .any(|node| node.kind == RealmTreeNodeKind::Space);
-    let projection_label = projection_collection_label(has_realms, has_product_spaces);
-    let recent_projection_label =
-        recent_projection_collection_label(has_realms, has_product_spaces);
-    let projection_browse_label =
-        projection_collection_browse_label(has_realms, has_product_spaces);
-    let projection_signin_label =
-        projection_collection_signin_label(has_realms, has_product_spaces);
-    let projection_empty_label = projection_collection_empty_label(has_realms, has_product_spaces);
-    let projection_empty_help_label =
-        projection_collection_empty_help_label(has_realms, has_product_spaces);
+    // Label helpers return i18n keys; translate once here.
+    let projection_label =
+        crate::i18n::tr(projection_collection_label(has_realms, has_product_spaces));
+    let recent_projection_label = crate::i18n::tr(recent_projection_collection_label(
+        has_realms,
+        has_product_spaces,
+    ));
+    let projection_browse_label = crate::i18n::tr(projection_collection_browse_label(
+        has_realms,
+        has_product_spaces,
+    ));
+    let projection_signin_label = crate::i18n::tr(projection_collection_signin_label(
+        has_realms,
+        has_product_spaces,
+    ));
+    let projection_empty_label =
+        crate::i18n::tr(projection_collection_empty_label(has_realms, has_product_spaces));
+    let projection_empty_help_label = crate::i18n::tr(projection_collection_empty_help_label(
+        has_realms,
+        has_product_spaces,
+    ));
     let active_node = realm_tree_snapshot
         .iter()
         .find(|node| node.id == selected_realm_id())
@@ -337,7 +348,8 @@ pub fn DashboardPanel(
                                                 crate::snapshot::SnapshotTrustState::Verified => None,
                                             }
                                         });
-                                        let kind_label = projection_kind_label(node.kind);
+                                        let kind_label =
+                                            crate::i18n::tr(projection_kind_label(node.kind));
                                         rsx! {
                                         Link {
                                             class: "m-list-item",
@@ -476,7 +488,10 @@ pub fn DashboardPanel(
                                         onclick: move |_| view.set(super::AppView::Notifications),
                                         span { class: "avatar xs", if notification.read { "✓" } else { "!" } }
                                         span { class: "grow",
-                                            span { class: "title f-13", "{notification.title}" }
+                                            // `title` may be a server-provided string or an i18n
+                                            // default-title key — `tr()` translates keys and
+                                            // passes unknown strings through unchanged.
+                                            span { class: "title f-13", {crate::i18n::tr(&notification.title)} }
                                             span { class: "sub", "{notification.body}" }
                                         }
                                         span { class: "pill muted xs", "{notification.kind}" }
@@ -628,7 +643,7 @@ fn dashboard_notification_summaries(
             Some(DashboardNotificationSummary {
                 id,
                 title: value_string(value, &["title"])
-                    .unwrap_or_else(|| default_notification_title(&kind)),
+                    .unwrap_or_else(|| default_notification_title(&kind).to_owned()),
                 body: value_string(value, &["body", "preview", "summary"])
                     .unwrap_or_else(|| "Notification".to_owned()),
                 kind,
@@ -681,68 +696,57 @@ fn contact_summary_delta(summary: &DashboardContactsSummary) -> String {
     )
 }
 
-fn value_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        value
-            .get(*key)
-            .and_then(|field| field.as_str())
-            .map(ToOwned::to_owned)
-    })
-}
+// Shared with the notifications model (single source, YGN-DRY-05):
+use crate::views::notifications::{default_notification_title, value_string};
 
-fn default_notification_title(kind: &str) -> String {
-    match kind {
-        "invite" => "Realm invite".to_owned(),
-        "reaction" => "New reaction".to_owned(),
-        "mention" => "You were mentioned".to_owned(),
-        _ => "New message".to_owned(),
-    }
-}
+// The projection label helpers below return i18n KEYS; render sites pass
+// them through `tr()` (model helpers stay runtime-free so unit tests can
+// assert the key table without a Dioxus runtime).
 
 fn projection_kind_label(kind: RealmTreeNodeKind) -> &'static str {
     match kind {
-        RealmTreeNodeKind::Realm => "Realm",
-        RealmTreeNodeKind::Space => "Space",
+        RealmTreeNodeKind::Realm => "dashboard.node_kind.realm",
+        RealmTreeNodeKind::Space => "dashboard.node_kind.space",
     }
 }
 
 fn projection_collection_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
     match (has_realms, has_product_spaces) {
-        (true, true) => "Realms & Spaces",
-        (false, true) => "Spaces",
-        _ => "Realms",
+        (true, true) => "dashboard.collection.realms_and_spaces",
+        (false, true) => "dashboard.collection.spaces",
+        _ => "dashboard.collection.realms",
     }
 }
 
 fn recent_projection_collection_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
     match (has_realms, has_product_spaces) {
-        (true, true) => "Recent Realms & Spaces",
-        (false, true) => "Recent Spaces",
-        _ => "Recent Realms",
+        (true, true) => "dashboard.collection.recent_realms_and_spaces",
+        (false, true) => "dashboard.collection.recent_spaces",
+        _ => "dashboard.collection.recent_realms",
     }
 }
 
 fn projection_collection_browse_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
     match (has_realms, has_product_spaces) {
-        (true, true) => "Search or join a Realm or Space",
-        (false, true) => "Search or join a Space",
-        _ => "Search or join a Realm",
+        (true, true) => "dashboard.collection.browse_realm_or_space",
+        (false, true) => "dashboard.collection.browse_space",
+        _ => "dashboard.collection.browse_realm",
     }
 }
 
 fn projection_collection_signin_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
     match (has_realms, has_product_spaces) {
-        (true, true) => "Sign in to load realms and Spaces",
-        (false, true) => "Sign in to load Spaces",
-        _ => "Sign in to load realms",
+        (true, true) => "dashboard.collection.signin_realms_and_spaces",
+        (false, true) => "dashboard.collection.signin_spaces",
+        _ => "dashboard.collection.signin_realms",
     }
 }
 
 fn projection_collection_empty_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
     match (has_realms, has_product_spaces) {
-        (true, true) => "No realms or Spaces loaded",
-        (false, true) => "No Spaces loaded",
-        _ => "No realms loaded",
+        (true, true) => "dashboard.collection.empty_realms_and_spaces",
+        (false, true) => "dashboard.collection.empty_spaces",
+        _ => "dashboard.collection.empty_realms",
     }
 }
 
@@ -751,9 +755,9 @@ fn projection_collection_empty_help_label(
     has_product_spaces: bool,
 ) -> &'static str {
     match (has_realms, has_product_spaces) {
-        (true, true) => "The connected server did not return realms or Spaces yet.",
-        (false, true) => "The connected server did not return Spaces yet.",
-        _ => "The connected server did not return realms yet.",
+        (true, true) => "dashboard.collection.empty_help_realms_and_spaces",
+        (false, true) => "dashboard.collection.empty_help_spaces",
+        _ => "dashboard.collection.empty_help_realms",
     }
 }
 
@@ -767,16 +771,26 @@ mod tests {
 
     #[test]
     fn projection_labels_follow_realm_space_kind() {
-        assert_eq!(projection_kind_label(RealmTreeNodeKind::Realm), "Realm");
-        assert_eq!(projection_kind_label(RealmTreeNodeKind::Space), "Space");
-        assert_eq!(projection_collection_label(true, false), "Realms");
+        // The helpers return i18n keys (translated at render via tr()).
+        assert_eq!(
+            projection_kind_label(RealmTreeNodeKind::Realm),
+            "dashboard.node_kind.realm"
+        );
+        assert_eq!(
+            projection_kind_label(RealmTreeNodeKind::Space),
+            "dashboard.node_kind.space"
+        );
+        assert_eq!(
+            projection_collection_label(true, false),
+            "dashboard.collection.realms"
+        );
         assert_eq!(
             recent_projection_collection_label(true, false),
-            "Recent Realms"
+            "dashboard.collection.recent_realms"
         );
         assert_eq!(
             recent_projection_collection_label(true, true),
-            "Recent Realms & Spaces"
+            "dashboard.collection.recent_realms_and_spaces"
         );
     }
 

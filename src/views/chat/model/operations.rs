@@ -99,14 +99,6 @@ fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("{kind} payload is not schema-valid: {error}"))
 }
 
-pub(crate) fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
-    event
-        .unsigned
-        .get("local_operation_idempotency_alias")
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| event.event_id.as_str())
-}
-
 pub(crate) fn load_chat_productivity_namespace_key(
     actor_id: &str,
     device_id: &str,

@@ -33,7 +33,6 @@
 // 5. The Auth Service can only issue short-lived `ck.session.grant`; any change to the long-lived
 //    device set must go through `ck.device.authorize`.
 
-pub mod account_projection;
 pub mod agents;
 pub mod applets;
 pub mod audit;

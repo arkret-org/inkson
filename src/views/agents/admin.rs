@@ -29,44 +29,8 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
-
-/// Copy text to the clipboard using the browser clipboard API with a
-/// `document.execCommand` fallback for non-secure contexts.
-fn copy_text_to_clipboard(text: &str) {
-    let Ok(encoded) = serde_json::to_string(text) else {
-        return;
-    };
-    let script = format!(
-        r#"(async () => {{
-    const text = {encoded};
-    if (navigator.clipboard && window.isSecureContext) {{
-        await navigator.clipboard.writeText(text);
-        return true;
-    }}
-    const node = document.createElement("textarea");
-    node.value = text;
-    node.setAttribute("readonly", "");
-    node.style.position = "fixed";
-    node.style.left = "-9999px";
-    document.body.appendChild(node);
-    node.select();
-    const copied = document.execCommand("copy");
-    document.body.removeChild(node);
-    return copied;
-}})()"#
-    );
-    let _ = document::eval(&script);
-}
-
-/// Open a URL in a new tab. Used for the pairing deep-link so the
-/// controller lands on the deployment's agent-pair page.
-fn open_url_in_new_tab(url: &str) {
-    let Ok(encoded) = serde_json::to_string(url) else {
-        return;
-    };
-    let script = format!("window.open({encoded}, \"_blank\", \"noopener,noreferrer\");");
-    let _ = document::eval(&script);
-}
+// Shared JS-interop helpers (single source, YGN-DRY-04).
+use yoface::utils::dom::{copy_text_to_clipboard, open_url_in_new_tab};
 
 // ═══════════════════════════════════════════════════════════════════
 // CKP-0008 / CKP-0009 - Personal Agent admin panel (B-A / P3-A).
@@ -329,9 +293,9 @@ pub fn PersonalAgentAdminPanel(
             // ───────────────────────────────────────────────────────
             // Provision (ck.self.agent.command.provision)
             // CKP-0008 §4.7 — permission-preset selector. The chosen
-            // presets drive `requested_scope` (coarse AgentKeyScope) on
-            // the provision body, and each preset is expanded into a
-            // canonical ck.capability.grant attached right after
+            // presets drive `requested_scope` (the spec AgentKeyScope
+            // object) on the provision body, and each preset is expanded
+            // into a canonical ck.capability.grant attached right after
             // provisioning (effective_after_first_authorized_key=true).
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-provision",
@@ -422,12 +386,16 @@ pub fn PersonalAgentAdminPanel(
                                 // controller binding comes from the
                                 // authenticated session, not the body. The
                                 // selected presets fold into requested_scope
-                                // (coarse AgentKeyScope); their canonical
-                                // capability grants attach after provision.
+                                // (spec AgentKeyScope object, realm-scoped);
+                                // their canonical capability grants attach
+                                // after provision.
                                 let body = AgentProvisionRequestBody {
                                     display_name: Some(display),
                                     agent_slug,
-                                    requested_scope: requested_scope_for_presets(&presets),
+                                    requested_scope: requested_scope_for_presets(
+                                        &presets,
+                                        realm_for_grant.as_deref(),
+                                    ),
                                     accountability: Value::Null,
                                     pairing_ttl_ms: None,
                                 };

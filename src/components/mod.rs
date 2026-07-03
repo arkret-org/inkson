@@ -356,7 +356,7 @@ pub fn LazyLinkBadge(
 ) -> Element {
     let reason_text = reason.unwrap_or_else(|| "locked".to_owned());
     let target_full = target_ref.unwrap_or_else(|| "opaque".to_owned());
-    let target_text = crate::views::helpers::short_protocol_id(&target_full);
+    let target_text = yoface::utils::text::short_protocol_id(&target_full);
     rsx! {
         span {
             class: "badge amber",

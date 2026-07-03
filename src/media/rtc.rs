@@ -556,7 +556,8 @@ pub struct JoinedMediaSession {
     pub ice_config: IceConfig,
     /// 32-byte SFrame frame key derived from the MLS exporter
     /// (`ck-rtc-frame-key/v1`). Installed as the E2EE keyprovider seed.
-    pub frame_key: Vec<u8>,
+    /// Key material — kept [`zeroize::Zeroizing`] so it is wiped on drop.
+    pub frame_key: zeroize::Zeroizing<Vec<u8>>,
     /// `desired_media` echoed for the transport's publisher setup.
     pub desired_media: DesiredMedia,
     /// Local participant's own `device_id` — bound into the local sender's
@@ -634,7 +635,7 @@ impl PerSenderFrameKeys {
         &self,
         participant_identity: &str,
         device_id: &str,
-    ) -> Result<Vec<u8>, RtcClientError> {
+    ) -> Result<zeroize::Zeroizing<Vec<u8>>, RtcClientError> {
         let realm_id = self.realm_id.clone();
         let call_id = self.call_id.clone();
         let device_id = DeviceId::new(device_id.to_owned())
@@ -824,7 +825,7 @@ impl MlsExporterSource for RealmMlsExporter {
         label: &str,
         context: &[u8],
         length: usize,
-    ) -> cokret_sdk::Result<Vec<u8>> {
+    ) -> cokret_sdk::Result<zeroize::Zeroizing<Vec<u8>>> {
         self.group.export_secret(label, context, length)
     }
 }

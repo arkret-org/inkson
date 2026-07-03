@@ -60,12 +60,9 @@ pub(crate) fn ensure_events_submit_batch_accepted(
         .rejected
         .iter()
         .map(|item| {
-            let id = item.get("id").and_then(Value::as_str).unwrap_or("unknown");
-            let reason = item
-                .get("reason_code")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let detail = item.get("detail").and_then(Value::as_str).unwrap_or("");
+            let id = item.id.as_str();
+            let reason = item.reason_code.as_str();
+            let detail = item.detail.as_deref().unwrap_or("");
             if detail.is_empty() {
                 format!("{id}:{reason}")
             } else {

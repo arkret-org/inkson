@@ -223,7 +223,7 @@ pub fn derive_and_retain_realm_history_secret(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-) -> Option<(u64, Vec<u8>)> {
+) -> Option<(u64, zeroize::Zeroizing<Vec<u8>>)> {
     let snapshot = state_store.mls_snapshot_for(realm_id)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
     // COR-04: read-only export of the CURRENT epoch's history secret — floor 0 is
@@ -235,7 +235,7 @@ pub fn derive_and_retain_realm_history_secret(
     if history_secret.is_empty() {
         return None;
     }
-    state_store.save_history_secret(realm_id.to_owned(), epoch, history_secret.clone());
+    state_store.save_history_secret(realm_id.to_owned(), epoch, history_secret.to_vec());
     Some((epoch, history_secret))
 }
 
@@ -1078,10 +1078,10 @@ pub fn apply_welcome_messages_with_device_snapshot(
                     // identity that cannot work. (mls-welcome-debug)
                     tracing::warn!(
                         target: "mls_admission",
-                        realm = %crate::views::helpers::short_protocol_id(realm_id),
-                        actor = %crate::views::helpers::short_protocol_id(actor_id),
-                        device = %crate::views::helpers::short_protocol_id(device_id),
-                        key_package_id = %crate::views::helpers::short_protocol_id(key_package_id),
+                        realm = %yoface::utils::text::short_protocol_id(realm_id),
+                        actor = %yoface::utils::text::short_protocol_id(actor_id),
+                        device = %yoface::utils::text::short_protocol_id(device_id),
+                        key_package_id = %yoface::utils::text::short_protocol_id(key_package_id),
                         "welcome apply: no local KeyPackage identity state for the Welcome's key_package_id — the published KeyPackage's private init key is missing from this device's secure store (cannot decrypt Welcome)"
                     );
                     outcome.record_failure(format!(
@@ -1097,7 +1097,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
             None => {
                 tracing::warn!(
                     target: "mls_admission",
-                    realm = %crate::views::helpers::short_protocol_id(realm_id),
+                    realm = %yoface::utils::text::short_protocol_id(realm_id),
                     "welcome apply: Welcome carries no key_package_id — cannot select the KeyPackage private state to decrypt it"
                 );
                 outcome.record_failure("welcome carries no key_package_id".to_owned());

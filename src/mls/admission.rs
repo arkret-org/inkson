@@ -31,7 +31,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-    claim: &cokret_sdk::KeypackageClaimRecord,
+    claim: &cokret_sdk::KeyPackageClaimRecord,
     claim_nonce: &str,
 ) -> Result<RealmMlsAdmissionEvents, String> {
     let member_key_package = crate::api::keypackage_claim_record_to_mls_record(claim)
@@ -46,7 +46,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         &member_key_package,
     )
     .map_err(|err| err.user_message())?;
-    let commit = crate::views::kanban::kanban_mls_commit_event_from_store_for_effective_scope(
+    let commit = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
         state_store,
         realm_id,
         None,
@@ -94,7 +94,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-    claims: &[(cokret_sdk::KeypackageClaimRecord, String)],
+    claims: &[(cokret_sdk::KeyPackageClaimRecord, String)],
 ) -> Result<RealmMlsBatchAdmissionEvents, String> {
     if claims.is_empty() {
         return Err("MLS admission batch requires at least one claim".to_owned());
@@ -116,7 +116,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
         &member_key_packages,
     )
     .map_err(|err| err.user_message())?;
-    let commit = crate::views::kanban::kanban_mls_commit_event_from_store_for_effective_scope(
+    let commit = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
         state_store,
         realm_id,
         None,
@@ -306,7 +306,7 @@ pub(crate) fn build_mls_welcome_payload_value(
     realm_id: &str,
     actor_id: &str,
     sender_device_id: &str,
-    claim: &cokret_sdk::KeypackageClaimRecord,
+    claim: &cokret_sdk::KeyPackageClaimRecord,
     _key_package_id: &str,
     welcome: &cokret_sdk::MlsWelcomeEnvelope,
     commit_event: &cokret_sdk::Event,
@@ -328,7 +328,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         nonce: claim_nonce.trim().to_owned(),
         welcome_digest: welcome.welcome_hash.clone(),
         created_at: crate::clock::now_utc(),
-        signature: cokret_sdk::Signature2 {
+        signature: cokret_sdk::KeyOperationSignature {
             kid: String::new(),
             alg: Some("EdDSA".to_owned()),
             sig: String::new(),
@@ -467,8 +467,8 @@ mod tests {
     fn claim_from_key_package(
         record: &cokret_sdk::MlsKeyPackageRecord,
         ssk_generation: u64,
-    ) -> cokret_sdk::KeypackageClaimRecord {
-        cokret_sdk::KeypackageClaimRecord {
+    ) -> cokret_sdk::KeyPackageClaimRecord {
+        cokret_sdk::KeyPackageClaimRecord {
             claim_id: "ck:mls_keypackage:test:Y2xhaW0tbm9uY2U".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
             keypackage_digest: record.keypackage_ref.clone(),
@@ -480,7 +480,7 @@ mod tests {
             ssk_generation: Some(ssk_generation),
             device_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
-            device_signature: cokret_sdk::Signature2 {
+            device_signature: cokret_sdk::KeyOperationSignature {
                 kid: format!("{}#device", record.principal_id.as_str()),
                 alg: Some("EdDSA".to_owned()),
                 sig: "test-signature".to_owned(),
@@ -524,7 +524,7 @@ mod tests {
             )
             .unwrap(),
             created_at: crate::clock::now_utc(),
-            signature: cokret_sdk::Signature2 {
+            signature: cokret_sdk::KeyOperationSignature {
                 kid: String::new(),
                 alg: Some("EdDSA".to_owned()),
                 sig: String::new(),
@@ -562,7 +562,7 @@ mod tests {
             ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
                 .unwrap()
                 .expect("creator snapshot");
-        let genesis_event = crate::views::kanban::build_creator_mls_genesis_event(
+        let genesis_event = crate::mls::group_events::build_creator_mls_genesis_event(
             &mut alice_state,
             realm,
             alice,
@@ -675,7 +675,7 @@ mod tests {
             ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
                 .unwrap()
                 .expect("creator snapshot");
-        let genesis_event = crate::views::kanban::build_creator_mls_genesis_event(
+        let genesis_event = crate::mls::group_events::build_creator_mls_genesis_event(
             &mut alice_state,
             realm,
             alice,

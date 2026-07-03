@@ -524,6 +524,13 @@ fn discard_failed_oidc_callback(error: String) -> String {
     if let Err(clear_error) = clear_persisted_oidc_scaffold() {
         tracing::warn!(%clear_error, "clear failed OIDC scaffold failed");
     }
+    // Principal-binding mismatch gets specific guidance: the raw wire reason
+    // ("proof_invalid; principal binding mismatch: …") tells the user nothing
+    // actionable — the actual fix is signing in with the intended account.
+    if error.contains("principal binding mismatch") {
+        return "The account signed in at the Account Authority does not match this local device session. Start sign-in again with the intended account."
+            .to_owned();
+    }
     format!("{error} Start sign-in again.")
 }
 

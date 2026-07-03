@@ -6,6 +6,7 @@ use serde_json::json;
 use super::model::*;
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::operation::sdk_event_local_operation_id;
 
 #[derive(Clone)]
 pub(super) enum CardAssignmentMutation {
@@ -61,13 +62,6 @@ pub(super) fn relation_id_from_event_id(event_id: &str) -> Option<String> {
         .map(|suffix| format!("ck:relation:{suffix}"))
 }
 
-fn sdk_event_local_operation_id(event: &cokret_sdk::Event) -> &str {
-    event
-        .unsigned
-        .get("local_operation_idempotency_alias")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_else(|| event.event_id.as_str())
-}
 
 pub(super) fn normalize_assignee_selection(
     selected_actor_ids: BTreeSet<String>,

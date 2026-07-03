@@ -1,10 +1,17 @@
+#[cfg(any(test, feature = "demo-crypto"))]
 use base64::Engine as _;
+#[cfg(any(test, feature = "demo-crypto"))]
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use super::*;
 
 /// Canonical signing-input prefix for the `keys/upload` `device_signature`
 /// (spec `device-lifecycle.md` §8.1).
+// The keys/upload signing chain below is only exercised by the `demo-crypto`
+// `upload_keys` path (the non-demo build fails closed before signing) and by
+// the wire-shape unit tests; gate it accordingly so the default build stays
+// warning-free.
+#[cfg(any(test, feature = "demo-crypto"))]
 const KEYS_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keys-upload-v1\n";
 
 /// Build the spec `device-lifecycle.md` §8.1 canonical signing input for a
@@ -18,6 +25,7 @@ const KEYS_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keys-upload-v1\n";
 /// object `{}` (not be omitted) so sender and verifier hash byte-identical
 /// input. The body object is canonicalized with RFC 8785 JCS via
 /// [`crate::canonical`].
+#[cfg(any(test, feature = "demo-crypto"))]
 fn keys_upload_signing_input(
     device_id: &str,
     one_time_keys: &BTreeMap<String, Value>,
@@ -39,6 +47,7 @@ fn keys_upload_signing_input(
 /// signing the §8.1 canonical input with the local event-signer (the device
 /// identity Ed25519 `did:key`). Fail-closed (`bail!`) when no signer is
 /// installed — never emit a placeholder.
+#[cfg(any(test, feature = "demo-crypto"))]
 pub(crate) fn device_signature_tuple_for_input(
     signer: &crate::event_signer::YougenEventSigner,
     signing_input: &[u8],
@@ -54,6 +63,7 @@ pub(crate) fn device_signature_tuple_for_input(
     }))
 }
 
+#[cfg(any(test, feature = "demo-crypto"))]
 pub(crate) fn sign_keys_upload_batch_with_signer(
     signer: &crate::event_signer::YougenEventSigner,
     device_id: &str,

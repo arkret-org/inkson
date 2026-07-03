@@ -32,7 +32,9 @@ mod model;
 use dnd::*;
 use due_calendar::*;
 use model::*;
-pub(crate) use model::{kanban_operations_from_events, strand_update_operations_from_events};
+#[cfg(test)]
+pub(crate) use crate::projection::kanban_ops::kanban_operations_from_events;
+pub(crate) use model::strand_update_operations_from_events;
 
 #[component]
 fn CardMarkdownEditor(
@@ -5289,16 +5291,6 @@ use card_detail::*;
 use card_patch::*;
 use members::*;
 use mls_encrypt::*;
-// `build_creator_mls_genesis_event` / `kanban_mls_commit_event_from_store`
-// are reused by sibling views (realm_admin epoch rotation, sync_engine,
-// setup) through `crate::views::kanban::<name>`, so re-export them at the
-// module root to keep those `pub(crate)` call sites resolving after the
-// move into `mls_encrypt`.
-pub(crate) use mls_encrypt::{
-    build_creator_mls_genesis_event, kanban_mls_commit_event_from_store,
-    kanban_mls_commit_event_from_store_for_effective_scope,
-    kanban_mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs,
-};
 use plaintext_guard::*;
 
 #[cfg(test)]

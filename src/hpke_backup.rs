@@ -28,6 +28,23 @@
 //! Both travel base64url in the `recovery_public_key` envelope. The caller's
 //! `info` transcript is bound into the HKDF context and `aad` into the AEAD AAD,
 //! exactly as the opener reconstructs them.
+//!
+//! NOT delegated to `cokret_sdk::secret_share::{seal_base_mode_to_x25519_pubkey,
+//! open_base_mode_with_x25519_privkey}` (YGN-DRY-06 verdict): the two
+//! constructions are deliberately NOT byte-isomorphic, and already-sealed
+//! backups pin this one —
+//! 1. Nonce: this surface uses a fresh random 24-byte XNonce carried on the
+//!    wire (`nonce || ct`); the SDK base-mode entry uses a fixed zero nonce
+//!    (single-use key) and carries no nonce.
+//! 2. Wire framing: this surface keeps `enc` and `ciphertext` as two separate
+//!    envelope fields; the SDK returns one `base64url(ephemeral_pub || ct)`
+//!    blob.
+//! 3. HKDF info: this surface expands with
+//!    `HPKE_KEY_SCHEDULE_INFO || 0x00 || caller_info`; the SDK expands with
+//!    the caller `info` bytes verbatim (transformable, but moot given 1–2).
+//! Switching would make every existing `recovery_public_key`-sealed backup
+//! unopenable. If convergence is ever wanted it needs a versioned envelope
+//! migration, not a drop-in swap.
 
 use anyhow::{Result, anyhow};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};

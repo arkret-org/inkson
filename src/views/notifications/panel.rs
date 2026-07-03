@@ -199,7 +199,10 @@ pub fn NotificationsPanel(
                     key: "{notification.id}",
                     style: if notification.read { "opacity: 0.6;" } else { "" },
                     div { class: "event-head",
-                        span { "{notification.title}" }
+                        // `title` may be server-provided copy or an i18n
+                        // default-title key — `tr()` translates keys and
+                        // passes unknown strings through unchanged.
+                        span { {crate::i18n::tr(&notification.title)} }
                         span { "{notification.kind} / {notification.timestamp}" }
                     }
                     div {
@@ -210,7 +213,8 @@ pub fn NotificationsPanel(
                         div {
                             class: "muted",
                             "data-testid": "notification-watch-hint",
-                            "{hint}"
+                            // Watch hints are stored as i18n keys.
+                            {crate::i18n::tr(hint)}
                         }
                     }
                     if !notification.realm_id.is_empty() {
@@ -340,7 +344,8 @@ pub fn NotificationsPanel(
                                     let action_to_run = notification.action.clone();
                                     let base_url = base_url.clone();
                                     let notification_id = notification.id.clone();
-                                    let title = notification.title.clone();
+                                    // Translate now (default titles are i18n keys).
+                                    let title = crate::i18n::tr(&notification.title);
                                     move |_| {
                                         if let Some(action_to_run) = action_to_run.clone() {
                                             run_notification_action(
@@ -357,7 +362,8 @@ pub fn NotificationsPanel(
                                         }
                                     }
                                 },
-                                "{action}"
+                                // Action labels are stored as i18n keys.
+                                {crate::i18n::tr(action)}
                             }
                         }
                     }

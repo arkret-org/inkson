@@ -8,6 +8,8 @@ use base64::engine::general_purpose::{
     STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD,
 };
 use serde_json::json;
+// Shared JS-interop helper (single source, YGN-DRY-04).
+pub(super) use yoface::utils::dom::copy_text_to_clipboard;
 
 pub(super) const INVITE_LOCATOR_TTL_MINUTES: i64 = 15;
 
@@ -69,28 +71,3 @@ pub(super) fn render_invite_locator_qr_svg(locator_url: &str) -> String {
     }
 }
 
-pub(super) fn copy_text_to_clipboard(text: &str) {
-    let Ok(encoded) = serde_json::to_string(text) else {
-        return;
-    };
-    let script = format!(
-        r#"(async () => {{
-    const text = {encoded};
-    if (navigator.clipboard && window.isSecureContext) {{
-        await navigator.clipboard.writeText(text);
-        return true;
-    }}
-    const node = document.createElement("textarea");
-    node.value = text;
-    node.setAttribute("readonly", "");
-    node.style.position = "fixed";
-    node.style.left = "-9999px";
-    document.body.appendChild(node);
-    node.select();
-    const copied = document.execCommand("copy");
-    document.body.removeChild(node);
-    return copied;
-}})()"#
-    );
-    let _ = dioxus::document::eval(&script);
-}

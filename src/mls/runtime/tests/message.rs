@@ -892,7 +892,7 @@ fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
         bob_device,
         alice_device,
         &bob_pub,
-        &[(epoch, history_secret)],
+        &[(epoch, history_secret.to_vec())],
     );
     assert_eq!(
         ingest_realm_key_share(&mut state, &secure, realm, bob_actor, bob_device, &share),
@@ -962,7 +962,7 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
         "without the granted secret there is nothing to decrypt"
     );
 
-    state.save_history_secret(realm.to_owned(), epoch, history_secret);
+    state.save_history_secret(realm.to_owned(), epoch, history_secret.to_vec());
     let decrypted =
         decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
             .expect("group-free tier-3 decrypt opens content with no local snapshot");

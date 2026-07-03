@@ -1371,7 +1371,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // above is out of scope here; take a fresh read
                             // guard scoped to this call.
                             let store_guard = state_store.read();
-                            crate::views::account_projection::projection_events_from_sync_realms(
+                            crate::projection::projection_events_from_sync_realms(
                                 &sync.realms,
                                 Some(&store_guard),
                                 Some((&canonical_actor, &device)),

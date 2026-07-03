@@ -1,9 +1,18 @@
 //! G3.Y2 — poll composer + result tally state.
 //!
-//! Wire shape (spec: `models/content-types.md §4.9`):
-//! * `ck.message.create` with `content.kind = ck.content.poll` creates a poll.
-//! * `ck.message.create` with `content.kind = ck.content.poll.response` records a response.
-//! * `ck.message.create` with `content.kind = ck.content.poll.close` closes a poll.
+//! Wire shape (spec: `models/content-types.md §4.9`, canonical schema
+//! `content-block-poll.schema.json`, `additionalProperties: false`):
+//! * `ck.message.create` with a `poll_block` content block
+//!   `{kind: "ck.content.poll", body, poll: {kind: "disclosed",
+//!   max_selections, answers: [{id, text}]}}` creates a poll.
+//! * `ck.message.create` with a `poll_response_block`
+//!   `{kind: "ck.content.poll.response", body, poll_response:
+//!   {poll_ref: id:message, selections: [answer_id]}}` records a response.
+//!
+//! Closing a poll has NO carrier in spec v1 (the content-block schema's
+//! `oneOf` registers only the two blocks above, and no `poll` Morph type or
+//! close event kind is registered) — "closed" is therefore a local UI state
+//! only and is never written to the wire.
 //!
 //! Polls are enabled in the local 1.0 UI because soland now projects the
 //! content-type reducer state.
@@ -188,188 +197,103 @@ impl PollCard {
         self.closed = true;
     }
 
-    pub fn from_content(message_id: String, content: &Value) -> Option<Self> {
+    /// Parse a canonical `poll_block`
+    /// (`content-block-poll.schema.json#/$defs/poll_block`). `poll_ref` is
+    /// the wire message id (`ck:message:<uuid7>`) carried by the enclosing
+    /// `ck.message.create` — it becomes the card's `poll_id` (the identity
+    /// `poll_response.poll_ref` points at); `message_id` stays the local
+    /// render identity. Non-canonical shapes (missing `poll`, unknown
+    /// `poll.kind`) fail closed to `None`.
+    pub fn from_content(message_id: String, poll_ref: Option<&str>, content: &Value) -> Option<Self> {
         if content_kind(content) != Some("ck.content.poll") {
             return None;
         }
-        let poll_id = poll_id_from_content(content).unwrap_or_else(|| message_id.clone());
-        let question = content
-            .get("question")
-            .and_then(Value::as_str)
-            .or_else(|| content.get("body").and_then(Value::as_str))
-            .or_else(|| {
-                content
-                    .get("poll")
-                    .and_then(|poll| poll.get("question"))
-                    .and_then(text_body)
-            })?
-            .trim()
-            .to_owned();
-        let options = poll_options_from_content(content);
-        if question.is_empty() || options.len() < 2 {
+        let poll = content.get("poll")?;
+        // `poll.kind` is a closed enum (const "disclosed" in v1); an unknown
+        // tally-disclosure mode must not render as if it were disclosed.
+        if poll.get("kind").and_then(Value::as_str) != Some("disclosed") {
             return None;
         }
-        let mut card = Self {
-            poll_id,
+        let question = poll
+            .get("question")
+            .and_then(|question| question.get("body"))
+            .and_then(Value::as_str)
+            .or_else(|| content.get("body").and_then(Value::as_str))?
+            .trim()
+            .to_owned();
+        let options: Vec<PollOption> = poll
+            .get("answers")
+            .and_then(Value::as_array)?
+            .iter()
+            .filter_map(|answer| {
+                let id = answer.get("id").and_then(Value::as_str)?.to_owned();
+                let label = answer
+                    .get("text")
+                    .and_then(|text| text.get("body"))
+                    .and_then(Value::as_str)?
+                    .trim()
+                    .to_owned();
+                if id.is_empty() || label.is_empty() {
+                    None
+                } else {
+                    Some(PollOption { id, label })
+                }
+            })
+            .collect();
+        if question.is_empty() || options.is_empty() {
+            return None;
+        }
+        Some(Self {
+            poll_id: poll_ref
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| message_id.clone()),
             message_id,
             question,
             votes: vec![Vec::new(); options.len()],
             options,
-            max_selections: content
+            max_selections: poll
                 .get("max_selections")
                 .and_then(Value::as_u64)
-                .or_else(|| {
-                    content
-                        .get("poll")
-                        .and_then(|poll| poll.get("max_selections"))
-                        .and_then(Value::as_u64)
-                })
                 .unwrap_or(1)
                 .max(1) as u32,
-            closed: content
-                .get("closed")
-                .and_then(Value::as_bool)
-                .or_else(|| {
-                    content
-                        .get("poll")
-                        .and_then(|poll| poll.get("closed"))
-                        .and_then(Value::as_bool)
-                })
-                .unwrap_or(false),
-        };
-        if let Some(results) = content.get("results").and_then(Value::as_array) {
-            for row in results {
-                let Some(option_id) = row.get("id").and_then(Value::as_str) else {
-                    continue;
-                };
-                let Some(index) = card
-                    .options
-                    .iter()
-                    .position(|option| option.id == option_id)
-                else {
-                    continue;
-                };
-                if let Some(voters) = row.get("voters").and_then(Value::as_array) {
-                    card.votes[index] = voters
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(ToOwned::to_owned)
-                        .collect();
-                }
-            }
-        }
-        Some(card)
+            // Poll close has no spec v1 carrier — `closed` is local UI state.
+            closed: false,
+        })
     }
 }
 
+/// Parse a canonical `poll_response_block`
+/// (`content-block-poll.schema.json#/$defs/poll_response_block`), returning
+/// `(poll_ref, selections)`. An empty `selections` array is schema-legal but
+/// tallies nothing, so it returns `None`.
 pub fn poll_response_from_content(content: &Value) -> Option<(String, Vec<String>)> {
     if content_kind(content) != Some("ck.content.poll.response") {
         return None;
     }
-    let poll_id = poll_id_from_content(content)?;
-    let choices = content
-        .get("choices")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .or_else(|| {
-            content
-                .get("choice")
-                .and_then(Value::as_str)
-                .map(|choice| vec![choice.to_owned()])
-        })
-        .unwrap_or_default();
-    if choices.is_empty() {
+    let response = content.get("poll_response")?;
+    let poll_ref = response
+        .get("poll_ref")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())?
+        .to_owned();
+    let selections = response
+        .get("selections")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if selections.is_empty() {
         None
     } else {
-        Some((poll_id, choices))
-    }
-}
-
-pub fn poll_close_id_from_content(content: &Value) -> Option<String> {
-    if content_kind(content) == Some("ck.content.poll.close") {
-        poll_id_from_content(content)
-    } else {
-        None
+        Some((poll_ref, selections))
     }
 }
 
 fn content_kind(content: &Value) -> Option<&str> {
     content.get("kind").and_then(Value::as_str)
-}
-
-fn poll_id_from_content(content: &Value) -> Option<String> {
-    content
-        .get("poll_id")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            content
-                .get("poll")
-                .and_then(|poll| poll.get("id"))
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .map(ToOwned::to_owned)
-        })
-}
-
-fn text_body(value: &Value) -> Option<&str> {
-    value.as_str().or_else(|| {
-        value
-            .get("body")
-            .or_else(|| value.get("label"))
-            .and_then(Value::as_str)
-    })
-}
-
-fn poll_options_from_content(content: &Value) -> Vec<PollOption> {
-    let options = content
-        .get("options")
-        .and_then(Value::as_array)
-        .or_else(|| {
-            content
-                .get("poll")
-                .and_then(|poll| poll.get("answers"))
-                .and_then(Value::as_array)
-        });
-    options
-        .map(|items| {
-            items
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, item)| {
-                    if let Some(label) = item.as_str().filter(|value| !value.trim().is_empty()) {
-                        return Some(PollOption {
-                            id: format!("opt-{idx}"),
-                            label: label.trim().to_owned(),
-                        });
-                    }
-                    let id = item
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned)
-                        .unwrap_or_else(|| format!("opt-{idx}"));
-                    let label = item
-                        .get("label")
-                        .and_then(Value::as_str)
-                        .or_else(|| item.get("text").and_then(text_body))?
-                        .trim()
-                        .to_owned();
-                    if label.is_empty() {
-                        None
-                    } else {
-                        Some(PollOption { id, label })
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 // YOU-02-001: these helpers return `Result` instead of panicking — the
@@ -384,32 +308,50 @@ fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
         .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
 }
 
-/// Build the `ck.content.poll.create` event for the wire.
+/// Build the canonical `poll_block` message
+/// (`content-block-poll.schema.json#/$defs/poll_block`) as a
+/// `ck.message.create` event. The poll's wire identity is the stamped
+/// `message_id` (`ck:message:<uuid7>` derived from the event id) — callers
+/// read it back from `event.content["message_id"]` to address later
+/// `poll_response.poll_ref`s at this poll.
 pub fn build_poll_create_op(
     realm_id: &str,
     actor: &str,
     strand_id: &str,
-    poll_id: &str,
     draft: &PollDraft,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    let options: Vec<Value> = draft
+    let answers: Vec<cokret_sdk::models::PollAnswer> = draft
         .options
         .iter()
         .filter(|opt| !opt.trim().is_empty())
         .enumerate()
-        .map(|(idx, label)| json!({"id": format!("opt-{idx}"), "label": label.trim()}))
+        .map(|(idx, label)| cokret_sdk::models::PollAnswer {
+            id: format!("opt-{idx}"),
+            text: cokret_sdk::ContentBlock::text(label.trim()),
+        })
         .collect();
-    let content = cokret_sdk::ContentBlock::new("ck.content.poll", draft.question.trim())
-        .with_field("poll_id", json!(poll_id))
-        .with_field("question", json!(draft.question.trim()))
-        .with_field("options", Value::Array(options))
-        .with_field("max_selections", json!(draft.max_selections.max(1)));
+    let block = cokret_sdk::models::PollBlock {
+        kind: "ck.content.poll".to_owned(),
+        // `body` is the fallback text for clients without poll rendering;
+        // `poll.question` is omitted so the question is read from `body`
+        // (content-types.md §4.9).
+        body: draft.question.trim().to_owned(),
+        format: None,
+        formatted_body: None,
+        reply_context: None,
+        poll: cokret_sdk::models::PollBody {
+            kind: "disclosed".to_owned(),
+            max_selections: u64::from(draft.max_selections.max(1)),
+            question: None,
+            answers,
+        },
+    };
     let payload = cokret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
-        sdk_payload_value(content.to_value(), "poll create content serialize")?,
-    )
-    .with_message_id(poll_id);
+        serde_json::to_value(&block)
+            .map_err(|err| anyhow::anyhow!("poll create content serialize: {err}"))?,
+    );
     let mut event = OperationBuilder::new(
         realm_id,
         actor,
@@ -426,34 +368,60 @@ pub fn build_poll_create_op(
         .as_str()
         .replacen("ck:event:", "ck:message:", 1);
     event.content["message_id"] = json!(message_ref);
-    event.content["content"]["message_id"] = json!(message_ref);
     Ok(event)
 }
 
-/// Build the `ck.content.poll.response` event for a single-select
-/// vote. The multi-select variant is left for the soland-side reducer
-/// work referenced above.
+/// Read the stamped wire message id (`ck:message:<uuid7>`) back from a
+/// freshly built poll-create event — the identity later
+/// `poll_response.poll_ref`s point at.
+pub fn poll_message_ref(event: &cokret_sdk::Event) -> Option<String> {
+    event
+        .content
+        .get("message_id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+/// Build the canonical `poll_response_block`
+/// (`content-block-poll.schema.json#/$defs/poll_response_block`) as a
+/// `ck.message.create` event on the poll's own Strand. `poll_ref` MUST be
+/// the poll message's wire id (`ck:message:<uuid7>`) — fail-closed
+/// otherwise (a locally generated optimistic id never reaches the wire).
 pub fn build_poll_vote_op(
     realm_id: &str,
     actor: &str,
-    poll_id: &str,
-    option_id: &str,
+    strand_id: &str,
+    poll_ref: &str,
+    selections: &[String],
 ) -> anyhow::Result<cokret_sdk::Event> {
-    let strand_id = strand_id_from_realm_id(realm_id);
-    let content = cokret_sdk::ContentBlock::new("ck.content.poll.response", "poll response")
-        .with_field("poll_id", json!(poll_id))
-        .with_field("choice", json!(option_id));
+    if selections.is_empty() {
+        anyhow::bail!("poll response requires at least one selection");
+    }
+    let poll_ref = cokret_sdk::MessageId::new(poll_ref.trim().to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid poll_ref {poll_ref:?}: {err:?}"))?;
+    let block = cokret_sdk::models::PollResponseBlock {
+        kind: "ck.content.poll.response".to_owned(),
+        body: "poll response".to_owned(),
+        format: None,
+        formatted_body: None,
+        reply_context: None,
+        poll_response: cokret_sdk::models::PollResponseBody {
+            poll_ref,
+            selections: selections.to_vec(),
+        },
+    };
     let payload = cokret_sdk::MessageCreatePayload::with_content(
-        strand_id_value(&strand_id)?,
+        strand_id_value(strand_id)?,
         "discussion",
-        sdk_payload_value(content.to_value(), "poll vote content serialize")?,
+        serde_json::to_value(&block)
+            .map_err(|err| anyhow::anyhow!("poll vote content serialize: {err}"))?,
     );
     OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .target_ref(poll_id)
+    .target_ref(strand_id)
     .body(sdk_payload_value(
         payload.to_value(),
         "poll vote ck.message.create payload serialize",
@@ -461,44 +429,11 @@ pub fn build_poll_vote_op(
     .build_sdk_event("yougen")
 }
 
-/// Build the `ck.content.poll.close` event.
-pub fn build_poll_close_op(
-    realm_id: &str,
-    actor: &str,
-    poll_id: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
-    let strand_id = strand_id_from_realm_id(realm_id);
-    let content = cokret_sdk::ContentBlock::new("ck.content.poll.close", "poll closed")
-        .with_field("poll_id", json!(poll_id));
-    let payload = cokret_sdk::MessageCreatePayload::with_content(
-        strand_id_value(&strand_id)?,
-        "discussion",
-        sdk_payload_value(content.to_value(), "poll close content serialize")?,
-    );
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
-    )
-    .target_ref(poll_id)
-    .body(sdk_payload_value(
-        payload.to_value(),
-        "poll close ck.message.create payload serialize",
-    )?)
-    .build_sdk_event("yougen")
-}
-
-/// Generate a fresh poll id (`poll-<uuid>`).
+/// Generate a fresh local poll id (`poll-<uuid>`), used only as the
+/// optimistic local card/message identity before the create round-trip
+/// stamps the wire `ck:message:` id. Never written to the wire.
 pub fn new_poll_id() -> String {
     format!("poll-{}", uuid_v7())
-}
-
-fn strand_id_from_realm_id(realm_id: &str) -> String {
-    let suffix = realm_id
-        .trim()
-        .strip_prefix("ck:realm:")
-        .unwrap_or_else(|| realm_id.trim());
-    format!("ck:strand:{suffix}")
 }
 
 #[cfg(test)]
@@ -563,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn build_poll_create_op_includes_options() {
+    fn build_poll_create_op_emits_canonical_poll_block() {
         let mut draft = PollDraft::new();
         draft.set_question("ship?".into());
         draft.set_option(0, "yes".into());
@@ -572,21 +507,28 @@ mod tests {
             "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             "ck:strand:01904100-0000-7000-8000-000000000011",
-            "poll-x",
             &draft,
         )
         .expect("builds");
         assert_eq!(op.kind.as_str(), "ck.message.create");
-        assert!(op.content.get("body").is_none());
         assert!(op.content.get("encrypted").is_none());
-        assert!(op.content.get("poll_id").is_none());
-        let options = op
-            .content
-            .get("content")
-            .and_then(|content| content.get("options"))
-            .and_then(|v| v.as_array())
-            .unwrap();
-        assert_eq!(options.len(), 2);
+        // Canonical poll_block: nested `poll` object, no flat legacy fields.
+        let block = op.content.get("content").unwrap();
+        assert_eq!(block["kind"], "ck.content.poll");
+        assert_eq!(block["body"], "ship?");
+        assert!(block.get("poll_id").is_none());
+        assert!(block.get("options").is_none());
+        assert!(block.get("question").is_none());
+        assert_eq!(block["poll"]["kind"], "disclosed");
+        assert_eq!(block["poll"]["max_selections"], 1);
+        let answers = block["poll"]["answers"].as_array().unwrap();
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0]["id"], "opt-0");
+        assert_eq!(answers[0]["text"]["kind"], "ck.content.text");
+        assert_eq!(answers[0]["text"]["body"], "yes");
+        // The stamped wire message id is readable back for poll_ref use.
+        let message_ref = poll_message_ref(&op).unwrap();
+        assert!(message_ref.starts_with("ck:message:"));
         cokret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
             .validate_payload(op.kind.as_str(), &op.content)
@@ -594,23 +536,120 @@ mod tests {
     }
 
     #[test]
-    fn poll_card_from_content_reads_results() {
+    fn build_poll_vote_op_emits_canonical_poll_response_block() {
+        let op = build_poll_vote_op(
+            "ck:realm:01904100-0000-7000-8000-000000000010",
+            "did:web:alice.example",
+            "ck:strand:01904100-0000-7000-8000-000000000011",
+            "ck:message:01904100-0000-7000-8000-000000000012",
+            &["opt-1".to_owned()],
+        )
+        .expect("builds");
+        let block = op.content.get("content").unwrap();
+        assert_eq!(block["kind"], "ck.content.poll.response");
+        assert!(block.get("poll_id").is_none());
+        assert!(block.get("choice").is_none());
+        assert_eq!(
+            block["poll_response"]["poll_ref"],
+            "ck:message:01904100-0000-7000-8000-000000000012"
+        );
+        assert_eq!(block["poll_response"]["selections"], json!(["opt-1"]));
+        cokret_sdk::schema::event_payload_validator_catalog()
+            .unwrap()
+            .validate_payload(op.kind.as_str(), &op.content)
+            .unwrap();
+    }
+
+    #[test]
+    fn build_poll_vote_op_rejects_local_poll_ids() {
+        // A locally generated optimistic id must never reach the wire as a
+        // poll_ref (schema requires ck:message:<uuid7>).
+        assert!(
+            build_poll_vote_op(
+                "ck:realm:01904100-0000-7000-8000-000000000010",
+                "did:web:alice.example",
+                "ck:strand:01904100-0000-7000-8000-000000000011",
+                &new_poll_id(),
+                &["opt-0".to_owned()],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn poll_card_from_content_parses_canonical_poll_block() {
         let content = json!({
+            "kind": "ck.content.poll",
+            "body": "ship?",
+            "poll": {
+                "kind": "disclosed",
+                "max_selections": 2,
+                "answers": [
+                    {"id": "yes", "text": {"kind": "ck.content.text", "body": "Yes"}},
+                    {"id": "no", "text": {"kind": "ck.content.text", "body": "No"}}
+                ]
+            }
+        });
+        let card = PollCard::from_content(
+            "ck:event:1".to_owned(),
+            Some("ck:message:01904100-0000-7000-8000-000000000012"),
+            &content,
+        )
+        .unwrap();
+        assert_eq!(
+            card.poll_id,
+            "ck:message:01904100-0000-7000-8000-000000000012"
+        );
+        assert_eq!(card.message_id, "ck:event:1");
+        assert_eq!(card.question, "ship?");
+        assert_eq!(card.max_selections, 2);
+        assert_eq!(card.options[0].id, "yes");
+        assert_eq!(card.options[0].label, "Yes");
+        assert!(!card.closed);
+    }
+
+    #[test]
+    fn poll_card_from_content_fails_closed_on_non_canonical_shapes() {
+        // Legacy flat shape (pre-canonical) — no `poll` object.
+        let flat = json!({
             "kind": "ck.content.poll",
             "poll_id": "poll-1",
             "question": "ship?",
-            "options": [
-                {"id": "yes", "label": "Yes"},
-                {"id": "no", "label": "No"}
-            ],
-            "results": [
-                {"id": "yes", "voters": ["did:web:alice.example"]},
-                {"id": "no", "voters": []}
-            ]
+            "options": [{"id": "yes", "label": "Yes"}, {"id": "no", "label": "No"}]
         });
-        let card = PollCard::from_content("ck:event:1".to_owned(), &content).unwrap();
-        assert_eq!(card.poll_id, "poll-1");
-        assert_eq!(card.votes_for(0), 1);
-        assert_eq!(card.votes_for(1), 0);
+        assert!(PollCard::from_content("ck:event:1".to_owned(), None, &flat).is_none());
+        // Unknown tally-disclosure mode.
+        let undisclosed = json!({
+            "kind": "ck.content.poll",
+            "body": "ship?",
+            "poll": {
+                "kind": "hidden",
+                "max_selections": 1,
+                "answers": [{"id": "yes", "text": {"kind": "ck.content.text", "body": "Yes"}}]
+            }
+        });
+        assert!(PollCard::from_content("ck:event:1".to_owned(), None, &undisclosed).is_none());
+    }
+
+    #[test]
+    fn poll_response_from_content_parses_canonical_block_only() {
+        let canonical = json!({
+            "kind": "ck.content.poll.response",
+            "body": "poll response",
+            "poll_response": {
+                "poll_ref": "ck:message:01904100-0000-7000-8000-000000000012",
+                "selections": ["opt-0", "opt-2"]
+            }
+        });
+        let (poll_ref, selections) = poll_response_from_content(&canonical).unwrap();
+        assert_eq!(poll_ref, "ck:message:01904100-0000-7000-8000-000000000012");
+        assert_eq!(selections, vec!["opt-0".to_owned(), "opt-2".to_owned()]);
+        // Legacy flat shape fails closed.
+        let flat = json!({
+            "kind": "ck.content.poll.response",
+            "poll_id": "poll-1",
+            "choice": "opt-0"
+        });
+        assert!(poll_response_from_content(&flat).is_none());
     }
 }

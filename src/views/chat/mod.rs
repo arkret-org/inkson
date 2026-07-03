@@ -13,7 +13,9 @@ use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIco
 use crate::hlc::{Hlc, observe_seq};
 use crate::local_state::{ClientLocalState, LocalStateStore};
 use crate::models::SubmitEventResult;
-use crate::operation::{OperationBuilder, ck_ops, trim_realm_id, uuid_v7};
+use crate::operation::{
+    OperationBuilder, ck_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7,
+};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -35,6 +37,7 @@ const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 // Re-exported for the sync engine so the account-aggregate stream folds
 // discussion message events into the shared `raw_operations` log (local-first
 // feed), mirroring `kanban::kanban_operations_from_events`.
+#[cfg(test)]
 pub(crate) use model::message_operations_from_events;
 use model::*;
 use render::*;
@@ -2897,6 +2900,7 @@ pub fn ChatPanel(
                                                             let card_poll_id = poll_id.clone();
                                                             let card_message_id = card.message_id.clone();
                                                             let realm = msg.realm_id.clone();
+                                                            let strand = msg.strand_id.clone();
                                                             let actor = account_did.clone();
                                                             let card_closed = card.closed;
                                                             let base_for_vote = base_url.clone();
@@ -2916,6 +2920,7 @@ pub fn ChatPanel(
                                                                                 let card_message_id = card_message_id.clone();
                                                                                 let actor = actor.clone();
                                                                                 let realm = realm.clone();
+                                                                                let strand = strand.clone();
                                                                                 let card_poll_id = card_poll_id.clone();
                                                                                 let option_id = option_id.clone();
                                                                                 let api_token = token();
@@ -2935,8 +2940,9 @@ pub fn ChatPanel(
                                                                                     }
                                                                                     let base = base_for_vote.clone();
                                                                                     let realm = realm.clone();
+                                                                                    let strand = strand.clone();
                                                                                     let actor = actor.clone();
-                                                                                    let poll_id = card_poll_id.clone();
+                                                                                    let poll_ref = card_poll_id.clone();
                                                                                     let option_id = option_id.clone();
                                                                                     let message_id_for_status = card_message_id.clone();
                                                                                     let api_token = api_token.clone();
@@ -2948,8 +2954,9 @@ pub fn ChatPanel(
                                                                                                 let op = crate::messaging::polls::build_poll_vote_op(
                                                                                                     &realm,
                                                                                                     &actor,
-                                                                                                    &poll_id,
-                                                                                                    &option_id,
+                                                                                                    &strand,
+                                                                                                    &poll_ref,
+                                                                                                    &[option_id],
                                                                                                 )?;
                                                                                                 api.submit_sdk_event(&op).await
                                                                                             },
@@ -3002,12 +3009,13 @@ pub fn ChatPanel(
                                                             "data-testid": "poll-close-button",
                                                             onclick: {
                                                                 let card_message_id = card.message_id.clone();
-                                                                let card_poll_id = poll_id.clone();
-                                                                let realm = msg.realm_id.clone();
-                                                                let actor = account_did.clone();
-                                                                let base_for_close = base_url.clone();
-                                                                let api_token = token();
                                                                 move |_| {
+                                                                    // Spec v1 registers no poll-close carrier
+                                                                    // (content-block-poll.schema.json oneOf has only
+                                                                    // poll_block / poll_response_block, and no poll
+                                                                    // Morph type or close event kind exists) —
+                                                                    // closing is a LOCAL view state only and is
+                                                                    // never written to the wire.
                                                                     if let Some(found) = poll_cards
                                                                         .write()
                                                                         .iter_mut()
@@ -3015,51 +3023,7 @@ pub fn ChatPanel(
                                                                     {
                                                                         found.close();
                                                                     }
-                                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == card_message_id) {
-                                                                        found.pending = true;
-                                                                        found.failed = false;
-                                                                        found.error = None;
-                                                                    }
-                                                                    let base = base_for_close.clone();
-                                                                    let realm = realm.clone();
-                                                                    let actor = actor.clone();
-                                                                    let poll_id = card_poll_id.clone();
-                                                                    let message_id_for_status = card_message_id.clone();
-                                                                    let api_token = api_token.clone();
-                                                                    spawn(async move {
-                                                                        match crate::views::helpers::with_authed_api(
-                                                                            &base,
-                                                                            api_token,
-                                                                            |api| async move {
-                                                                                let op = crate::messaging::polls::build_poll_close_op(
-                                                                                    &realm,
-                                                                                    &actor,
-                                                                                    &poll_id,
-                                                                                )?;
-                                                                                api.submit_sdk_event(&op).await
-                                                                            },
-                                                                        )
-                                                                        .await
-                                                                        {
-                                                                            Ok(_) => {
-                                                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == message_id_for_status.as_str()) {
-                                                                                    found.pending = false;
-                                                                                    found.failed = false;
-                                                                                    found.error = None;
-                                                                                }
-                                                                                status_msg.set("Poll closed".to_owned());
-                                                                            }
-                                                                            Err(error) => {
-                                                                                let error_text = error.display();
-                                                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == message_id_for_status.as_str()) {
-                                                                                    found.pending = false;
-                                                                                    found.failed = true;
-                                                                                    found.error = Some(format!("Poll close failed: {error_text}"));
-                                                                                }
-                                                                                status_msg.set(format!("Poll close failed: {error_text}"));
-                                                                            }
-                                                                        }
-                                                                    });
+                                                                    status_msg.set("Poll closed in this view".to_owned());
                                                                 }
                                                             },
                                                             "Close poll"
@@ -4332,19 +4296,39 @@ pub fn ChatPanel(
                                             return;
                                         }
                                         let poll_id = crate::messaging::polls::new_poll_id();
-                                        let card = crate::messaging::polls::PollCard::from_draft(
+                                        // Build the canonical poll_block op up front (synchronous)
+                                        // so the optimistic card can adopt the stamped wire
+                                        // message id — the identity later
+                                        // `poll_response.poll_ref` votes point at.
+                                        let op = match crate::messaging::polls::build_poll_create_op(
+                                            &realm,
+                                            &actor,
+                                            &selected_strand,
+                                            &draft_snapshot,
+                                        ) {
+                                            Ok(op) => op,
+                                            Err(error) => {
+                                                status_msg.set(format!("Poll send failed: {error}"));
+                                                return;
+                                            }
+                                        };
+                                        let message_ref = crate::messaging::polls::poll_message_ref(&op);
+                                        let mut card = crate::messaging::polls::PollCard::from_draft(
                                             poll_id.clone(),
                                             &draft_snapshot,
                                         );
+                                        if let Some(message_ref) = message_ref.clone() {
+                                            card.poll_id = message_ref;
+                                        }
                                         // Optimistic UI: surface the
                                         // poll card immediately, then push
                                         // a synthetic ChatMessage so chat
                                         // renders it in place.
-                                        poll_cards.write().push(card.clone());
+                                        poll_cards.write().push(card);
                                         messages.write().push(ChatMessage {
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
-                                            protocol_message_id: None,
+                                            protocol_message_id: message_ref,
                                             sender: actor.clone(),
                                             executed_by: None,
                                             body: format!("[poll] {}", draft_snapshot.question),
@@ -4364,27 +4348,13 @@ pub fn ChatPanel(
                                         poll_draft.set(None);
 
                                         let base = base.clone();
-                                        let realm = realm.clone();
-                                        let actor = actor.clone();
-                                        let strand_id = selected_strand.clone();
                                         let api_token = token();
-                                        let draft_for_op = draft_snapshot.clone();
-                                        let poll_id_for_op = poll_id.clone();
                                         let poll_id_for_status = poll_id.clone();
                                         spawn(async move {
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
-                                                |api| async move {
-                                                    let op = crate::messaging::polls::build_poll_create_op(
-                                                        &realm,
-                                                        &actor,
-                                                        &strand_id,
-                                                        &poll_id_for_op,
-                                                        &draft_for_op,
-                                                    )?;
-                                                    api.submit_sdk_event(&op).await
-                                                },
+                                                |api| async move { api.submit_sdk_event(&op).await },
                                             )
                                             .await
                                             {
@@ -4431,15 +4401,33 @@ pub fn ChatPanel(
                                             return;
                                         }
                                         let poll_id = crate::messaging::polls::new_poll_id();
-                                        let card = crate::messaging::polls::PollCard::from_draft(
+                                        // Same canonical poll_block flow as the primary
+                                        // `poll-create-button` handler above.
+                                        let op = match crate::messaging::polls::build_poll_create_op(
+                                            &realm,
+                                            &actor,
+                                            &selected_strand,
+                                            &draft_snapshot,
+                                        ) {
+                                            Ok(op) => op,
+                                            Err(error) => {
+                                                status_msg.set(format!("Poll send failed: {error}"));
+                                                return;
+                                            }
+                                        };
+                                        let message_ref = crate::messaging::polls::poll_message_ref(&op);
+                                        let mut card = crate::messaging::polls::PollCard::from_draft(
                                             poll_id.clone(),
                                             &draft_snapshot,
                                         );
-                                        poll_cards.write().push(card.clone());
+                                        if let Some(message_ref) = message_ref.clone() {
+                                            card.poll_id = message_ref;
+                                        }
+                                        poll_cards.write().push(card);
                                         messages.write().push(ChatMessage {
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
-                                            protocol_message_id: None,
+                                            protocol_message_id: message_ref,
                                             sender: actor.clone(),
                                             executed_by: None,
                                             body: format!("[poll] {}", draft_snapshot.question),
@@ -4459,27 +4447,13 @@ pub fn ChatPanel(
                                         poll_draft.set(None);
 
                                         let base = base.clone();
-                                        let realm = realm.clone();
-                                        let actor = actor.clone();
-                                        let strand_id = selected_strand.clone();
                                         let api_token = token();
-                                        let draft_for_op = draft_snapshot.clone();
-                                        let poll_id_for_op = poll_id.clone();
                                         let poll_id_for_status = poll_id.clone();
                                         spawn(async move {
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
-                                                |api| async move {
-                                                    let op = crate::messaging::polls::build_poll_create_op(
-                                                        &realm,
-                                                        &actor,
-                                                        &strand_id,
-                                                        &poll_id_for_op,
-                                                        &draft_for_op,
-                                                    )?;
-                                                    api.submit_sdk_event(&op).await
-                                                },
+                                                |api| async move { api.submit_sdk_event(&op).await },
                                             )
                                             .await
                                             {
@@ -5023,7 +4997,7 @@ pub fn ChatPanel(
                                 // raw_operation record (X10.6 sidecar re-key) is
                                 // keyed on it.
                                 let msg_local_op_id =
-                                    crate::views::secure_send::sdk_event_local_operation_id(
+                                    crate::operation::sdk_event_local_operation_id(
                                         &secure_build.message_event,
                                     )
                                     .to_owned();

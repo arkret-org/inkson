@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod personal_agent_tests {
-    use cokret_sdk::models::{AgentKeyScope, AgentParticipation};
+    use cokret_sdk::models::AgentParticipation;
 
     use super::super::*;
 
@@ -88,19 +88,26 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn requested_scope_widens_to_realm_when_any_write_preset_selected() {
-        assert_eq!(requested_scope_for_presets(&[]), None);
+    fn requested_scope_unions_preset_actions_and_requires_realm() {
+        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+        // No preset / no realm → omit requested_scope entirely (schema
+        // requires non-empty resources, so there is nothing valid to send).
+        assert!(requested_scope_for_presets(&[], Some(REALM)).is_none());
+        assert!(requested_scope_for_presets(&[AgentGrantPreset::ReadOnly], None).is_none());
+
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::ReadOnly, AgentGrantPreset::ReplyAsAgent],
+            Some(REALM),
+        )
+        .expect("realm-scoped presets produce a scope");
         assert_eq!(
-            requested_scope_for_presets(&[AgentGrantPreset::ReadOnly]),
-            Some(AgentKeyScope::Limited)
+            scope.actions,
+            vec!["ck.event.read", "ck.message.create", "ck.reaction.add"]
         );
-        assert_eq!(
-            requested_scope_for_presets(&[
-                AgentGrantPreset::ReadOnly,
-                AgentGrantPreset::ReplyAsAgent,
-            ]),
-            Some(AgentKeyScope::Realm)
-        );
+        let wire = serde_json::to_value(&scope).unwrap();
+        assert_eq!(wire["resources"][0]["kind"], "realm");
+        assert_eq!(wire["resources"][0]["realm_id"], REALM);
+        assert!(scope.constraints.is_empty());
     }
 
     #[test]
@@ -295,7 +302,7 @@ mod tests {
     #[test]
     fn agent_endpoint_body_keys_pin_canonical_wire() {
         let op = crate::operation::ck_ops::agent_endpoint(
-            "ck:space:test",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "did:web:agent.example",
             "ck.agent.v1",
@@ -312,7 +319,7 @@ mod tests {
     #[test]
     fn agent_result_body_carries_audit_binding() {
         let op = crate::operation::ck_ops::agent_interop_session_result(
-            "ck:space:test",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:session:test",
             serde_json::json!({"summary": "ok"}),

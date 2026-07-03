@@ -241,6 +241,10 @@ pub struct CokretApiError {
 mod account;
 mod agent;
 mod applet;
+// YGN-ARCH-01 step 1: authenticated-client builders + `with_authed_api*`
+// wrapper moved here from `views/helpers.rs` (pure move; the helpers module
+// re-exports them for existing view call sites).
+mod authed;
 mod blob;
 mod blob_resumable;
 // YOU-07-001: realm event / envelope builders moved out to `builders`.
@@ -292,6 +296,7 @@ mod views;
 #[cfg(test)]
 mod tests;
 
+pub use authed::*;
 pub use builders::*;
 pub use ephemeral::*;
 pub use error_classify::*;

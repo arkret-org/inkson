@@ -541,7 +541,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     let publish_device_id = device_id.clone();
     let publish_key_package_id = key_package_id.clone();
     let publish_key_package_ref = key_package_ref.clone();
-    let outcome = crate::views::helpers::with_authed_api(
+    let outcome = crate::api::with_authed_api(
         &base_url,
         session_credential.clone(),
         |api| async move {
@@ -614,7 +614,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
 
-    let messages = crate::views::helpers::with_authed_api(
+    let messages = crate::api::with_authed_api(
         &base_url,
         session_credential.clone(),
         |api| async move { api.receive_device_messages().await },
@@ -717,7 +717,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     let actor_for_backup = actor_id.clone();
     let device_for_backup = device_id.clone();
     let realm_for_backup = realm_id.clone();
-    let backup_id = crate::views::helpers::with_authed_api(
+    let backup_id = crate::api::with_authed_api(
         &base_url,
         session_credential.clone(),
         |api| async move {
@@ -745,7 +745,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         true,
         persist_error.as_deref(),
     ) && let Some(ack_token) = ack_token
-        && let Err(error) = crate::views::helpers::with_authed_api(
+        && let Err(error) = crate::api::with_authed_api(
             &base_url,
             session_credential.clone(),
             |api| async move { api.ack_device_messages(&ack_token).await },
