@@ -588,6 +588,7 @@ mod tests {
             .unwrap();
         assert_eq!(options.len(), 2);
         cokret_sdk::schema::event_payload_validator_catalog()
+            .unwrap()
             .validate_payload(op.kind.as_str(), &op.content)
             .unwrap();
     }

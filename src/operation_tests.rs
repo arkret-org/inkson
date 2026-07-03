@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::*;
 
 fn assert_registered_payload_valid(event: &EventEnvelope) {
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog();
+    let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
     catalog
         .validate_payload(event.kind.as_str(), &event.content)
         .unwrap_or_else(|err| {
@@ -1219,7 +1219,7 @@ mod realm_organization_builder_tests {
         )
         .expect("builds (schema enforces the empty-proof rejection)")
         .build("node");
-        let catalog = cokret_sdk::schema::event_payload_validator_catalog();
+        let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
         assert!(
             catalog
                 .validate_payload(event.kind.as_str(), &event.content)

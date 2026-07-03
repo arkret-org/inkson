@@ -436,7 +436,14 @@ pub fn SettingsPanel(
     // Manual presence preference editor state (profiles-presence.md
     // §3.6). Hydrated from persisted local state; the expiry picker is
     // relative so it always starts at "never".
-    let initial_presence_preference = state_store.read().presence_preference();
+    let initial_presence_preference = {
+        let preference = state_store.read().presence_preference();
+        if !preference.is_empty() && !preference.is_active(chrono::Utc::now()) {
+            crate::local_state::PresencePreferenceState::default()
+        } else {
+            preference
+        }
+    };
     let initial_presence_manual_state = initial_presence_preference
         .manual_state
         .clone()
@@ -2056,17 +2063,24 @@ pub fn SettingsPanel(
                             "data-testid": "presence-status-save-button",
                             onclick: move |_| {
                                 let manual_state = presence_manual_state();
-                                let message = presence_status_message().trim().to_owned();
-                                if message.chars().count() > 256 {
+                                let message = cokret_sdk::canonical::to_nfc(
+                                    presence_status_message().trim(),
+                                );
+                                if let Err(error) = cokret_sdk::validate_status_message(&message) {
                                     presence_status_feedback.set(
-                                        "Status message is limited to 256 characters.".to_owned(),
+                                        format!("Status message is invalid: {error}"),
                                     );
                                     return;
                                 }
+                                let has_preference = manual_state != "auto" || !message.is_empty();
                                 let preference = crate::local_state::PresencePreferenceState {
                                     manual_state: (manual_state != "auto").then_some(manual_state),
                                     status_message: (!message.is_empty()).then_some(message),
-                                    clears_at: presence_expiry_to_clears_at(&presence_expiry_choice()),
+                                    clears_at: has_preference
+                                        .then(|| {
+                                            presence_expiry_to_clears_at(&presence_expiry_choice())
+                                        })
+                                        .flatten(),
                                 };
                                 let cleared = preference.is_empty();
                                 state_store.write().set_presence_preference(preference);

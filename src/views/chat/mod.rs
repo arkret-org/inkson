@@ -30,6 +30,8 @@ use crate::views::moderation_appeal::{AppealEntrypoint, AppealState};
 mod model;
 mod render;
 
+const PRESENCE_HEARTBEAT_SECS: u64 = 25;
+
 // Re-exported for the sync engine so the account-aggregate stream folds
 // discussion message events into the shared `raw_operations` log (local-first
 // feed), mirroring `kanban::kanban_operations_from_events`.
@@ -251,6 +253,7 @@ pub fn ChatPanel(
     let presence_status_messages = use_signal(std::collections::BTreeMap::<String, String>::new);
     let mut presence_sync_key_seen = use_signal(String::new);
     let mut presence_announce_key_seen = use_signal(String::new);
+    let mut presence_heartbeat_tick = use_signal(|| 0u64);
     // G3.Y2 — discussion promote modal. Holds the source message id
     // (or Strand id) + the desired private discussion title.
     let mut promote_discussion_draft =
@@ -274,34 +277,30 @@ pub fn ChatPanel(
         let realm = selected_realm_id.clone();
         let actor = account_did.clone();
         let device = device_id.clone();
-        let state_store_for_presence = state_store;
+        let mut state_store_for_presence = state_store;
         use_effect(move || {
             let realm = trim_realm_id(&realm);
             let actor = actor.trim().to_owned();
             let device = device.clone();
+            let heartbeat_tick = presence_heartbeat_tick();
             let visibility = state_store_for_presence.read().presence_visibility();
             // Manual presence preference (profiles-presence.md §3.6):
             // while active it pins the broadcast state on every device
             // and supplies the transient status message.
-            let preference = state_store_for_presence.read().presence_preference();
             let now = chrono::Utc::now();
+            let mut preference = state_store_for_presence.read().presence_preference();
+            if !preference.is_empty() && !preference.is_active(now) {
+                state_store_for_presence
+                    .write()
+                    .set_presence_preference(crate::local_state::PresencePreferenceState::default());
+                preference = crate::local_state::PresencePreferenceState::default();
+            }
             let state = preference
                 .effective_manual_state(now)
                 .unwrap_or("online")
                 .to_owned();
-            let status_message = preference
-                .effective_status_message(now)
-                .map(str::to_owned);
+            let status_message = preference.effective_status_message(now).map(str::to_owned);
             let api_token = token();
-            let announce_key = format!(
-                "{realm}|{actor}|{}|{state}|{}",
-                visibility.as_wire(),
-                status_message.as_deref().unwrap_or("")
-            );
-            if presence_announce_key_seen.peek().as_str() == announce_key {
-                return;
-            }
-            presence_announce_key_seen.set(announce_key);
             if realm.is_empty()
                 || actor.is_empty()
                 || api_token.trim().is_empty()
@@ -309,6 +308,15 @@ pub fn ChatPanel(
             {
                 return;
             }
+            let announce_key = format!(
+                "{realm}|{actor}|{}|{state}|{}|{heartbeat_tick}",
+                visibility.as_wire(),
+                status_message.as_deref().unwrap_or("")
+            );
+            if presence_announce_key_seen.peek().as_str() == announce_key {
+                return;
+            }
+            presence_announce_key_seen.set(announce_key);
             let base = base.clone();
             spawn(async move {
                 let _ =
@@ -324,6 +332,10 @@ pub fn ChatPanel(
                         .await
                     })
                     .await;
+                crate::api::sleep_for(std::time::Duration::from_secs(PRESENCE_HEARTBEAT_SECS))
+                    .await;
+                let next_tick = (*presence_heartbeat_tick.peek()).wrapping_add(1);
+                presence_heartbeat_tick.set(next_tick);
             });
         });
     }

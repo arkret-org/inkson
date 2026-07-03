@@ -247,6 +247,17 @@ impl PresencePreferenceState {
         }
     }
 
+    pub fn next_clears_at(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let raw = self.clears_at.as_deref()?;
+        let clears_at = chrono::DateTime::parse_from_rfc3339(raw)
+            .ok()?
+            .with_timezone(&chrono::Utc);
+        (now < clears_at).then_some(clears_at)
+    }
+
     /// The state to pin broadcasts to at `now`, if the preference is
     /// active and carries a valid manual state.
     pub fn effective_manual_state(&self, now: chrono::DateTime<chrono::Utc>) -> Option<&str> {

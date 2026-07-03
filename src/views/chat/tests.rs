@@ -267,6 +267,7 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     assert!(op.content.get("reply_to").is_none());
     assert!(op.content.get("thread_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
@@ -310,6 +311,7 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
         Some("SEV-1 public update: checkout latency is recovering")
     );
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
@@ -340,6 +342,7 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
     assert_eq!(op.content["expiry"]["grace_ms"], 5_000);
     assert!(op.content["content"].get("expiry").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
@@ -367,6 +370,7 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     assert!(op.content.get("mentions").is_none());
     assert!(op.content.get("mention_relations").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
@@ -417,6 +421,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     assert!(mention.get("target").is_none());
     assert!(op.content.get("mentions").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
@@ -441,6 +446,7 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     );
     assert!(op.content.get("thread_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
@@ -524,9 +530,11 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     assert_eq!(remove.content["target_ref"], target_ref);
     assert!(remove.content.get("key").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(add.kind.as_str(), &add.content)
         .unwrap();
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(remove.kind.as_str(), &remove.content)
         .unwrap();
 }
@@ -2050,6 +2058,7 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
     assert!(op.content.get("body").is_none());
     assert!(op.content.get("target_event_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }
@@ -2072,6 +2081,7 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
     assert!(op.content.get("event_id").is_none());
     assert!(op.content.get("actor").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(op.kind.as_str(), &op.content)
         .unwrap();
 }

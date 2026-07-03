@@ -24,6 +24,7 @@ pub fn rsvp_set(
     let payload = serde_json::to_value(payload)
         .map_err(|err| anyhow::anyhow!("ck.rsvp.set payload serialize: {err}"))?;
     cokret_sdk::schema::event_payload_validator_catalog()
+        .map_err(|err| anyhow::anyhow!("ck.rsvp.set payload validator catalog: {err}"))?
         .validate_payload("ck.rsvp.set", &payload)
         .map_err(|err| anyhow::anyhow!("ck.rsvp.set payload is not schema-valid: {err}"))?;
     Ok(OperationBuilder::new(

@@ -351,16 +351,16 @@ pub fn verify_tier2_chain(
         return DeviceTrustState::Unverified;
     };
     let trust_binding = trust_binding_from_directory(binding);
-    cokret_sdk::verify_device_cross_signing_chain(
-        &publish_content,
-        &trust_binding,
-        actor,
-        device,
-        device_signing_key_multibase,
+    cokret_sdk::verify_device_cross_signing_chain(cokret_sdk::DeviceCrossSigningChainVerification {
+        publish: &publish_content,
+        binding: &trust_binding,
+        principal_id: actor,
+        device_id: device,
+        device_public_key: device_signing_key_multibase,
         hpke_key,
-        trust_algorithms,
-        &anchored_psk,
-    )
+        algorithms: trust_algorithms,
+        anchored_psk: &anchored_psk,
+    })
 }
 
 /// Apply the full Tier-2 acceptance gate to a `keys/query` outcome for one

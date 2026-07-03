@@ -8,13 +8,14 @@
 //! / sibling `super::*` paths resolve unchanged.
 
 use chrono::Timelike as _;
+
 use super::*;
 
 pub(crate) fn validate_outgoing_registered_event_payload(
     kind: &str,
     payload: &Value,
 ) -> anyhow::Result<()> {
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog();
+    let catalog = cokret_sdk::schema::event_payload_validator_catalog()?;
     if !catalog
         .missing_payload_validators_for(std::iter::once(kind))
         .is_empty()

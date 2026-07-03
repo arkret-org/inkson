@@ -48,6 +48,7 @@ impl TestEventPayloadView for cokret_sdk::Event {
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView) {
     cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
         .validate_payload(event.kind_for_schema(), event.payload_for_schema())
         .unwrap_or_else(|err| {
             panic!(

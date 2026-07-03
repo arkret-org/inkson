@@ -631,7 +631,7 @@ fn space_create_payload_matches_spec_schema() {
         None,
     )
     .unwrap();
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog();
+    let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
     if catalog
         .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
         .is_empty()
@@ -672,7 +672,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
     )
     .unwrap();
 
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog();
+    let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
     for event in &events {
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))

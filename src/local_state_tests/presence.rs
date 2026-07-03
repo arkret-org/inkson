@@ -38,9 +38,11 @@ fn presence_preference_persists_and_expires() {
         preference.effective_status_message(before),
         Some("In a meeting")
     );
+    assert_eq!(preference.next_clears_at(before), Some(after));
     // Past clears_at the whole preference reads as absent.
     assert_eq!(preference.effective_manual_state(after), None);
     assert_eq!(preference.effective_status_message(after), None);
+    assert_eq!(preference.next_clears_at(after), None);
 }
 
 #[test]

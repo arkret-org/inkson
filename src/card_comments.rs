@@ -243,6 +243,7 @@ mod tests {
         let comment = CardComment::new(CARD_STRAND_ID, "ship it @did:web:bob.example");
         let payload = build_card_comment_payload(&comment).expect("builds");
         cokret_sdk::schema::event_payload_validator_catalog()
+            .unwrap()
             .validate_payload("ck.message.create", &payload)
             .expect("card comment payload must satisfy message_create_payload schema");
     }

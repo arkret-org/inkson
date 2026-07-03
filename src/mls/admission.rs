@@ -618,7 +618,7 @@ mod tests {
                 .as_str()
                 .is_some_and(|sig| !sig.is_empty())
         );
-        let catalog = cokret_sdk::schema::event_payload_validator_catalog();
+        let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
         catalog
             .validate_payload(admission.welcome.kind.as_str(), &admission.welcome.content)
             .unwrap_or_else(|err| {

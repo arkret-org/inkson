@@ -187,6 +187,7 @@ mod tests {
         );
         for event in &ops {
             cokret_sdk::schema::event_payload_validator_catalog()
+                .unwrap()
                 .validate_payload(event.kind.as_str(), &event.content)
                 .unwrap_or_else(|err| {
                     panic!(

@@ -94,6 +94,7 @@ pub(crate) fn shared_message_pin_remove_operation(
 
 fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
     cokret_sdk::schema::event_payload_validator_catalog()
+        .map_err(|error| anyhow::anyhow!("{kind} payload validator catalog: {error}"))?
         .validate_payload(kind, payload)
         .map_err(|error| anyhow::anyhow!("{kind} payload is not schema-valid: {error}"))
 }
