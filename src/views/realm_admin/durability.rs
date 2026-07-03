@@ -17,14 +17,49 @@ use cokret_sdk::models::{
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use crate::i18n::tr;
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::with_authed_api;
+
+/// Structured validation error from the form helpers. Carries the i18n key
+/// plus placeholder substitutions; translation happens at the render site so
+/// the helpers stay callable outside a Dioxus runtime (`tr` needs a live
+/// runtime and panics in plain unit tests).
+#[derive(Debug)]
+struct FormError {
+    key: &'static str,
+    args: Vec<(&'static str, String)>,
+}
+
+impl FormError {
+    fn new(key: &'static str) -> Self {
+        Self {
+            key,
+            args: Vec::new(),
+        }
+    }
+
+    fn arg(mut self, placeholder: &'static str, value: String) -> Self {
+        self.args.push((placeholder, value));
+        self
+    }
+
+    /// Resolve the i18n key and apply placeholder substitutions. Must be
+    /// called from inside the Dioxus runtime (component/event scope).
+    fn localize(&self) -> String {
+        let mut message = tr(self.key);
+        for (placeholder, value) in &self.args {
+            message = message.replace(&format!("{{{placeholder}}}"), value);
+        }
+        message
+    }
+}
 
 /// Parse the recipient textarea: one recipient per non-empty line, fields
 /// pipe-separated `recipient_id | principal_did | verification_method`. A
 /// trailing 4th field is the optional `controller_organization` DID. Returns the
-/// SDK-typed recipients or a human-readable parse error.
-fn parse_recipients(raw: &str) -> Result<Vec<RealmRecoveryRecipient>, String> {
+/// SDK-typed recipients or a structured validation error.
+fn parse_recipients(raw: &str) -> Result<Vec<RealmRecoveryRecipient>, FormError> {
     let mut out = Vec::new();
     for (index, line) in raw.lines().enumerate() {
         let line = line.trim();
@@ -33,13 +68,14 @@ fn parse_recipients(raw: &str) -> Result<Vec<RealmRecoveryRecipient>, String> {
         }
         let fields: Vec<&str> = line.split('|').map(str::trim).collect();
         if fields.len() < 3 {
-            return Err(format!(
-                "line {}: expected `recipient_id | principal_did | verification_method`",
-                index + 1
-            ));
+            return Err(FormError::new("realm_admin.durability_err_recipient_fields")
+                .arg("line", (index + 1).to_string()));
         }
-        let principal_id = Did::new(fields[1].to_owned())
-            .map_err(|err| format!("line {}: invalid principal DID: {err:?}", index + 1))?;
+        let principal_id = Did::new(fields[1].to_owned()).map_err(|err| {
+            FormError::new("realm_admin.durability_err_principal_did")
+                .arg("line", (index + 1).to_string())
+                .arg("error", format!("{err:?}"))
+        })?;
         let controller_organization = fields
             .get(3)
             .map(|did| did.trim())
@@ -47,10 +83,9 @@ fn parse_recipients(raw: &str) -> Result<Vec<RealmRecoveryRecipient>, String> {
             .map(|did| Did::new(did.to_owned()))
             .transpose()
             .map_err(|err| {
-                format!(
-                    "line {}: invalid controller_organization DID: {err:?}",
-                    index + 1
-                )
+                FormError::new("realm_admin.durability_err_org_did")
+                    .arg("line", (index + 1).to_string())
+                    .arg("error", format!("{err:?}"))
             })?;
         out.push(RealmRecoveryRecipient {
             recipient_id: fields[0].to_owned(),
@@ -69,12 +104,15 @@ fn build_policy(
     mode: &str,
     recipients: Vec<RealmRecoveryRecipient>,
     k: u32,
-) -> Result<DurabilityPolicy, String> {
+) -> Result<DurabilityPolicy, FormError> {
     let mode = match mode {
         "none" => DurabilityMode::None,
         "org_recovery_key" => DurabilityMode::OrgRecoveryKey,
         "threshold" => DurabilityMode::Threshold,
-        other => return Err(format!("unknown durability mode {other:?}")),
+        other => {
+            return Err(FormError::new("realm_admin.durability_err_unknown_mode")
+                .arg("mode", format!("{other:?}")));
+        }
     };
     if matches!(mode, DurabilityMode::None) {
         return Ok(DurabilityPolicy {
@@ -84,24 +122,26 @@ fn build_policy(
         });
     }
     if recipients.is_empty() {
-        return Err("mode != none requires at least one recovery recipient".to_owned());
+        return Err(FormError::new(
+            "realm_admin.durability_err_recipients_required",
+        ));
     }
     // uniqueItems by recipient_id.
     let mut seen = std::collections::BTreeSet::new();
     for recipient in &recipients {
         if !seen.insert(recipient.recipient_id.clone()) {
-            return Err(format!(
-                "duplicate recipient_id {:?}",
-                recipient.recipient_id
-            ));
+            return Err(
+                FormError::new("realm_admin.durability_err_duplicate_recipient")
+                    .arg("recipient_id", format!("{:?}", recipient.recipient_id)),
+            );
         }
     }
     let threshold = if matches!(mode, DurabilityMode::Threshold) {
         let n = recipients.len() as u32;
         if k == 0 || k > n {
-            return Err(format!(
-                "threshold k must satisfy 1 <= k <= n ({n}), got {k}"
-            ));
+            return Err(FormError::new("realm_admin.durability_err_threshold_k")
+                .arg("n", n.to_string())
+                .arg("k", k.to_string()));
         }
         Some(DurabilityThreshold { k, n })
     } else {
@@ -212,37 +252,38 @@ pub fn DurabilityPolicyEditor(
     rsx! {
         div { class: "event", "data-testid": "realm-durability-policy-editor",
             div { class: "event-head",
-                span { "Realm recovery key (durability)" }
+                span { {tr("realm_admin.durability_title")} }
                 span {
                     class: if scheme_ok { "badge green" } else { "badge amber" },
-                    if scheme_ok { "mls-exporter-aead-v1" } else { "scheme not eligible" }
+                    // The scheme identifier is a protocol literal, not translatable copy.
+                    if scheme_ok { "mls-exporter-aead-v1" } else { {tr("realm_admin.durability_scheme_not_eligible")} }
                 }
             }
             div { class: "muted",
-                "声明在全体成员设备失效或全员离职后谁能解开本 Realm 历史。改策略是控制面 Move：后续 ck.mls.commit 覆盖成员前沿后才对新 epoch 生效，并触发对成员的重新披露。"
+                {tr("realm_admin.durability_intro")}
             }
             if !scheme_ok {
                 div { class: "muted", "data-testid": "durability-scheme-warning",
-                    "本 Realm 未使用 mls-exporter-aead-v1，无可交付的 history_secret；声明 mode != none 将被拒绝（durability_scheme_incompatible）。"
+                    {tr("realm_admin.durability_scheme_warning")}
                 }
             }
 
-            label { r#for: "durability-mode-select", "Mode" }
+            label { r#for: "durability-mode-select", {tr("realm_admin.durability_mode_label")} }
             select {
                 id: "durability-mode-select",
                 "data-testid": "durability-mode-select",
                 value: "{mode_value}",
                 "data-value": "{mode_value}",
                 onchange: move |evt| mode.set(evt.value()),
-                option { value: "none", "none — 无组织恢复（丢光即永久丢失）" }
-                option { value: "org_recovery_key", "org_recovery_key — 单把组织 RRK" }
-                option { value: "threshold", "threshold — k-of-n 门限" }
+                option { value: "none", {tr("realm_admin.durability_mode_none")} }
+                option { value: "org_recovery_key", {tr("realm_admin.durability_mode_org")} }
+                option { value: "threshold", {tr("realm_admin.durability_mode_threshold")} }
             }
 
             if show_recipients {
-                label { r#for: "durability-recipients-input", "Recovery recipients" }
+                label { r#for: "durability-recipients-input", {tr("realm_admin.durability_recipients_label")} }
                 div { class: "muted",
-                    "每行一个：recipient_id | principal_did | verification_method [ | controller_org_did]"
+                    {tr("realm_admin.durability_recipients_hint")}
                 }
                 textarea {
                     id: "durability-recipients-input",
@@ -254,7 +295,7 @@ pub fn DurabilityPolicyEditor(
             }
 
             if show_threshold {
-                label { r#for: "durability-threshold-k", "Threshold k (of n = recipient count)" }
+                label { r#for: "durability-threshold-k", {tr("realm_admin.durability_threshold_label")} }
                 input {
                     id: "durability-threshold-k",
                     "data-testid": "durability-threshold-k",
@@ -269,7 +310,7 @@ pub fn DurabilityPolicyEditor(
                 }
             }
 
-            label { r#for: "durability-policy-revision", "Policy revision (monotonic)" }
+            label { r#for: "durability-policy-revision", {tr("realm_admin.durability_revision_label")} }
             input {
                 id: "durability-policy-revision",
                 "data-testid": "durability-policy-revision",
@@ -299,33 +340,39 @@ pub fn DurabilityPolicyEditor(
                         let recipients = match parse_recipients(&recipients_raw_value) {
                             Ok(recipients) => recipients,
                             Err(err) => {
-                                status.set(format!("解析恢复方失败: {err}"));
+                                status.set(
+                                    tr("realm_admin.durability_parse_failed")
+                                        .replace("{error}", &err.localize()),
+                                );
                                 return;
                             }
                         };
                         let policy = match build_policy(&mode_value, recipients, k) {
                             Ok(policy) => policy,
                             Err(err) => {
-                                status.set(format!("策略无效: {err}"));
+                                status.set(
+                                    tr("realm_admin.durability_policy_invalid")
+                                        .replace("{error}", &err.localize()),
+                                );
                                 return;
                             }
                         };
-                        status.set("提交中…".to_owned());
+                        status.set(tr("realm_admin.durability_submitting"));
                         let result = with_authed_api(&base, session, |api| async move {
                             api.set_realm_durability_policy(&realm_id, &actor_id, &policy, revision)
                                 .await
                         })
                         .await;
                         match result {
-                            Ok(()) => status.set(
-                                "已提交 ck.realm.policy_components；推进一次 ck.mls.commit 以激活封存并重新披露。"
-                                    .to_owned(),
+                            Ok(()) => status.set(tr("realm_admin.durability_submitted")),
+                            Err(err) => status.set(
+                                tr("realm_admin.durability_submit_failed")
+                                    .replace("{error}", &format!("{err:?}")),
                             ),
-                            Err(err) => status.set(format!("提交失败: {err:?}")),
                         }
                     }
                 },
-                "Apply durability policy"
+                {tr("realm_admin.durability_apply_button")}
             }
             if !status().is_empty() {
                 div { class: "muted", "data-testid": "durability-policy-status", "{status}" }

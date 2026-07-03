@@ -640,16 +640,19 @@ pub fn VerifyDevicePanel(
                                 // contract verify-device relies on.
                                 //
                                 // Fallback: when peer key is not yet
-                                // pasted, keep the demo
+                                // pasted (or ECDH fails on an invalid
+                                // peer key), keep the demo
                                 // `(target_device_did, sas_code)` info
                                 // hash so the panel still renders
-                                // something the user can see; UI
-                                // labels that as "(demo, not real)"
-                                // so operators don't mistake it for a
-                                // real cross-device match.
+                                // something the user can see. That
+                                // placeholder MUST NOT be confirmable:
+                                // `sas_is_real` is false in both demo
+                                // branches, which shows a warning
+                                // callout and disables "They Match"
+                                // until a real shared secret exists.
                                 let target = target_device();
                                 let info = format!("{target}|{}", sas_code());
-                                let (sas, sas_source) = match (
+                                let (sas, sas_source, sas_is_real) = match (
                                     ephemeral_keypair(),
                                     if peer_public_b64().is_empty() { None } else { Some(peer_public_b64()) },
                                 ) {
@@ -661,6 +664,7 @@ pub fn VerifyDevicePanel(
                                                     info.as_bytes(),
                                                 ),
                                                 "real X25519 shared secret",
+                                                true,
                                             ),
                                             Err(_) => (
                                                 cokret_sdk::key_verification::derive_sas_bytes(
@@ -668,6 +672,7 @@ pub fn VerifyDevicePanel(
                                                     info.as_bytes(),
                                                 ),
                                                 "demo info (peer key invalid)",
+                                                false,
                                             ),
                                         }
                                     }
@@ -677,6 +682,7 @@ pub fn VerifyDevicePanel(
                                             info.as_bytes(),
                                         ),
                                         "demo info (paste peer key for real ECDH)",
+                                        false,
                                     ),
                                 };
                                 let emoji_pairs = sas.emoji_pairs();
@@ -688,6 +694,16 @@ pub fn VerifyDevicePanel(
                                 );
                                 rsx! {
                             div { class: "event", "data-testid": "sas-display",
+                                // Security gate: the placeholder SAS derived
+                                // from public inputs must never be confirmed
+                                // as a match — make that explicit up front.
+                                if !sas_is_real {
+                                    div { class: "callout warn", "data-testid": "sas-demo-warning",
+                                        div { class: "body",
+                                            {crate::i18n::tr("verify_device.sas_demo_warning")}
+                                        }
+                                    }
+                                }
                                 div { class: "entity-title", {crate::i18n::tr("verify_device.short_auth_string")} }
                                 div { class: "muted", "Visually compare this emoji + digit sequence side-by-side on both devices." }
                                 div { class: "muted", "data-testid": "sas-source", "Source: {sas_source}" }
@@ -703,6 +719,16 @@ pub fn VerifyDevicePanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "sas-match-button",
+                                        // Confirming a match is only meaningful when the
+                                        // displayed SAS was derived from the real X25519
+                                        // shared secret; the demo placeholder is derived
+                                        // from public inputs and proves nothing.
+                                        disabled: !sas_is_real,
+                                        title: if sas_is_real {
+                                            String::new()
+                                        } else {
+                                            crate::i18n::tr("verify_device.sas_match_disabled_hint")
+                                        },
                                         onclick: {
                                             let base = base_url.clone();
                                             let actor = account_did.clone();

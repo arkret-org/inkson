@@ -190,8 +190,8 @@ pub fn ChatPanel(
     let mut compose_dragover = use_signal(|| false);
     let mut compose_upload_status = use_signal(String::new);
     let mut shared_pins = use_signal(Vec::<SharedMessagePin>::new);
-    let mut private_saved_targets = use_signal(std::collections::BTreeSet::<String>::new);
-    let mut private_saved_account_data =
+    let private_saved_targets = use_signal(std::collections::BTreeSet::<String>::new);
+    let private_saved_account_data =
         use_signal(std::collections::BTreeMap::<String, Value>::new);
     // Currently-open context menu (right-click on a message). Stores
     // the message id whose menu is open; None means no menu visible.
@@ -1753,6 +1753,143 @@ pub fn ChatPanel(
                                 outbox_message_id_set.contains(&msg.id);
                             let sender_is_own =
                                 is_own_message_sender(&msg.sender, &account_did);
+                            // T7: shared per-message action dispatchers. The hover
+                            // action row and the right-click context menu both call
+                            // these closures so the two surfaces expose an identical
+                            // action set without duplicating the underlying logic.
+                            // Signals are `Copy`, so each closure re-shadows the ones
+                            // it mutates as a local `mut` copy to stay a plain `Fn`.
+                            let reply_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
+                                let reply_target =
+                                    msg.reply_target_ref().map(ToOwned::to_owned);
+                                move || {
+                                    let mut reply_to_message = reply_to_message;
+                                    if let Some(target) = reply_target.clone() {
+                                        reply_to_message.set(Some(target));
+                                    }
+                                }
+                            });
+                            let react_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
+                                let msg_id = msg.id.clone();
+                                move || {
+                                    let mut reaction_picker = reaction_picker;
+                                    let current = reaction_picker();
+                                    reaction_picker.set(if current == Some(msg_id.clone()) {
+                                        None
+                                    } else {
+                                        Some(msg_id.clone())
+                                    });
+                                }
+                            });
+                            let edit_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
+                                let msg_id = msg.id.clone();
+                                let body = msg.body.clone();
+                                move || {
+                                    let mut editing_message = editing_message;
+                                    let mut edit_draft = edit_draft;
+                                    editing_message.set(Some(msg_id.clone()));
+                                    edit_draft.set(body.clone());
+                                }
+                            });
+                            let redact_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
+                                let msg_id = msg.id.clone();
+                                move || {
+                                    let mut redact_confirm = redact_confirm;
+                                    redact_confirm.set(Some(msg_id.clone()));
+                                }
+                            });
+                            // T7: holder-private save, shared between the context
+                            // menu and the hover `chat-save-button`. Writes the
+                            // `ck.saved.v1:*` account-data entry exactly like the
+                            // former inline context-menu handler.
+                            let private_save_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
+                                let actor_for_saved = account_did.clone();
+                                let device_for_saved = device_id.clone();
+                                let base_for_saved = base_url.clone();
+                                let target_for_saved = message_target_ref.clone();
+                                move || {
+                                    let mut status_msg = status_msg;
+                                    let mut message_context_menu = message_context_menu;
+                                    let mut state_store = state_store;
+                                    let mut private_saved_targets = private_saved_targets;
+                                    let mut private_saved_account_data = private_saved_account_data;
+                                    if private_saved_targets().contains(&target_for_saved) {
+                                        message_context_menu.set(None);
+                                        return;
+                                    }
+                                    let namespace_key = match load_chat_productivity_namespace_key(
+                                        &actor_for_saved,
+                                        &device_for_saved,
+                                    ) {
+                                        Ok(key) => key,
+                                        Err(error) => {
+                                            status_msg.set(format!("Private save failed: {error:#}"));
+                                            message_context_menu.set(None);
+                                            return;
+                                        }
+                                    };
+                                    let updated_hlc = Hlc::now("yougen").encode();
+                                    let item = match chat_saved_account_data_item(
+                                        &namespace_key,
+                                        &target_for_saved,
+                                        &updated_hlc,
+                                    ) {
+                                        Ok(item) => item,
+                                        Err(error) => {
+                                            status_msg.set(format!("Private save failed: {error:#}"));
+                                            message_context_menu.set(None);
+                                            return;
+                                        }
+                                    };
+                                    let account_data_value =
+                                        match crate::account_data::saved_item_account_data_value(&item.value) {
+                                            Ok(value) => value,
+                                            Err(error) => {
+                                                status_msg.set(format!("Private save failed: {error:#}"));
+                                                message_context_menu.set(None);
+                                                return;
+                                            }
+                                        };
+                                    {
+                                        let mut store = state_store.write();
+                                        if let Err(error) = store.stage_saved_account_data_item(&item) {
+                                            status_msg.set(format!("Private save failed: {error:#}"));
+                                            message_context_menu.set(None);
+                                            return;
+                                        }
+                                    }
+                                    private_saved_targets.write().insert(target_for_saved.clone());
+                                    private_saved_account_data.write().insert(
+                                        item.account_data_key.clone(),
+                                        account_data_value.clone(),
+                                    );
+                                    message_context_menu.set(None);
+                                    status_msg.set(crate::i18n::tr("message.private_saved"));
+                                    let base = base_for_saved.clone();
+                                    let api_token = token();
+                                    let wait_for = active_sync_token(sync_cursor());
+                                    let key_for_submit = item.account_data_key.clone();
+                                    spawn(async move {
+                                        match authed_api_with_sync(&base, api_token, wait_for) {
+                                            Ok(api) => {
+                                                if let Err(error) = api
+                                                    .set_private_account_data_with_cas(
+                                                        &key_for_submit,
+                                                        account_data_value,
+                                                        None,
+                                                    )
+                                                    .await
+                                                {
+                                                    status_msg.set(format!("Private save stayed local: {error}"));
+                                                }
+                                            }
+                                            Err(error) => {
+                                                status_msg.set(format!("Private save stayed local: {error}"));
+                                            }
+                                        }
+                                    });
+                                }
+                            });
                             rsx! {
                         div {
                             key: "{msg.id}",
@@ -1844,11 +1981,68 @@ pub fn ChatPanel(
                                         let existing_pin = shared_pins()
                                             .into_iter()
                                             .find(|pin| pin.target_ref == target_for_pin || pin.target_ref == msg.id);
-                                        let actor_for_saved = account_did.clone();
-                                        let device_for_saved = device_id.clone();
-                                        let base_for_saved = base_url.clone();
-                                        let target_for_saved = target_ref.clone();
                                         rsx! {
+                                            // T7: mirror the hover action row so both
+                                            // surfaces expose the same action set. The
+                                            // entries reuse the shared per-message
+                                            // dispatchers and only add the menu-close
+                                            // glue. Hidden for redacted messages, same
+                                            // as the hover row.
+                                            if !msg.redacted {
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    r#type: "button",
+                                                    "data-testid": "message-context-reply-button",
+                                                    disabled: msg.reply_target_ref().is_none(),
+                                                    onclick: {
+                                                        let reply_action = reply_action.clone();
+                                                        move |_| {
+                                                            (*reply_action)();
+                                                            message_context_menu.set(None);
+                                                        }
+                                                    },
+                                                    {crate::i18n::tr("chat.button.reply")}
+                                                }
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    r#type: "button",
+                                                    "data-testid": "message-context-react-button",
+                                                    onclick: {
+                                                        let react_action = react_action.clone();
+                                                        move |_| {
+                                                            (*react_action)();
+                                                            message_context_menu.set(None);
+                                                        }
+                                                    },
+                                                    {crate::i18n::tr("chat.button.react")}
+                                                }
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    r#type: "button",
+                                                    "data-testid": "message-context-edit-button",
+                                                    onclick: {
+                                                        let edit_action = edit_action.clone();
+                                                        move |_| {
+                                                            (*edit_action)();
+                                                            message_context_menu.set(None);
+                                                        }
+                                                    },
+                                                    {crate::i18n::tr("common.edit")}
+                                                }
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    r#type: "button",
+                                                    "data-testid": "message-context-redact-button",
+                                                    onclick: {
+                                                        let redact_action = redact_action.clone();
+                                                        move |_| {
+                                                            (*redact_action)();
+                                                            message_context_menu.set(None);
+                                                        }
+                                                    },
+                                                    {crate::i18n::tr("chat.button.redact")}
+                                                }
+                                            }
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 r#type: "button",
@@ -1978,82 +2172,14 @@ pub fn ChatPanel(
                                                 "data-testid": "message-private-save-button",
                                                 "data-source": "private-account-data",
                                                 "data-account-data-prefix": "ck.saved.v1",
-                                                onclick: move |_| {
-                                                    if is_saved_private {
-                                                        message_context_menu.set(None);
-                                                        return;
-                                                    }
-                                                    let namespace_key = match load_chat_productivity_namespace_key(
-                                                        &actor_for_saved,
-                                                        &device_for_saved,
-                                                    ) {
-                                                        Ok(key) => key,
-                                                        Err(error) => {
-                                                            status_msg.set(format!("Private save failed: {error:#}"));
-                                                            message_context_menu.set(None);
-                                                            return;
-                                                        }
-                                                    };
-                                                    let updated_hlc = Hlc::now("yougen").encode();
-                                                    let item = match chat_saved_account_data_item(
-                                                        &namespace_key,
-                                                        &target_for_saved,
-                                                        &updated_hlc,
-                                                    ) {
-                                                        Ok(item) => item,
-                                                        Err(error) => {
-                                                            status_msg.set(format!("Private save failed: {error:#}"));
-                                                            message_context_menu.set(None);
-                                                            return;
-                                                        }
-                                                    };
-                                                    let account_data_value =
-                                                        match crate::account_data::saved_item_account_data_value(&item.value) {
-                                                            Ok(value) => value,
-                                                            Err(error) => {
-                                                                status_msg.set(format!("Private save failed: {error:#}"));
-                                                                message_context_menu.set(None);
-                                                                return;
-                                                            }
-                                                        };
-                                                    {
-                                                        let mut store = state_store.write();
-                                                        if let Err(error) = store.stage_saved_account_data_item(&item) {
-                                                            status_msg.set(format!("Private save failed: {error:#}"));
-                                                            message_context_menu.set(None);
-                                                            return;
-                                                        }
-                                                    }
-                                                    private_saved_targets.write().insert(target_for_saved.clone());
-                                                    private_saved_account_data.write().insert(
-                                                        item.account_data_key.clone(),
-                                                        account_data_value.clone(),
-                                                    );
-                                                    message_context_menu.set(None);
-                                                    status_msg.set(crate::i18n::tr("message.private_saved"));
-                                                    let base = base_for_saved.clone();
-                                                    let api_token = token();
-                                                    let wait_for = active_sync_token(sync_cursor());
-                                                    let key_for_submit = item.account_data_key.clone();
-                                                    spawn(async move {
-                                                        match authed_api_with_sync(&base, api_token, wait_for) {
-                                                            Ok(api) => {
-                                                                if let Err(error) = api
-                                                                    .set_private_account_data_with_cas(
-                                                                        &key_for_submit,
-                                                                        account_data_value,
-                                                                        None,
-                                                                    )
-                                                                    .await
-                                                                {
-                                                                    status_msg.set(format!("Private save stayed local: {error}"));
-                                                                }
-                                                            }
-                                                            Err(error) => {
-                                                                status_msg.set(format!("Private save stayed local: {error}"));
-                                                            }
-                                                        }
-                                                    });
+                                                // T7: delegates to the shared dispatcher
+                                                // (also used by the hover
+                                                // `chat-save-button`); it handles the
+                                                // already-saved early-return and closes
+                                                // the menu itself.
+                                                onclick: {
+                                                    let private_save_action = private_save_action.clone();
+                                                    move |_| (*private_save_action)()
                                                 },
                                                 if is_saved_private {
                                                     {crate::i18n::tr("message.private_saved")}
@@ -2238,17 +2364,31 @@ pub fn ChatPanel(
                                                 span { {crate::i18n::tr("chat.crypto.needs_verification")} }
                                             }
                                         },
-                                        MessageCryptoState::LateRecoveryRejected => rsx! {
-                                            div {
-                                                class: "crypto-status-row crypto-status-late-recovery-rejected",
-                                                "data-testid": "crypto-status-late-recovery-rejected",
-                                                span { class: "crypto-status-icon", "\u{26a0}" }
-                                                span {
-                                                    {
-                                                        msg.error
-                                                            .as_deref()
-                                                            .unwrap_or("late_recovery_rejected")
-                                                    }
+                                        MessageCryptoState::LateRecoveryRejected => {
+                                            // T6: map the raw protocol reason code to a
+                                            // human-readable explanation. All known
+                                            // `late_recovery_*` reason codes share the
+                                            // late-recovery copy; anything else falls back
+                                            // to a generic undecryptable message. The raw
+                                            // code stays available in the tooltip for
+                                            // debugging/support.
+                                            let raw_code = msg
+                                                .error
+                                                .as_deref()
+                                                .unwrap_or("late_recovery_rejected")
+                                                .to_owned();
+                                            let friendly = if raw_code.starts_with("late_recovery") {
+                                                crate::i18n::tr("chat.crypto.late_recovery_rejected")
+                                            } else {
+                                                crate::i18n::tr("chat.crypto.undecryptable_generic")
+                                            };
+                                            rsx! {
+                                                div {
+                                                    class: "crypto-status-row crypto-status-late-recovery-rejected",
+                                                    "data-testid": "crypto-status-late-recovery-rejected",
+                                                    title: "{raw_code}",
+                                                    span { class: "crypto-status-icon", "\u{26a0}" }
+                                                    span { {friendly} }
                                                 }
                                             }
                                         },
@@ -2470,12 +2610,8 @@ pub fn ChatPanel(
                                             "data-testid": "chat-reply-button",
                                             disabled: msg.reply_target_ref().is_none(),
                                             onclick: {
-                                                let msg_id = msg.reply_target_ref().map(ToOwned::to_owned);
-                                                move |_| {
-                                                    if let Some(msg_id) = msg_id.clone() {
-                                                        reply_to_message.set(Some(msg_id));
-                                                    }
-                                                }
+                                                let reply_action = reply_action.clone();
+                                                move |_| (*reply_action)()
                                             },
                                             {crate::i18n::tr("chat.button.reply")}
                                         }
@@ -2484,11 +2620,8 @@ pub fn ChatPanel(
                                             class: "chat-message-action",
                                             "data-testid": "chat-react-button",
                                             onclick: {
-                                                let msg_id = msg.id.clone();
-                                                move |_| {
-                                                    let current = reaction_picker();
-                                                    reaction_picker.set(if current == Some(msg_id.clone()) { None } else { Some(msg_id.clone()) });
-                                                }
+                                                let react_action = react_action.clone();
+                                                move |_| (*react_action)()
                                             },
                                             {crate::i18n::tr("chat.button.react")}
                                         }
@@ -2497,12 +2630,8 @@ pub fn ChatPanel(
                                             class: "chat-message-action",
                                             "data-testid": "chat-edit-button",
                                             onclick: {
-                                                let msg_id = msg.id.clone();
-                                                let body = msg.body.clone();
-                                                move |_| {
-                                                    editing_message.set(Some(msg_id.clone()));
-                                                    edit_draft.set(body.clone());
-                                                }
+                                                let edit_action = edit_action.clone();
+                                                move |_| (*edit_action)()
                                             },
                                             {crate::i18n::tr("common.edit")}
                                         }
@@ -2511,8 +2640,8 @@ pub fn ChatPanel(
                                             class: "chat-message-action",
                                             "data-testid": "chat-redact-button",
                                             onclick: {
-                                                let msg_id = msg.id.clone();
-                                                move |_| redact_confirm.set(Some(msg_id.clone()))
+                                                let redact_action = redact_action.clone();
+                                                move |_| (*redact_action)()
                                             },
                                             {crate::i18n::tr("chat.button.redact")}
                                         }
@@ -2657,6 +2786,26 @@ pub fn ChatPanel(
                                                         {crate::i18n::tr("message.shared_pin")}
                                                     }
                                                 }
+                                            }
+                                        }
+                                        // T7: holder-private save exposed on the hover
+                                        // action row, mirroring the context-menu entry.
+                                        // Both delegate to the shared dispatcher.
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            class: "chat-message-action",
+                                            disabled: message_is_saved_private,
+                                            "data-testid": "chat-save-button",
+                                            "data-source": "private-account-data",
+                                            "data-account-data-prefix": "ck.saved.v1",
+                                            onclick: {
+                                                let private_save_action = private_save_action.clone();
+                                                move |_| (*private_save_action)()
+                                            },
+                                            if message_is_saved_private {
+                                                {crate::i18n::tr("message.private_saved")}
+                                            } else {
+                                                {crate::i18n::tr("message.private_save")}
                                             }
                                         }
                                     }

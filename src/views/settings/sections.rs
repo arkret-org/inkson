@@ -1,6 +1,6 @@
 //! Settings navigation taxonomy: the `SettingsSection` enum (one variant per
-//! settings surface, with slug/label/route mapping), the `DiagnosticsMode`
-//! sub-tab enum, and the nav-group consts that drive the settings sidebar.
+//! settings surface, with slug/label/route mapping) and the nav-group consts
+//! that drive the settings sidebar.
 
 use crate::routes::Route;
 
@@ -28,6 +28,12 @@ pub(super) enum SettingsSection {
     Capabilities,
     Theme,
     Release,
+    /// Read-only audit-event inspector (`/audit`), promoted from the
+    /// Release diagnostics sub-tab to a first-class section.
+    Audit,
+    /// Developer tools / protocol diagnostics (`/developer`), promoted
+    /// from the Release diagnostics sub-tab to a first-class section.
+    Developer,
 }
 
 impl SettingsSection {
@@ -47,7 +53,9 @@ impl SettingsSection {
             "consent" => Self::Consent,
             "blocklist" | "blocked-users" => Self::Blocklist,
             "capabilities" => Self::Capabilities,
-            "audit" | "audit-log" | "developer" | "developer-tools" | "release" => Self::Release,
+            "audit" | "audit-log" => Self::Audit,
+            "developer" | "developer-tools" => Self::Developer,
+            "release" => Self::Release,
             "theme" => Self::Theme,
             _ => Self::Server,
         }
@@ -72,6 +80,8 @@ impl SettingsSection {
             Self::Capabilities => "capabilities",
             Self::Theme => "theme",
             Self::Release => "release",
+            Self::Audit => "audit",
+            Self::Developer => "developer",
         }
     }
 
@@ -94,6 +104,8 @@ impl SettingsSection {
             Self::Capabilities => "Capabilities",
             Self::Theme => "Appearance & locale",
             Self::Release => "Diagnostics",
+            Self::Audit => "Audit log",
+            Self::Developer => "Developer tools",
         }
     }
 
@@ -101,38 +113,11 @@ impl SettingsSection {
         match self {
             Self::Devices => Route::SettingsDevices,
             Self::Recovery => Route::SettingsRecovery,
+            Self::Audit => Route::Audit,
+            Self::Developer => Route::Developer,
             _ => Route::SettingsSection {
                 section: self.slug().to_owned(),
             },
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum DiagnosticsMode {
-    Developer,
-    Audit,
-}
-
-impl DiagnosticsMode {
-    pub(super) fn from_slug(slug: Option<&str>) -> Option<Self> {
-        match slug {
-            Some("developer" | "developer-tools") => Some(Self::Developer),
-            Some("audit" | "audit-log") => Some(Self::Audit),
-            _ => None,
-        }
-    }
-
-    pub(super) fn slug(self) -> &'static str {
-        match self {
-            Self::Developer => "developer",
-            Self::Audit => "audit",
-        }
-    }
-
-    pub(super) fn route(self) -> Route {
-        Route::SettingsSection {
-            section: self.slug().to_owned(),
         }
     }
 }
@@ -163,6 +148,8 @@ pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
     SettingsSection::Connections,
     SettingsSection::Storage,
     SettingsSection::Release,
+    SettingsSection::Audit,
+    SettingsSection::Developer,
 ];
 pub(super) const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
     (

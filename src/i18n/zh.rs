@@ -354,6 +354,102 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.ban_member_move", "封禁（Move）");
     dict.set("realm_admin.rotate_epoch", "轮换 Epoch");
     dict.set("realm_admin.leave_realm", "退出");
+    dict.set("realm_admin.leave_confirm_title", "退出此 Realm？");
+    dict.set(
+        "realm_admin.leave_confirm_body",
+        "离开后需要重新受邀才能回到此 Realm，本设备上的本地缓存也会被清除。",
+    );
+    dict.set("realm_admin.leave_confirm_target", "将退出的 Realm");
+    dict.set("realm_admin.leave_confirm_button", "退出 Realm");
+    dict.set("realm_admin.leave_confirm_cancel", "取消");
+    dict.set(
+        "realm_admin.durability_title",
+        "Realm 恢复密钥（durability）",
+    );
+    dict.set(
+        "realm_admin.durability_scheme_not_eligible",
+        "加密方案不符合条件",
+    );
+    dict.set(
+        "realm_admin.durability_intro",
+        "声明在全体成员设备失效或全员离职后谁能解开本 Realm 历史。改策略是控制面 Move：后续 ck.mls.commit 覆盖成员前沿后才对新 epoch 生效，并触发对成员的重新披露。",
+    );
+    dict.set(
+        "realm_admin.durability_scheme_warning",
+        "本 Realm 未使用 mls-exporter-aead-v1，无可交付的 history_secret；声明 mode != none 将被拒绝（durability_scheme_incompatible）。",
+    );
+    dict.set("realm_admin.durability_mode_label", "模式");
+    dict.set(
+        "realm_admin.durability_mode_none",
+        "none — 无组织恢复（丢光即永久丢失）",
+    );
+    dict.set(
+        "realm_admin.durability_mode_org",
+        "org_recovery_key — 单把组织 RRK",
+    );
+    dict.set(
+        "realm_admin.durability_mode_threshold",
+        "threshold — k-of-n 门限",
+    );
+    dict.set("realm_admin.durability_recipients_label", "恢复接收方");
+    dict.set(
+        "realm_admin.durability_recipients_hint",
+        "每行一个：recipient_id | principal_did | verification_method [ | controller_org_did]",
+    );
+    dict.set(
+        "realm_admin.durability_threshold_label",
+        "门限 k（n = 接收方数量）",
+    );
+    dict.set(
+        "realm_admin.durability_revision_label",
+        "策略版本号（单调递增）",
+    );
+    dict.set("realm_admin.durability_apply_button", "应用持久化策略");
+    dict.set("realm_admin.durability_submitting", "提交中…");
+    dict.set(
+        "realm_admin.durability_submitted",
+        "已提交 ck.realm.policy_components；推进一次 ck.mls.commit 以激活封存并重新披露。",
+    );
+    dict.set(
+        "realm_admin.durability_submit_failed",
+        "提交失败：{error}",
+    );
+    dict.set(
+        "realm_admin.durability_parse_failed",
+        "解析恢复方失败：{error}",
+    );
+    dict.set(
+        "realm_admin.durability_policy_invalid",
+        "策略无效：{error}",
+    );
+    dict.set(
+        "realm_admin.durability_err_recipient_fields",
+        "第 {line} 行：应为 `recipient_id | principal_did | verification_method`",
+    );
+    dict.set(
+        "realm_admin.durability_err_principal_did",
+        "第 {line} 行：principal DID 无效：{error}",
+    );
+    dict.set(
+        "realm_admin.durability_err_org_did",
+        "第 {line} 行：controller_organization DID 无效：{error}",
+    );
+    dict.set(
+        "realm_admin.durability_err_unknown_mode",
+        "未知的持久化模式 {mode}",
+    );
+    dict.set(
+        "realm_admin.durability_err_recipients_required",
+        "mode != none 至少需要一个恢复接收方",
+    );
+    dict.set(
+        "realm_admin.durability_err_duplicate_recipient",
+        "recipient_id 重复：{recipient_id}",
+    );
+    dict.set(
+        "realm_admin.durability_err_threshold_k",
+        "门限 k 须满足 1 <= k <= n（{n}），当前为 {k}",
+    );
     dict.set("directory.list_contacts", "列出");
     dict.set("directory.search_button", "搜索");
     dict.set("directory.resolve_selected", "解析选中");
@@ -391,6 +487,24 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.archive_board_action", "归档看板");
     dict.set("kanban.archive_board_pending", "正在归档看板及其全部卡片…");
     dict.set("kanban.archive_board_done", "看板已归档;卡片已级联归档。");
+    dict.set("kanban.archive_board_confirm_title", "归档此看板？");
+    dict.set(
+        "kanban.archive_board_confirm_scope",
+        "这将归档该看板及其 {lists} 个活动列表和 {cards} 张活动卡片。",
+    );
+    dict.set(
+        "kanban.archive_board_confirm_recover",
+        "已归档的列表和卡片之后可从「已归档」区恢复。",
+    );
+    dict.set("kanban.archive_board_confirm_confirm", "归档看板");
+    dict.set("kanban.archive_board_confirm_cancel", "取消");
+    dict.set("kanban.archive_list_confirm_title", "归档此列表？");
+    dict.set(
+        "kanban.archive_list_confirm_body",
+        "归档「{title}」后，该列表及其 {cards} 张活动卡片将从看板中隐藏，可从「已归档列表」区恢复。",
+    );
+    dict.set("kanban.archive_list_confirm_confirm", "归档列表");
+    dict.set("kanban.archive_list_confirm_cancel", "取消");
     dict.set("kanban.restore_action", "恢复");
     dict.set("error.circle.realm_mismatch", "Circle 不属于该 Realm。");
     dict.set(
@@ -632,6 +746,13 @@ pub fn chinese_translations() -> TranslationDict {
         "等待 Space 管理员或其他设备发送的 Welcome 消息。",
     );
     dict.set("chat.crypto.needs_verification", "发送方需要验证");
+    // T6: human-readable copy for late-recovery rejections; the raw
+    // protocol reason code is only surfaced via the element tooltip.
+    dict.set(
+        "chat.crypto.late_recovery_rejected",
+        "无法恢复这条消息——加密密钥在你加入前已轮换。",
+    );
+    dict.set("chat.crypto.undecryptable_generic", "此设备无法解密这条消息。");
     dict.set("chat.mls.epoch", "MLS epoch");
     dict.set("chat.mls.key_package", "Key package");
     dict.set("chat.mls.welcome", "Welcome");
@@ -688,6 +809,11 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm.add_member", "添加成员");
     dict.set("realm.settings", "设置");
     dict.set("realm.pin_failed", "Realm 置顶 account-data 写入失败");
+    // Actor-private contact list pinning.
+    dict.set("contact.pin", "置顶联系人");
+    dict.set("contact.unpin", "取消置顶联系人");
+    dict.set("contact.pinned", "已置顶联系人");
+    dict.set("contact.unpinned", "已取消置顶联系人");
     dict.set("chat.empty.title", "暂无可用讨论 track");
     dict.set(
         "chat.empty.description",
@@ -724,6 +850,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("verify_device.generate_qr", "生成二维码");
     dict.set("verify_device.start_sas", "开始 SAS 验证");
     dict.set("verify_device.short_auth_string", "短认证串");
+    dict.set(
+        "verify_device.sas_demo_warning",
+        "尚未完成密钥交换，下方序列仅为演示占位，不能用于验证。",
+    );
+    dict.set(
+        "verify_device.sas_match_disabled_hint",
+        "请先完成 X25519 密钥交换——演示占位序列不能被确认为匹配。",
+    );
 
     // A6.4 - keyboard shortcut help overlay.
     dict.set("shortcuts.title", "键盘快捷键");

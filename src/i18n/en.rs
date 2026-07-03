@@ -312,6 +312,108 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.ban_member_move", "Ban (Move)");
     dict.set("realm_admin.rotate_epoch", "Rotate Epoch");
     dict.set("realm_admin.leave_realm", "Leave");
+    dict.set("realm_admin.leave_confirm_title", "Leave this Realm?");
+    dict.set(
+        "realm_admin.leave_confirm_body",
+        "After leaving you will need a new invitation to rejoin this Realm, and its local cache on this device will be cleared.",
+    );
+    dict.set("realm_admin.leave_confirm_target", "Realm to leave");
+    dict.set("realm_admin.leave_confirm_button", "Leave Realm");
+    dict.set("realm_admin.leave_confirm_cancel", "Cancel");
+    dict.set(
+        "realm_admin.durability_title",
+        "Realm recovery key (durability)",
+    );
+    dict.set(
+        "realm_admin.durability_scheme_not_eligible",
+        "scheme not eligible",
+    );
+    dict.set(
+        "realm_admin.durability_intro",
+        "Declares who can unseal this Realm's history after every member device is lost or all members have left. Changing the policy is a control-plane Move: it only applies to new epochs once a following ck.mls.commit covers the membership frontier, which also triggers re-disclosure to members.",
+    );
+    dict.set(
+        "realm_admin.durability_scheme_warning",
+        "This Realm does not use mls-exporter-aead-v1, so there is no deliverable history_secret; declaring mode != none will be rejected (durability_scheme_incompatible).",
+    );
+    dict.set("realm_admin.durability_mode_label", "Mode");
+    dict.set(
+        "realm_admin.durability_mode_none",
+        "none — no organizational recovery (losing all devices loses history forever)",
+    );
+    dict.set(
+        "realm_admin.durability_mode_org",
+        "org_recovery_key — a single organizational RRK",
+    );
+    dict.set(
+        "realm_admin.durability_mode_threshold",
+        "threshold — k-of-n threshold",
+    );
+    dict.set(
+        "realm_admin.durability_recipients_label",
+        "Recovery recipients",
+    );
+    dict.set(
+        "realm_admin.durability_recipients_hint",
+        "One per line: recipient_id | principal_did | verification_method [ | controller_org_did]",
+    );
+    dict.set(
+        "realm_admin.durability_threshold_label",
+        "Threshold k (of n = recipient count)",
+    );
+    dict.set(
+        "realm_admin.durability_revision_label",
+        "Policy revision (monotonic)",
+    );
+    dict.set(
+        "realm_admin.durability_apply_button",
+        "Apply durability policy",
+    );
+    dict.set("realm_admin.durability_submitting", "Submitting…");
+    dict.set(
+        "realm_admin.durability_submitted",
+        "Submitted ck.realm.policy_components; advance one ck.mls.commit to activate the sealing obligation and trigger re-disclosure.",
+    );
+    dict.set(
+        "realm_admin.durability_submit_failed",
+        "Submit failed: {error}",
+    );
+    dict.set(
+        "realm_admin.durability_parse_failed",
+        "Failed to parse recovery recipients: {error}",
+    );
+    dict.set(
+        "realm_admin.durability_policy_invalid",
+        "Invalid policy: {error}",
+    );
+    dict.set(
+        "realm_admin.durability_err_recipient_fields",
+        "line {line}: expected `recipient_id | principal_did | verification_method`",
+    );
+    dict.set(
+        "realm_admin.durability_err_principal_did",
+        "line {line}: invalid principal DID: {error}",
+    );
+    dict.set(
+        "realm_admin.durability_err_org_did",
+        "line {line}: invalid controller_organization DID: {error}",
+    );
+    dict.set(
+        "realm_admin.durability_err_unknown_mode",
+        "unknown durability mode {mode}",
+    );
+    dict.set(
+        "realm_admin.durability_err_recipients_required",
+        "mode != none requires at least one recovery recipient",
+    );
+    dict.set(
+        "realm_admin.durability_err_duplicate_recipient",
+        "duplicate recipient_id {recipient_id}",
+    );
+    dict.set(
+        "realm_admin.durability_err_threshold_k",
+        "threshold k must satisfy 1 <= k <= n ({n}), got {k}",
+    );
     dict.set("directory.list_contacts", "List");
     dict.set("directory.search_button", "Search");
     dict.set("directory.resolve_selected", "Resolve Selected");
@@ -337,6 +439,24 @@ pub fn english_translations() -> TranslationDict {
         "kanban.archive_board_done",
         "Board archived; cards cascaded to archived.",
     );
+    dict.set("kanban.archive_board_confirm_title", "Archive this board?");
+    dict.set(
+        "kanban.archive_board_confirm_scope",
+        "This archives the board plus {lists} active list(s) and {cards} active card(s) on it.",
+    );
+    dict.set(
+        "kanban.archive_board_confirm_recover",
+        "Archived lists and cards can be restored later from the Archived panels.",
+    );
+    dict.set("kanban.archive_board_confirm_confirm", "Archive board");
+    dict.set("kanban.archive_board_confirm_cancel", "Cancel");
+    dict.set("kanban.archive_list_confirm_title", "Archive this list?");
+    dict.set(
+        "kanban.archive_list_confirm_body",
+        "Archiving \"{title}\" hides the list and its {cards} active card(s) from the board. You can restore it from the Archived lists panel.",
+    );
+    dict.set("kanban.archive_list_confirm_confirm", "Archive list");
+    dict.set("kanban.archive_list_confirm_cancel", "Cancel");
     dict.set("kanban.restore_action", "Restore");
     dict.set("kanban.archived_lists_header", "Archived lists");
     dict.set("kanban.archived_lists_empty", "No archived lists.");
@@ -595,6 +715,16 @@ pub fn english_translations() -> TranslationDict {
         "chat.crypto.needs_verification",
         "Sender needs verification",
     );
+    // T6: human-readable copy for late-recovery rejections; the raw
+    // protocol reason code is only surfaced via the element tooltip.
+    dict.set(
+        "chat.crypto.late_recovery_rejected",
+        "This message can't be recovered — its encryption key was rotated before you joined.",
+    );
+    dict.set(
+        "chat.crypto.undecryptable_generic",
+        "This message can't be decrypted on this device.",
+    );
     dict.set("chat.mls.epoch", "MLS epoch");
     dict.set("chat.mls.key_package", "Key package");
     dict.set("chat.mls.welcome", "Welcome");
@@ -654,6 +784,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm.unpin", "Unpin Realm");
     dict.set("realm.pinned", "Pinned Realm");
     dict.set("realm.pin_failed", "Realm pin account-data save failed");
+    // Actor-private contact list pinning.
+    dict.set("contact.pin", "Pin Contact");
+    dict.set("contact.unpin", "Unpin Contact");
+    dict.set("contact.pinned", "Pinned Contact");
+    dict.set("contact.unpinned", "Unpinned Contact");
     dict.set("realm.add_member", "Add Member");
     dict.set("realm.settings", "Settings");
     dict.set("chat.empty.title", "No discussion track available");
@@ -697,6 +832,14 @@ pub fn english_translations() -> TranslationDict {
     dict.set(
         "verify_device.short_auth_string",
         "Short Authentication String",
+    );
+    dict.set(
+        "verify_device.sas_demo_warning",
+        "Key exchange is not complete yet. The sequence below is a placeholder and must not be used for verification.",
+    );
+    dict.set(
+        "verify_device.sas_match_disabled_hint",
+        "Complete the X25519 key exchange first — the placeholder sequence cannot be confirmed as a match.",
     );
 
     // A6.4 — keyboard shortcut help overlay.

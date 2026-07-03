@@ -138,9 +138,9 @@ pub(super) fn toggle_sidebar_contact_pin(
         .write()
         .set_contact_remark(actor_id.clone(), next.clone());
     let action_status = if next_pinned {
-        "Pinned Contact"
+        crate::i18n::tr("contact.pinned")
     } else {
-        "Unpinned Contact"
+        crate::i18n::tr("contact.unpinned")
     };
     let actor_label = crate::views::helpers::display_name_for_did(&state_store.read(), &actor_id);
     status.set(format!("{action_status}: {actor_label}"));

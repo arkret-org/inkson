@@ -52,6 +52,10 @@ pub fn RealmAdminPanel(
     let mut destroy_confirm_open = use_signal(|| false);
     let mut danger_confirm_text = use_signal(String::new);
     let mut destroy_reason = use_signal(|| "operator_request".to_owned());
+    // Leave Realm confirmation dialog (no ID re-typing: leaving is
+    // recoverable-by-invite, unlike destroy, but still needs one explicit
+    // confirmation step before the membership event is submitted).
+    let mut leave_confirm_open = use_signal(|| false);
     // Realm-admin grant inputs (see realm-admin-grant-card). The subject is
     // the DID being made / removed as admin; the grant id is minted
     // client-side on grant and re-entered on revoke (the soland reducer
@@ -1077,57 +1081,105 @@ pub fn RealmAdminPanel(
                 }
             }
 
-            // Leave Realm
+            // Leave Realm. The button only opens the confirmation dialog;
+            // the membership event is submitted from the dialog's confirm
+            // button below.
             div { class: "event", "data-testid": "leave-realm",
                 div { class: "event-head", span { "Leave Realm" } span { "" } }
                 div { class: "actions",
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "leave-realm-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            let realm = selected_realm_id.clone();
-                            let actor_account_did = account_did.clone();
-                            let mut state_store = state_store;
-                            let mut sync_cursor = sync_cursor;
-                            move |_| {
-                                let base = base.clone();
-                                let realm = realm.clone();
-                                let api_token = token();
-                                // Membership events are authored by the account/principal DID
-                                // (the authenticated session actor), not the device DID, or the server
-                                // rejects them with `actor_session_mismatch`.
-                                let actor_id = actor_account_did.trim().to_owned();
-                                if actor_id.is_empty() {
-                                    status_msg.set("Leave Realm failed: account is not connected".to_owned());
-                                    return;
-                                }
-                                spawn(async move {
-                                    let realm_for_msg = realm.clone();
-                                    match crate::views::helpers::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move {
-                                            api.leave_realm(&realm, &actor_id).await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(_) => {
-                                            state_store.write().forget_realm_tree_projection(&realm_for_msg);
-                                            sync_cursor.set("-".to_owned());
-                                            status_msg.set(format!(
-                                                "left {realm_for_msg}; local cache cleared"
-                                            ));
-                                        }
-                                        Err(err) => status_msg.set(format!(
-                                            "leave failed: {}", err.display()
-                                        )),
-                                    }
-                                });
-                            }
-                        },
+                        onclick: move |_| leave_confirm_open.set(true),
                         {crate::i18n::tr("realm_admin.leave_realm")}
+                    }
+                }
+            }
+
+            if leave_confirm_open() {
+                crate::components::DismissiblePopup {
+                    overlay_class: "modal-backdrop",
+                    surface_class: "modal danger-confirm-modal",
+                    overlay_test_id: Some("leave-realm-confirm-modal".to_owned()),
+                    surface_test_id: Some("leave-realm-confirm-dialog".to_owned()),
+                    aria_label: crate::i18n::tr("realm_admin.leave_confirm_title"),
+                    on_dismiss: move |_| leave_confirm_open.set(false),
+                    div { class: "modal-head",
+                        h3 { {crate::i18n::tr("realm_admin.leave_confirm_title")} }
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            class: "icon-button close",
+                            "aria-label": "Close",
+                            "data-testid": "leave-realm-confirm-close",
+                            onclick: move |_| leave_confirm_open.set(false),
+                            "\u{2715}"
+                        }
+                    }
+                    div { class: "modal-body workflow-form",
+                        div { class: "callout danger", "data-testid": "leave-realm-impact",
+                            p { {crate::i18n::tr("realm_admin.leave_confirm_body")} }
+                        }
+                        div { class: "metric",
+                            strong { {crate::i18n::tr("realm_admin.leave_confirm_target")} }
+                            span { class: "mono", "data-testid": "leave-realm-target-id", "{selected_realm_id}" }
+                        }
+                    }
+                    div { class: "modal-foot",
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "leave-realm-cancel-button",
+                            onclick: move |_| leave_confirm_open.set(false),
+                            {crate::i18n::tr("realm_admin.leave_confirm_cancel")}
+                        }
+                        Button {
+                            variant: ButtonVariant::Destructive,
+                            "data-testid": "leave-realm-confirm-button",
+                            onclick: {
+                                let base = base_url.clone();
+                                let realm = selected_realm_id.clone();
+                                let actor_account_did = account_did.clone();
+                                let mut state_store = state_store;
+                                let mut sync_cursor = sync_cursor;
+                                move |_| {
+                                    let base = base.clone();
+                                    let realm = realm.clone();
+                                    let api_token = token();
+                                    // Membership events are authored by the account/principal DID
+                                    // (the authenticated session actor), not the device DID, or the server
+                                    // rejects them with `actor_session_mismatch`.
+                                    let actor_id = actor_account_did.trim().to_owned();
+                                    if actor_id.is_empty() {
+                                        status_msg.set("Leave Realm failed: account is not connected".to_owned());
+                                        return;
+                                    }
+                                    leave_confirm_open.set(false);
+                                    spawn(async move {
+                                        let realm_for_msg = realm.clone();
+                                        match crate::views::helpers::with_authed_api(
+                                            &base,
+                                            api_token,
+                                            |api| async move {
+                                                api.leave_realm(&realm, &actor_id).await
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(_) => {
+                                                state_store.write().forget_realm_tree_projection(&realm_for_msg);
+                                                sync_cursor.set("-".to_owned());
+                                                status_msg.set(format!(
+                                                    "left {realm_for_msg}; local cache cleared"
+                                                ));
+                                            }
+                                            Err(err) => status_msg.set(format!(
+                                                "leave failed: {}", err.display()
+                                            )),
+                                        }
+                                    });
+                                }
+                            },
+                            {crate::i18n::tr("realm_admin.leave_confirm_button")}
+                        }
                     }
                 }
             }

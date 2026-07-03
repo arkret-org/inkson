@@ -24,7 +24,7 @@ use account_data::*;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
-use dioxus_router::hooks::{use_navigator, use_route};
+use dioxus_router::hooks::use_route;
 use invite_locator::*;
 use sections::*;
 use serde_json::{Map, Value, json};
@@ -419,12 +419,7 @@ pub fn SettingsPanel(
     status: Signal<String>,
 ) -> Element {
     let route = use_route::<Route>();
-    let navigator = use_navigator();
     let active_section = SettingsSection::from_slug(route.settings_section());
-    let route_diagnostics_mode = DiagnosticsMode::from_slug(route.settings_section());
-    let mut diagnostics_mode =
-        use_signal(|| route_diagnostics_mode.unwrap_or(DiagnosticsMode::Developer));
-    let active_diagnostics_mode = route_diagnostics_mode.unwrap_or(diagnostics_mode());
     let mut presence_visibility_choice = use_signal(|| {
         state_store
             .read()
@@ -3235,48 +3230,20 @@ pub fn SettingsPanel(
                                     }
                                 }
                             }
-                            // T7.1 — entry point into the Developer Tools /
-                            // Diagnostics panel that hosts the protocol-level
-                            // surfaces (raw event log, audit rows, schema /
-                            // profile / event-kind references) which used to
-                            // leak into the main strand.
-                            div { class: "event settings-diagnostics-switcher", "data-testid": "settings-diagnostics-switcher",
-                                div { class: "event-head",
-                                    span { "Diagnostics explorer" }
-                                    span { class: "badge blue", {crate::i18n::tr("developer.subtitle")} }
-                                }
-                                div { class: "muted", {crate::i18n::tr("developer.hint")} }
-                                div { class: "actions",
-                                    Button {
-                                        variant: if active_diagnostics_mode == DiagnosticsMode::Developer { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                                        size: ButtonSize::Sm,
-                                        "data-testid": "open-developer-tools",
-                                        "aria-pressed": if active_diagnostics_mode == DiagnosticsMode::Developer { "true" } else { "false" },
-                                        onclick: move |_| {
-                                            diagnostics_mode.set(DiagnosticsMode::Developer);
-                                            let _ = navigator.push(DiagnosticsMode::Developer.route());
-                                        },
-                                        "Developer Tools"
-                                    }
-                                    Button {
-                                        variant: if active_diagnostics_mode == DiagnosticsMode::Audit { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                                        size: ButtonSize::Sm,
-                                        "data-testid": "open-audit-from-settings",
-                                        "aria-pressed": if active_diagnostics_mode == DiagnosticsMode::Audit { "true" } else { "false" },
-                                        onclick: move |_| {
-                                            diagnostics_mode.set(DiagnosticsMode::Audit);
-                                            let _ = navigator.push(DiagnosticsMode::Audit.route());
-                                        },
-                                        "Audit log"
-                                    }
-                                }
-                            }
-                            if active_diagnostics_mode == DiagnosticsMode::Developer {
-                                crate::views::developer::DeveloperToolsPanel { state_store }
-                            }
-                            if active_diagnostics_mode == DiagnosticsMode::Audit {
-                                crate::views::audit::AuditPanel { state_store }
-                            }
+                        }
+                    }
+
+                    // ── Audit log (promoted from the Release sub-tab) ─────
+                    if active_section == SettingsSection::Audit {
+                        div { class: "settings-content-stack",
+                            crate::views::audit::AuditPanel { state_store }
+                        }
+                    }
+
+                    // ── Developer tools (promoted from the Release sub-tab) ──
+                    if active_section == SettingsSection::Developer {
+                        div { class: "settings-content-stack",
+                            crate::views::developer::DeveloperToolsPanel { state_store }
                         }
                     }
 

@@ -133,6 +133,12 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("sas-emoji-row")).toBeVisible();
     await expect(page.getByTestId("sas-digits")).toBeVisible();
     await expect(page.getByTestId("sas-match-button")).toBeVisible();
+    // No X25519 key exchange happened in this flow, so the SAS shown is
+    // the demo placeholder: the demo warning must render and "They
+    // Match" must stay disabled until a real shared secret exists.
+    await expect(page.getByTestId("sas-demo-warning")).toBeVisible();
+    await expect(page.getByTestId("sas-match-button")).toBeDisabled();
+    await expect(page.getByTestId("sas-mismatch-button")).toBeEnabled();
   });
 
   test("device pairing: generated request is accepted through account gate", async ({

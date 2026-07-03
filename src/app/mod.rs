@@ -3823,10 +3823,12 @@ pub fn RouterView() -> Element {
                                     let is_pinned_contact =
                                         contact_remark.as_ref().is_some_and(|remark| remark.pinned);
                                     let pin_contact_label = if is_pinned_contact {
-                                        "Unpin Contact"
+                                        crate::i18n::tr("contact.unpin")
                                     } else {
-                                        "Pin Contact"
+                                        crate::i18n::tr("contact.pin")
                                     };
+                                    let pinned_contact_badge_label =
+                                        crate::i18n::tr("contact.pinned");
                                     let contact_menu_key = format!("contact:{peer}");
                                     let contact_menu_is_open =
                                         sidebar_row_menu_open().as_deref()
@@ -3908,7 +3910,7 @@ pub fn RouterView() -> Element {
                                                     span {
                                                         class: "pill muted xs realm-pin-badge",
                                                         "data-testid": "contact-sidebar-pinned-badge",
-                                                        title: "Pinned Contact",
+                                                        title: "{pinned_contact_badge_label}",
                                                         UiIcon { name: "pin" }
                                                     }
                                                 }

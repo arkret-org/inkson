@@ -7,8 +7,8 @@
 //! when they need to see the canonical identifiers.
 //!
 //! The panel is intentionally a thin protocol inspector. Audit rows are
-//! surfaced by the sibling Diagnostics audit tab so the two operator tasks
-//! remain visually distinct.
+//! surfaced by the dedicated "Audit log" settings section so the two
+//! operator tasks remain visually distinct.
 
 use dioxus::prelude::*;
 

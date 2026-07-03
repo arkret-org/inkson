@@ -103,7 +103,8 @@ pub(super) fn route_label(route: &Route) -> &'static str {
             "repair" => "Repair & Danger",
             _ => "Realm Settings",
         },
-        Route::Audit | Route::Developer => "Diagnostics",
+        Route::Audit => "Audit log",
+        Route::Developer => "Developer tools",
         Route::Kanban
         | Route::KanbanRealm { .. }
         | Route::KanbanBoard { .. }
@@ -136,7 +137,8 @@ pub(super) fn settings_route_label(section: &str) -> &'static str {
         "invite-policy" | "invite_policy" => "Who can invite me",
         "blocklist" | "blocked-users" => "Blocked actors",
         "capabilities" => "Capabilities",
-        "audit" | "audit-log" | "developer" | "developer-tools" => "Diagnostics",
+        "audit" | "audit-log" => "Audit log",
+        "developer" | "developer-tools" => "Developer tools",
         "theme" => "Appearance & locale",
         "release" => "Diagnostics",
         _ => "Settings",

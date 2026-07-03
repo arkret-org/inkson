@@ -712,6 +712,13 @@ pub fn KanbanPanel(
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
     let mut mls_sidecar_restore_key_seen = use_signal(String::new);
     let mut board_popover = use_signal(BoardToolbarPopover::default);
+    // Destructive-action confirmation state (same modal pattern as the
+    // realm-admin danger zone). Board archive is a client-driven cascade
+    // over every active card + list, so it must never fire on a bare click.
+    let mut archive_board_confirm_open = use_signal(|| false);
+    // Column pending list-archive confirmation:
+    // `(space_container_id, list_title, active_card_count)`.
+    let mut list_archive_confirm = use_signal(|| Option::<(String, String, usize)>::None);
     let mut editing_card_detail = use_signal(|| false);
     let mut card_edit_scope = use_signal(CardEditScope::default);
     let mut card_detail_sidebar_visible = use_signal(|| true);
@@ -1783,26 +1790,12 @@ pub fn KanbanPanel(
                                 class: "btn board-archive-board",
                                 "data-testid": "archive-board-button",
                                 title: crate::i18n::tr("kanban.archive_board_action"),
-                                onclick: {
-                                    // End-of-week bulk archive: cascade-archive
-                                    // every active card + list, then the board
-                                    // Space itself (client-driven cascade; v1 has
-                                    // no server Space->Strand cascade).
-                                    let base = base_url.clone();
-                                    let realm = selected_realm_id.clone();
-                                    let actor = account_did.clone();
-                                    move |_| {
-                                        dispatch_board_archive_cascade(
-                                            base.clone(),
-                                            token,
-                                            realm.clone(),
-                                            actor.clone(),
-                                            selected_board_space_id(),
-                                            state_store,
-                                            board_status,
-                                        );
-                                    }
-                                },
+                                // End-of-week bulk archive cascades every active
+                                // card + list before the board Space itself, so
+                                // the click only opens the confirmation dialog;
+                                // `dispatch_board_archive_cascade` runs from the
+                                // dialog's confirm button.
+                                onclick: move |_| archive_board_confirm_open.set(true),
                                 {crate::i18n::tr("kanban.archive_board_action")}
                             }
                         }
@@ -2771,21 +2764,25 @@ pub fn KanbanPanel(
                                     disabled: !gate.enabled,
                                     title: title_text,
                                     onclick: {
-                                        let base = base_url.clone();
-                                        let realm = selected_realm_id.clone();
-                                        let actor = account_did.clone();
+                                        // Archiving a list hides all of its cards
+                                        // from the board grid, so route the click
+                                        // through the confirmation dialog instead
+                                        // of submitting `ck.space.archive` directly.
                                         let space_container_id = column.id.clone();
+                                        let list_title = column.title.clone();
+                                        let active_card_count = column
+                                            .cards
+                                            .iter()
+                                            .filter(|card| {
+                                                card.lifecycle == StrandLifecycleState::Active
+                                            })
+                                            .count();
                                         move |_| {
-                                            dispatch_space_container_lifecycle(
-                                                base.clone(),
-                                                token,
-                                                realm.clone(),
-                                                actor.clone(),
+                                            list_archive_confirm.set(Some((
                                                 space_container_id.clone(),
-                                                SpaceContainerLifecycleState::Archived,
-                                                state_store,
-                                                board_status,
-                                            );
+                                                list_title.clone(),
+                                                active_card_count,
+                                            )));
                                         }
                                     },
                                     {crate::i18n::tr("kanban.archive_action")}
@@ -2981,6 +2978,146 @@ pub fn KanbanPanel(
                                     if !row.card.description.is_empty() {
                                         div { class: "muted", "{row.card.description}" }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Board-archive confirmation dialog. Same DismissiblePopup modal
+            // pattern as the realm-admin danger zone: the destructive cascade
+            // only fires from the explicit confirm button below.
+            if archive_board_confirm_open() {
+                {
+                    // Impact preview mirrors `dispatch_board_archive_cascade`,
+                    // which archives every active card and active list before
+                    // archiving the board Space itself.
+                    let cols = columns();
+                    let active_list_count = cols
+                        .iter()
+                        .filter(|col| col.state == SpaceContainerLifecycleState::Active)
+                        .count();
+                    let active_card_count = cols
+                        .iter()
+                        .flat_map(|col| col.cards.iter())
+                        .filter(|card| card.lifecycle == StrandLifecycleState::Active)
+                        .count();
+                    let scope_line = crate::i18n::tr("kanban.archive_board_confirm_scope")
+                        .replace("{lists}", &active_list_count.to_string())
+                        .replace("{cards}", &active_card_count.to_string());
+                    rsx! {
+                        crate::components::DismissiblePopup {
+                            overlay_class: "modal-backdrop",
+                            surface_class: "modal danger-confirm-modal",
+                            overlay_test_id: Some("archive-board-confirm-modal".to_owned()),
+                            surface_test_id: Some("archive-board-confirm-dialog".to_owned()),
+                            aria_label: crate::i18n::tr("kanban.archive_board_confirm_title"),
+                            on_dismiss: move |_| archive_board_confirm_open.set(false),
+                            div { class: "modal-head",
+                                h3 { {crate::i18n::tr("kanban.archive_board_confirm_title")} }
+                            }
+                            div { class: "modal-body workflow-form",
+                                div { class: "callout danger", "data-testid": "archive-board-confirm-impact",
+                                    p { "{scope_line}" }
+                                    p { {crate::i18n::tr("kanban.archive_board_confirm_recover")} }
+                                }
+                            }
+                            div { class: "modal-foot",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "archive-board-cancel-button",
+                                    onclick: move |_| archive_board_confirm_open.set(false),
+                                    {crate::i18n::tr("kanban.archive_board_confirm_cancel")}
+                                }
+                                Button {
+                                    variant: ButtonVariant::Destructive,
+                                    "data-testid": "archive-board-confirm-button",
+                                    onclick: {
+                                        // Confirmed end-of-week bulk archive:
+                                        // cascade-archive every active card +
+                                        // list, then the board Space itself
+                                        // (client-driven cascade; v1 has no
+                                        // server Space->Strand cascade).
+                                        let base = base_url.clone();
+                                        let realm = selected_realm_id.clone();
+                                        let actor = account_did.clone();
+                                        move |_| {
+                                            archive_board_confirm_open.set(false);
+                                            dispatch_board_archive_cascade(
+                                                base.clone(),
+                                                token,
+                                                realm.clone(),
+                                                actor.clone(),
+                                                selected_board_space_id(),
+                                                state_store,
+                                                board_status,
+                                            );
+                                        }
+                                    },
+                                    {crate::i18n::tr("kanban.archive_board_confirm_confirm")}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // List-archive confirmation dialog (lighter single-step variant of
+            // the board dialog above). Archiving a list hides its cards from
+            // the board grid until the list is restored, so it warrants a
+            // confirmation even though it is reversible.
+            if let Some((confirm_list_id, confirm_list_title, confirm_card_count)) =
+                list_archive_confirm()
+            {
+                {
+                    let body_line = crate::i18n::tr("kanban.archive_list_confirm_body")
+                        .replace("{title}", &confirm_list_title)
+                        .replace("{cards}", &confirm_card_count.to_string());
+                    rsx! {
+                        crate::components::DismissiblePopup {
+                            overlay_class: "modal-backdrop",
+                            surface_class: "modal danger-confirm-modal",
+                            overlay_test_id: Some("list-archive-confirm-modal".to_owned()),
+                            surface_test_id: Some("list-archive-confirm-dialog".to_owned()),
+                            aria_label: crate::i18n::tr("kanban.archive_list_confirm_title"),
+                            on_dismiss: move |_| list_archive_confirm.set(None),
+                            div { class: "modal-head",
+                                h3 { {crate::i18n::tr("kanban.archive_list_confirm_title")} }
+                            }
+                            div { class: "modal-body workflow-form",
+                                p { "data-testid": "list-archive-confirm-impact", "{body_line}" }
+                            }
+                            div { class: "modal-foot",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "list-archive-cancel-button",
+                                    onclick: move |_| list_archive_confirm.set(None),
+                                    {crate::i18n::tr("kanban.archive_list_confirm_cancel")}
+                                }
+                                Button {
+                                    variant: ButtonVariant::Destructive,
+                                    "data-testid": "list-archive-confirm-button",
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let realm = selected_realm_id.clone();
+                                        let actor = account_did.clone();
+                                        let space_container_id = confirm_list_id.clone();
+                                        move |_| {
+                                            list_archive_confirm.set(None);
+                                            dispatch_space_container_lifecycle(
+                                                base.clone(),
+                                                token,
+                                                realm.clone(),
+                                                actor.clone(),
+                                                space_container_id.clone(),
+                                                SpaceContainerLifecycleState::Archived,
+                                                state_store,
+                                                board_status,
+                                            );
+                                        }
+                                    },
+                                    {crate::i18n::tr("kanban.archive_list_confirm_confirm")}
                                 }
                             }
                         }
