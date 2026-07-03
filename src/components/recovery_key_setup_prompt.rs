@@ -8,7 +8,9 @@ use dioxus::prelude::*;
 use dioxus_router::hooks::use_navigator;
 
 use crate::local_state::LocalStateStore;
-use crate::recovery_crypto::{generate_recovery_key, recovery_key_confirmation_matches};
+use crate::recovery_crypto::{
+    RecoveryKeyConfirmationDiff, generate_recovery_key, recovery_key_confirmation_diff,
+};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
@@ -22,9 +24,10 @@ use crate::views::recovery::RecoveryKeyBackupOutcome;
 /// is an authorized, verified key-management device for the account. So we:
 ///
 /// 1. generate the 24 words **in memory only** — nothing persisted, nothing shown;
-/// 2. attempt the server backup (`upload_recovery_key_account_backup`, which now persists local
-///    metadata ONLY on success);
-/// 3. reveal the words and mark recovery configured **only** on `Established`;
+/// 2. attempt the server backup (`upload_recovery_key_account_backup`);
+/// 3. reveal the words **only** on `Established`; local recovery metadata stays pending until
+///    the user passes the transcription check ("Confirm saved key"), which finalizes it via
+///    `save_generated_recovery_key_metadata`;
 /// 4. on `DeviceNotAuthorized` discard the key and route the user to authorize this device /
 ///    restore with their existing Recovery Key — never leave a divergent root behind.
 fn begin_recovery_key_setup(
@@ -358,20 +361,39 @@ pub fn RecoveryKeySetupPrompt(
                             onclick: {
                                 let saved_recovery_key = generated_now.clone();
                                 move |_| {
-                                    if !recovery_key_confirmation_matches(
+                                    match recovery_key_confirmation_diff(
                                         &saved_recovery_key,
                                         &confirmation_input(),
                                     ) {
-                                        status.set(
-                                            "The entered words do not match this Recovery Key. Check your saved copy, or generate a new key and save that one instead."
-                                                .to_owned(),
-                                        );
-                                        return;
+                                        RecoveryKeyConfirmationDiff::Match => {}
+                                        RecoveryKeyConfirmationDiff::WordCount { entered } => {
+                                            status.set(format!(
+                                                "You entered {entered} of 24 words. Complete the phrase, then confirm again."
+                                            ));
+                                            return;
+                                        }
+                                        RecoveryKeyConfirmationDiff::MismatchAt { index } => {
+                                            status.set(format!(
+                                                "Word {index} does not match this Recovery Key. Fix it and confirm again."
+                                            ));
+                                            return;
+                                        }
                                     }
                                     let actor = account_did();
                                     if !actor.trim().is_empty()
                                         && !saved_recovery_key.trim().is_empty()
                                     {
+                                        // Transcription verified — finalize the pending
+                                        // enrollment. The server backup was accepted before
+                                        // the words were revealed; local metadata
+                                        // (fingerprint / public key / rotated_at) lands
+                                        // only now, on verify success.
+                                        let mut store_signal = state_store;
+                                        let _ = crate::views::recovery::save_generated_recovery_key_metadata(
+                                            &mut store_signal,
+                                            &actor,
+                                            &saved_recovery_key,
+                                        );
                                         let fingerprint =
                                             crate::recovery_crypto::fingerprint_recovery_key(
                                                 &saved_recovery_key,

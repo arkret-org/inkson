@@ -398,6 +398,49 @@ pub fn recovery_key_confirmation_matches(recovery_key: &str, confirmation: &str)
     normalize_recovery_key_input(confirmation).as_deref() == Some(expected.as_str())
 }
 
+/// Word-level comparison of a confirmation entry against the displayed
+/// Recovery Key, so transcription-check UIs can point at the first wrong word
+/// instead of a dead-end "does not match".
+///
+/// Only the 1-based *position* of the first mismatch is reported — never the
+/// expected word — so nothing beyond what is already on screen leaks through
+/// status text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecoveryKeyConfirmationDiff {
+    /// Every word matches the displayed key (same predicate as
+    /// [`recovery_key_confirmation_matches`]).
+    Match,
+    /// The entry has the wrong number of words.
+    WordCount { entered: usize },
+    /// 1-based index of the first word that differs from the displayed key.
+    MismatchAt { index: usize },
+}
+
+pub fn recovery_key_confirmation_diff(
+    recovery_key: &str,
+    confirmation: &str,
+) -> RecoveryKeyConfirmationDiff {
+    let expected: Vec<String> = recovery_key
+        .split_whitespace()
+        .map(|word| word.to_ascii_lowercase())
+        .collect();
+    let entered: Vec<String> = confirmation
+        .split_whitespace()
+        .map(|word| word.to_ascii_lowercase())
+        .collect();
+    if entered.len() != expected.len() {
+        return RecoveryKeyConfirmationDiff::WordCount {
+            entered: entered.len(),
+        };
+    }
+    for (idx, (expected_word, entered_word)) in expected.iter().zip(entered.iter()).enumerate() {
+        if expected_word != entered_word {
+            return RecoveryKeyConfirmationDiff::MismatchAt { index: idx + 1 };
+        }
+    }
+    RecoveryKeyConfirmationDiff::Match
+}
+
 /// SHA-256 the recovery key (UTF-8) and return `"sha256:<hex>"`. We only
 /// persist the digest on disk so the plaintext is gone the moment the
 /// user dismisses the "copy / print" affordance.
@@ -858,6 +901,50 @@ mod tests {
         assert!(!recovery_key_confirmation_matches(&phrase, &other));
         assert!(!recovery_key_confirmation_matches(&phrase, "not the key"));
         assert!(!recovery_key_confirmation_matches("not the key", &phrase));
+    }
+
+    #[test]
+    fn recovery_key_confirmation_diff_matches_case_and_spacing_noise() {
+        let phrase = format_recovery_key(&[0x00u8; RECOVERY_KEY_BYTES]);
+        let noisy = phrase
+            .split_whitespace()
+            .map(str::to_ascii_uppercase)
+            .collect::<Vec<_>>()
+            .join("   ");
+        assert_eq!(
+            recovery_key_confirmation_diff(&phrase, &noisy),
+            RecoveryKeyConfirmationDiff::Match
+        );
+    }
+
+    #[test]
+    fn recovery_key_confirmation_diff_reports_first_mismatched_word() {
+        let phrase = format_recovery_key(&[0x00u8; RECOVERY_KEY_BYTES]);
+        let mut words: Vec<&str> = phrase.split_whitespace().collect();
+        words[6] = "zebra";
+        let entry = words.join(" ");
+        assert_eq!(
+            recovery_key_confirmation_diff(&phrase, &entry),
+            RecoveryKeyConfirmationDiff::MismatchAt { index: 7 }
+        );
+    }
+
+    #[test]
+    fn recovery_key_confirmation_diff_reports_word_count() {
+        let phrase = format_recovery_key(&[0x00u8; RECOVERY_KEY_BYTES]);
+        let short = phrase
+            .split_whitespace()
+            .take(20)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            recovery_key_confirmation_diff(&phrase, &short),
+            RecoveryKeyConfirmationDiff::WordCount { entered: 20 }
+        );
+        assert_eq!(
+            recovery_key_confirmation_diff(&phrase, ""),
+            RecoveryKeyConfirmationDiff::WordCount { entered: 0 }
+        );
     }
 
     #[test]

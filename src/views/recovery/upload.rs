@@ -2,7 +2,6 @@
 
 use dioxus::prelude::*;
 
-use super::state::save_generated_recovery_key_metadata;
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::with_authed_api;
 
@@ -16,8 +15,11 @@ use crate::views::helpers::with_authed_api;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecoveryKeyBackupOutcome {
     /// Server accepted the recovery policy + DID-recovery (and, when present,
-    /// account-secret) backup. Only now may the device reveal the 24 words and
-    /// persist local recovery metadata.
+    /// account-secret) backup. Only now may the device reveal the 24 words.
+    /// Local recovery metadata (fingerprint / rotated_at / public key) stays
+    /// pending until the user passes the transcription check — the caller
+    /// finalizes it via `save_generated_recovery_key_metadata` on verify
+    /// success, so an abandoned enrollment never claims to be configured.
     Established,
     /// The server refused because this session device is not an authorized,
     /// verified key-management device (`device_not_authorized`). The generated
@@ -103,18 +105,13 @@ pub(crate) fn upload_recovery_key_account_backup(
         match result {
             Ok((did_backup_id, account_backup_id)) => {
                 // Fail-closed ordering: the server accepted the backup, so this
-                // device is an authorized key-management device for the account.
-                // ONLY now do we persist local recovery metadata — never before
-                // the server confirms, so an unauthorized device can't leave a
-                // divergent Recovery Key root behind. `save_generated_recovery_
-                // key_metadata` manages its own signal borrow, so it must run
-                // outside any held `try_write` guard.
-                let mut state_store_signal = state_store;
-                let _ = save_generated_recovery_key_metadata(
-                    &mut state_store_signal,
-                    &actor_for_sidecar,
-                    &recovery_key,
-                );
+                // device is an authorized key-management device and the caller
+                // may now reveal the 24 words. Local recovery metadata is NOT
+                // persisted here — enrollment stays pending until the user
+                // passes the transcription check, at which point the caller
+                // runs `save_generated_recovery_key_metadata`. The server-side
+                // backup marker below records a server fact (the ciphertext
+                // exists) and therefore lands at accept time.
                 if let Ok(mut store) = state_store.try_write() {
                     let configured_backup_id = account_backup_id
                         .as_deref()

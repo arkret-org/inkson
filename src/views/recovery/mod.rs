@@ -3,12 +3,14 @@
 //!
 //! - **Recovery Key (24 words)**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. This
 //!   is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and therefore
-//!   the `MlsUnlockPrompt` restore path) only accepts this 24-word format, so generating the key
-//!   publishes the recovery policy and a `did_recovery` backup immediately, then wraps the account
-//!   MLS secret behind it when one exists (see `upload_recovery_key_account_backup`). The mnemonic
-//!   plaintext only lives in memory between Generate and the user's Copy interaction; only a
-//!   SHA-256 fingerprint plus rotation timestamp are persisted via
-//!   `LocalStateStore::save_private_data` — the words themselves are never uploaded.
+//!   the `MlsUnlockPrompt` restore path) only accepts this 24-word format. Enrollment is
+//!   server-first (design: `docs/design/recovery-key-server-first.md`): generating the key
+//!   publishes the recovery policy and a `did_recovery` backup, wraps the account MLS secret
+//!   behind it when one exists (see `upload_recovery_key_account_backup`), and the words are shown
+//!   ONLY after the server accepts — so a rejected registration never invalidates a copy the user
+//!   already wrote down. Local metadata (SHA-256 fingerprint + rotation timestamp, via
+//!   `LocalStateStore::save_private_data`) stays pending until the user passes the transcription
+//!   check; the words themselves are never uploaded.
 //! - **Backup history**: summarizes the server-side `ck.schema.key_backup.v1` ciphertext envelopes
 //!   by creation time, emphasizing the latest encrypted backup without exposing per-backup
 //!   controls.

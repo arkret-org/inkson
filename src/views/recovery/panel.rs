@@ -1,14 +1,15 @@
 //! The `RecoveryPanel` Dioxus component.
 
 use dioxus::prelude::*;
+use dioxus_router::hooks::use_navigator;
 
 use super::backup_summary::{
     backup_inventory_status, fmt_backup_timestamp, parse_backup_list, sorted_backups_latest_first,
 };
 use super::helpers::{copy_recovery_text_to_clipboard, passkey_wrap_aad};
-use super::state::{fmt_relative, load_state, save_state};
+use super::state::{fmt_relative, load_state, save_generated_recovery_key_metadata, save_state};
 use super::types::{BackupSummaryRow, Guardian, PasskeyRecoveryWrap, RecoveryState};
-use super::upload::upload_recovery_key_account_backup;
+use super::upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};
 use crate::components::HelpTip;
 // SyncBadge / SyncBadgeState are shared in `crate::components::sync_badge`.
 // The Recovery view renders the Recovery Key backup state through the shared
@@ -18,9 +19,9 @@ use crate::components::SyncBadgeState as SyncBadge;
 use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
-    fingerprint_recovery_key, generate_passkey_wrap_salt, generate_recovery_key,
-    normalize_recovery_key_input, open_recovery_key_with_passkey_prf,
-    recovery_key_confirmation_matches, seal_recovery_key_with_passkey_prf,
+    RecoveryKeyConfirmationDiff, fingerprint_recovery_key, generate_passkey_wrap_salt,
+    generate_recovery_key, normalize_recovery_key_input, open_recovery_key_with_passkey_prf,
+    recovery_key_confirmation_diff, seal_recovery_key_with_passkey_prf,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
@@ -29,6 +30,21 @@ use crate::ui::textarea::Textarea;
 use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 
 const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
+
+/// Server-first enrollment phases. The plaintext key lives in memory only
+/// during `Registering` (not yet on screen) and `Transcribe` (on screen,
+/// awaiting the transcription check).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EnrollPhase {
+    /// No enrollment in flight.
+    Idle,
+    /// Key generated in memory; waiting for the server to accept the backup.
+    /// The words are never shown in this phase, so a rejection costs nothing.
+    Registering,
+    /// Server accepted the backup; the words are on screen and local metadata
+    /// stays pending until the user re-enters them correctly.
+    Transcribe,
+}
 
 #[component]
 pub fn RecoveryPanel(
@@ -51,6 +67,11 @@ pub fn RecoveryPanel(
     let mut passkey_status = use_signal(String::new);
     let mut passkey_recovery_key_input = use_signal(String::new);
     let mut recovery_key_confirm_input = use_signal(String::new);
+    let mut enroll_phase = use_signal(|| EnrollPhase::Idle);
+    let mut confirm_attempts = use_signal(|| 0u32);
+    let mut copied_feedback = use_signal(|| false);
+    let mut device_unauthorized = use_signal(|| false);
+    let navigator = use_navigator();
 
     // Social recovery state
     let mut threshold = use_signal(|| initial.sss_threshold);
@@ -114,18 +135,44 @@ pub fn RecoveryPanel(
                     HelpTip { text: "The Recovery Key (24 words) is the only recovery credential. Cokret never stores it on the server; backups are encrypted on-device before upload. A recovery credential may unlock backup material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session proof." }
                 }
                 div { class: "metric-grid", "data-testid": "recovery-overview",
-                    div { class: "metric",
+                    div { class: "metric", "data-testid": "recovery-status-card",
                         strong { "Recovery Key (24 words)" }
                         span {
-                            if recovery_key_fp().is_empty() { "not generated" } else { "fingerprint stored" }
+                            {
+                                match enroll_phase() {
+                                    EnrollPhase::Registering => "registering with the server…",
+                                    EnrollPhase::Transcribe => "write the words down now",
+                                    EnrollPhase::Idle => {
+                                        if !recovery_key_fp().is_empty() {
+                                            "backed up ✓"
+                                        } else if recovery_key_backed_up {
+                                            "backup on server — unconfirmed here"
+                                        } else {
+                                            "not set ⚠"
+                                        }
+                                    }
+                                }
+                            }
                         }
                         div { class: "muted",
-                            if recovery_key_fp().is_empty() {
-                                "Generate one to enable cross-device recovery"
-                            } else if recovery_key_rotated_at().is_empty() {
-                                "Recovery Key imported on this device"
-                            } else {
-                                "Last rotated {fmt_relative(&recovery_key_rotated_at())}"
+                            {
+                                match enroll_phase() {
+                                    EnrollPhase::Registering => "The 24 words appear only after the server accepts the encrypted backup.".to_owned(),
+                                    EnrollPhase::Transcribe => "Write the words down, then re-enter them below to finish.".to_owned(),
+                                    EnrollPhase::Idle => {
+                                        if !recovery_key_fp().is_empty() {
+                                            if recovery_key_rotated_at().is_empty() {
+                                                "Recovery Key imported on this device".to_owned()
+                                            } else {
+                                                format!("Last rotated {}", fmt_relative(&recovery_key_rotated_at()))
+                                            }
+                                        } else if recovery_key_backed_up {
+                                            "A previous enrollment was never confirmed on this device. Generate a new key to replace it.".to_owned()
+                                        } else {
+                                            "Generate one to enable cross-device recovery".to_owned()
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -155,7 +202,17 @@ pub fn RecoveryPanel(
                 // the single most important value on the panel, not one metric
                 // cell among equals.
                 div { class: "recovery-key-hero",
-                    if !live_recovery_key().is_empty() {
+                    if enroll_phase() == EnrollPhase::Registering {
+                        // Server-first ordering: no words on screen until the
+                        // server accepts the backup, so a rejection can never
+                        // invalidate a copy the user already wrote down.
+                        div { class: "recovery-key-empty", "data-testid": "recovery-key-pending",
+                            strong { "Registering the encrypted backup with the server…" }
+                            span { class: "muted",
+                                "The 24 words are shown only after the server accepts the backup — you will never copy a key that later turns out to be rejected."
+                            }
+                        }
+                    } else if !live_recovery_key().is_empty() {
                         {
                             let words: Vec<String> = live_recovery_key()
                                 .split_whitespace()
@@ -203,7 +260,7 @@ pub fn RecoveryPanel(
                             oninput: move |event: FormEvent| recovery_key_confirm_input.set(event.value()),
                         }
                         div { class: "muted", "data-testid": "recovery-key-confirm-hint",
-                            "The words must match before the plaintext is cleared. If your saved copy is wrong, regenerate and save the new key."
+                            "The words must match before the plaintext is cleared. If a word is wrong, the check tells you which position to fix — no need to regenerate."
                         }
                     }
                 } else if !recovery_key_fp().is_empty() {
@@ -239,35 +296,67 @@ pub fn RecoveryPanel(
                 if !recovery_key_status().is_empty() {
                     div { class: "muted", "data-testid": "recovery-key-status", "{recovery_key_status}" }
                 }
+                if device_unauthorized() {
+                    div { class: "actions",
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "recovery-key-goto-devices",
+                            title: "Authorize this device from one you already use, then come back and generate the key.",
+                            onclick: move |_| {
+                                navigator.push(crate::routes::Route::SettingsDevices);
+                            },
+                            "Open device settings"
+                        }
+                    }
+                }
                 div { class: "actions",
                     Button {
-                        variant: ButtonVariant::Primary,
+                        variant: if enroll_phase() == EnrollPhase::Transcribe { ButtonVariant::Secondary } else { ButtonVariant::Primary },
                         "data-testid": "recovery-key-regenerate",
+                        disabled: enroll_phase() == EnrollPhase::Registering,
+                        title: if enroll_phase() == EnrollPhase::Transcribe {
+                            "Discard the displayed words and register a fresh key with the server."
+                        } else {
+                            "The words are shown only after the server accepts the encrypted backup."
+                        },
                         onclick: {
-                            let actor_key = actor_key.clone();
-                            let mut store = state_store;
                             let base_url = base_url.clone();
                             move |_| {
+                                if enroll_phase() == EnrollPhase::Registering {
+                                    return;
+                                }
                                 match generate_recovery_key() {
                                     Ok(key) => {
-                                        let _ = &mut store;
-                                        let _ = &actor_key;
-                                        let _ = snapshot_state;
-                                        // Reveal the words in-context (a deliberate settings
-                                        // action), but do NOT persist a recovery fingerprint
-                                        // upfront. `upload_recovery_key_account_backup` is
-                                        // fail-closed: it persists local recovery metadata ONLY
-                                        // after the server accepts the backup (i.e. this device
-                                        // passed the verified-device gate). A device the server
-                                        // rejects with `device_not_authorized` therefore never
-                                        // leaves a divergent Recovery Key root behind, and the
-                                        // status line routes the user to authorize / restore.
-                                        live_recovery_key.set(key.clone());
+                                        // Server-first ordering (design:
+                                        // recovery-key-server-first): keep the key in
+                                        // memory only and reveal it exclusively on
+                                        // `Established`, so a rejected registration never
+                                        // shows words the user could copy in vain. Local
+                                        // metadata stays pending until the transcription
+                                        // check passes.
+                                        live_recovery_key.set(String::new());
                                         recovery_key_confirm_input.set(String::new());
+                                        confirm_attempts.set(0);
+                                        copied_feedback.set(false);
+                                        device_unauthorized.set(false);
                                         passkey_status.set(String::new());
-                                        recovery_key_status.set(
-                                            "Recovery Key generated. Setting it up on the server — copy the words now; they are only displayed once.".to_owned()
-                                        );
+                                        enroll_phase.set(EnrollPhase::Registering);
+                                        let reveal_key = key.clone();
+                                        let on_outcome = EventHandler::new(move |outcome: RecoveryKeyBackupOutcome| {
+                                            match outcome {
+                                                RecoveryKeyBackupOutcome::Established => {
+                                                    live_recovery_key.set(reveal_key.clone());
+                                                    enroll_phase.set(EnrollPhase::Transcribe);
+                                                }
+                                                RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
+                                                    enroll_phase.set(EnrollPhase::Idle);
+                                                    device_unauthorized.set(true);
+                                                }
+                                                RecoveryKeyBackupOutcome::Transient => {
+                                                    enroll_phase.set(EnrollPhase::Idle);
+                                                }
+                                            }
+                                        });
                                         upload_recovery_key_account_backup(
                                             base_url.clone(),
                                             token,
@@ -277,7 +366,7 @@ pub fn RecoveryPanel(
                                             key,
                                             recovery_key_status,
                                             None,
-                                            None,
+                                            Some(on_outcome),
                                         );
                                     }
                                     Err(err) => {
@@ -286,7 +375,15 @@ pub fn RecoveryPanel(
                                 }
                             }
                         },
-                        if recovery_key_fp().is_empty() { "Generate" } else { "Regenerate" }
+                        if enroll_phase() == EnrollPhase::Registering {
+                            "Registering…"
+                        } else if enroll_phase() == EnrollPhase::Transcribe {
+                            "Start over with a new key"
+                        } else if recovery_key_fp().is_empty() {
+                            "Generate"
+                        } else {
+                            "Regenerate"
+                        }
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
@@ -295,40 +392,109 @@ pub fn RecoveryPanel(
                         title: "Copy the 24-word Recovery Key to the clipboard.",
                         onclick: move |_| {
                             copy_recovery_text_to_clipboard(&live_recovery_key());
-                            recovery_key_status.set("Recovery Key copied to clipboard. Store it offline and clear it from the screen.".to_owned());
+                            // In-place feedback instead of a status-line string;
+                            // reverts after a moment so repeat copies read clearly.
+                            copied_feedback.set(true);
+                            spawn(async move {
+                                #[cfg(target_arch = "wasm32")]
+                                gloo_timers::future::TimeoutFuture::new(2_000).await;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                tokio::time::sleep(std::time::Duration::from_millis(2_000)).await;
+                                copied_feedback.set(false);
+                            });
                         },
-                        "Copy"
+                        if copied_feedback() { "✓ Copied!" } else { "Copy" }
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "recovery-key-confirm-retry",
+                        disabled: live_recovery_key().is_empty() || recovery_key_confirm_input().is_empty(),
+                        title: "Clear the entry and type the saved words again.",
+                        onclick: move |_| {
+                            recovery_key_confirm_input.set(String::new());
+                        },
+                        "Clear and retry"
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "recovery-key-clear-live",
                         disabled: live_recovery_key().is_empty(),
                         title: "Re-enter the saved 24 words before dropping the plaintext from memory.",
-                        onclick: move |_| {
-                            let current_key = live_recovery_key();
-                            if !recovery_key_confirmation_matches(
-                                &current_key,
-                                &recovery_key_confirm_input(),
-                            ) {
-                                recovery_key_status.set(
-                                    "The entered words do not match the displayed Recovery Key. Check your saved copy, or regenerate a new key and save that instead."
-                                        .to_owned(),
-                                );
-                                return;
+                        onclick: {
+                            let actor_key = actor_key.clone();
+                            let mut store = state_store;
+                            move |_| {
+                                let current_key = live_recovery_key();
+                                match recovery_key_confirmation_diff(
+                                    &current_key,
+                                    &recovery_key_confirm_input(),
+                                ) {
+                                    RecoveryKeyConfirmationDiff::Match => {
+                                        // Transcription verified — finalize the pending
+                                        // enrollment: persist fingerprint / public key /
+                                        // rotated_at now, never earlier.
+                                        let Some((fingerprint, rotated_at)) =
+                                            save_generated_recovery_key_metadata(
+                                                &mut store,
+                                                &actor_key,
+                                                &current_key,
+                                            )
+                                        else {
+                                            recovery_key_status.set(
+                                                "Could not persist local recovery metadata; the words stay on screen. Try again."
+                                                    .to_owned(),
+                                            );
+                                            return;
+                                        };
+                                        recovery_key_fp.set(fingerprint);
+                                        recovery_key_rotated_at.set(rotated_at);
+                                        live_recovery_key.set(String::new());
+                                        recovery_key_confirm_input.set(String::new());
+                                        confirm_attempts.set(0);
+                                        enroll_phase.set(EnrollPhase::Idle);
+                                        recovery_key_status.set(
+                                            "Recovery Key confirmed; plaintext cleared from memory. Recommended next step: create a passkey quick unlock under Advanced options below."
+                                                .to_owned(),
+                                        );
+                                    }
+                                    RecoveryKeyConfirmationDiff::WordCount { entered } => {
+                                        let attempts = confirm_attempts() + 1;
+                                        confirm_attempts.set(attempts);
+                                        let extra = if attempts >= 3 {
+                                            " If your saved copy keeps failing, start over with a new key."
+                                        } else {
+                                            ""
+                                        };
+                                        recovery_key_status.set(format!(
+                                            "You entered {entered} of 24 words. Complete the phrase, then confirm again.{extra}"
+                                        ));
+                                    }
+                                    RecoveryKeyConfirmationDiff::MismatchAt { index } => {
+                                        let attempts = confirm_attempts() + 1;
+                                        confirm_attempts.set(attempts);
+                                        let extra = if attempts >= 3 {
+                                            " If your saved copy keeps failing, start over with a new key."
+                                        } else {
+                                            ""
+                                        };
+                                        recovery_key_status.set(format!(
+                                            "Word {index} does not match the displayed key. Fix it and confirm again.{extra}"
+                                        ));
+                                    }
+                                }
                             }
-                            live_recovery_key.set(String::new());
-                            recovery_key_confirm_input.set(String::new());
-                            recovery_key_status.set("Recovery Key confirmed; plaintext cleared from memory.".to_owned());
                         },
                         "Confirm and clear"
                     }
                 }
             }
 
-            // Passkey quick unlock — browser-local WebAuthn PRF wrapper
-            div { class: "event", "data-testid": "passkey-recovery-section",
-                div { class: "event-head",
-                    span { "Passkey quick unlock" }
+            // Passkey quick unlock — browser-local WebAuthn PRF wrapper.
+            // Advanced, collapsed by default: the status card + main flow above
+            // are the page's primary layer.
+            details { class: "event", "data-testid": "passkey-recovery-section",
+                summary { class: "event-head",
+                    span { "Advanced · Passkey quick unlock" }
                     span { class: "muted", "browser-local WebAuthn PRF" }
                     HelpTip { text: "This wraps the 24-word Recovery Key with a WebAuthn PRF output for this browser/RP context. It is a convenience unlock layer, not a replacement for writing down the 24 words or for fresh-device recovery policy proof. The encrypted wrapper is stored locally; the server never receives the words." }
                 }
@@ -372,9 +538,9 @@ pub fn RecoveryPanel(
                     }
                     div { class: "muted", "data-testid": "passkey-wrap-key-hint",
                         if !live_recovery_key().trim().is_empty() {
-                            "Using the Recovery Key currently displayed above. You can also paste an existing 24-word key here after the words are cleared from screen."
+                            "A Recovery Key setup is in progress; that key will be wrapped automatically — no need to paste it."
                         } else if passkey_recovery_key_input().trim().is_empty() {
-                            "Create passkey unlock becomes available after you generate a new Recovery Key or paste your existing 24 words here."
+                            "Paste your existing 24-word Recovery Key here, or wrap a new one in a single step right after generating it."
                         } else {
                             "Ready to create a browser-local passkey wrapper. The pasted words are cleared after setup succeeds."
                         }
@@ -634,6 +800,17 @@ pub fn RecoveryPanel(
                         },
                     }
                 }
+                div { class: "muted", "data-testid": "sss-progress",
+                    {
+                        let have = guardians().len() as u32;
+                        let need = threshold();
+                        if have >= need {
+                            format!("{have} guardian(s) added — the {need}-guardian threshold is met.")
+                        } else {
+                            format!("{have} of {need} guardians added — add {} more to enable social recovery.", need - have)
+                        }
+                    }
+                }
                 if guardians().is_empty() {
                     div { class: "muted", "data-testid": "no-guardians", "No guardians added yet. Add at least {threshold} to enable social recovery." }
                 } else {
@@ -759,10 +936,14 @@ pub fn RecoveryPanel(
                         variant: ButtonVariant::Secondary,
                         "data-testid": "social-recover-now",
                         disabled: guardians().len() < threshold() as usize,
-                        title: if (guardians().len() as u32) < threshold() {
-                            "Add enough guardians to meet the threshold before rehearsing."
-                        } else {
-                            "Records a Last rehearsed timestamp; integrate with guardian outreach when wired to the server."
+                        title: {
+                            let have = guardians().len() as u32;
+                            let need = threshold();
+                            if have < need {
+                                format!("Add {} more guardian(s) to meet the {need}-guardian threshold before rehearsing.", need - have)
+                            } else {
+                                "Records a Last rehearsed timestamp; integrate with guardian outreach when wired to the server.".to_owned()
+                            }
                         },
                         onclick: {
                             let actor_key = actor_key.clone();
@@ -784,9 +965,9 @@ pub fn RecoveryPanel(
             // Lists only backup creation times. Detailed envelope identifiers,
             // per-backup decrypt controls, and destructive delete controls stay
             // out of this user-facing panel.
-            div { class: "event", "data-testid": "restore-section",
-                div { class: "event-head",
-                    span { "Backup history" }
+            details { class: "event", "data-testid": "restore-section",
+                summary { class: "event-head",
+                    span { "Advanced · Backup history" }
                     span { class: "muted", "server-side ciphertext only" }
                     HelpTip { text: "Shows when encrypted backups were created on the server. Backup contents stay encrypted and are not shown here." }
                 }
@@ -925,11 +1106,13 @@ pub fn RecoveryPanel(
             }
 
             // Recovery write path
-            div { class: "event", "data-testid": "recovery-writeback-explainer",
-                div { class: "event-head",
-                    span { "What happens when recovery succeeds" }
+            details { class: "event", "data-testid": "recovery-writeback-explainer",
+                summary { class: "event-head",
+                    span { "Advanced · What happens when recovery succeeds" }
                     span { "method-specific evidence" }
-                    HelpTip { text: "A complete recovery session should make the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. This panel now keeps backup history visible while policy proof and device authorization remain separate follow-up strands." }
+                }
+                div { class: "muted",
+                    "A complete recovery session makes the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. Backup history stays visible above; policy proof and device authorization are separate follow-up strands."
                 }
             }
         }
