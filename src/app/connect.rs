@@ -1080,7 +1080,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             }
                             let realm_title_hints = invite_notifications
                                 .as_deref()
-                                .map(crate::views::notifications::realm_title_hints_from_values)
+                                .map(crate::projection::notifications::realm_title_hints_from_values)
                                 .unwrap_or_default();
                             for (id, body) in &sync.realms {
                                 let projection = crate::realm_tree::projection_with_title_hint(
@@ -1107,14 +1107,16 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // invites live on `authz/invites` rather than the
                             // normal account subscribe notification stream.
                             let projection_from_sync =
-                                crate::views::notifications::notification_items_from_value(
+                                crate::projection::notifications::notification_items_from_value(
                                     &sync.notifications,
                                 );
                             let account_notification_projection = sync
                                 .account_data
                                 .iter()
                                 .filter(|entry| {
-                                    crate::views::notifications::is_notification_account_data(entry)
+                                    crate::projection::notifications::is_notification_account_data(
+                                        entry,
+                                    )
                                 })
                                 .cloned()
                                 .collect::<Vec<_>>();
@@ -1131,7 +1133,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                 });
                             if let Some(invites) = invite_notifications {
-                                crate::views::notifications::merge_invite_notifications(
+                                crate::projection::notifications::merge_invite_notifications(
                                     &mut notification_projection,
                                     invites,
                                     &server_set,

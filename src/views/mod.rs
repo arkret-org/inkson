@@ -134,25 +134,8 @@ pub enum AppView {
     SettingsRecovery,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConnectionState {
-    Offline,
-    Loading,
-    Online,
-    Reconnecting,
-    Empty,
-    Error,
-}
-
-impl ConnectionState {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Offline => "Offline",
-            Self::Loading => "Loading",
-            Self::Online => "Online",
-            Self::Reconnecting => "Reconnecting",
-            Self::Empty => "Empty",
-            Self::Error => "Error",
-        }
-    }
-}
+// The connection-status label enum is a sync-layer concept; it now lives in
+// `sync_engine` (YGN-ARCH-01, so the sync core no longer reaches back into
+// `views`). Re-exported here so the app-shell call sites that reference it as
+// `crate::views::ConnectionState` keep resolving unchanged.
+pub use crate::sync_engine::ConnectionState;

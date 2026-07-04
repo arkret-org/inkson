@@ -47,6 +47,32 @@ use crate::models::{
     ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNode, RealmTreeNodeKind,
 };
 
+/// Connection-status label surfaced to the app shell's status signal.
+/// A pure sync-layer concept (no Dioxus state, no rendering); the app views
+/// consume it via the `crate::views::ConnectionState` re-export.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionState {
+    Offline,
+    Loading,
+    Online,
+    Reconnecting,
+    Empty,
+    Error,
+}
+
+impl ConnectionState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Offline => "Offline",
+            Self::Loading => "Loading",
+            Self::Online => "Online",
+            Self::Reconnecting => "Reconnecting",
+            Self::Empty => "Empty",
+            Self::Error => "Error",
+        }
+    }
+}
+
 /// Sleep ceiling between failed iterations. 60s matches what other
 /// Long enough that a wedged server doesn't get DoSed by retries,
 /// short enough that recovery is noticeable to the user.
@@ -909,6 +935,10 @@ async fn route_inbound_call_signals(
     );
 
     for (id, body) in &response.realms {
+        // Retained in `views::call_signals` on purpose: this router operates
+        // on `&mut CallSignalHub`, which owns Dioxus `Signal` state and is
+        // deliberately kept in the view layer (YGN-ARCH-01). Relocating the
+        // router without the hub would gain nothing, so both stay together.
         crate::views::call_signals::route_realm_call_signals(
             &mut hub,
             id,
@@ -1296,11 +1326,11 @@ pub fn apply_response(
         &state_store.read().load().realm_tree_projections,
     );
     if reconciled.is_empty() {
-        status.set(crate::views::ConnectionState::Empty.label().to_owned());
+        status.set(ConnectionState::Empty.label().to_owned());
     } else {
         status.set(format!(
             "{}: synced {} realm-tree node(s)",
-            crate::views::ConnectionState::Online.label(),
+            ConnectionState::Online.label(),
             reconciled.len()
         ));
     }
@@ -1797,11 +1827,11 @@ fn apply_notification_projection(
     invite_notifications: Option<Vec<Value>>,
 ) {
     let projection_from_sync =
-        crate::views::notifications::notification_items_from_value(&response.notifications);
+        crate::projection::notifications::notification_items_from_value(&response.notifications);
     let account_notification_projection = response
         .account_data
         .iter()
-        .filter(|entry| crate::views::notifications::is_notification_account_data(entry))
+        .filter(|entry| crate::projection::notifications::is_notification_account_data(entry))
         .cloned()
         .collect::<Vec<_>>();
     let should_save_notification_projection = projection_from_sync.is_some()
@@ -1816,7 +1846,7 @@ fn apply_notification_projection(
     });
     if let Some(invites) = invite_notifications {
         let joined_realms = response.realms.keys().cloned().collect::<BTreeSet<_>>();
-        crate::views::notifications::merge_invite_notifications(
+        crate::projection::notifications::merge_invite_notifications(
             &mut notification_projection,
             invites,
             &joined_realms,

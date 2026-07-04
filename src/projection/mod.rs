@@ -6,6 +6,7 @@
 
 mod decrypt;
 mod model;
+pub(crate) mod notifications;
 mod sync;
 
 #[cfg(test)]
