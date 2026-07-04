@@ -349,6 +349,11 @@ pub async fn ensure_active_recovery_policy(
         return Ok(policy);
     }
 
+    // DIAG (describe-storm): this describe fires only when no active recovery
+    // policy exists yet. If it repeats, a caller is re-running recovery-policy
+    // establishment in a loop (fetch=None -> describe -> put -> still None).
+    // Remove once the driver is fixed.
+    tracing::warn!(target: "recovery_diag", %principal_id, "ensure_active_recovery_policy: no policy -> describe + put");
     let description = api.describe().await?;
     let body = build_signed_genesis_recovery_policy_for_session_device(
         principal_id,

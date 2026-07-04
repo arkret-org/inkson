@@ -1302,8 +1302,32 @@ pub fn KanbanPanel(
                             Ok((payload, events))
                         })
                         .await;
-                    let Ok((payload, events)) = result else {
-                        continue;
+                    let (payload, events) = match result {
+                        Ok(value) => value,
+                        Err(error) => {
+                            if let Some(retry_after_ms) =
+                                crate::api::rate_limited_retry_after(error.inner())
+                            {
+                                tracing::warn!(
+                                    target: "mls_sidecar_restore",
+                                    retry_after_ms,
+                                    "key-backup unlock rate limited; stopping sidecar restore retries"
+                                );
+                                break;
+                            }
+                            if let Some(backoff) = error
+                                .inner()
+                                .downcast_ref::<crate::key_backup::KeyBackupUnlockBackoff>()
+                            {
+                                tracing::debug!(
+                                    target: "mls_sidecar_restore",
+                                    retry_after_ms = backoff.retry_after_ms(),
+                                    "key-backup unlock is in local backoff; stopping sidecar restore retries"
+                                );
+                                break;
+                            }
+                            continue;
+                        }
                     };
 
                     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");

@@ -54,6 +54,54 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
 }
 
+/// §2.10 history sharing: authoring `mls-exporter-aead-v1` content MUST retain
+/// the authoring epoch's `history_secret` locally. The author never decrypts
+/// its own ciphertext, so if the encrypt path does not retain here, the secret
+/// is lost once the epoch advances (forward secrecy) and
+/// `share_history_to_requester` has nothing to seal for a late joiner —
+/// permanently locking every pre-join card. See `encrypt_values_with_device_snapshot`.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn authoring_exporter_aead_content_retains_history_secret() {
+    let mut state = temp_state_store("author-retains-history-secret");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let device = "ck:device:01904100-0000-7000-8000-000000000001";
+    // history_secret persistence is a PROCESS-GLOBAL secure store keyed only by
+    // realm_id (see `save_history_secret` → `persist_realm_history_secrets`), so
+    // this test MUST use a realm id no other test writes, or the `is_none()`
+    // precondition below would observe another test's retained secret.
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f7";
+
+    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
+        .unwrap()
+        .expect("creator snapshot");
+    // Declare the history-shareable content scheme so the encrypt path routes
+    // through exporter-aead and must retain the epoch's history_secret.
+    state.save_realm_tree_projection(realm, json!({ "content_scheme": "mls-exporter-aead-v1" }));
+
+    // No secret is retained before any content is authored.
+    assert!(state.history_secret_for(realm, 0).is_none());
+
+    encrypt_values_with_device_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        actor,
+        device,
+        "application/vnd.cokret.test+json",
+        &[br#""private""#.to_vec()],
+    )
+    .unwrap();
+
+    // The epoch-0 history_secret is now retained and non-empty, so it can be
+    // sealed into a later ck.realm_key.share for a late joiner.
+    let retained = state
+        .history_secret_for(realm, 0)
+        .expect("authoring exporter-aead content must retain the epoch history_secret");
+    assert!(!retained.is_empty());
+}
+
 // ── YOU-02-004: receive-chain persistence (§5.6) ─────────────────
 
 /// Build a two-member group: alice (in-memory sender) + bob, whose

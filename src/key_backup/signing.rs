@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::fmt;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use chrono::SecondsFormat;
@@ -8,6 +11,39 @@ use super::{
     DEFAULT_SSK_GENERATION, KEY_BACKUP_RAW_SIGNATURE_ALGORITHM, KEY_BACKUP_SIGNED_FIELDS,
     KEY_BACKUP_SIGNED_FIELDS_MANDATORY, KEY_BACKUP_UNLOCK_PROOF_SCHEMA, required_str_anyhow,
 };
+
+const UNLOCKED_KEY_BACKUP_CACHE_MAX_ENTRIES: usize = 64;
+const KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES: usize = 32;
+
+thread_local! {
+    static UNLOCKED_KEY_BACKUP_CACHE: RefCell<Vec<(String, Value)>> =
+        const { RefCell::new(Vec::new()) };
+    static KEY_BACKUP_UNLOCK_BACKOFFS: RefCell<Vec<(String, u64)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyBackupUnlockBackoff {
+    retry_after_ms: u64,
+}
+
+impl KeyBackupUnlockBackoff {
+    pub fn retry_after_ms(&self) -> u64 {
+        self.retry_after_ms
+    }
+}
+
+impl fmt::Display for KeyBackupUnlockBackoff {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "key backup download quota is cooling down; retry after {} ms",
+            self.retry_after_ms
+        )
+    }
+}
+
+impl std::error::Error for KeyBackupUnlockBackoff {}
 
 #[derive(Clone, Debug)]
 pub enum KeyBackupDeviceTrustAnchor {
@@ -224,6 +260,18 @@ pub fn build_key_backup_unlock_proof_active(
         let digest = required_str_anyhow(summary, "proof_digest")?.to_owned();
         (session_id, kind, digest)
     } else {
+        // No policy-layer recovery-session driver is available on this client
+        // yet, so the unlock is backed only by a device signature over a
+        // locally-derived transcript. The server (key-management.md §7.7.1 /
+        // §7.8, `unlock.rs::proof_kind_requires_recovery_session`) fails closed
+        // with `recovery_evidence_unbound` for every recovery-ceremony
+        // proof_kind (`recovery_unlock` / `threshold_recovery` / `device_quorum`
+        // / `trusted_recovery_service`) whose claimed recovery session record is
+        // absent. `principal_signing` is the ONLY documented compatibility kind
+        // permitted to proceed without a durable session record, so a purely
+        // device-signed unlock MUST declare `principal_signing`; declaring
+        // `recovery_unlock` here made the server reject every unlock and left
+        // shared-history cards permanently locked.
         let session_id = format!("ck:recovery_session:{}", crate::operation::uuid_v7());
         let local_digest = crate::canonical::canonical_sha256(&json!({
             "type": "ck.key_backup.local_unlock_proof.v1",
@@ -235,7 +283,7 @@ pub fn build_key_backup_unlock_proof_active(
             "ciphertext_digest": ciphertext_digest,
             "issued_at": issued_at,
         }))?;
-        (session_id, "recovery_unlock".to_owned(), local_digest)
+        (session_id, "principal_signing".to_owned(), local_digest)
     };
     let signed_fields = vec![
         "schema",
@@ -282,6 +330,15 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
     principal_id: &str,
     requesting_device_id: &str,
 ) -> anyhow::Result<Value> {
+    let backoff_scope = key_backup_unlock_backoff_scope(api, principal_id)?;
+    if let Some(retry_after_ms) = key_backup_unlock_backoff_remaining_ms(&backoff_scope) {
+        return Err(KeyBackupUnlockBackoff { retry_after_ms }.into());
+    }
+    let cache_key =
+        unlocked_key_backup_cache_key(api, backup_metadata, principal_id, requesting_device_id)?;
+    if let Some(cached) = unlocked_key_backup_cache_get(&cache_key) {
+        return Ok(cached);
+    }
     let backup_id = required_str_anyhow(backup_metadata, "backup_id")?.to_owned();
     let proof = build_key_backup_unlock_proof_active(
         backup_metadata,
@@ -289,12 +346,121 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
         requesting_device_id,
         None,
     )?;
-    let backup = api
+    let backup = match api
         .get_key_backup_with_unlock_proof(&backup_id, &proof)
-        .await?;
+        .await
+    {
+        Ok(backup) => backup,
+        Err(error) => {
+            if let Some(retry_after_ms) = crate::api::rate_limited_retry_after(&error) {
+                note_key_backup_unlock_backoff(&backoff_scope, retry_after_ms);
+            }
+            return Err(error);
+        }
+    };
     // Callers fold the full backup envelope through lenient `Value` accessors;
     // serialize the typed `KeyBackup` back to its wire JSON.
-    Ok(serde_json::to_value(&backup)?)
+    let backup = serde_json::to_value(&backup)?;
+    unlocked_key_backup_cache_put(cache_key, &backup);
+    Ok(backup)
+}
+
+fn key_backup_unlock_backoff_scope(
+    api: &crate::api::CokretApi,
+    principal_id: &str,
+) -> anyhow::Result<String> {
+    let endpoint = api.endpoint("_cokret/self/keys/backups")?;
+    Ok(format!(
+        "{}|principal={}",
+        endpoint.as_str(),
+        principal_id.trim()
+    ))
+}
+
+fn key_backup_unlock_backoff_remaining_ms(scope: &str) -> Option<u64> {
+    let now_ms = crate::clock::now_unix_ms();
+    KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| {
+        let mut backoffs = backoffs.borrow_mut();
+        backoffs.retain(|(_, until_ms)| *until_ms > now_ms);
+        backoffs
+            .iter()
+            .find(|(entry_scope, _)| entry_scope == scope)
+            .map(|(_, until_ms)| until_ms.saturating_sub(now_ms))
+    })
+}
+
+fn note_key_backup_unlock_backoff(scope: &str, retry_after_ms: u64) {
+    let until_ms = crate::clock::now_unix_ms().saturating_add(retry_after_ms.max(1_000));
+    KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| {
+        let mut backoffs = backoffs.borrow_mut();
+        if let Some(index) = backoffs
+            .iter()
+            .position(|(entry_scope, _)| entry_scope == scope)
+        {
+            backoffs.remove(index);
+        }
+        backoffs.push((scope.to_owned(), until_ms));
+        while backoffs.len() > KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES {
+            backoffs.remove(0);
+        }
+    });
+}
+
+fn unlocked_key_backup_cache_key(
+    api: &crate::api::CokretApi,
+    backup_metadata: &Value,
+    principal_id: &str,
+    requesting_device_id: &str,
+) -> anyhow::Result<String> {
+    let endpoint = api.endpoint("_cokret/self/keys/backups")?;
+    let backup_id = required_str_anyhow(backup_metadata, "backup_id")?;
+    let backup_class = required_str_anyhow(backup_metadata, "backup_class")?;
+    let series_id = required_str_anyhow(backup_metadata, "series_id")?;
+    let ciphertext_digest = required_str_anyhow(backup_metadata, "ciphertext_digest")?;
+    Ok(format!(
+        "{}|principal={}|device={}|backup={backup_id}|class={backup_class}|series={series_id}|digest={ciphertext_digest}",
+        endpoint.as_str(),
+        principal_id.trim(),
+        requesting_device_id.trim()
+    ))
+}
+
+fn unlocked_key_backup_cache_get(cache_key: &str) -> Option<Value> {
+    UNLOCKED_KEY_BACKUP_CACHE.with(|cache| {
+        let mut entries = cache.borrow_mut();
+        let index = entries
+            .iter()
+            .position(|(entry_key, _)| entry_key == cache_key)?;
+        let (entry_key, value) = entries.remove(index);
+        let result = value.clone();
+        entries.push((entry_key, value));
+        Some(result)
+    })
+}
+
+fn unlocked_key_backup_cache_put(cache_key: String, backup: &Value) {
+    if backup.get("ciphertext").and_then(Value::as_str).is_none() {
+        return;
+    }
+    UNLOCKED_KEY_BACKUP_CACHE.with(|cache| {
+        let mut entries = cache.borrow_mut();
+        if let Some(index) = entries
+            .iter()
+            .position(|(entry_key, _)| entry_key == cache_key.as_str())
+        {
+            entries.remove(index);
+        }
+        entries.push((cache_key, backup.clone()));
+        while entries.len() > UNLOCKED_KEY_BACKUP_CACHE_MAX_ENTRIES {
+            entries.remove(0);
+        }
+    });
+}
+
+#[cfg(test)]
+fn clear_key_backup_unlock_memory() {
+    UNLOCKED_KEY_BACKUP_CACHE.with(|cache| cache.borrow_mut().clear());
+    KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| backoffs.borrow_mut().clear());
 }
 
 #[cfg(test)]
@@ -339,7 +505,61 @@ mod tests {
         .expect("unlock proof builds");
 
         assert!(proof["auth_data"].get("device_id").is_none());
+        // The device-signed compatibility path (no recovery session) MUST declare
+        // `principal_signing`: it is the only proof_kind the server exempts from
+        // requiring a durable recovery-session record. Declaring a recovery-
+        // ceremony kind (e.g. `recovery_unlock`) makes the server fail closed with
+        // `recovery_evidence_unbound` and permanently locks shared-history cards.
+        assert_eq!(proof["proof_kind"], "principal_signing");
         serde_json::from_value::<cokret_sdk::KeyBackupUnlockProof>(proof)
             .expect("unlock proof matches SDK schema");
+    }
+
+    #[test]
+    fn unlocked_key_backup_cache_reuses_digest_and_evicts_oldest() {
+        clear_key_backup_unlock_memory();
+        let key = "server|principal=alice|device=dev|backup=one|digest=sha256:a";
+        let backup = json!({
+            "backup_id": "ck:backup:one",
+            "ciphertext": "ciphertext-a"
+        });
+
+        unlocked_key_backup_cache_put(key.to_owned(), &backup);
+        assert_eq!(
+            unlocked_key_backup_cache_get(key).and_then(|value| {
+                value
+                    .get("ciphertext")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            }),
+            Some("ciphertext-a".to_owned())
+        );
+
+        for index in 0..(UNLOCKED_KEY_BACKUP_CACHE_MAX_ENTRIES + 1) {
+            unlocked_key_backup_cache_put(
+                format!("server|principal=alice|device=dev|backup={index}|digest=sha256:{index}"),
+                &json!({
+                    "backup_id": format!("ck:backup:{index}"),
+                    "ciphertext": format!("ciphertext-{index}")
+                }),
+            );
+        }
+
+        assert!(
+            unlocked_key_backup_cache_get(key).is_none(),
+            "oldest full-backup cache entry must be evicted"
+        );
+    }
+
+    #[test]
+    fn unlock_backoff_reports_remaining_retry_window() {
+        clear_key_backup_unlock_memory();
+        let scope = "server|principal=alice";
+
+        assert!(key_backup_unlock_backoff_remaining_ms(scope).is_none());
+        note_key_backup_unlock_backoff(scope, 30_000);
+        let remaining = key_backup_unlock_backoff_remaining_ms(scope)
+            .expect("backoff must be visible after rate limit");
+        assert!(remaining > 0 && remaining <= 30_000);
     }
 }

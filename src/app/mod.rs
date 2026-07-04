@@ -21,6 +21,7 @@ use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServerDescription, ServerDescriptionExt,
     projection_realm_id_for_known_node,
 };
+use crate::projection::ProjectionEvent;
 // R28-B — realm-tree / projection / field-extraction helpers moved to
 // `crate::realm_tree`. Re-export the two `pub` entry points used by
 // `crate::sync_engine` so the existing `crate::app::…` call sites keep
@@ -35,7 +36,6 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::ConnectionState;
-use crate::projection::ProjectionEvent;
 use crate::views::helpers::{display_name_for_did, persist_config, short_protocol_id};
 
 // YOU-07-001: post-login / startup-check effects and small types moved to
@@ -951,7 +951,12 @@ pub fn RouterView() -> Element {
             if account_recovery_detection_key_seen().as_deref() == Some(detection_key.as_str()) {
                 return;
             }
-            account_recovery_detection_key_seen.set(Some(detection_key));
+            account_recovery_detection_key_seen.set(Some(detection_key.clone()));
+            // DIAG (describe-storm): this effect re-fetches recovery-policy +
+            // backups whenever `detection_key` changes. On a wedged account it
+            // storms; log the key so consecutive values reveal which field
+            // (generation) keeps flipping. Remove once the driver is fixed.
+            tracing::warn!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (recovery-policy+backups)");
             let local_fingerprint = {
                 let store = state_store_for_recovery_state.read();
                 crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
@@ -1394,6 +1399,12 @@ pub fn RouterView() -> Element {
                 return;
             }
             seen_detection_key.set(Some(detection_key.clone()));
+            // DIAG (describe-storm): this effect re-fetches backups (+ sidecar)
+            // whenever `detection_key` changes. On a wedged-recovery account it
+            // storms; log the full key so consecutive values reveal which
+            // component (sec/snap/enc/epoch/rk/recovery/generation) keeps
+            // flipping. Remove once the driver is fixed.
+            tracing::warn!(target: "recovery_diag", key = %detection_key, "mls_unlock detection re-fetch (backups)");
             let seen_detection_key_for_result = seen_detection_key;
 
             spawn(async move {
@@ -2075,10 +2086,24 @@ pub fn RouterView() -> Element {
             // running, remember one pending rerun; completion flips that bit
             // back to false and lets the subscribed effect run once more.
             if *admit_in_flight.peek() {
-                admit_pending.set(true);
+                // Write ONLY on a real false→true transition. This effect
+                // subscribes to `admit_pending` (see the `admit_pending()`
+                // read above), and a plain `set()` marks the signal dirty even
+                // when the value is unchanged — so an unconditional set() here
+                // would re-fire this very effect and spin the main thread
+                // (same class as the in_flight self-spin fixed earlier).
+                if !*admit_pending.peek() {
+                    admit_pending.set(true);
+                }
                 return;
             }
-            admit_pending.set(false);
+            // Same guard on the reset path: an unconditional `set(false)` runs
+            // on every non-in-flight pass and is the loop seed — it retriggers
+            // the subscribed effect with no external change. Only clear a flag
+            // that is actually set.
+            if *admit_pending.peek() {
+                admit_pending.set(false);
+            }
             admit_in_flight.set(true);
             spawn(async move {
                 let outcome =

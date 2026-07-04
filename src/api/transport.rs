@@ -69,9 +69,9 @@ impl CokretApi {
     /// ②(A+②) — bind the device DPoP holder key so every `/_cokret/self/*`
     /// request mints a fresh per-request `DPoP` proof (RFC 9449) bound to the
     /// grant in `authorization_credential`. Centralized minting happens in the
-    /// request pipeline ([`Self::attach_self_path_dpop`]); call sites only attach
-    /// the key once. The grant must already be set via [`Self::with_bearer`] for
-    /// the `ath` binding to be present.
+    /// request pipeline ([`Self::attach_session_grant_dpop`]); call sites only
+    /// attach the key once. The grant must already be set via
+    /// [`Self::with_bearer`] for the `ath` binding to be present.
     pub fn with_dpop_device(mut self, handle: crate::auth_dpop::DpopHandle) -> Self {
         self.dpop_device = Some(handle);
         self
@@ -326,14 +326,14 @@ impl CokretApi {
                 // attempt so created/expires stay fresh after a backoff. The
                 // ②(A+②) per-request DPoP is attached on the same built request
                 // so htu == the final absolute URL.
-                let built = self.attach_self_path_dpop(self.sign_request(request.build()?)?)?;
+                let built = self.attach_session_grant_dpop(self.sign_request(request.build()?)?)?;
                 return Ok(self.http.execute(built).await?);
             };
             // 401 handling lives at the app layer (`crate::session`): a
             // refresh future capturing Dioxus signals + wasm `reqwest` is
             // `!Send`, so the HTTP client can't own it. The client just
             // surfaces the 401; the caller refreshes the session credential and retries.
-            let built = self.attach_self_path_dpop(self.sign_request(candidate.build()?)?)?;
+            let built = self.attach_session_grant_dpop(self.sign_request(candidate.build()?)?)?;
             match self.http.execute(built).await {
                 Ok(response) => {
                     if retryable
@@ -388,7 +388,7 @@ impl CokretApi {
             return Ok(request);
         };
         let path = request.url().path().to_owned();
-        if !is_cokret_signed_surface(&path) {
+        if !is_http_signature_surface(&path) {
             return Ok(request);
         }
         use cokret_sdk::http_signature::{
@@ -471,18 +471,21 @@ impl CokretApi {
         Ok(request)
     }
 
-    /// ②(A+②) — attach the per-request `DPoP` proof for `/_cokret/self/*`
-    /// requests (api-conventions.md §3.3). Centralized single mint point: every
-    /// request builder funnels through `send_with_retry`, so binding the device
-    /// key once via [`Self::with_dpop_device`] is enough to cover every self-path
-    /// call. No-op when no DPoP device key is bound or for non-self surfaces.
+    /// ②(A+②) — attach the per-request `DPoP` proof for protected Cokret
+    /// requests that present `ck.session.grant` (api-conventions.md §3.3 and
+    /// account-lifecycle.md §4.1). Centralized single mint point: every request
+    /// builder funnels through `send_with_retry`, so binding the device key once
+    /// via [`Self::with_dpop_device`] covers self/root requests and the
+    /// client-visible gate/account operations that authenticate with the current
+    /// session grant. No-op when no DPoP device key is bound or for public gate
+    /// surfaces such as register/session-grants issue.
     ///
     /// Binding (RFC 9449): `htm` = request method, `htu` = the absolute request
     /// URL, `ath` = base64url(sha256(grant)) where the grant is the HTTP Bearer
     /// credential in `authorization_credential`. Minted on the fully-built
     /// request so `htu` is the final URL and refreshed per attempt so the
     /// proof's `iat`/`jti` stay fresh.
-    fn attach_self_path_dpop(
+    fn attach_session_grant_dpop(
         &self,
         mut request: reqwest::Request,
     ) -> anyhow::Result<reqwest::Request> {
@@ -490,7 +493,7 @@ impl CokretApi {
             return Ok(request);
         };
         let path = request.url().path();
-        if !is_cokret_signed_surface(path) {
+        if !is_session_grant_dpop_surface(path) {
             return Ok(request);
         }
         let htm = request.method().as_str().to_owned();
@@ -539,6 +542,68 @@ impl CokretApi {
     }
 }
 
-fn is_cokret_signed_surface(path: &str) -> bool {
+fn is_http_signature_surface(path: &str) -> bool {
     path.starts_with("/_cokret/self/") || path.starts_with("/_cokret/root/")
+}
+
+fn is_session_grant_dpop_surface(path: &str) -> bool {
+    is_http_signature_surface(path)
+        || matches!(
+            path,
+            "/_cokret/gate/account/device-pair"
+                | "/_cokret/gate/account/logout"
+                | "/_cokret/gate/account/session-grants/revoke"
+        )
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    use super::*;
+
+    fn test_dpop_handle() -> crate::auth_dpop::DpopHandle {
+        let seed_b64 = URL_SAFE_NO_PAD.encode([11u8; 32]);
+        let record = crate::auth_dpop::dpop_device_key_record_from_seed(&seed_b64)
+            .expect("test DPoP record");
+        crate::auth_dpop::device_handle_from_seed(&record.seed_b64, &record.jkt)
+            .expect("test DPoP handle")
+    }
+
+    #[test]
+    fn gate_account_device_pair_gets_session_grant_dpop_header() {
+        let api = CokretApi::new("https://soland.example.com")
+            .unwrap()
+            .with_bearer("grant.jwt")
+            .with_dpop_device(test_dpop_handle());
+        let request = api
+            .http
+            .post(api.endpoint("_cokret/gate/account/device-pair").unwrap())
+            .body("{}")
+            .build()
+            .unwrap();
+
+        let request = api.attach_session_grant_dpop(request).unwrap();
+
+        assert!(request.headers().get("dpop").is_some());
+    }
+
+    #[test]
+    fn public_gate_account_register_does_not_get_session_grant_dpop_header() {
+        let api = CokretApi::new("https://soland.example.com")
+            .unwrap()
+            .with_bearer("grant.jwt")
+            .with_dpop_device(test_dpop_handle());
+        let request = api
+            .http
+            .post(api.endpoint("_cokret/gate/account/register").unwrap())
+            .body("{}")
+            .build()
+            .unwrap();
+
+        let request = api.attach_session_grant_dpop(request).unwrap();
+
+        assert!(request.headers().get("dpop").is_none());
+    }
 }

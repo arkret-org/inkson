@@ -1258,6 +1258,25 @@ pub fn encrypt_values_with_device_snapshot(
                 .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?,
         );
     }
+    // §2.10 history sharing: retain THIS epoch's `history_secret` at author time.
+    // The author never decrypts its own ciphertext (OpenMLS refuses), so the
+    // lazy decrypt-path retain (see `decrypt_application_payload`) never fires
+    // for content this device wrote. Without an explicit retain here the secret
+    // is lost the moment the epoch advances (forward secrecy), so a later
+    // `ck.realm_key.request` finds nothing in `history_secrets_for` and
+    // `share_history_to_requester` returns `Ok(false)` — leaving every late
+    // joiner's pre-join cards permanently locked. `group.epoch()` is read after
+    // any forced commit above, so it matches the epoch the content rides.
+    if use_exporter_aead
+        && let Ok(history_secret) = group.derive_and_retain_history_secret(realm_id)
+        && !history_secret.is_empty()
+    {
+        state_store.save_history_secret(
+            realm_id.to_owned(),
+            group.epoch(),
+            history_secret.to_vec(),
+        );
+    }
     let schedule_hash = group.schedule_hash();
     let member_dids = group.member_principal_ids();
     let post_state = group
@@ -1360,7 +1379,8 @@ pub fn encrypt_message_with_device_snapshot(
     // The routing `aad` rides the envelope (`EncryptedPayload.aad` + digest); the
     // AEAD itself binds the epoch via `history_content_aad_bytes`, matching the
     // decrypt-side `try_history_decrypt_standalone`.
-    let encrypted = if realm_content_scheme_is_exporter_aead(state_store, realm_id) {
+    let use_exporter_aead = realm_content_scheme_is_exporter_aead(state_store, realm_id);
+    let encrypted = if use_exporter_aead {
         let aad_bytes = history_content_aad_bytes(realm_id, group.epoch());
         group.encrypt_payload_exporter_aead(
             content_type,
@@ -1373,6 +1393,20 @@ pub fn encrypt_message_with_device_snapshot(
         group.encrypt_payload_with_aad(content_type, Some(aad), plaintext)
     }
     .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+    // §2.10 history sharing: retain this epoch's `history_secret` at author time
+    // so a late joiner can decrypt it — see the fuller rationale in
+    // `encrypt_values_with_device_snapshot`. Without this the author's own
+    // messages become permanently unreadable to every late joiner.
+    if use_exporter_aead
+        && let Ok(history_secret) = group.derive_and_retain_history_secret(realm_id)
+        && !history_secret.is_empty()
+    {
+        state_store.save_history_secret(
+            realm_id.to_owned(),
+            group.epoch(),
+            history_secret.to_vec(),
+        );
+    }
     let schedule_hash = group.schedule_hash();
     let member_dids = group.member_principal_ids();
     let post_state = group

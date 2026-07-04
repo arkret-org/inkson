@@ -90,7 +90,18 @@ thread_local! {
     static INVALIDATOR: RefCell<Option<InvalidateFn>> = const { RefCell::new(None) };
     static IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
     static LAST_RESULT: RefCell<Option<CurrentSessionRefresh>> = const { RefCell::new(None) };
+    /// Wall-clock ms of the last refresh that produced a live credential.
+    /// Backs the sequential-call cooldown in [`refresh_current_session`].
+    static LAST_SUCCESS_AT_MS: Cell<u64> = const { Cell::new(0) };
 }
+
+/// How long a freshly rotated credential is reused before a subsequent
+/// *sequential* refresh is allowed to rotate again. The single-flight guard
+/// only coalesces concurrent callers; this closes the sequential gap where a
+/// caller that keeps reclassifying the same failure as `auth_expired` would
+/// otherwise rotate the grant — and re-resolve its uncached `/_cokret/describe`
+/// — on every iteration, storming the network.
+const REFRESH_COOLDOWN_MS: u64 = 3_000;
 
 /// Maximum time a coalescing caller waits for an in-flight refresh before
 /// giving up (200 × 50 ms ≈ 10 s) — a backstop against a wedged refresh
@@ -157,10 +168,36 @@ pub async fn refresh_current_session() -> CurrentSessionRefresh {
         return wait_for_in_flight_refresh_result().await;
     }
 
+    // Sequential-call cooldown. The single-flight check above only coalesces
+    // *concurrent* callers — sequential callers each ran a full rotation. A
+    // driver that keeps re-classifying the same non-auth failure as
+    // `auth_expired` (e.g. a self-re-running effect polling during MLS seal)
+    // would rotate the grant, and pre-resolve its uncached `/_cokret/describe`,
+    // on every iteration — the `describe` request storm seen on card create in
+    // an encrypted Realm. If a refresh produced a live credential within the
+    // cooldown, reuse it instead of rotating again: the rotated grant is still
+    // valid, so returning it is correct as well as cheap. Terminal / sign-in
+    // outcomes are never cached here, so a genuinely dead grant still escalates
+    // once the window lapses.
+    let now_ms = crate::clock::now_unix_ms();
+    let within_cooldown = LAST_SUCCESS_AT_MS
+        .with(Cell::get)
+        .checked_add(REFRESH_COOLDOWN_MS)
+        .is_some_and(|until| now_ms < until);
+    if within_cooldown
+        && let Some(cached @ CurrentSessionRefresh::Credential(_)) =
+            LAST_RESULT.with(|slot| slot.borrow().clone())
+    {
+        return cached;
+    }
+
     IN_FLIGHT.with(|flag| flag.set(true));
     let _guard = InFlightGuard;
     let result = refresher().await;
     LAST_RESULT.with(|slot| *slot.borrow_mut() = Some(result.clone()));
+    if matches!(result, CurrentSessionRefresh::Credential(_)) {
+        LAST_SUCCESS_AT_MS.with(|slot| slot.set(crate::clock::now_unix_ms()));
+    }
     result
 }
 
@@ -252,6 +289,34 @@ mod tests {
             CALLS.with(Cell::get),
             1,
             "concurrent callers must coalesce onto a single refresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn cooldown_reuses_fresh_credential_across_sequential_callers() {
+        thread_local! {
+            static CALLS: Cell<u32> = const { Cell::new(0) };
+        }
+        CALLS.with(|c| c.set(0));
+        register_session_refresher(Rc::new(|| {
+            Box::pin(async {
+                CALLS.with(|c| c.set(c.get() + 1));
+                CurrentSessionRefresh::Credential("tok".to_owned())
+            })
+        }));
+
+        // First sequential call rotates; a second call within the cooldown must
+        // reuse the fresh credential instead of rotating (and re-`describe`-ing)
+        // again — this is what caps the refresh treadmill's request storm.
+        let first = refresh_current_session_credential().await;
+        let second = refresh_current_session_credential().await;
+
+        assert_eq!(first, Some("tok".to_owned()));
+        assert_eq!(second, Some("tok".to_owned()));
+        assert_eq!(
+            CALLS.with(Cell::get),
+            1,
+            "a sequential refresh within the cooldown must reuse the fresh credential, not rotate again"
         );
     }
 

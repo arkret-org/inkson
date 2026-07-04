@@ -495,6 +495,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         let mut account_has_other_devices = ctx.account_has_other_devices;
         let mut did_resolution_health = ctx.did_resolution_health;
 
+        // A (re)connect may point at a different / re-provisioned Account
+        // Authority, so drop the cached authority resolution and let the first
+        // describe below repopulate it. Steady-state session refreshes then
+        // reuse that cache instead of re-probing `/_cokret/describe`.
+        crate::coauth::clear_authority_resolver_cache();
         did_resolution_health.set(crate::components::DidResolutionHealth::healthy());
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(false);

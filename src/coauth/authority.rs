@@ -1,9 +1,32 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use url::Url;
 
 use super::CoauthApi;
 use super::util::principal_audience;
 use crate::api::CokretApi;
 use crate::config::validate_server_url;
+
+thread_local! {
+    /// Process-wide cache of resolved account authorities, keyed by principal
+    /// server URL. The `/_cokret/describe` `auth_metadata` this is derived from
+    /// is deployment-stable, so ONE probe per server connection suffices.
+    /// Without it, every session-grant rotation rebuilds a fresh `CokretApi`
+    /// and re-fetches describe (the per-instance `describe_cached` OnceCell is
+    /// useless across instances), so any upstream refresh loop becomes a
+    /// `describe` request storm. Cleared on reconnect via
+    /// [`clear_authority_resolver_cache`].
+    static AUTHORITY_RESOLVER_CACHE: RefCell<HashMap<String, AuthorityResolver>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Drop the cached authority resolution(s). Called on an explicit reconnect /
+/// server switch (`connect()`), so a genuinely re-pointed Account Authority is
+/// re-probed instead of served from a stale cache.
+pub fn clear_authority_resolver_cache() {
+    AUTHORITY_RESOLVER_CACHE.with(|cache| cache.borrow_mut().clear());
+}
 
 /// R3.2 (YG-HC-1) — best-effort deep link to the issuer/coauth handle
 /// issuance strand (`/handles/me`). yougen does NOT manage handle lifecycle
@@ -61,9 +84,27 @@ impl AuthorityResolver {
     /// Discover the Account Authority from the Principal Server's root
     /// `/_cokret/describe` and its strongly-typed `auth_metadata`.
     pub async fn discover(principal_server_url: &str) -> anyhow::Result<Self> {
+        // describe/`auth_metadata` is deployment-stable, so resolve ONCE per
+        // principal server and reuse it. This is the choke point every
+        // session-grant rotation flows through; caching it here is what stops
+        // an upstream refresh loop from storming `/_cokret/describe`.
+        let key = principal_server_url.trim().to_owned();
+        if let Some(cached) =
+            AUTHORITY_RESOLVER_CACHE.with(|cache| cache.borrow().get(&key).cloned())
+        {
+            return Ok(cached);
+        }
+        // DIAG (describe-storm): only reached on a cache MISS, so if `describe`
+        // keeps hitting the network from the coauth/session-refresh path this
+        // fires repeatedly. A steady stream here means an upstream refresh loop;
+        // silence here means describe is coming from another caller. Remove once
+        // the driver is fixed.
+        tracing::warn!(target: "recovery_diag", server = %key, "authority discover cache-miss -> real describe");
         let principal = CokretApi::new(principal_server_url)?;
         let description = principal.describe().await?;
-        Self::from_description(principal_server_url, &description)
+        let resolver = Self::from_description(principal_server_url, &description)?;
+        AUTHORITY_RESOLVER_CACHE.with(|cache| cache.borrow_mut().insert(key, resolver.clone()));
+        Ok(resolver)
     }
 
     pub(crate) fn from_description(
