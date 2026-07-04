@@ -11,7 +11,7 @@ mod native {
     use cokret_sdk::{
         CokretMlsGroup, CokretMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
         MessageCryptoDecrypt, MlsAddMemberResult, MlsCommitEnvelope, MlsKeyPackageRecord,
-        MlsRemoveMemberResult, MlsWelcomeEnvelope,
+        MlsProposalEnvelope, MlsRemoveMemberResult, MlsWelcomeEnvelope,
     };
 
     use super::ClientEncryptedMessage;
@@ -114,6 +114,19 @@ mod native {
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
             Ok(group.apply_commit(commit)?)
+        }
+
+        /// Stage a by-reference MLS proposal (e.g. one carried in
+        /// `MlsRemoveMemberResult::proposals`) so a subsequent `apply_commit`
+        /// that references it can converge. Surviving members MUST apply every
+        /// proposal that a Remove commit references before applying the commit
+        /// itself; Add commits inline their proposals and never need this.
+        pub fn apply_proposal(&mut self, proposal: &MlsProposalEnvelope) -> anyhow::Result<()> {
+            let group = self
+                .group
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+            Ok(group.apply_proposal(proposal)?)
         }
 
         pub fn encrypt_message(
@@ -334,6 +347,18 @@ mod tests {
                 .any(|did| did.as_str() == "did:web:bob.example"),
             "remove commit must name Bob as the removed principal"
         );
+        // The SDK Remove uses the production by-reference wire form: the
+        // commit references detached Remove proposals rather than inlining
+        // them. Surviving members converge by staging every proposal the
+        // commit references, then applying the commit — mirroring the receive
+        // order (`ck.*.mls.proposal` events before the `mls_commit` event).
+        assert!(
+            !remove.proposals.is_empty(),
+            "Remove must emit at least one by-reference proposal"
+        );
+        for proposal in &remove.proposals {
+            carol.apply_proposal(proposal).unwrap();
+        }
         carol.apply_commit(&remove.commit).unwrap();
 
         let after_remove = alice

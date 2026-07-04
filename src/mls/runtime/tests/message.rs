@@ -103,12 +103,16 @@ fn two_member_group_with_bob_snapshot(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn receive_chain_persists_across_restart_and_serves_plaintext_cache() {
-    // §5.6 MUST: after a successful decrypt the advanced group state is
-    // persisted; the same-epoch NEXT message decrypts after a "restart"
-    // (fresh store over the same backing file), and the already-decrypted
-    // message re-renders from the plaintext cache (its ratchet key was
-    // deliberately consumed by the write-back).
+fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
+    // §5.6 MUST + E2EE-at-rest hardening: after a successful decrypt the
+    // advanced group state is persisted (so the same-epoch NEXT message
+    // decrypts after a "restart"), and the already-decrypted message re-renders
+    // from the in-session plaintext cache (its ratchet key was deliberately
+    // consumed by the write-back). Crucially, that plaintext cache is
+    // in-memory ONLY: `e2ee_safe_persist_state` strips `mls_decrypted_plaintext`
+    // before anything touches durable storage, so a real restart (fresh store
+    // over the same backing file) must NOT be able to re-render the consumed
+    // message — its plaintext is never written at rest.
     let path = std::env::temp_dir().join(format!(
         "yougen-test-receive-chain-{}.json",
         crate::operation::uuid_v7()
@@ -140,18 +144,27 @@ fn receive_chain_persists_across_restart_and_serves_plaintext_cache() {
     assert_ne!(advanced.ciphertext_hex, base_envelope.ciphertext_hex);
     assert_eq!(advanced.app_messages_observed, 1);
 
+    // Same session: m1 re-renders from the in-memory plaintext cache (a ratchet
+    // replay would fail — its message key was consumed before the write-back).
+    let same_session_replay1 =
+        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
+            .expect("m1 served from the in-session plaintext cache");
+    assert_eq!(same_session_replay1, br#"{"body":"m1"}"#);
+
     // "Restart": a brand-new store over the same backing file must see
     // the advanced receive chain (NOT the pre-decrypt snapshot).
     let restarted = crate::local_state::LocalStateStore::with_path(path.clone());
     let reloaded = restarted.mls_snapshot_for(realm).unwrap();
     assert_eq!(reloaded.ciphertext_hex, advanced.ciphertext_hex);
-    // m1 re-renders from the persisted plaintext cache (a ratchet replay
-    // would fail — its message key was consumed before the write-back).
-    let replay1 =
+    // E2EE-at-rest: the plaintext cache is stripped before persist, so after a
+    // real restart m1 is NOT recoverable — its ratchet key was consumed and its
+    // plaintext was never written to durable storage.
+    assert!(
         decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m1)
-            .expect("m1 served from the plaintext cache after restart");
-    assert_eq!(replay1, br#"{"body":"m1"}"#);
-    // m2 (the next generation in the same epoch) decrypts from the
+            .is_none(),
+        "consumed-message plaintext must never survive a restart (nothing at rest)"
+    );
+    // m2 (the next generation in the same epoch) still decrypts from the
     // persisted advanced chain.
     let plain2 =
         decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m2)

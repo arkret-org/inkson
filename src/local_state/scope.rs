@@ -524,6 +524,9 @@ impl LocalStateStore {
     }
 
     pub fn pending_encrypted_count(&self) -> usize {
-        self.cached.pending_encrypted_messages.len()
+        // Read through `load()` (like `snapshot_sync_status`) so a
+        // freshly-constructed store whose `cached` has not yet been populated
+        // still reports the durable pending count instead of a spurious 0.
+        self.load().pending_encrypted_messages.len()
     }
 }

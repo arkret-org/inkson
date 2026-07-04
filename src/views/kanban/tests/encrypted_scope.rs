@@ -181,8 +181,13 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
         "content": serde_json::to_value(&add.welcome).unwrap(),
         "unsigned": {
             "mls_welcome_id": "ck:mls_welcome:01904100-0000-7000-8000-0000000000ff",
+            "key_package_id": bob_key_package.keypackage_id.clone(),
         },
     })]);
+    // Deliberately DO NOT store the KeyPackage identity state for this device:
+    // the Welcome names a KeyPackage whose private init key is absent from the
+    // secure store, so the apply must fail closed at the early identity-state
+    // gate (the observable form of the old OpenMLS `NoMatchingKeyPackage`).
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let patch = json!({
         "body": {"$op": "set", "value": "private body from invited member"},
@@ -195,7 +200,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     .unwrap_err();
 
     assert!(error.contains("MLS Welcome could not be applied from local device inbox"));
-    assert!(error.contains("NoMatchingKeyPackage"));
+    assert!(error.contains("no local KeyPackage identity state"));
     assert!(state.mls_snapshot_for(realm).is_none());
     assert!(
         state
@@ -273,6 +278,11 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
             .as_deref(),
         Some("\"private body from invited member\"")
     );
+    // The KeyPackage init private state is RETAINED after a successful apply.
+    // Invitees publish reusable last-resort KeyPackages whose whole purpose is
+    // to stay decryptable across redelivered / repeated Welcomes; consuming the
+    // init key here would self-inflict a "no local KeyPackage identity state"
+    // deadlock on the next redelivery.
     assert!(
         crate::mls::runtime::load_mls_key_package_identity_state(
             &secure,
@@ -281,7 +291,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
             &bob_key_package.keypackage_id,
         )
         .unwrap()
-        .is_none()
+        .is_some()
     );
     assert!(mls_events.genesis.is_none());
     assert!(mls_events.commit.is_none());

@@ -41,6 +41,26 @@ fn wrap() -> Value {
         .unwrap()
 }
 
+/// Build the HPKE `recovery_public_key` account-secret backup that the
+/// server-first recovery redesign treats as the preferred, passphrase-free
+/// recovery material. The prompt gates (`mls_restore_prompt_required` /
+/// `mls_backup_prompt_required`) key off this body, not the passphrase-wrapped
+/// `wrap()` `secret_storage` body.
+fn recovery_hpke_backup() -> Value {
+    let (_sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+    build_mls_account_secret_recovery_public_key_backup(
+        "ck:backup:01964137-0000-7000-8000-00000000c0de",
+        ACTOR,
+        DEVICE,
+        &pk,
+        "did:web:alice.example#recovery",
+        ACCOUNT_SECRET,
+        1,
+        None,
+    )
+    .unwrap()
+}
+
 fn active_series_record(backup_class: &str, active_series_id: &str) -> Value {
     serde_json::json!({
         "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
@@ -269,7 +289,7 @@ fn prompt_required_when_local_secret_exists_but_history_is_missing() {
     let state = temp_state_store("prompt-missing-history");
     let envelope = history_envelope("ck:realm:prompt", "group-a", 7, ACCOUNT_SECRET);
     let payload = serde_json::json!({
-        "backups": [wrap(), history_body(&envelope)]
+        "backups": [recovery_hpke_backup(), history_body(&envelope)]
     });
 
     assert!(mls_restore_prompt_required(
@@ -357,7 +377,7 @@ fn prompt_required_when_local_snapshot_uses_forked_random_secret() {
     let local_envelope = history_envelope("ck:realm:prompt", "group-a", 7, "forked-random-secret");
     state.save_mls_snapshot(local_envelope.realm_id.clone(), local_envelope);
     let payload = serde_json::json!({
-        "backups": [wrap(), history_body(&server_envelope)]
+        "backups": [recovery_hpke_backup(), history_body(&server_envelope)]
     });
 
     assert!(
@@ -621,10 +641,11 @@ fn backup_prompt_required_when_local_secret_and_no_server_backup() {
 
 #[test]
 fn backup_prompt_not_required_when_server_backup_present() {
-    // Server already holds the account-secret backup: nothing to upload.
+    // Server already holds the passphrase-free recovery-public-key account-secret
+    // backup: fresh-device recovery material exists, so nothing to upload.
     let store = MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
-    let payload = serde_json::json!({ "backups": [wrap()] });
+    let payload = serde_json::json!({ "backups": [recovery_hpke_backup()] });
     assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
 }
 

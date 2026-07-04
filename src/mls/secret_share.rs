@@ -484,8 +484,8 @@ mod tests {
     #[test]
     fn rejects_tampered_sender_device_aad() {
         let (requester, send) = drive_happy_path();
-        // A relay that swaps the sender device (verify-A-send-from-B) changes the
-        // AAD the receiver reconstructs, so HPKE open MUST fail.
+        // A relay that swaps the sender device (verify-A-send-from-B) is caught
+        // by the explicit sender-device binding check before HPKE open.
         let err = open_send_content(
             &requester,
             &send,
@@ -495,7 +495,7 @@ mod tests {
             EXPIRES,
         )
         .unwrap_err();
-        assert!(format!("{err}").contains("hpke open"));
+        assert!(format!("{err}").contains("from_device does not match"));
     }
 
     #[test]
@@ -532,7 +532,7 @@ mod tests {
             EXPIRES,
         )
         .unwrap_err();
-        assert!(format!("{err}").contains("hpke open"));
+        assert!(format!("{err}").contains("hpke aead open failed"));
     }
 
     #[test]
