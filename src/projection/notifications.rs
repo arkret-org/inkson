@@ -180,6 +180,8 @@ pub(crate) fn default_notification_title(kind: &str) -> &'static str {
         "invite" => "notifications.default_title.invite",
         "reaction" => "notifications.default_title.reaction",
         "mention" => "notifications.default_title.mention",
+        "assignment" => "notifications.default_title.assignment",
+        "schedule" => "notifications.default_title.schedule",
         _ => "notifications.default_title.message",
     }
 }

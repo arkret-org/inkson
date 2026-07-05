@@ -88,6 +88,7 @@ pub struct NotificationEvalContext {
     pub local_decrypted: bool,
     pub mentions_actor: Option<bool>,
     pub assigned_to_actor: bool,
+    pub schedule_target: bool,
     pub reply_to_self: bool,
     pub participating_thread_update: bool,
     pub is_direct_message: bool,
@@ -297,7 +298,7 @@ fn evaluate_watch_gate(ctx: &NotificationEvalContext) -> Option<NotificationDeci
     let level = effective_watch_level(ctx)?;
     let core_ctx = PushRuleEventContext {
         mentions_actor: ctx.mentions_actor.unwrap_or(false),
-        assigned_to_actor: ctx.assigned_to_actor,
+        assigned_to_actor: ctx.assigned_to_actor || ctx.schedule_target,
         reply_to_self: ctx.reply_to_self,
         participating_thread_update: ctx.participating_thread_update,
         is_e2ee: ctx.is_e2ee,
@@ -329,7 +330,7 @@ fn evaluate_watch_gate(ctx: &NotificationEvalContext) -> Option<NotificationDeci
 }
 
 fn directed_event(ctx: &NotificationEvalContext) -> bool {
-    ctx.mentions_actor.unwrap_or(false) || ctx.assigned_to_actor
+    ctx.mentions_actor.unwrap_or(false) || ctx.assigned_to_actor || ctx.schedule_target
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

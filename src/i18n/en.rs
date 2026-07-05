@@ -874,6 +874,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.default_title.invite", "Realm invite");
     dict.set("notifications.default_title.reaction", "New reaction");
     dict.set("notifications.default_title.mention", "You were mentioned");
+    dict.set(
+        "notifications.default_title.assignment",
+        "You were assigned",
+    );
+    dict.set("notifications.default_title.schedule", "Schedule updated");
     dict.set("notifications.default_title.message", "New message");
     dict.set("notifications.default_action.accept", "Accept");
     dict.set("notifications.default_action.view", "View");

@@ -256,6 +256,45 @@ mod tests {
     }
 
     #[test]
+    fn assignment_and_schedule_notifications_survive_realm_mute_hydration() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000ab";
+        let mut local_state = ClientLocalState::default();
+        local_state
+            .realm_watch_levels
+            .insert(realm_id.to_owned(), WatchLevel::Muted);
+        let raw = vec![
+            json!({
+                "notification_id": "assignment",
+                "notification_type": "assignment",
+                "realm_id": realm_id,
+                "body": "You were assigned to a Strand.",
+                "assigned_to_actor": true,
+            }),
+            json!({
+                "notification_id": "schedule",
+                "notification_type": "schedule",
+                "realm_id": realm_id,
+                "body": "A due date or calendar schedule changed.",
+                "schedule_target": true,
+            }),
+        ];
+
+        let hydrated = hydrate_notifications(raw, &local_state, None, None);
+
+        assert_eq!(hydrated.len(), 2);
+        assert!(hydrated.iter().any(|notification| {
+            notification.kind == "assignment"
+                && notification.title == "notifications.default_title.assignment"
+                && notification_overrides_realm_mute(notification)
+        }));
+        assert!(hydrated.iter().any(|notification| {
+            notification.kind == "schedule"
+                && notification.title == "notifications.default_title.schedule"
+                && notification_overrides_realm_mute(notification)
+        }));
+    }
+
+    #[test]
     fn invite_title_is_preserved_for_accept_projection_hint() {
         let realm_id = "ck:realm:01904100-0000-7000-8000-000000000010";
         let invite = json!({
@@ -313,6 +352,19 @@ mod tests {
         assert!(!ctx.local_decrypted);
         assert_eq!(ctx.mentions_actor, Some(true));
         assert_eq!(ctx.sender.as_deref(), Some("did:web:alice.example"));
+    }
+
+    #[test]
+    fn notification_eval_context_extracts_schedule_target() {
+        let ctx = notification_eval_context(&json!({
+            "notification_id": "n1",
+            "event_kind": "ck.strand.update",
+            "notification_type": "schedule",
+            "schedule_target": true,
+        }));
+
+        assert_eq!(ctx.notification_type, "schedule");
+        assert!(ctx.schedule_target);
     }
 
     #[test]

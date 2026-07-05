@@ -877,6 +877,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.default_title.invite", "Realm 邀请");
     dict.set("notifications.default_title.reaction", "新表情回应");
     dict.set("notifications.default_title.mention", "有人提到了你");
+    dict.set("notifications.default_title.assignment", "分配给你的任务");
+    dict.set("notifications.default_title.schedule", "日程已更新");
     dict.set("notifications.default_title.message", "新消息");
     dict.set("notifications.default_action.accept", "接受");
     dict.set("notifications.default_action.view", "查看");

@@ -426,7 +426,7 @@ fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
     let core_level = ctx.watch_level.unwrap_or_default();
     let core_ctx = PushRuleEventContext {
         mentions_actor: ctx.mentions_actor.unwrap_or(false),
-        assigned_to_actor: ctx.assigned_to_actor,
+        assigned_to_actor: ctx.assigned_to_actor || ctx.schedule_target,
         reply_to_self: ctx.reply_to_self,
         participating_thread_update: ctx.participating_thread_update,
         is_e2ee: ctx.is_e2ee,
@@ -513,6 +513,7 @@ pub(crate) fn notification_eval_context(value: &Value) -> NotificationEvalContex
         local_decrypted: value_bool(value, "local_decrypted").unwrap_or(!is_e2ee),
         mentions_actor: value_bool(value, "mentions_actor"),
         assigned_to_actor: value_bool(value, "assigned_to_actor").unwrap_or(false),
+        schedule_target: value_bool(value, "schedule_target").unwrap_or(false),
         reply_to_self: value_bool(value, "reply_to_self").unwrap_or(false),
         participating_thread_update: value_bool(value, "participating_thread_update")
             .unwrap_or(false),
@@ -541,8 +542,10 @@ fn realm_watch_override(local_state: &ClientLocalState, realm_id: &str) -> Optio
 fn eval_context_overrides_realm_mute(ctx: &NotificationEvalContext) -> bool {
     matches!(
         ctx.notification_type.as_str(),
-        "invite" | "mention" | "priority" | "critical" | "urgent"
+        "invite" | "mention" | "assignment" | "schedule" | "priority" | "critical" | "urgent"
     ) || ctx.mentions_actor.unwrap_or(false)
+        || ctx.assigned_to_actor
+        || ctx.schedule_target
         || ctx.priority_override
 }
 
@@ -566,6 +569,6 @@ pub(crate) fn notification_overrides_realm_mute(notification: &UiNotification) -
         // dropped before this filter), so any `realm_watch_levels` mute is
         // necessarily stale from a prior membership and must not swallow a
         // fresh, actionable invite.
-        "invite" | "mention" | "priority" | "critical" | "urgent"
+        "invite" | "mention" | "assignment" | "schedule" | "priority" | "critical" | "urgent"
     )
 }
