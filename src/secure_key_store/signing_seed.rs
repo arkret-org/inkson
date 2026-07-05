@@ -36,22 +36,21 @@ use super::{SecureKeyStore, SecureKeyStoreError, require_wasm_indexeddb_ed25519_
 /// The seed is additionally scoped *per account* (see
 /// [`signing_seed_key_for`]): two accounts signed in on the same browser MUST
 /// hold completely separate device signing keys, never one shared key. The
-/// bare `SIGNING_SEED_KEY` is the **bootstrap** scope, used only during the
-/// pre-account phase of an interactive sign-in (the device key is needed to
-/// mint the session grant before the Account Authority resolves which principal
-/// the OIDC subject maps to); it is migrated into the account scope by
-/// [`adopt_device_seed_scope_on_login`] once the principal is known.
+/// bare `SIGNING_SEED_KEY` is a **bootstrap/legacy** scope used only before an
+/// account scope is known. Interactive session grants are bound by the separate
+/// grant-binding key below, so a returning account's signing seed must not be
+/// overwritten by a fresh login.
 pub const SIGNING_SEED_KEY: &str = "device.ed25519.signing_seed.v1";
 
 /// Process-global active device-seed scope: the signed-in account DID whose
 /// per-account seed the bare [`load_signing_seed`] / [`ensure_signing_seed`]
 /// helpers resolve. `None` selects the bootstrap scope. Set on login
 /// completion ([`adopt_device_seed_scope_on_login`]), on app boot / session
-/// restore for the persisted account, and reset for a fresh interactive
-/// sign-in ([`reset_device_seed_scope_for_signin`]). The seed is read at a few
-/// controlled points (signer activation at boot/login, recovery); per-event
-/// signing uses the already-activated in-memory signer, so this is not a hot
-/// path.
+/// restore for the persisted account, and temporarily reset to bootstrap for a
+/// fresh interactive sign-in ([`reset_device_seed_scope_for_signin`]). The seed
+/// is read at a few controlled points (signer activation at boot/login,
+/// recovery); per-event signing uses the already-activated in-memory signer, so
+/// this is not a hot path.
 static ACTIVE_DEVICE_SEED_SCOPE: RwLock<Option<String>> = RwLock::new(None);
 
 /// Set the active per-account device-seed scope (the account DID), or `None`
@@ -111,13 +110,12 @@ pub fn pending_login_device_id() -> Option<String> {
 /// wrapping key for the store on this one browser; sharing it across the
 /// browser's own accounts leaks nothing the user can't already read.
 ///
-/// It MUST stay constant across a sign-in: [`adopt_device_seed_scope_on_login`]
-/// re-homes the bootstrap signing seed to the account scope and only THEN flips
-/// `ACTIVE_DEVICE_SEED_SCOPE`. If the wrap_seed namespace tracked that scope, the
-/// account-scope seed would be wrapped under the pre-flip namespace but read back
-/// under the post-flip one — an undecryptable mismatch that silently drops the
-/// device key (regenerating it with a fresh `jkt` that no longer matches the
-/// just-issued grant). Keeping it global avoids that write/read skew entirely.
+/// It MUST stay constant across a sign-in: the callback stores bootstrap/pending
+/// material before the account DID is known, then flips `ACTIVE_DEVICE_SEED_SCOPE`
+/// once the resolved account is authoritative. If the wrap_seed namespace tracked
+/// that scope, a write under the pre-flip namespace could be read back under the
+/// post-flip one — an undecryptable mismatch that silently drops local device
+/// material. Keeping it global avoids that write/read skew entirely.
 pub fn wrap_seed_namespace(service_name: &str) -> String {
     service_name.to_owned()
 }
@@ -262,14 +260,11 @@ pub fn delete_signing_seed_scoped(
     store.delete_secret(&signing_seed_key_for(scope))
 }
 
-/// On login completion (the resolved principal DID is now known), re-home the
-/// bootstrap-scope seed — the one bound to the just-issued session grant
-/// (`cnf.jkt`) — under the account scope, then clear the bootstrap entry so the
-/// next account signed in on this browser cannot inherit it. When a bootstrap
-/// seed exists, its paired bootstrap `device_id` is re-homed with it even for a
-/// returning DID: the freshly-issued grant is bound to that exact device tuple,
-/// so keeping an older account-scoped `device_id` would make the local session
-/// internally inconsistent. Sets the active scope to `account`.
+/// On login completion (the resolved principal DID is now known), select that
+/// account's device-identity scope and clean any bootstrap leftovers. A returning
+/// account keeps its account-scoped signing seed and device id; only a first-time
+/// account may adopt bootstrap material. The just-issued grant's `cnf.jkt` is
+/// handled by the separate grant-binding key, not by this signing seed.
 pub fn adopt_device_seed_scope_on_login(
     store: &dyn SecureKeyStore,
     account: &str,
@@ -278,36 +273,35 @@ pub fn adopt_device_seed_scope_on_login(
     if account.is_empty() {
         return Ok(());
     }
-    // A present bootstrap seed is the freshly-minted device bound to the
-    // session grant just issued during this sign-in; it becomes this account's
-    // device key, OVERWRITING any prior one (the prior key is not bound to the
-    // live grant, so a sign-in that resolves back to the same principal must
-    // adopt the new key, not the stale one).
-    if let Some(material) = load_signing_seed_scoped(store, None)? {
-        store_signing_seed_scoped(store, Some(account), &material.seed)?;
-        delete_signing_seed_scoped(store, None)?;
-        // Re-home the paired bootstrap `device_id` under the account scope in
-        // lockstep with the seed it was minted with. The session grant just
-        // issued is bound to this bootstrap tuple, so both halves must overwrite
-        // any prior account-scoped tuple together.
-        if let Some(bootstrap_device_id) = load_device_id_scoped(store, None)? {
-            store_device_id_scoped(store, Some(account), &bootstrap_device_id)?;
-            delete_device_id_scoped(store, None)?;
+    if load_signing_seed_scoped(store, Some(account))?.is_none() {
+        if let Some(material) = load_signing_seed_scoped(store, None)? {
+            store_signing_seed_scoped(store, Some(account), &material.seed)?;
         }
     }
+    delete_signing_seed_scoped(store, None)?;
+
+    if load_device_id_scoped(store, Some(account))?.is_none() {
+        if let Some(bootstrap_device_id) = load_device_id_scoped(store, None)? {
+            store_device_id_scoped(store, Some(account), &bootstrap_device_id)?;
+        }
+    }
+    delete_device_id_scoped(store, None)?;
+
     set_active_device_seed_scope(Some(account));
     Ok(())
 }
 
-/// Reset to the bootstrap scope for a fresh interactive sign-in and clear any
-/// leftover bootstrap seed, so the device key minted for whatever principal the
-/// OIDC flow resolves to is brand-new and never the previous account's key.
+/// Reset to the bootstrap scope for a fresh interactive sign-in, clear only
+/// bootstrap leftovers, and rotate the session grant-binding key. Account-scoped
+/// device identity seeds/device ids are deliberately preserved so a hard
+/// re-login can prove a fresh `cnf.jkt` without rotating the E2EE device.
 pub fn reset_device_seed_scope_for_signin(
     store: &dyn SecureKeyStore,
 ) -> Result<(), SecureKeyStoreError> {
     set_active_device_seed_scope(None);
     let _ = delete_device_id_scoped(store, None);
-    delete_signing_seed_scoped(store, None)
+    let _ = delete_signing_seed_scoped(store, None);
+    rotate_grant_binding_seed(store).map(|_| ())
 }
 
 /// Load the existing signing seed, or generate + persist a fresh one if
@@ -401,9 +395,11 @@ pub fn store_grant_binding_seed_b64url(
     store: &dyn SecureKeyStore,
     seed_b64url: &str,
 ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
-    let bytes = URL_SAFE_NO_PAD.decode(seed_b64url.as_bytes()).map_err(|err| {
-        SecureKeyStoreError::Backend(format!("grant-binding seed b64url decode: {err}"))
-    })?;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(seed_b64url.as_bytes())
+        .map_err(|err| {
+            SecureKeyStoreError::Backend(format!("grant-binding seed b64url decode: {err}"))
+        })?;
     if bytes.len() != 32 {
         return Err(SecureKeyStoreError::Backend(format!(
             "grant-binding seed length {}, expected 32",

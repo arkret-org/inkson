@@ -19,11 +19,16 @@
 //! The split keeps the policy pure (testable without spinning up
 //! reqwest) and the IO thin.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
+use serde::Serialize;
 
 use crate::auth_dpop::DpopHandle;
 use crate::config::normalize_server_url;
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
+
+const SOFT_LOGOUT_RESTORE_OPERATION: &str = "resume_soft_logged_out_session";
 
 /// Window before the current grant expiry at which the background poller
 /// proactively rotates the grant.
@@ -155,8 +160,8 @@ pub enum RefreshPrepared {
     Done(RefreshOutcome),
     /// Caller should run [`exchange_refresh`] with these materials and
     /// then feed the result into [`commit_refresh`]. `device_handle` is the
-    /// DPoP holder key bound into the grant's `cnf.jkt`; it signs the rotation
-    /// proof.
+    /// DPoP holder key bound into the grant's `cnf.jkt`; the active event
+    /// signer supplies the separate device-identity DID proof.
     Ready {
         grant: PersistedSessionGrant,
         device_handle: DpopHandle,
@@ -185,8 +190,9 @@ fn prepare_refresh_grant(
     store: &mut LocalStateStore,
     grant: PersistedSessionGrant,
 ) -> RefreshPrepared {
-    // The rotation proof is signed by the durable device DPoP key (the same key
-    // bound into the grant's `cnf.jkt`), not the grant's own session key.
+    // The DPoP header is signed by the grant-binding key (`cnf.jkt`). The body
+    // proof is a separate DID proof signed by the authorized device identity
+    // signer, so bind the active signer to the grant's protocol device id here.
     let device_handle = match crate::auth_dpop::load_or_recover_device_key(store) {
         Ok(Some(handle)) => handle,
         Ok(None) => {
@@ -200,10 +206,18 @@ fn prepare_refresh_grant(
             });
         }
     };
-    if let Err(error) = crate::event_signer::bind_active_signer_device_id(&grant.device_id) {
-        return RefreshPrepared::Done(RefreshOutcome::Transient {
-            reason: format!("could not bind event signer to grant device: {error}"),
-        });
+    match crate::event_signer::bind_active_signer_device_id(&grant.device_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return RefreshPrepared::Done(RefreshOutcome::Transient {
+                reason: "could not load device identity signer for grant rotation".to_owned(),
+            });
+        }
+        Err(error) => {
+            return RefreshPrepared::Done(RefreshOutcome::Transient {
+                reason: format!("could not bind event signer to grant device: {error}"),
+            });
+        }
     }
 
     RefreshPrepared::Ready {
@@ -262,7 +276,8 @@ pub async fn exchange_refresh(
 
 /// Rotate a session grant onto a fresh one via the Account Authority's DPoP
 /// refresh endpoint. The DPoP proof is `htm=POST`, `htu`=absolute refresh URL,
-/// `ath`=hash(prior grant), signed by the device key bound into `cnf.jkt`.
+/// `ath`=hash(prior grant), signed by the grant-binding key bound into
+/// `cnf.jkt`. The body proof is signed by the authorized device identity key.
 async fn rotate_session_grant(
     grant: &PersistedSessionGrant,
     device_handle: &DpopHandle,
@@ -276,13 +291,7 @@ async fn rotate_session_grant(
     let dpop_proof = device_handle
         .mint_proof("POST", &htu, Some(&grant.grant_jwt))
         .map_err(|error| anyhow::anyhow!("mint rotation DPoP proof: {error}"))?;
-    let refresh_proof = device_handle
-        .mint_session_grant_refresh_proof(
-            &grant.grant_jwt,
-            &grant.principal_id,
-            &grant.device_id,
-            &grant.audience,
-        )
+    let refresh_proof = mint_session_grant_refresh_proof(grant)
         .map_err(|error| anyhow::anyhow!("mint rotation DID proof: {error}"))?;
     let outcome = refresh_session_grant(
         &gate_account_base,
@@ -309,6 +318,113 @@ async fn rotate_session_grant(
         grant_expires_at: Some(outcome.expires_at),
         stored_at: Utc::now(),
     })
+}
+
+#[derive(Debug, Serialize)]
+struct SoftLogoutDidProofClaims<'a> {
+    pub principal_id: &'a str,
+    pub device_id: &'a str,
+    pub audience: &'a str,
+    pub challenge: &'a str,
+    pub request_canonical_digest: &'a str,
+    pub issued_at: chrono::DateTime<Utc>,
+    pub expires_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct SoftLogoutRestoreRequestDigest<'a> {
+    pub operation: &'static str,
+    pub grant_jwt_hash: String,
+    pub principal_id: &'a str,
+    pub device_id: &'a str,
+    pub audience: &'a str,
+    pub holder_key_id: &'a str,
+}
+
+fn mint_session_grant_refresh_proof(
+    grant: &PersistedSessionGrant,
+) -> anyhow::Result<cokret_sdk::SessionGrantRefreshProof> {
+    let principal_id = required_trimmed(&grant.principal_id, "principal_id")?;
+    let device_id = required_trimmed(&grant.device_id, "device_id")?;
+    let audience = required_trimmed(&grant.audience, "audience")?;
+    let verification_method = format!("{principal_id}#{device_id}");
+    let request_canonical_digest = soft_logout_restore_request_canonical_digest(
+        &grant.grant_jwt,
+        principal_id,
+        device_id,
+        audience,
+        &verification_method,
+    )?;
+    let request_canonical_digest_hash = cokret_sdk::Hash::new(request_canonical_digest.clone())
+        .map_err(|error| anyhow::anyhow!("soft logout restore request digest: {error}"))?;
+    let challenge = soft_logout_refresh_challenge()?;
+    let issued_at = Utc::now();
+    let expires_at = issued_at + chrono::Duration::seconds(60);
+    let claims = SoftLogoutDidProofClaims {
+        principal_id,
+        device_id,
+        audience,
+        challenge: &challenge,
+        request_canonical_digest: &request_canonical_digest,
+        issued_at,
+        expires_at,
+    };
+    let payload = crate::canonical::canonical_json_bytes(&claims)
+        .map_err(|error| anyhow::anyhow!("soft logout restore proof payload: {error}"))?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
+    let signature = signer
+        .detached_jws_over_payload_with_kid(&verification_method, &payload)
+        .map_err(|error| anyhow::anyhow!("sign soft logout restore proof: {error}"))?;
+    Ok(cokret_sdk::SessionGrantRefreshProof {
+        proof_kind: Some(cokret_sdk::SessionGrantProofKind::DidBoundSignature),
+        challenge: Some(challenge),
+        request_canonical_digest: Some(request_canonical_digest_hash),
+        audience: Some(audience.to_owned()),
+        issued_at: Some(issued_at),
+        expires_at: Some(expires_at),
+        signature: Some(signature),
+        verification_method: Some(verification_method),
+    })
+}
+
+fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> {
+    let value = value.trim();
+    if value.is_empty() {
+        anyhow::bail!("{field} is required");
+    }
+    Ok(value)
+}
+
+fn soft_logout_restore_request_canonical_digest(
+    grant_jwt: &str,
+    principal_id: &str,
+    device_id: &str,
+    audience: &str,
+    holder_key_id: &str,
+) -> anyhow::Result<String> {
+    crate::canonical::canonical_sha256(&SoftLogoutRestoreRequestDigest {
+        operation: SOFT_LOGOUT_RESTORE_OPERATION,
+        grant_jwt_hash: crate::coauth::session_grant_jwt_hash(grant_jwt),
+        principal_id,
+        device_id,
+        audience,
+        holder_key_id,
+    })
+    .map_err(|error| anyhow::anyhow!("soft logout restore request canonicalization: {error}"))
+}
+
+/// Build the soft-logout refresh challenge from a pure 128-bit random nonce +
+/// millisecond timestamp. The DPoP jkt is intentionally not mixed in: holder-key
+/// binding is carried by the signed proof payload and request digest.
+fn soft_logout_refresh_challenge() -> anyhow::Result<String> {
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|err| anyhow::anyhow!("refresh challenge RNG: {err}"))?;
+    Ok(format!(
+        "sg-refresh-{}-{}",
+        Utc::now().timestamp_millis(),
+        URL_SAFE_NO_PAD.encode(nonce)
+    ))
 }
 
 /// Synchronous commit: persist the rotated grant (or clear it on a definitive

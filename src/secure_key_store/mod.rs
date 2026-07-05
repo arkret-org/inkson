@@ -67,13 +67,12 @@ pub use platform::IosKeychainSecureKeyStore;
 pub use signing_seed::{
     GRANT_BINDING_SEED_KEY, SIGNING_SEED_KEY, SigningSeedMaterial, account_scoped_device_key,
     active_device_seed_scope, adopt_device_seed_scope_on_login, delete_grant_binding_seed,
-    ensure_grant_binding_seed, ensure_signing_seed, ensure_signing_seed_scoped,
-    load_device_id, load_device_id_scoped, load_grant_binding_seed, load_signing_seed,
-    load_signing_seed_scoped, pending_login_device_id, reset_device_seed_scope_for_signin,
-    rotate_grant_binding_seed, set_active_device_seed_scope, set_pending_login_device_id,
-    store_device_id, store_device_id_scoped, store_grant_binding_seed,
-    store_grant_binding_seed_b64url, store_signing_seed, store_signing_seed_scoped,
-    wrap_seed_namespace,
+    ensure_grant_binding_seed, ensure_signing_seed, ensure_signing_seed_scoped, load_device_id,
+    load_device_id_scoped, load_grant_binding_seed, load_signing_seed, load_signing_seed_scoped,
+    pending_login_device_id, reset_device_seed_scope_for_signin, rotate_grant_binding_seed,
+    set_active_device_seed_scope, set_pending_login_device_id, store_device_id,
+    store_device_id_scoped, store_grant_binding_seed, store_grant_binding_seed_b64url,
+    store_signing_seed, store_signing_seed_scoped, wrap_seed_namespace,
 };
 
 #[cfg(target_arch = "wasm32")]

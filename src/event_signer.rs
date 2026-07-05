@@ -357,6 +357,46 @@ impl YougenEventSigner {
         Ok(format!("{header_b64}..{sig_b64}"))
     }
 
+    /// Produce a detached compact JWS (`<b64u header>..<b64u sig>`) with a
+    /// `kid` protected-header claim. Unlike [`Self::detached_jws_over`], this
+    /// follows RFC 7515 signing input rules and signs
+    /// `b64u(header) "." b64u(payload)`. The session-grant refresh endpoint
+    /// verifies this shape against the Principal Server's authorized device
+    /// key.
+    pub fn detached_jws_over_payload_with_kid(
+        &self,
+        kid: &str,
+        payload: &[u8],
+    ) -> Result<String, EventSignerError> {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+        let kid = kid.trim();
+        if kid.is_empty() {
+            return Err(EventSignerError::Encoding(
+                "detached JWS kid must not be empty".to_owned(),
+            ));
+        }
+        let header = serde_json::json!({
+            "alg": self.algorithm(),
+            "kid": kid,
+        });
+        let header = serde_json::to_vec(&header)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
+        let payload_b64 = URL_SAFE_NO_PAD.encode(payload);
+        let signing_input = format!("{header_b64}.{payload_b64}");
+        let Some(signing_key) = &self.raw_signing_key else {
+            return Err(EventSignerError::RawSigningUnavailable);
+        };
+        let signature = signing_key.sign(signing_input.as_bytes()).to_bytes();
+        let sig_b64 = URL_SAFE_NO_PAD.encode(signature);
+        if let Ok(mut guard) = self.last_signed_at.lock() {
+            *guard = Some(crate::clock::now_utc());
+        }
+        Ok(format!("{header_b64}..{sig_b64}"))
+    }
+
     fn verification_method_for_sdk_event(&self, event: &cokret_sdk::Event) -> String {
         let controller = event
             .executed_by
@@ -451,11 +491,10 @@ fn install_device_signer(signer: Arc<YougenEventSigner>) -> Arc<YougenEventSigne
 
 /// Make `seed` the active session-device signer, replacing any stale signer.
 ///
-/// Cokret's default session profile uses one Ed25519 device key for DPoP,
-/// RFC 9421/session proofs, device authorization, KeyPackage claims, and MLS
-/// Welcome claim envelopes. This entry point is used when the DPoP path is the
-/// authoritative source of the device seed, such as grant injection or a
-/// rehydrated `cnf.jkt` holder key.
+/// Separated-lifecycle boot paths pass the durable device identity signing seed
+/// used for events, device authorization, KeyPackage claims, and MLS Welcome
+/// claim envelopes. Grant-binding (DPoP) seeds have a separate lifecycle and
+/// are installed in the auth DPoP store instead.
 pub fn activate_device_signer_from_seed(
     seed: [u8; 32],
     persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
@@ -768,6 +807,31 @@ pub fn bootstrap_default_signer(
     Ok(install_device_signer_from_material(&material))
 }
 
+/// Bootstrap the OS-keychain backed signer and bind it to the protocol
+/// `ck:device:*` id for this account session.
+///
+/// Unlike [`bootstrap_default_signer`], this intentionally replaces any stale
+/// active signer. Boot may have installed a grant-binding (DPoP) signer early
+/// enough to unblock requests; once the account-scoped device id is known, the
+/// durable device identity signer must win the active slot.
+pub fn bootstrap_default_signer_for_device(
+    service_name: &str,
+    device_id: &str,
+) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+    let device_id = normalize_signer_device_id(Some(device_id))
+        .ok_or_else(|| anyhow::anyhow!("device_id is required for device-bound event signer"))?;
+    cokret_sdk::DeviceId::new(device_id.clone())
+        .map_err(|err| anyhow::anyhow!("invalid device_id for event signer: {err}"))?;
+    let store = crate::secure_key_store::default_secure_key_store(service_name);
+    let material = crate::secure_key_store::ensure_signing_seed(&*store)
+        .map_err(|err| anyhow::anyhow!("ensure_signing_seed failed: {err}"))?;
+    activate_device_signer_from_seed_for_device(
+        material.seed,
+        Some(store.as_ref()),
+        Some(&device_id),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -861,6 +925,43 @@ mod tests {
                 .is_err(),
             "raw control-plane signatures must not be detached-JWS signatures"
         );
+    }
+
+    #[test]
+    fn detached_jws_over_payload_with_kid_signs_standard_jws_input() {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use ed25519_dalek::{Signature, SigningKey, Verifier as _};
+
+        let _g = reset();
+        let seed = [10u8; 32];
+        let signer = build_ed25519_signer(seed, "did:web:jws.example");
+        let payload = canonical_json_bytes(&json!({
+            "purpose": "session_grant_refresh",
+            "challenge": "challenge-1",
+        }))
+        .unwrap();
+        let kid = "did:web:jws.example#ck:device:01964137-0000-7000-8000-000000000001";
+
+        let jws = signer
+            .detached_jws_over_payload_with_kid(kid, &payload)
+            .expect("detached jws");
+        let parts: Vec<&str> = jws.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        assert!(parts[1].is_empty());
+        let header: serde_json::Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).expect("header b64"))
+                .expect("header json");
+        assert_eq!(header, json!({"alg": "EdDSA", "kid": kid}));
+
+        let signing_input = format!("{}.{}", parts[0], URL_SAFE_NO_PAD.encode(&payload));
+        let signature =
+            Signature::from_slice(&URL_SAFE_NO_PAD.decode(parts[2]).expect("signature b64"))
+                .expect("signature");
+        SigningKey::from_bytes(&seed)
+            .verifying_key()
+            .verify(signing_input.as_bytes(), &signature)
+            .expect("signature verifies over JWS signing input");
     }
 
     #[test]

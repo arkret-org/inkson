@@ -36,7 +36,6 @@ use dioxus_router::Link;
 use dioxus_router::hooks::use_route;
 use serde_json::{Value, json};
 
-use crate::auth_dpop::ensure_device_key;
 use crate::components::{EmptyState, EmptyStateKind, HelpTip};
 use crate::device_pairing::{
     PendingPairingRequest, pairing_request_body, parse_pending_pairing_requests,
@@ -108,8 +107,9 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
 }
 
 /// Build the QR / paste payload that an already-authorized device approves.
-/// The new device owns `requesting_device_id` and its local key material;
-/// the existing device turns this payload into `ck.gate.account.command.pair_device`.
+/// The new device owns `requesting_device_id` and its device-identity public
+/// key; the existing device turns this payload into
+/// `ck.gate.account.command.pair_device`.
 fn build_pair_payload(
     account_did: &str,
     requesting_device_id: &str,
@@ -1121,29 +1121,36 @@ fn render_pair_strand(
                             pair_status.set("No active session. Sign in first.".to_owned());
                             return;
                         }
-                        let public_key_material = match ensure_device_key(&mut state_store.write())
-                        {
-                            Ok(handle) => handle.jkt().to_owned(),
-                            Err(err) => {
-                                pair_status.set(format!(
-                                    "Generating this device key failed: {err}"
-                                ));
-                                return;
-                            }
-                        };
                         let requesting_device_id = device_id();
                         if requesting_device_id.trim().is_empty() {
                             pair_status.set("This browser has no local device id yet. Sign in again or reload before pairing.".to_owned());
                             return;
                         }
-                        if let Err(err) =
-                            crate::event_signer::bind_active_signer_device_id(&requesting_device_id)
-                        {
-                            pair_status.set(format!(
-                                "Binding this device signer failed: {err}"
-                            ));
+                        let signer = match crate::event_signer::bind_active_signer_device_id(
+                            &requesting_device_id,
+                        ) {
+                            Ok(Some(signer)) => signer,
+                            Ok(None) => {
+                                pair_status.set(
+                                    "This browser has no device identity signer yet. Reload before pairing."
+                                        .to_owned(),
+                                );
+                                return;
+                            }
+                            Err(err) => {
+                                pair_status.set(format!(
+                                    "Binding this device signer failed: {err}"
+                                ));
+                                return;
+                            }
+                        };
+                        let Some(public_key_material) = signer.public_key_multibase() else {
+                            pair_status.set(
+                                "This device signer cannot expose a device public key for pairing."
+                                    .to_owned(),
+                            );
                             return;
-                        }
+                        };
                         let pairing_code = uuid_v7().replace('-', "");
                         let challenge_signature = uuid_v7().replace('-', "");
                         let payload = build_pair_payload(

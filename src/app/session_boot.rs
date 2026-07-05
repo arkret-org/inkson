@@ -238,15 +238,21 @@ pub(super) fn inject_test_session_grant(
     // (which now sources the grant-binding store) mints DPoP proofs whose
     // thumbprint matches `cnf.jkt`. The event signer (device identity key that
     // signs events / KeyPackages / MLS) is activated SEPARATELY from the account
-    // signing seed via `bootstrap_default_signer`, so the two lifecycles stay
-    // decoupled just as they do in production.
-    if let Err(error) =
-        crate::secure_key_store::store_grant_binding_seed_b64url(secure_store.as_ref(), &dpop_seed_b64url)
-    {
-        tracing::warn!(?error, "test session injection: grant-binding key persist failed");
+    // signing seed and bound to the injected device id, so the two lifecycles
+    // stay decoupled just as they do in production.
+    if let Err(error) = crate::secure_key_store::store_grant_binding_seed_b64url(
+        secure_store.as_ref(),
+        &dpop_seed_b64url,
+    ) {
+        tracing::warn!(
+            ?error,
+            "test session injection: grant-binding key persist failed"
+        );
         return None;
     }
-    if let Err(error) = crate::event_signer::bootstrap_default_signer("yougen") {
+    if let Err(error) =
+        crate::event_signer::bootstrap_default_signer_for_device("yougen", device_id)
+    {
         tracing::warn!(
             ?error,
             "test session injection: device identity signer install failed"

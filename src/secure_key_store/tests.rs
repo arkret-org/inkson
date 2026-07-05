@@ -44,7 +44,7 @@ fn ensure_signing_seed_generates_and_is_idempotent() {
 }
 
 #[test]
-fn login_adopt_rehomes_bootstrap_device_id_with_seed() {
+fn login_adopt_preserves_returning_account_device_identity() {
     let _reset = SeedScopeReset;
     set_active_device_seed_scope(None);
     let store = MemorySecureKeyStore::new();
@@ -56,6 +56,42 @@ fn login_adopt_rehomes_bootstrap_device_id_with_seed() {
 
     store_signing_seed_scoped(&store, Some(account), &old_seed).expect("old account seed");
     store_device_id_scoped(&store, Some(account), old_device).expect("old account device id");
+    store_signing_seed_scoped(&store, None, &bootstrap_seed).expect("bootstrap seed");
+    store_device_id_scoped(&store, None, bootstrap_device).expect("bootstrap device id");
+
+    adopt_device_seed_scope_on_login(&store, account).expect("adopt login scope");
+
+    let adopted_seed = load_signing_seed_scoped(&store, Some(account))
+        .expect("load account seed")
+        .expect("account seed present");
+    assert_eq!(adopted_seed.seed, old_seed);
+    assert_eq!(
+        load_device_id_scoped(&store, Some(account))
+            .expect("load account device")
+            .as_deref(),
+        Some(old_device)
+    );
+    assert!(
+        load_signing_seed_scoped(&store, None)
+            .expect("load bootstrap seed")
+            .is_none()
+    );
+    assert!(
+        load_device_id_scoped(&store, None)
+            .expect("load bootstrap device")
+            .is_none()
+    );
+}
+
+#[test]
+fn login_adopt_rehomes_bootstrap_material_for_first_time_account() {
+    let _reset = SeedScopeReset;
+    set_active_device_seed_scope(None);
+    let store = MemorySecureKeyStore::new();
+    let account = "did:web:alice.example";
+    let bootstrap_device = "ck:device:01964137-0000-7000-8000-000000000002";
+    let bootstrap_seed = [2u8; 32];
+
     store_signing_seed_scoped(&store, None, &bootstrap_seed).expect("bootstrap seed");
     store_device_id_scoped(&store, None, bootstrap_device).expect("bootstrap device id");
 
@@ -80,6 +116,59 @@ fn login_adopt_rehomes_bootstrap_device_id_with_seed() {
         load_device_id_scoped(&store, None)
             .expect("load bootstrap device")
             .is_none()
+    );
+}
+
+#[test]
+fn signin_reset_preserves_account_identity_and_rotates_grant_binding() {
+    let _reset = SeedScopeReset;
+    let store = MemorySecureKeyStore::new();
+    let account = "did:web:alice.example";
+    let account_device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let account_seed = [1u8; 32];
+    let bootstrap_seed = [2u8; 32];
+    let bootstrap_device = "ck:device:01964137-0000-7000-8000-000000000002";
+    let old_grant_binding = [3u8; 32];
+
+    set_active_device_seed_scope(Some(account));
+    store_signing_seed_scoped(&store, Some(account), &account_seed).expect("account seed");
+    store_device_id_scoped(&store, Some(account), account_device).expect("account device");
+    store_signing_seed_scoped(&store, None, &bootstrap_seed).expect("bootstrap seed");
+    store_device_id_scoped(&store, None, bootstrap_device).expect("bootstrap device");
+    store_grant_binding_seed(&store, &old_grant_binding).expect("old grant-binding");
+
+    reset_device_seed_scope_for_signin(&store).expect("reset for signin");
+
+    assert_eq!(active_device_seed_scope(), None);
+    assert_eq!(
+        load_signing_seed_scoped(&store, Some(account))
+            .expect("load account seed")
+            .expect("account seed")
+            .seed,
+        account_seed
+    );
+    assert_eq!(
+        load_device_id_scoped(&store, Some(account))
+            .expect("load account device")
+            .as_deref(),
+        Some(account_device)
+    );
+    assert!(
+        load_signing_seed_scoped(&store, None)
+            .expect("load bootstrap seed")
+            .is_none()
+    );
+    assert!(
+        load_device_id_scoped(&store, None)
+            .expect("load bootstrap device")
+            .is_none()
+    );
+    assert_ne!(
+        load_grant_binding_seed(&store)
+            .expect("load grant-binding")
+            .expect("grant-binding")
+            .seed,
+        old_grant_binding
     );
 }
 

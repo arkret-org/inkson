@@ -57,3 +57,60 @@ fn mls_snapshot_drop_clears_persisted_record() {
     store.drop_mls_snapshot(realm);
     assert!(store.mls_snapshot_for(realm).is_none());
 }
+
+#[test]
+fn logout_session_clear_preserves_account_e2ee_state() {
+    use crate::mls::persistence::encrypt_state;
+
+    let path = temp_state_path("logout-preserves-mls");
+    let realm = "ck:realm:logout-preserves";
+    let actor = "did:web:alice.example";
+    let grant = PersistedSessionGrant {
+        grant_jwt: "alice.grant".to_owned(),
+        session_private_key_pem: "pem".to_owned(),
+        grant_id: "g-alice".to_owned(),
+        audience: "https://principal.example/api".to_owned(),
+        principal_id: actor.to_owned(),
+        device_id: "ck:device:01904100-0000-7000-8000-000000000001".to_owned(),
+        principal_server_url: "https://principal.example".to_owned(),
+        grant_expires_at: None,
+        stored_at: chrono::Utc::now(),
+    };
+    let dpop = DpopDeviceKeyRecord {
+        seed_b64: "seed".to_owned(),
+        jkt: "jkt-old".to_owned(),
+        created_at: chrono::Utc::now(),
+    };
+
+    {
+        let mut store = LocalStateStore::with_path(path.clone());
+        store.adopt_account_scope(actor);
+        store.save_mls_snapshot(
+            realm,
+            encrypt_state(realm, "abcd", 1, b"state", "secret", b"salt"),
+        );
+        store.save_realm_tree_projection(realm, serde_json::json!({"title": "Project"}));
+        store.save_draft(realm, "draft");
+        store.set_session_grant(Some(grant));
+        store.set_dpop_device_key(Some(dpop));
+
+        store.clear_session_scoped_for_logout();
+    }
+
+    let reader = LocalStateStore::with_path(path);
+    assert_eq!(reader.active_account_did().as_deref(), Some(actor));
+    assert!(reader.session_grant().is_none());
+    assert!(reader.dpop_device_key().is_none());
+    assert!(
+        reader.mls_snapshot_for(realm).is_some(),
+        "logout must preserve local MLS snapshot for returning account"
+    );
+    assert!(
+        reader.load().realm_tree_projections.get(realm).is_some(),
+        "logout must preserve the account's own projection cache"
+    );
+    assert_eq!(
+        reader.load().drafts.get(realm).map(String::as_str),
+        Some("draft")
+    );
+}

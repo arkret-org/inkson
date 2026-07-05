@@ -375,18 +375,6 @@ pub fn RouterView() -> Element {
                     };
                     match dpop_record {
                         Ok(Some(record)) => {
-                            if let Err(error) =
-                                crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
-                                    &record.seed_b64,
-                                    Some(secure_store.as_ref()),
-                                    Some(&device_id_for_secure_upgrade()),
-                                )
-                            {
-                                tracing::warn!(
-                                    ?error,
-                                    "IndexedDB DPoP-bound signer bootstrap failed",
-                                );
-                            }
                             if let Err(error) = state_store_for_secure_upgrade
                                 .write()
                                 .set_dpop_device_key_with_secure_store(
@@ -405,14 +393,6 @@ pub fn RouterView() -> Element {
                             tracing::warn!(?error, "IndexedDB DPoP key load failed");
                         }
                     }
-                    match crate::event_signer::bootstrap_default_signer("yougen") {
-                        Ok(_) => {
-                            tracing::info!("IndexedDB signer bootstrap succeeded");
-                        }
-                        Err(error) => {
-                            tracing::warn!(?error, "IndexedDB signer bootstrap failed");
-                        }
-                    }
                     // Pin the stable, account-scoped `device_id` from the secure
                     // store as the authoritative source BEFORE the bootstrap
                     // `connect()` (gated on `secure_store_bootstrap_ready` below)
@@ -427,46 +407,101 @@ pub fn RouterView() -> Element {
                     // state"). Resolving from the seed-paired secure-store entry
                     // makes `device_id` exactly as stable as the signing seed
                     // across reloads and re-logins of the same account.
-                    {
+                    let stable_device_id_for_signer = {
                         let store = secure_store.as_ref();
-                        let current = device_id_for_secure_upgrade.peek().trim().to_owned();
-                        let resolved = match crate::secure_key_store::load_device_id(store) {
-                            Ok(Some(existing)) => Some(existing),
-                            Ok(None) => {
-                                let chosen = if crate::config::is_valid_device_id(&current) {
-                                    current.clone()
-                                } else {
-                                    crate::config::new_device_id()
-                                };
-                                match crate::secure_key_store::store_device_id(store, &chosen) {
-                                    Ok(()) => Some(chosen),
-                                    Err(error) => {
-                                        tracing::warn!(target: "secure_store", ?error, "persist stable device_id failed");
-                                        None
-                                    }
-                                }
-                            }
-                            Err(error) => {
-                                tracing::warn!(target: "secure_store", ?error, "load stable device_id failed");
-                                None
-                            }
-                        };
-                        if let Some(resolved) = resolved
-                            && resolved != current
-                        {
+                        let account_scope = account_did_for_secure_upgrade.peek().trim().to_owned();
+                        if account_scope.is_empty() {
                             tracing::warn!(
                                 target: "secure_store",
-                                stale = %current,
-                                stable = %resolved,
-                                "pinning stable device_id from secure store (config blob value was phantom/stale)"
+                                "device identity signer bootstrap skipped: no account scope yet"
                             );
-                            device_id_for_secure_upgrade.set(resolved.clone());
-                            persist_config(
-                                config_store_for_secure_upgrade,
-                                base_url_for_secure_upgrade(),
-                                account_did_for_secure_upgrade(),
-                                resolved,
-                                token_for_secure_upgrade.peek().trim().to_owned(),
+                            None
+                        } else {
+                            crate::secure_key_store::set_active_device_seed_scope(Some(
+                                &account_scope,
+                            ));
+                            let current = device_id_for_secure_upgrade.peek().trim().to_owned();
+                            let resolved = match crate::secure_key_store::load_device_id_scoped(
+                                store,
+                                Some(&account_scope),
+                            ) {
+                                Ok(Some(existing)) => Some(existing),
+                                Ok(None) => {
+                                    let chosen = if crate::config::is_valid_device_id(&current) {
+                                        current.clone()
+                                    } else {
+                                        crate::config::new_device_id()
+                                    };
+                                    match crate::secure_key_store::store_device_id_scoped(
+                                        store,
+                                        Some(&account_scope),
+                                        &chosen,
+                                    ) {
+                                        Ok(()) => Some(chosen),
+                                        Err(error) => {
+                                            tracing::warn!(target: "secure_store", ?error, "persist stable device_id failed");
+                                            None
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    tracing::warn!(target: "secure_store", ?error, "load stable device_id failed");
+                                    None
+                                }
+                            };
+                            match resolved {
+                                Some(resolved) => {
+                                    if resolved != current {
+                                        tracing::warn!(
+                                            target: "secure_store",
+                                            stale = %current,
+                                            stable = %resolved,
+                                            "pinning stable device_id from secure store (config blob value was phantom/stale)"
+                                        );
+                                        device_id_for_secure_upgrade.set(resolved.clone());
+                                        persist_config(
+                                            config_store_for_secure_upgrade,
+                                            base_url_for_secure_upgrade(),
+                                            account_did_for_secure_upgrade(),
+                                            resolved.clone(),
+                                            token_for_secure_upgrade.peek().trim().to_owned(),
+                                        );
+                                    }
+                                    Some(resolved)
+                                }
+                                None if crate::config::is_valid_device_id(&current) => {
+                                    Some(current)
+                                }
+                                None => None,
+                            }
+                        }
+                    };
+                    match stable_device_id_for_signer {
+                        Some(stable_device_id) => {
+                            match crate::event_signer::bootstrap_default_signer_for_device(
+                                "yougen",
+                                &stable_device_id,
+                            ) {
+                                Ok(_) => {
+                                    tracing::info!(
+                                        target: "secure_store",
+                                        device_id = %stable_device_id,
+                                        "IndexedDB device identity signer bootstrap succeeded"
+                                    );
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: "secure_store",
+                                        ?error,
+                                        "IndexedDB device identity signer bootstrap failed"
+                                    );
+                                }
+                            }
+                        }
+                        None => {
+                            tracing::warn!(
+                                target: "secure_store",
+                                "IndexedDB device identity signer bootstrap skipped: no stable device_id"
                             );
                         }
                     }
@@ -1160,6 +1195,7 @@ pub fn RouterView() -> Element {
                     sync_cursor,
                     token,
                     account_did,
+                    device_id,
                     selected_realm_id,
                     realm_tree_nodes,
                     projection_events,
@@ -3438,6 +3474,7 @@ pub fn RouterView() -> Element {
                                     sync_cursor,
                                     token,
                                     account_did,
+                                    device_id,
                                     selected_realm_id,
                                     realm_tree_nodes,
                                     projection_events,
@@ -3621,6 +3658,7 @@ pub fn RouterView() -> Element {
                                                         sync_cursor,
                                                         token,
                                                         account_did,
+                                                        device_id,
                                                         selected_realm_id,
                                                         realm_tree_nodes,
                                                         projection_events,
@@ -5128,28 +5166,22 @@ pub fn RouterView() -> Element {
                                                 let logout_generation = session_generation() + 1;
                                                 account_session_state.set("Logging out".to_owned());
                                                 session_generation.set(logout_generation);
-                                                // Clear session-grant state up front so
-                                                // a local retry cannot resurrect the
-                                                // session if the server-side logout call
-                                                // later fails or is cancelled.
-                                                state_store.write().set_session_grant(None);
-                                                // Then wipe every account-scoped local
-                                                // projection cache (Realm tree, drafts,
-                                                // seals, read markers, remarks…) so
-                                                // whoever signs in next on this browser
-                                                // can't see the previous session's data.
-                                                // Device-level state (local_identity,
-                                                // push_registration) is preserved.
-                                                state_store.write().clear_account_scoped();
-                                                // G3.Y0 — daily "Log out" is a SOFT logout:
-                                                // it ends the session (grant + token cleared
-                                                // below) but deliberately KEEPS this account's
-                                                // device key (the account-scoped DPoP record /
-                                                // signing seed) and persisted `account_did`.
-                                                // Wiping the device (true rotation / "remove this
-                                                // device") is reserved for a separate explicit
-                                                // action; it must clear the account-scoped seed,
-                                                // not just this in-memory record.
+                                                // Clear browser-session credentials up front so a
+                                                // local retry cannot resurrect the session if the
+                                                // server-side logout call later fails or is
+                                                // cancelled. Keep the account entry itself:
+                                                // projections, MLS snapshots, plaintext sidecars,
+                                                // and the durable device identity are account
+                                                // state, not grant-binding state. The next
+                                                // interactive sign-in rotates the grant-binding
+                                                // seed before issuing the new session grant.
+                                                state_store
+                                                    .write()
+                                                    .clear_session_scoped_for_logout();
+                                                // Wiping the durable E2EE device identity (true
+                                                // "remove this device") is reserved for a separate
+                                                // explicit action; logout only terminates the
+                                                // browser session.
                                                 let _ = crate::coauth::clear_persisted_oidc_scaffold();
                                                 // Wipe the in-memory UI signals too so the
                                                 // sidebar can't paint a frame of stale

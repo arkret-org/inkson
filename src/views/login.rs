@@ -210,11 +210,12 @@ pub fn LoginPanel(
     // Account selection belongs to the Account Authority. Yougen chooses only
     // the Principal Server; it must not turn the locally persisted account DID
     // into a hidden account selection. Therefore an interactive OIDC sign-in
-    // omits `principal_id` and starts in the bootstrap device scope. The
-    // callback adopts the DID returned by coauth as the authoritative account.
+    // omits `principal_id`. When a signed-out account is locally known, reuse
+    // its stable protocol device id so a hard re-login rotates only the
+    // grant-binding key, not the E2EE device identity.
     let launch_sign_in = move || {
         let principal = base_url();
-        let device = crate::config::new_device_id();
+        let device = interactive_sign_in_device_id(&account_did(), &device_id());
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
         is_busy.set(true);
@@ -228,20 +229,19 @@ pub fn LoginPanel(
             {
                 tracing::warn!(%error, "reset device seed scope for sign-in failed");
             }
-            // Drop the cached DPoP record so the device key is rebuilt from the
-            // freshly-scoped bootstrap seed.
+            // Drop the cached DPoP record so the grant holder is rebuilt from
+            // the freshly-rotated grant-binding seed.
             reset_state_store.write().set_dpop_device_key(None);
-            // Pre-DID: record the freshly-minted device id as the pending login
-            // so the bootstrap wrap_seed / secrets land under the
+            // Pre-DID: record the sign-in device id as the pending login so the
+            // bootstrap wrap_seed / secrets land under the
             // `pending.<device_id>` namespace until the principal DID resolves
             // and `adopt_pending_login` re-homes them.
             reset_state_store
                 .write()
                 .begin_pending_login(device.trim(), None);
-            // Persist the freshly-minted device_id under the bootstrap scope,
-            // paired with the bootstrap signing seed, so
-            // `adopt_device_seed_scope_on_login` re-homes BOTH under the account
-            // scope once the principal DID resolves.
+            // Persist the pending device_id under the bootstrap scope. On a
+            // returning account this should match the account-scoped device id;
+            // on first sign-in it becomes the account-scoped protocol device.
             if let Err(error) = crate::secure_key_store::store_device_id_scoped(
                 secure_store.as_ref(),
                 None,
@@ -479,6 +479,16 @@ fn restore_oidc_callback_device_seed_scope(device_id: &str) {
     crate::secure_key_store::set_pending_login_device_id(Some(device_id));
 }
 
+fn interactive_sign_in_device_id(persisted_actor: &str, persisted_device: &str) -> String {
+    let actor = persisted_actor.trim();
+    let device = persisted_device.trim();
+    if !actor.is_empty() && crate::config::is_valid_device_id(device) {
+        device.to_owned()
+    } else {
+        crate::config::new_device_id()
+    }
+}
+
 fn persist_completed_login_dpop_key(
     store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -487,17 +497,21 @@ fn persist_completed_login_dpop_key(
     record: &crate::local_state::DpopDeviceKeyRecord,
 ) -> Result<(), String> {
     crate::secure_key_store::set_active_device_seed_scope(Some(actor));
-    crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
-        &record.seed_b64,
-        Some(secure_store),
-        Some(device_id),
-    )
-    .map_err(|error| format!("activate device signer: {error}"))?;
+    crate::secure_key_store::store_grant_binding_seed_b64url(secure_store, &record.seed_b64)
+        .map_err(|error| format!("store grant-binding seed: {error}"))?;
     crate::secure_key_store::store_device_id_scoped(secure_store, Some(actor), device_id)
         .map_err(|error| format!("store account-scoped device id: {error}"))?;
     store
         .set_dpop_device_key_with_secure_store(Some(record.clone()), secure_store)
         .map_err(|error| format!("store account-scoped DPoP key: {error}"))?;
+    let material = crate::secure_key_store::ensure_signing_seed_scoped(secure_store, Some(actor))
+        .map_err(|error| format!("ensure account device signing seed: {error}"))?;
+    crate::event_signer::activate_device_signer_from_seed_for_device(
+        material.seed,
+        Some(secure_store),
+        Some(device_id),
+    )
+    .map_err(|error| format!("activate account device signer: {error}"))?;
     Ok(())
 }
 
@@ -776,6 +790,19 @@ async fn finish_oidc_callback(
         ) {
             tracing::warn!(%error, "adopt account device seed scope on login failed");
         }
+        // The grant just issued is authoritative for this browser session's
+        // protocol device id. `adopt_device_seed_scope_on_login` may have
+        // carried over an older bootstrap/pending id for a first-time account;
+        // overwrite it immediately so the next secure-store bootstrap does not
+        // bind the durable signer to a device id different from the bearer
+        // grant's `urn:cokret:client:device:*` scope.
+        if let Err(error) = crate::secure_key_store::store_device_id_scoped(
+            secure_store.as_ref(),
+            Some(&canonical_actor),
+            &device,
+        ) {
+            tracing::warn!(%error, "persist account device id from session grant failed");
+        }
     }
     let personal_handle = crate::app::personal_handle_from_account_handle(&account.handle);
     let _ = clear_persisted_oidc_scaffold();
@@ -894,6 +921,7 @@ mod tests {
         fn drop(&mut self) {
             crate::secure_key_store::set_active_device_seed_scope(None);
             crate::secure_key_store::set_pending_login_device_id(None);
+            let _ = crate::event_signer::replace_active_signer(None);
         }
     }
 
@@ -977,26 +1005,38 @@ mod tests {
     }
 
     #[test]
-    fn completed_login_dpop_key_overwrites_returning_account_key_material() {
+    fn interactive_sign_in_reuses_known_account_device_id() {
+        let existing = "ck:device:01964137-0000-7000-8000-000000000001";
+        assert_eq!(
+            interactive_sign_in_device_id("did:web:alice.example", existing),
+            existing
+        );
+        assert_ne!(
+            interactive_sign_in_device_id("", existing),
+            existing,
+            "first login mints a fresh protocol device id"
+        );
+        assert_ne!(
+            interactive_sign_in_device_id("did:web:alice.example", "not-a-device"),
+            "not-a-device",
+            "invalid persisted ids are never reused"
+        );
+    }
+
+    #[test]
+    fn completed_login_dpop_key_preserves_returning_account_key_material() {
         let _lock = seed_scope_test_lock();
         let _reset = SeedScopeReset;
         let mut store = crate::local_state::isolated_store_for_tests("completed-login-dpop-key");
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
         let actor = "did:web:alice.example";
         let device = "ck:device:01964137-0000-7000-8000-000000000001";
-        let old_record = dpop_record_for_seed([3_u8; 32]);
+        let old_seed = [3_u8; 32];
         let new_record = dpop_record_for_seed([7_u8; 32]);
 
-        crate::secure_key_store::set_active_device_seed_scope(Some(actor));
-        crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
-            &old_record.seed_b64,
-            Some(&secure_store),
-            Some(device),
-        )
-        .expect("old account seed");
-        store
-            .set_dpop_device_key_with_secure_store(Some(old_record), &secure_store)
-            .expect("old account dpop");
+        let _ = crate::event_signer::replace_active_signer(None);
+        crate::secure_key_store::store_signing_seed_scoped(&secure_store, Some(actor), &old_seed)
+            .expect("old account seed");
 
         persist_completed_login_dpop_key(&mut store, &secure_store, actor, device, &new_record)
             .expect("persist completed login dpop");
@@ -1005,7 +1045,11 @@ mod tests {
             crate::secure_key_store::load_signing_seed_scoped(&secure_store, Some(actor))
                 .expect("load account seed")
                 .expect("account seed");
-        assert_eq!(loaded_seed.seed, [7_u8; 32]);
+        assert_eq!(loaded_seed.seed, old_seed);
+        let grant_binding = crate::secure_key_store::load_grant_binding_seed(&secure_store)
+            .expect("load grant-binding seed")
+            .expect("grant-binding seed");
+        assert_eq!(grant_binding.seed, [7_u8; 32]);
         let loaded_record = store
             .load_dpop_device_key_with_secure_store(&secure_store)
             .expect("load account dpop")

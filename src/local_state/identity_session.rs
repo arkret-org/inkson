@@ -163,6 +163,32 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    /// Clear only browser-session credentials for a user-initiated logout.
+    ///
+    /// This is deliberately narrower than [`Self::clear_account_scoped`]: a
+    /// hard browser re-login must rotate the grant-binding/DPoP key while
+    /// preserving the account's durable E2EE state (MLS snapshots, sidecars,
+    /// projections, and device identity) so the same account can continue
+    /// decrypting and writing after it signs in again.
+    pub fn clear_session_scoped_for_logout(&mut self) {
+        #[cfg(not(test))]
+        {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            if let Err(error) = secure_store.delete_secret(
+                &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
+            ) {
+                tracing::debug!(
+                    ?error,
+                    "secure_key_store DPoP key delete on logout failed (likely already missing)",
+                );
+            }
+        }
+        self.ensure_cached_loaded();
+        self.cached.session_grant = None;
+        self.cached.dpop_device_key = None;
+        let _ = self.flush();
+    }
+
     /// Append a structured user-action log entry to the buffered telemetry
     /// log. Bounded by [`TELEMETRY_BUFFER_CAP`] - excess entries are
     /// dropped from the front (oldest-first).

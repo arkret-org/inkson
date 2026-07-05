@@ -205,6 +205,7 @@ pub(super) struct ConnectContext {
     pub(super) sync_cursor: Signal<String>,
     pub(super) token: Signal<String>,
     pub(super) account_did: Signal<String>,
+    pub(super) device_id: Signal<String>,
     pub(super) selected_realm_id: Signal<String>,
     pub(super) realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub(super) projection_events: Signal<Vec<ProjectionEvent>>,
@@ -496,7 +497,7 @@ async fn probe_device_authorization_with_auto_enroll(
 }
 
 pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
-    let device = normalize_device_id(&device);
+    let mut device = normalize_device_id(&device);
     spawn(async move {
         let mut sync_bootstrap_complete = ctx.sync_bootstrap_complete;
         // Connection-lifecycle status only; operation feedback goes through
@@ -505,6 +506,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         let mut sync_cursor = ctx.sync_cursor;
         let token = ctx.token;
         let mut account_did = ctx.account_did;
+        let mut device_id_signal = ctx.device_id;
         let mut selected_realm_id = ctx.selected_realm_id;
         let mut realm_tree_nodes = ctx.realm_tree_nodes;
         let mut projection_events = ctx.projection_events;
@@ -846,6 +848,47 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         personal_handles_status.set("Not published".to_owned());
                     }
                 }
+                let grant_device = {
+                    let store = state_store.read();
+                    store
+                        .session_grant()
+                        .filter(|grant| {
+                            grant.principal_id.trim() == canonical_actor.trim()
+                                && crate::session_refresh::grant_matches_principal_server(
+                                    grant, &base,
+                                )
+                                && crate::config::is_valid_device_id(&grant.device_id)
+                        })
+                        .map(|grant| grant.device_id)
+                };
+                if let Some(grant_device) = grant_device {
+                    if grant_device != device {
+                        tracing::warn!(
+                            target: "session_boot",
+                            stale = %device,
+                            grant_device = %grant_device,
+                            "connect: replacing boot device_id with session-grant device_id"
+                        );
+                        device = grant_device.clone();
+                        device_id_signal.set(grant_device);
+                    }
+                }
+                {
+                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    crate::secure_key_store::set_active_device_seed_scope(Some(&canonical_actor));
+                    if let Err(error) = crate::secure_key_store::store_device_id_scoped(
+                        secure_store.as_ref(),
+                        Some(&canonical_actor),
+                        &device,
+                    ) {
+                        tracing::warn!(?error, "connect: persist canonical device_id failed");
+                    }
+                    if let Err(error) =
+                        crate::event_signer::bootstrap_default_signer_for_device("yougen", &device)
+                    {
+                        tracing::warn!(?error, "connect: device identity signer bootstrap failed");
+                    }
+                }
                 adopt_live_token_for_api(
                     &base,
                     state_store,
@@ -1119,7 +1162,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             }
                             let realm_title_hints = invite_notifications
                                 .as_deref()
-                                .map(crate::projection::notifications::realm_title_hints_from_values)
+                                .map(
+                                    crate::projection::notifications::realm_title_hints_from_values,
+                                )
                                 .unwrap_or_default();
                             for (id, body) in &sync.realms {
                                 let projection = crate::realm_tree::projection_with_title_hint(
@@ -1259,7 +1304,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         && content.get("ciphertext").is_none()
                                         && let Ok(preference) = serde_json::from_value::<
                                             crate::local_state::PresencePreferenceState,
-                                        >(content.clone())
+                                        >(
+                                            content.clone()
+                                        )
                                     {
                                         store.set_presence_preference(preference);
                                     }
