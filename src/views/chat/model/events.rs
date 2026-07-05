@@ -1,5 +1,6 @@
 use super::*;
-
+#[cfg(test)]
+pub(crate) use crate::projection::message_ops::message_operations_from_events;
 // YGN-ARCH-01 step 3: the message-candidate walkers + raw-operation
 // extraction moved to `crate::projection::message_ops` (they are the sync
 // engine's ingest step, not chat rendering). Re-exported so every existing
@@ -8,8 +9,6 @@ pub(crate) use crate::projection::message_ops::{
     first_string_in_candidates, message_actor_from_candidates, message_candidates,
     message_kind_is_create, value_string_at,
 };
-#[cfg(test)]
-pub(crate) use crate::projection::message_ops::message_operations_from_events;
 
 pub(crate) fn chat_reply_quote_preview(
     messages: &[ChatMessage],
@@ -600,9 +599,7 @@ pub(crate) fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Opti
             candidate
                 .get("kind")
                 .and_then(Value::as_str)
-                .is_some_and(|kind| {
-                    matches!(kind, "ck.content.poll" | "ck.content.poll.response")
-                })
+                .is_some_and(|kind| matches!(kind, "ck.content.poll" | "ck.content.poll.response"))
         })
         .copied()
 }

@@ -87,4 +87,3 @@ pub(crate) fn raw_operation_from_event(
         }),
     })
 }
-

@@ -1,8 +1,8 @@
 use serde_json::Value;
+use yoface::utils::text::short_protocol_id;
 
 use super::decrypt::try_local_mls_decrypt_core;
 use super::model::ProjectionEvent;
-use yoface::utils::text::short_protocol_id;
 
 /// Read the sender identity from an account event projection envelope.
 ///

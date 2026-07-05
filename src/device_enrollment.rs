@@ -48,10 +48,8 @@ pub struct DeviceEnrollmentRequest {
 /// Canonical algorithm ids a yougen device advertises in its
 /// `ck.device.authorize` record: the default-MUST HPKE suite (secret / key
 /// envelope sealing) plus the MLS v1 group algorithm. UTF-8 bytewise sorted.
-pub const YOUGEN_DEVICE_ALGORITHMS: &[&str] = &[
-    "ck.hpke_x25519_aead_chacha20poly1305.v1",
-    "ck.mls.v1",
-];
+pub const YOUGEN_DEVICE_ALGORITHMS: &[&str] =
+    &["ck.hpke_x25519_aead_chacha20poly1305.v1", "ck.mls.v1"];
 
 pub fn yougen_device_algorithms() -> Vec<String> {
     YOUGEN_DEVICE_ALGORITHMS

@@ -516,4 +516,3 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     }
     Ok(event)
 }
-

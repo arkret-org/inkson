@@ -27,10 +27,10 @@ use serde_json::{Value, json};
 use crate::i18n::tr;
 use crate::local_state::LocalStateStore;
 use crate::models::IndexSearchView;
+use crate::projection::projection_events_from_sync_realms;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
-use crate::projection::projection_events_from_sync_realms;
 use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 /// True when a `key` event should be treated as the global search

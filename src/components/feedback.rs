@@ -28,12 +28,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dioxus::prelude::*;
 
+use super::circle_error_toast::take_circle_error;
+use super::policy_deny_banner::{PolicyDenyEvent, take_policy_deny};
 use crate::circle::CircleErrorKind;
 use crate::i18n::tr;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-
-use super::circle_error_toast::take_circle_error;
-use super::policy_deny_banner::{PolicyDenyEvent, take_policy_deny};
 
 /// Severity of a toast; drives styling, ARIA role and auto-dismiss.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -526,7 +525,11 @@ mod tests {
 
         // Overflow: pushing past the cap drops the OLDEST entries.
         for i in 0..(TOAST_QUEUE_CAP + 5) {
-            push_toast(FeedbackSeverity::Info, format!("feedback.overflow_{i}"), vec![]);
+            push_toast(
+                FeedbackSeverity::Info,
+                format!("feedback.overflow_{i}"),
+                vec![],
+            );
         }
         let drained = drain_toasts();
         assert_eq!(drained.len(), TOAST_QUEUE_CAP);

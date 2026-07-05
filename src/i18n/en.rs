@@ -113,7 +113,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.section.developer", "Developer tools");
     // Settings navigation — group labels + hints.
     dict.set("settings.group.account", "Account");
-    dict.set("settings.group.account.hint", "Identity, agents, and server.");
+    dict.set(
+        "settings.group.account.hint",
+        "Identity, agents, and server.",
+    );
     dict.set("settings.group.security", "Devices & security");
     dict.set(
         "settings.group.security.hint",
@@ -904,14 +907,26 @@ pub fn english_translations() -> TranslationDict {
         "dashboard.collection.browse_realm_or_space",
         "Search or join a Realm or Space",
     );
-    dict.set("dashboard.collection.browse_space", "Search or join a Space");
-    dict.set("dashboard.collection.browse_realm", "Search or join a Realm");
+    dict.set(
+        "dashboard.collection.browse_space",
+        "Search or join a Space",
+    );
+    dict.set(
+        "dashboard.collection.browse_realm",
+        "Search or join a Realm",
+    );
     dict.set(
         "dashboard.collection.signin_realms_and_spaces",
         "Sign in to load realms and Spaces",
     );
-    dict.set("dashboard.collection.signin_spaces", "Sign in to load Spaces");
-    dict.set("dashboard.collection.signin_realms", "Sign in to load realms");
+    dict.set(
+        "dashboard.collection.signin_spaces",
+        "Sign in to load Spaces",
+    );
+    dict.set(
+        "dashboard.collection.signin_realms",
+        "Sign in to load realms",
+    );
     dict.set(
         "dashboard.collection.empty_realms_and_spaces",
         "No realms or Spaces loaded",
@@ -1270,7 +1285,10 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
     dict.set("feedback.contacts_load_failed", "Failed to load contacts");
     dict.set("feedback.realm_leaving", "Leaving Realm: {realm}");
     dict.set("feedback.realm_left", "Left Realm: {realm}");
-    dict.set("feedback.realm_leave_failed", "Failed to leave Realm {realm}");
+    dict.set(
+        "feedback.realm_leave_failed",
+        "Failed to leave Realm {realm}",
+    );
     dict.set("feedback.contact_deleting", "Deleting contact: {name}");
     dict.set("feedback.contact_deleted", "Deleted contact: {name}");
     dict.set(
@@ -1282,7 +1300,10 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "Could not open the direct conversation",
     );
     dict.set("feedback.bulk_realms_leaving", "Leaving {total} Realm(s)…");
-    dict.set("feedback.bulk_realms_left", "Left {done} of {total} Realm(s)");
+    dict.set(
+        "feedback.bulk_realms_left",
+        "Left {done} of {total} Realm(s)",
+    );
     dict.set(
         "feedback.bulk_realms_leave_failed",
         "Left {done} of {total} Realm(s); some failed",
@@ -1299,7 +1320,10 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.bulk_contacts_delete_failed",
         "Deleted {done} of {total} contact(s); some failed",
     );
-    dict.set("feedback.directory_search_failed", "Directory search failed");
+    dict.set(
+        "feedback.directory_search_failed",
+        "Directory search failed",
+    );
     dict.set(
         "feedback.directory_resolve_failed",
         "Directory resolve failed",

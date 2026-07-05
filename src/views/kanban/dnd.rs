@@ -7,8 +7,8 @@ use crate::local_state::MoveSubmissionState;
 use crate::move_builder::{
     StrandPositionEffect, StrandPositionExpectation, strand_position_cell_id,
 };
-use crate::rank::RankError;
 use crate::operation::sdk_event_local_operation_id;
+use crate::rank::RankError;
 
 pub(super) fn submit_kanban_operation_event(
     base_url: String,
@@ -90,7 +90,6 @@ pub(super) fn submit_kanban_operation_event(
         }
     });
 }
-
 
 pub(super) fn submit_column_order_updates(
     base_url: String,

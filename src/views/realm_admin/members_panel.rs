@@ -7,6 +7,8 @@ use cokret_sdk::models::{
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
+// Shared JS-interop helpers (single source, YGN-DRY-04).
+use yoface::utils::dom::{copy_text_to_clipboard, open_url_in_new_tab};
 
 use super::capabilities::{RealmMemberCapabilities, authz_json_allowed};
 use crate::components::SelfAttributionBadge;
@@ -23,8 +25,6 @@ use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, display_name_for_did, handle_display_from_did,
     short_protocol_id,
 };
-// Shared JS-interop helpers (single source, YGN-DRY-04).
-use yoface::utils::dom::{copy_text_to_clipboard, open_url_in_new_tab};
 
 /// Number of member rows the list renders per page. The member list is
 /// hydrated from the full local sync projection (which can hold tens of

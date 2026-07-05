@@ -6,9 +6,9 @@ use super::{
     json_path_string,
 };
 use crate::local_state::{LocalStateStore, RawOperationRecord};
+use crate::operation::sdk_event_local_operation_id;
 use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
-use crate::operation::sdk_event_local_operation_id;
 
 pub(super) fn route_card_strand_id(route: &Route) -> Option<String> {
     match route {
@@ -404,7 +404,6 @@ pub(super) fn save_card_calendar_edit(
         false
     }
 }
-
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_calendar_rsvp(

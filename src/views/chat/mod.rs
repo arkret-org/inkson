@@ -198,8 +198,7 @@ pub fn ChatPanel(
     let mut compose_upload_status = use_signal(String::new);
     let mut shared_pins = use_signal(Vec::<SharedMessagePin>::new);
     let private_saved_targets = use_signal(std::collections::BTreeSet::<String>::new);
-    let private_saved_account_data =
-        use_signal(std::collections::BTreeMap::<String, Value>::new);
+    let private_saved_account_data = use_signal(std::collections::BTreeMap::<String, Value>::new);
     // Currently-open context menu (right-click on a message). Stores
     // the message id whose menu is open; None means no menu visible.
     let mut message_context_menu = use_signal(|| Option::<String>::None);

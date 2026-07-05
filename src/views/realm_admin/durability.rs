@@ -68,8 +68,10 @@ fn parse_recipients(raw: &str) -> Result<Vec<RealmRecoveryRecipient>, FormError>
         }
         let fields: Vec<&str> = line.split('|').map(str::trim).collect();
         if fields.len() < 3 {
-            return Err(FormError::new("realm_admin.durability_err_recipient_fields")
-                .arg("line", (index + 1).to_string()));
+            return Err(
+                FormError::new("realm_admin.durability_err_recipient_fields")
+                    .arg("line", (index + 1).to_string()),
+            );
         }
         let principal_id = Did::new(fields[1].to_owned()).map_err(|err| {
             FormError::new("realm_admin.durability_err_principal_did")

@@ -70,10 +70,7 @@ mod tests {
         assert_eq!(notifications[0].kind, "invite");
         // Default titles / action labels are stored as i18n keys and
         // translated at render via tr().
-        assert_eq!(
-            notifications[0].title,
-            "notifications.default_title.invite"
-        );
+        assert_eq!(notifications[0].title, "notifications.default_title.invite");
         assert_eq!(
             notifications[0].realm_id,
             "ck:realm:01904100-0000-7000-8000-000000000002"

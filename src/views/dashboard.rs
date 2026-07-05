@@ -93,8 +93,10 @@ pub fn DashboardPanel(
         has_realms,
         has_product_spaces,
     ));
-    let projection_empty_label =
-        crate::i18n::tr(projection_collection_empty_label(has_realms, has_product_spaces));
+    let projection_empty_label = crate::i18n::tr(projection_collection_empty_label(
+        has_realms,
+        has_product_spaces,
+    ));
     let projection_empty_help_label = crate::i18n::tr(projection_collection_empty_help_label(
         has_realms,
         has_product_spaces,

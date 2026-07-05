@@ -111,4 +111,3 @@ fn message_raw_operation_from_event(
         payload: event.clone(),
     })
 }
-

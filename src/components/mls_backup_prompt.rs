@@ -3,6 +3,8 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use dioxus::prelude::*;
+// Shared JS-interop helper (single source, YGN-DRY-04).
+pub(crate) use yoface::utils::dom::copy_text_to_clipboard;
 
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{
@@ -13,8 +15,6 @@ use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::with_authed_api;
-// Shared JS-interop helper (single source, YGN-DRY-04).
-pub(crate) use yoface::utils::dom::copy_text_to_clipboard;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
 const MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);

@@ -411,18 +411,12 @@ pub fn chinese_translations() -> TranslationDict {
         "realm_admin.durability_submitted",
         "已提交 ck.realm.policy_components；推进一次 ck.mls.commit 以激活封存并重新披露。",
     );
-    dict.set(
-        "realm_admin.durability_submit_failed",
-        "提交失败：{error}",
-    );
+    dict.set("realm_admin.durability_submit_failed", "提交失败：{error}");
     dict.set(
         "realm_admin.durability_parse_failed",
         "解析恢复方失败：{error}",
     );
-    dict.set(
-        "realm_admin.durability_policy_invalid",
-        "策略无效：{error}",
-    );
+    dict.set("realm_admin.durability_policy_invalid", "策略无效：{error}");
     dict.set(
         "realm_admin.durability_err_recipient_fields",
         "第 {line} 行：应为 `recipient_id | principal_did | verification_method`",
@@ -481,7 +475,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.group.account", "账号");
     dict.set("settings.group.account.hint", "身份、智能体与服务器。");
     dict.set("settings.group.security", "设备与安全");
-    dict.set("settings.group.security.hint", "已登录设备、恢复与应用授权。");
+    dict.set(
+        "settings.group.security.hint",
+        "已登录设备、恢复与应用授权。",
+    );
     dict.set("settings.group.privacy", "隐私");
     dict.set("settings.group.privacy.hint", "个人私密的披露控制。");
     dict.set("settings.group.notifications", "通知");
@@ -789,7 +786,10 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.crypto.late_recovery_rejected",
         "无法恢复这条消息——加密密钥在你加入前已轮换。",
     );
-    dict.set("chat.crypto.undecryptable_generic", "此设备无法解密这条消息。");
+    dict.set(
+        "chat.crypto.undecryptable_generic",
+        "此设备无法解密这条消息。",
+    );
     dict.set("chat.mls.epoch", "MLS epoch");
     dict.set("chat.mls.key_package", "Key package");
     dict.set("chat.mls.welcome", "Welcome");
@@ -1175,7 +1175,10 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
         "feedback.bulk_realms_leave_failed",
         "已退出 {done}/{total} 个 Realm,部分失败",
     );
-    dict.set("feedback.bulk_contacts_deleting", "正在删除 {total} 个联系人…");
+    dict.set(
+        "feedback.bulk_contacts_deleting",
+        "正在删除 {total} 个联系人…",
+    );
     dict.set(
         "feedback.bulk_contacts_deleted",
         "已删除 {done}/{total} 个联系人",
@@ -1187,7 +1190,10 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     dict.set("feedback.directory_search_failed", "目录搜索失败");
     dict.set("feedback.directory_resolve_failed", "目录解析失败");
     dict.set("feedback.directory_load_more_failed", "加载更多结果失败");
-    dict.set("feedback.realm_resolved", "Realm 已解析(加入规则:{join_rule})");
+    dict.set(
+        "feedback.realm_resolved",
+        "Realm 已解析(加入规则:{join_rule})",
+    );
     dict.set("feedback.realm_create_failed", "Realm 创建失败");
     dict.set("feedback.copied_did", "已复制 DID");
     dict.set("feedback.copied_handles", "已复制 Handle");
@@ -1204,7 +1210,10 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set("feedback.watch_level_set", "已将 {realm} 设为 {level}");
     dict.set("feedback.override_removed", "已移除 {realm} 的通知覆盖项");
-    dict.set("feedback.overrides_cleared", "已清除所有按 Realm 通知覆盖项");
+    dict.set(
+        "feedback.overrides_cleared",
+        "已清除所有按 Realm 通知覆盖项",
+    );
     dict.set("feedback.push_registered", "推送已注册:{label}");
     dict.set("feedback.push_register_failed", "推送注册失败");
     dict.set("feedback.push_unregistered", "推送已注销");

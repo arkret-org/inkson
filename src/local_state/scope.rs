@@ -288,10 +288,10 @@ impl LocalStateStore {
     ///   `true` (new account).
     ///
     /// Either way the pending root entry is cleared and `did` becomes active.
-    /// The secure-store device seed/device_id re-homing itself is handled by
-    /// `adopt_device_seed_scope_on_login` before this is called; that step always
-    /// adopts the bootstrap tuple bound to the freshly-issued session grant, even
-    /// for a returning DID.
+    /// The secure-store device seed/device_id scope selection itself is handled
+    /// by `adopt_device_seed_scope_on_login` before this is called; returning
+    /// accounts keep their existing device identity while first-time accounts may
+    /// adopt bootstrap material.
     pub fn adopt_pending_login(&mut self, did: &str) -> bool {
         self.ensure_cached_loaded();
         let did = did.trim();
@@ -311,8 +311,9 @@ impl LocalStateStore {
 
     /// G3.Y0 — hard logout: wipe everything `clear_account_scoped`
     /// would wipe, PLUS the device DPoP key, push registration, and
-    /// local identity. The next sign-in starts from a clean slate
-    /// (new `cnf.jkt`, new `did:key`).
+    /// local identity. The next sign-in rotates the grant holder (`cnf.jkt`);
+    /// account-scoped E2EE device identity is kept by the caller's soft
+    /// logout/config path.
     ///
     /// Distinct from `clear_account_scoped` (which is the soft path —
     /// session expired, server-switch, account-change). The split is

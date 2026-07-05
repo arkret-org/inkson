@@ -124,7 +124,10 @@ fn presence_expiry_choice_resolves_to_future_clears_at() {
         let parsed: chrono::DateTime<chrono::Utc> = clears_at
             .parse()
             .unwrap_or_else(|_| panic!("{choice} clears_at must be RFC 3339 UTC: {clears_at}"));
-        assert!(parsed > chrono::Utc::now(), "{choice} must be in the future");
+        assert!(
+            parsed > chrono::Utc::now(),
+            "{choice} must be in the future"
+        );
     }
 }
 

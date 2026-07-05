@@ -26,8 +26,7 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState};
-use crate::operation::{OperationBuilder, trim_realm_id, uuid_v7};
-use crate::operation::sdk_event_local_operation_id;
+use crate::operation::{OperationBuilder, sdk_event_local_operation_id, trim_realm_id, uuid_v7};
 
 /// The structured MLS payload + the canonical AAD it was bound to.
 pub(crate) type LocalEncryptedMessage = (

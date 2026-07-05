@@ -120,14 +120,13 @@ pub fn hpke_seal(
 ) -> Result<HpkeSealed> {
     // Validate the key length up front for a clearer error than the SDK's.
     let _ = x25519_32(recipient_public_key, "recovery HPKE public key")?;
-    let blob_b64 =
-        cokret_sdk::secret_share::seal_base_mode_to_x25519_pubkey(
-            recipient_public_key,
-            plaintext,
-            info,
-            aad,
-        )
-        .map_err(|err| anyhow!("hpke seal: {err}"))?;
+    let blob_b64 = cokret_sdk::secret_share::seal_base_mode_to_x25519_pubkey(
+        recipient_public_key,
+        plaintext,
+        info,
+        aad,
+    )
+    .map_err(|err| anyhow!("hpke seal: {err}"))?;
     let blob = URL_SAFE_NO_PAD
         .decode(blob_b64.as_bytes())
         .map_err(|err| anyhow!("hpke seal blob decode: {err}"))?;

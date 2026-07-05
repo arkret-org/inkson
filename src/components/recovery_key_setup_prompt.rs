@@ -25,8 +25,8 @@ use crate::views::recovery::RecoveryKeyBackupOutcome;
 ///
 /// 1. generate the 24 words **in memory only** — nothing persisted, nothing shown;
 /// 2. attempt the server backup (`upload_recovery_key_account_backup`);
-/// 3. reveal the words **only** on `Established`; local recovery metadata stays pending until
-///    the user passes the transcription check ("Confirm saved key"), which finalizes it via
+/// 3. reveal the words **only** on `Established`; local recovery metadata stays pending until the
+///    user passes the transcription check ("Confirm saved key"), which finalizes it via
 ///    `save_generated_recovery_key_metadata`;
 /// 4. on `DeviceNotAuthorized` discard the key and route the user to authorize this device /
 ///    restore with their existing Recovery Key — never leave a divergent root behind.

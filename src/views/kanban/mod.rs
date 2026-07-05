@@ -31,10 +31,11 @@ mod model;
 
 use dnd::*;
 use due_calendar::*;
+pub(crate) use model::strand_update_operations_from_events;
 use model::*;
+
 #[cfg(test)]
 pub(crate) use crate::projection::kanban_ops::kanban_operations_from_events;
-pub(crate) use model::strand_update_operations_from_events;
 
 #[component]
 fn CardMarkdownEditor(
@@ -1350,8 +1351,8 @@ pub fn KanbanPanel(
                             }
                             if let Some(backoff) = error
                                 .inner()
-                                .downcast_ref::<crate::key_backup::KeyBackupUnlockBackoff>()
-                            {
+                                .downcast_ref::<crate::key_backup::KeyBackupUnlockBackoff>(
+                            ) {
                                 tracing::debug!(
                                     target: "mls_sidecar_restore",
                                     retry_after_ms = backoff.retry_after_ms(),

@@ -5,9 +5,9 @@
 //!   is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and therefore
 //!   the `MlsUnlockPrompt` restore path) only accepts this 24-word format. Enrollment is
 //!   server-first (design: `docs/design/recovery-key-server-first.md`): generating the key
-//!   publishes the recovery policy and a `did_recovery` backup, wraps the account MLS secret
-//!   behind it when one exists (see `upload_recovery_key_account_backup`), and the words are shown
-//!   ONLY after the server accepts — so a rejected registration never invalidates a copy the user
+//!   publishes the recovery policy and a `did_recovery` backup, wraps the account MLS secret behind
+//!   it when one exists (see `upload_recovery_key_account_backup`), and the words are shown ONLY
+//!   after the server accepts — so a rejected registration never invalidates a copy the user
 //!   already wrote down. Local metadata (SHA-256 fingerprint + rotation timestamp, via
 //!   `LocalStateStore::save_private_data`) stays pending until the user passes the transcription
 //!   check; the words themselves are never uploaded.

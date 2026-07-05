@@ -8,8 +8,7 @@
 //! the notification view keeps its existing intra-module call sites. This
 //! module contains no Dioxus state and no rendering.
 
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 
@@ -196,7 +195,11 @@ pub(crate) fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
-pub(crate) fn value_string_with_prefix(value: &Value, keys: &[&str], prefix: &str) -> Option<String> {
+pub(crate) fn value_string_with_prefix(
+    value: &Value,
+    keys: &[&str],
+    prefix: &str,
+) -> Option<String> {
     value_string(value, keys).filter(|candidate| candidate.starts_with(prefix))
 }
 

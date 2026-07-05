@@ -70,4 +70,3 @@ pub(super) fn render_invite_locator_qr_svg(locator_url: &str) -> String {
         Err(_) => String::new(),
     }
 }
-

@@ -18,6 +18,8 @@ use cokret_sdk::{RealmId, StrandId};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
+// Shared JS-interop helpers (single source, YGN-DRY-04).
+use yoface::utils::dom::{copy_text_to_clipboard, open_url_in_new_tab};
 
 use super::components::{ActorKindBadge, DraftApprovalPanel, SidecarExposureDisclosure};
 use super::model::{
@@ -29,8 +31,6 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
-// Shared JS-interop helpers (single source, YGN-DRY-04).
-use yoface::utils::dom::{copy_text_to_clipboard, open_url_in_new_tab};
 
 // ═══════════════════════════════════════════════════════════════════
 // CKP-0008 / CKP-0009 - Personal Agent admin panel (B-A / P3-A).

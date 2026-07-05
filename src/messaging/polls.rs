@@ -2,12 +2,10 @@
 //!
 //! Wire shape (spec: `models/content-types.md §4.9`, canonical schema
 //! `content-block-poll.schema.json`, `additionalProperties: false`):
-//! * `ck.message.create` with a `poll_block` content block
-//!   `{kind: "ck.content.poll", body, poll: {kind: "disclosed",
-//!   max_selections, answers: [{id, text}]}}` creates a poll.
-//! * `ck.message.create` with a `poll_response_block`
-//!   `{kind: "ck.content.poll.response", body, poll_response:
-//!   {poll_ref: id:message, selections: [answer_id]}}` records a response.
+//! * `ck.message.create` with a `poll_block` content block `{kind: "ck.content.poll", body, poll:
+//!   {kind: "disclosed", max_selections, answers: [{id, text}]}}` creates a poll.
+//! * `ck.message.create` with a `poll_response_block` `{kind: "ck.content.poll.response", body,
+//!   poll_response: {poll_ref: id:message, selections: [answer_id]}}` records a response.
 //!
 //! Closing a poll has NO carrier in spec v1 (the content-block schema's
 //! `oneOf` registers only the two blocks above, and no `poll` Morph type or
@@ -204,7 +202,11 @@ impl PollCard {
     /// `poll_response.poll_ref` points at); `message_id` stays the local
     /// render identity. Non-canonical shapes (missing `poll`, unknown
     /// `poll.kind`) fail closed to `None`.
-    pub fn from_content(message_id: String, poll_ref: Option<&str>, content: &Value) -> Option<Self> {
+    pub fn from_content(
+        message_id: String,
+        poll_ref: Option<&str>,
+        content: &Value,
+    ) -> Option<Self> {
         if content_kind(content) != Some("ck.content.poll") {
             return None;
         }
