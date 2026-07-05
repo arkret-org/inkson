@@ -1936,6 +1936,20 @@ pub fn RouterView() -> Element {
             if crate::event_signer::active_signer().is_none() {
                 return;
             }
+            // Gate on device authorization. Publishing a KeyPackage requires an
+            // ACCEPTED `ck.device.authorize` — soland rejects the upload with
+            // `claim_generation_mismatch` ("accepted device authorization is
+            // required") otherwise. The device-authorization check + auto-enroll
+            // (app/connect.rs) runs CONCURRENTLY with this publish effect; without
+            // this gate the upload can lose the race, fail, and — because the
+            // publish is deduped on `seen_publish_key` (set before the spawn) — it
+            // is NEVER retried, so the device stays KeyPackage-less and every
+            // invite of it dies at admission with `mls_keypackage_not_found`.
+            // Reading both signals subscribes this effect, so it re-fires and
+            // publishes once the device becomes authorized.
+            if !device_authorization_check_complete() || needs_device_authorization() {
+                return;
+            }
             let base = base_url();
             let session = token();
             let actor = account_did();
