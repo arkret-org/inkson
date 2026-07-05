@@ -39,25 +39,30 @@ mod device_identity_proof_tests {
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
         let verification_method = signer.verification_method().to_owned();
-        let created_at = "2026-06-16T00:00:00Z";
-        let binding = json!({
-            "event_digest": event_digest,
-            "actor_id": actor_id,
-            "verification_method": verification_method,
-            "created_at": created_at,
-        });
-        let binding_bytes = crate::canonical::canonical_json_bytes(&binding).unwrap();
-        let jws = signer.detached_jws_over(&binding_bytes).unwrap();
+        // Build the proof binding via the SDK's authoritative
+        // `Proof::canonical_binding_bytes` (which folds in the
+        // `context = "ck-event-proof-v1"` domain tag) — the SAME transcript both
+        // the production signer and the verifier use, so this test can never drift
+        // from the on-wire binding again.
+        let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let did = cokret_sdk::Did::new(actor_id.to_owned()).unwrap();
+        let mut proof = cokret_sdk::Proof {
+            kind: "detached_jws".to_owned(),
+            alg: signer.algorithm().to_owned(),
+            verification_method: verification_method.clone(),
+            event_digest: cokret_sdk::Hash::new(event_digest).unwrap(),
+            created_at: proof_created_at,
+            domain: None,
+            audience: None,
+            jws: String::new(),
+        };
+        let binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
+        proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
         envelope.as_object_mut().unwrap().insert(
             "proofs".to_owned(),
-            json!([{
-                "kind": "detached_jws",
-                "alg": signer.algorithm(),
-                "verification_method": verification_method,
-                "event_digest": event_digest,
-                "created_at": created_at,
-                "jws": jws,
-            }]),
+            json!([serde_json::to_value(&proof).unwrap()]),
         );
         envelope
     }

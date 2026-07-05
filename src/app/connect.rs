@@ -346,15 +346,37 @@ async fn enroll_current_session_device(
     device: &str,
     principal_api: &CokretApi,
     mut state_store: Signal<crate::local_state::LocalStateStore>,
+    fallback_grant_jwt: &str,
 ) -> anyhow::Result<()> {
     let actor = actor.trim();
     if actor.is_empty() {
         anyhow::bail!("device enrollment requires a known account DID");
     }
-    let grant = state_store
-        .read()
-        .session_grant()
-        .ok_or_else(|| anyhow::anyhow!("device enrollment requires an active session grant"))?;
+    // Enrollment needs only the grant JWT (DPoP `ath` binding + request body). The
+    // injected-grant seam and the post-reload rehydration path both restore only
+    // the bearer credential (`config.session_credential`) into the connect-held
+    // `token`, WITHOUT reconstructing a full `PersistedSessionGrant` into
+    // local_state — so `session_grant()` reads None here even though the session is
+    // live. Fall back to the connect-held bearer in that case instead of failing
+    // the whole self-enrollment (which is what left the browser's real event-signer
+    // key unauthorized and dropped cross-member chat proofs).
+    let grant_jwt = {
+        let held = state_store
+            .read()
+            .session_grant()
+            .map(|grant| grant.grant_jwt)
+            .filter(|jwt| !jwt.trim().is_empty());
+        match held {
+            Some(jwt) => jwt,
+            None => {
+                let fallback = fallback_grant_jwt.trim();
+                if fallback.is_empty() {
+                    anyhow::bail!("device enrollment requires an active session grant");
+                }
+                fallback.to_owned()
+            }
+        }
+    };
 
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
@@ -380,7 +402,7 @@ async fn enroll_current_session_device(
     };
     let htu = coauth.endpoint_url("device-enroll")?;
     let dpop_proof = device_key
-        .mint_proof("POST", &htu, Some(&grant.grant_jwt))
+        .mint_proof("POST", &htu, Some(&grant_jwt))
         .map_err(|error| anyhow::anyhow!("mint device-enroll DPoP proof: {error}"))?;
 
     // Next control-stream sequence for this principal = highest accepted + 1.
@@ -410,7 +432,7 @@ async fn enroll_current_session_device(
         crate::did_key::encode_x25519_multibase(&pubkey)
     };
     let request = crate::device_enrollment::DeviceEnrollmentRequest {
-        grant_jwt: grant.grant_jwt,
+        grant_jwt,
         dpop_proof,
         device_id: device.to_owned(),
         device_public_key,
@@ -428,6 +450,7 @@ async fn probe_device_authorization_with_auto_enroll(
     device: &str,
     principal_api: &CokretApi,
     state_store: Signal<crate::local_state::LocalStateStore>,
+    fallback_grant_jwt: &str,
 ) -> anyhow::Result<(bool, bool)> {
     // The account-viewer helpers read `devices[]` leniently via `Value`
     // accessors; serialize the typed `AccountView` back to its wire JSON.
@@ -437,7 +460,16 @@ async fn probe_device_authorization_with_auto_enroll(
         device_authorization_required_from_account_viewer(&viewer, device);
 
     if needs_authorization {
-        match enroll_current_session_device(base, actor, device, principal_api, state_store).await {
+        match enroll_current_session_device(
+            base,
+            actor,
+            device,
+            principal_api,
+            state_store,
+            fallback_grant_jwt,
+        )
+        .await
+        {
             Ok(()) => match principal_api.list_devices().await {
                 Ok(viewer) => {
                     let viewer = serde_json::to_value(&viewer)?;
@@ -829,6 +861,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         &device,
                         &authed,
                         state_store,
+                        &session_credential,
                     ),
                 )
                 .await
@@ -858,6 +891,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         &device,
                                         &authed,
                                         state_store,
+                                        &session_credential,
                                     ),
                                 )
                                 .await

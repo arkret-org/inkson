@@ -268,50 +268,26 @@ impl YougenEventSigner {
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-        let builder = EventProofBuilder::new();
         let event_digest = event
             .event_digest()
             .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
         let verification_method = self.verification_method_for_sdk_event(event);
         let created_at = crate::clock::now_rfc3339_secs();
         let actor_id = event.actor_id.as_str();
-        let mut proof_binding = serde_json::json!({
-            "event_digest": event_digest.as_str(),
-            "actor_id": actor_id,
-            "verification_method": verification_method.as_str(),
-            "created_at": created_at.as_str(),
-        });
-        if let Value::Object(object) = &mut proof_binding {
-            if let Some(domain) = &context.domain {
-                object.insert("domain".to_owned(), Value::String(domain.clone()));
-            }
-            if let Some(audience) = &context.audience {
-                object.insert(
-                    "audience".to_owned(),
-                    serde_json::to_value(audience)
-                        .map_err(|err| EventSignerError::Encoding(err.to_string()))?,
-                );
-            }
-        }
-        let proof_binding_bytes = builder
-            .canonical_bytes(&proof_binding)
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let signature = self
-            .inner
-            .sign(&proof_binding_bytes)
-            .map_err(|err| EventSignerError::Backend(err.to_string()))?;
-
-        let header = serde_json::json!({ "alg": self.algorithm() });
-        let header = serde_json::to_vec(&header)
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
-        let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
-        let jws = format!("{header_b64}..{sig_b64}");
+        // Build the Proof up front (empty jws), then derive the signed bytes from
+        // the SDK's authoritative `Proof::canonical_binding_bytes` — the SAME
+        // transcript the verifier reconstructs: `{context, event_digest, actor_id,
+        // verification_method, created_at, domain?, audience?}`. Hand-rolling the
+        // binding here drifted from the SDK (it omitted the `context =
+        // "ck-event-proof-v1"` domain tag encoding.md §2 mandates), so every
+        // cross-member Event proof failed the binding-JWS signature check despite a
+        // correct signing key and a matching `event_digest`.
         let proof_created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
             .map_err(|err| EventSignerError::Encoding(err.to_string()))?
             .with_timezone(&Utc);
         let proof_audience = context
             .audience
+            .as_ref()
             .map(|audience| {
                 serde_json::from_value::<cokret_sdk::Audience>(
                     serde_json::to_value(audience)
@@ -320,7 +296,9 @@ impl YougenEventSigner {
                 .map_err(|err| EventSignerError::Encoding(err.to_string()))
             })
             .transpose()?;
-        event.proofs = vec![cokret_sdk::Proof {
+        let actor_did = cokret_sdk::Did::new(actor_id.to_owned())
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let mut proof = cokret_sdk::Proof {
             kind: "detached_jws".to_owned(),
             alg: self.algorithm().to_owned(),
             verification_method,
@@ -329,8 +307,22 @@ impl YougenEventSigner {
             created_at: proof_created_at,
             domain: context.domain,
             audience: proof_audience,
-            jws,
-        }];
+            jws: String::new(),
+        };
+        let proof_binding_bytes = proof
+            .canonical_binding_bytes(&actor_did)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let signature = self
+            .inner
+            .sign(&proof_binding_bytes)
+            .map_err(|err| EventSignerError::Backend(err.to_string()))?;
+        let header = serde_json::json!({ "alg": self.algorithm() });
+        let header = serde_json::to_vec(&header)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
+        let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
+        proof.jws = format!("{header_b64}..{sig_b64}");
+        event.proofs = vec![proof];
 
         if let Ok(mut guard) = self.last_signed_at.lock() {
             *guard = Some(crate::clock::now_utc());
@@ -981,13 +973,11 @@ mod tests {
             proof.event_digest.as_str(),
             event.event_digest().unwrap().as_str()
         );
-        let proof_binding_bytes = canonical_json_bytes(&json!({
-            "event_digest": proof.event_digest.as_str(),
-            "actor_id": event.actor_id.as_str(),
-            "verification_method": proof.verification_method.as_str(),
-            "created_at": proof.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        }))
-        .unwrap();
+        // The binding transcript is the SDK's authoritative `canonical_binding_bytes`
+        // (folds in the `context = "ck-event-proof-v1"` domain tag), matching the
+        // production signer.
+        let did = cokret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
+        let proof_binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
 
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1053,15 +1043,10 @@ mod tests {
             proof.event_digest.as_str(),
             event.event_digest().unwrap().as_str()
         );
-        let proof_binding_bytes = canonical_json_bytes(&json!({
-            "event_digest": proof.event_digest.as_str(),
-            "actor_id": event.actor_id.as_str(),
-            "verification_method": proof.verification_method.as_str(),
-            "created_at": proof.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            "domain": "ck:trust_domain:server.example",
-            "audience": "did:web:server.example",
-        }))
-        .unwrap();
+        // Binding transcript via the SDK's authoritative `canonical_binding_bytes`
+        // (context tag + domain + audience folded in), matching the production signer.
+        let did = cokret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
+        let proof_binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
 
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
