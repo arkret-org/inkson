@@ -393,6 +393,28 @@ pub fn store_grant_binding_seed(
     })
 }
 
+/// Persist a `URL_SAFE_NO_PAD` base64 seed as the browser-session grant-binding
+/// key. Used by the injected-grant test seam, whose `dpop_seed_b64url` IS the
+/// key the issued grant's `cnf.jkt` binds to, so it must become the
+/// grant-binding key (not the device identity seed).
+pub fn store_grant_binding_seed_b64url(
+    store: &dyn SecureKeyStore,
+    seed_b64url: &str,
+) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    let bytes = URL_SAFE_NO_PAD.decode(seed_b64url.as_bytes()).map_err(|err| {
+        SecureKeyStoreError::Backend(format!("grant-binding seed b64url decode: {err}"))
+    })?;
+    if bytes.len() != 32 {
+        return Err(SecureKeyStoreError::Backend(format!(
+            "grant-binding seed length {}, expected 32",
+            bytes.len()
+        )));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&bytes);
+    store_grant_binding_seed(store, &seed)
+}
+
 /// Load the existing grant-binding seed, or generate + persist a fresh one if
 /// none exists (soft recovery / grant rotation reuse the same key).
 pub fn ensure_grant_binding_seed(

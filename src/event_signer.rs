@@ -53,9 +53,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
-use cokret_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
+use cokret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
 use ed25519_dalek::{Signer as _, SigningKey};
-use serde_json::Value;
 
 use crate::operation::{EventEnvelope, EventProofAudience, ProofMode, current_proof_mode};
 
@@ -901,7 +900,7 @@ mod tests {
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let header = URL_SAFE_NO_PAD.decode(parts[0]).expect("header b64");
-        let header: Value = serde_json::from_slice(&header).expect("header json");
+        let header: serde_json::Value = serde_json::from_slice(&header).expect("header json");
         assert_eq!(header, json!({"alg": "EdDSA"}));
 
         assert!(signer.last_signed_at_snapshot().is_some());
