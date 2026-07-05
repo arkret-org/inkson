@@ -205,12 +205,14 @@ pub fn build_signed_genesis_recovery_policy(
     trust_domain: &str,
 ) -> anyhow::Result<Value> {
     if let Some(signer) = crate::event_signer::active_signer()
-        && principal_scoped_recovery_policy_verification_method(principal_id, &signer).is_ok()
+        && let Ok(verification_method) =
+            principal_scoped_recovery_policy_verification_method(principal_id, &signer)
     {
-        return build_signed_genesis_recovery_policy_with_signer(
+        return build_signed_genesis_recovery_policy_with_raw_signer(
             principal_id,
             trust_domain,
-            &signer,
+            verification_method,
+            |bytes| signer.sign_raw(bytes),
         );
     }
 
@@ -225,13 +227,20 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
     trust_domain: &str,
     device_id: &str,
 ) -> anyhow::Result<Value> {
-    if let Some(signer) = crate::event_signer::active_signer()
-        && principal_scoped_recovery_policy_verification_method(principal_id, &signer).is_ok()
-    {
-        return build_signed_genesis_recovery_policy_with_signer(
+    let device_id = device_id.trim();
+    if device_id.is_empty() {
+        anyhow::bail!("device_id is required");
+    }
+    if let Some(signer) = crate::event_signer::active_signer() {
+        let verification_method =
+            principal_scoped_recovery_policy_verification_method(principal_id, &signer)
+                .map(str::to_owned)
+                .unwrap_or_else(|_| format!("{principal_id}#{device_id}"));
+        return build_signed_genesis_recovery_policy_with_raw_signer(
             principal_id,
             trust_domain,
-            &signer,
+            &verification_method,
+            |bytes| signer.sign_raw(bytes),
         );
     }
 
@@ -268,16 +277,32 @@ fn build_signed_genesis_recovery_policy_with_signer(
     trust_domain: &str,
     signer: &crate::event_signer::YougenEventSigner,
 ) -> anyhow::Result<Value> {
+    let verification_method =
+        principal_scoped_recovery_policy_verification_method(principal_id, signer)?;
+    build_signed_genesis_recovery_policy_with_raw_signer(
+        principal_id,
+        trust_domain,
+        verification_method,
+        |bytes| signer.sign_raw(bytes),
+    )
+}
+
+fn build_signed_genesis_recovery_policy_with_raw_signer(
+    principal_id: &str,
+    trust_domain: &str,
+    verification_method: &str,
+    sign_raw: impl Fn(&[u8]) -> Result<Vec<u8>, crate::event_signer::EventSignerError>,
+) -> anyhow::Result<Value> {
     let principal_id = principal_id.trim();
     let trust_domain = trust_domain.trim();
+    let verification_method = verification_method.trim();
     if principal_id.is_empty() {
         anyhow::bail!("principal_id is required");
     }
     if trust_domain.is_empty() {
         anyhow::bail!("trust_domain is required");
     }
-    let verification_method =
-        principal_scoped_recovery_policy_verification_method(principal_id, signer)?;
+    principal_scoped_recovery_policy_verification_method_id(principal_id, verification_method)?;
     let issued_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let mut policy = json!({
         "schema": "ck.schema.recovery_policy.v1",
@@ -298,9 +323,8 @@ fn build_signed_genesis_recovery_policy_with_signer(
     });
     let transcript = recovery_policy_signature_transcript(&policy, RECOVERY_POLICY_SIGNED_FIELDS);
     let bytes = crate::canonical::canonical_json_bytes(&transcript)?;
-    let signature = signer
-        .sign_raw(&bytes)
-        .map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
+    let signature =
+        sign_raw(&bytes).map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
     policy["auth_data"]["signature"] = Value::String(B64.encode(signature));
     Ok(policy)
 }
@@ -310,12 +334,20 @@ fn principal_scoped_recovery_policy_verification_method<'a>(
     signer: &'a crate::event_signer::YougenEventSigner,
 ) -> anyhow::Result<&'a str> {
     let verification_method = signer.verification_method().trim();
+    principal_scoped_recovery_policy_verification_method_id(principal_id, verification_method)?;
+    Ok(verification_method)
+}
+
+fn principal_scoped_recovery_policy_verification_method_id(
+    principal_id: &str,
+    verification_method: &str,
+) -> anyhow::Result<()> {
     if verification_method
         .strip_prefix(principal_id)
         .and_then(|rest| rest.strip_prefix('#'))
         .is_some_and(|fragment| !fragment.trim().is_empty())
     {
-        return Ok(verification_method);
+        return Ok(());
     }
     anyhow::bail!(
         "active signer verification_method `{}` is not scoped to principal_id `{}`; recovery policy requires a principal signing key such as `{}`",
@@ -734,6 +766,56 @@ mod tests {
                 .as_str()
                 .is_some_and(|value| !value.is_empty())
         );
+    }
+
+    #[test]
+    fn genesis_recovery_policy_for_session_device_reuses_active_device_key() {
+        static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let _previous = crate::event_signer::replace_active_signer(None);
+
+        let principal_id = "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f";
+        let device_id = "ck:device:01964137-0000-7000-8000-000000000001";
+        let seed = [42u8; 32];
+        let device_signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            seed,
+            "did:key:zlocal-device",
+            device_id,
+        ));
+        crate::event_signer::replace_active_signer(Some(device_signer));
+
+        let policy = build_signed_genesis_recovery_policy_for_session_device(
+            principal_id,
+            "ck:trust_domain:local.host",
+            device_id,
+        )
+        .expect("active device signer should sign principal-scoped recovery policy");
+
+        assert_eq!(
+            policy["auth_data"]["verification_method"],
+            format!("{principal_id}#{device_id}")
+        );
+
+        let transcript =
+            recovery_policy_signature_transcript(&policy, RECOVERY_POLICY_SIGNED_FIELDS);
+        let bytes = crate::canonical::canonical_json_bytes(&transcript).expect("canonical bytes");
+        let raw_signature = B64
+            .decode(
+                policy["auth_data"]["signature"]
+                    .as_str()
+                    .expect("signature")
+                    .as_bytes(),
+            )
+            .expect("signature base64url");
+        let signature =
+            ed25519_dalek::Signature::from_slice(&raw_signature).expect("ed25519 signature");
+        let verifying_key = SigningKey::from_bytes(&seed).verifying_key();
+        ed25519_dalek::Verifier::verify(&verifying_key, &bytes, &signature)
+            .expect("policy must be signed by the active device key");
+
+        crate::event_signer::replace_active_signer(None);
     }
 
     #[test]
