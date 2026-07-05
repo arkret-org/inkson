@@ -3,7 +3,7 @@
 //! ②(A+②) model (api-conventions.md §3.3): there is **no** second client-visible
 //! local session credential minted by soland. After login, the client
 //! holds the `ck.session.grant` (issued by the Account Authority) plus the
-//! device DPoP holder key whose thumbprint is the grant's `cnf.jkt`. The grant
+//! grant-binding (DPoP) key whose thumbprint is the grant's `cnf.jkt`. The grant
 //! itself is the live credential for `/_cokret/self/*`: every request presents
 //! `Authorization: Bearer <grant>` + a per-request `DPoP` proof.
 //!
@@ -82,13 +82,13 @@ pub enum RefreshOutcome {
 
 /// Rotate the session grant when it has less than this much runway left.
 /// The grant is the (minutes-to-hours) refresh credential; rotating it before
-/// it dies — onto a fresh grant via the DPoP holder proof — is what slides the
+/// it dies — onto a fresh grant via the grant-binding DPoP proof — is what slides the
 /// device session into multi-day territory without re-login. 30 min gives many
 /// poll ticks to land a rotation before the grant expires.
 pub const GRANT_ROTATION_SKEW_SECS: i64 = 30 * 60;
 
 /// True when the persisted grant is within `GRANT_ROTATION_SKEW_SECS` of its own
-/// expiry and should be rotated (DPoP holder proof → fresh grant). `None` grant
+/// expiry and should be rotated (grant-binding DPoP proof → fresh grant). `None` grant
 /// expiry is treated as "not due" — the 401 path handles unknown-expiry
 /// grants, and we must not rotate blindly without a deadline.
 pub fn grant_due_for_rotation(grant: &PersistedSessionGrant) -> bool {
@@ -108,7 +108,7 @@ pub fn grant_is_dead(grant: &PersistedSessionGrant) -> bool {
 /// Inspect the persisted grant and decide what the caller should do.
 ///
 /// ②(A+②): "Due" now means the grant itself is near its own expiry and should
-/// be rotated (DPoP holder proof → fresh grant). There is no separate
+/// be rotated (grant-binding DPoP proof → fresh grant). There is no separate
 /// minted local session expiry to chase any more — the grant *is* the credential.
 pub fn refresh_decision(store: &LocalStateStore) -> RefreshDecision {
     let Some(grant) = store.session_grant() else {
@@ -160,7 +160,7 @@ pub enum RefreshPrepared {
     Done(RefreshOutcome),
     /// Caller should run [`exchange_refresh`] with these materials and
     /// then feed the result into [`commit_refresh`]. `device_handle` is the
-    /// DPoP holder key bound into the grant's `cnf.jkt`; the active event
+    /// grant-binding (DPoP) key bound into the grant's `cnf.jkt`; the active event
     /// signer supplies the separate device-identity DID proof.
     Ready {
         grant: PersistedSessionGrant,
@@ -338,7 +338,7 @@ struct SoftLogoutRestoreRequestDigest<'a> {
     pub principal_id: &'a str,
     pub device_id: &'a str,
     pub audience: &'a str,
-    pub holder_key_id: &'a str,
+    pub grant_binding_key_id: &'a str,
 }
 
 fn mint_session_grant_refresh_proof(
@@ -401,7 +401,7 @@ fn soft_logout_restore_request_canonical_digest(
     principal_id: &str,
     device_id: &str,
     audience: &str,
-    holder_key_id: &str,
+    grant_binding_key_id: &str,
 ) -> anyhow::Result<String> {
     crate::canonical::canonical_sha256(&SoftLogoutRestoreRequestDigest {
         operation: SOFT_LOGOUT_RESTORE_OPERATION,
@@ -409,14 +409,15 @@ fn soft_logout_restore_request_canonical_digest(
         principal_id,
         device_id,
         audience,
-        holder_key_id,
+        grant_binding_key_id,
     })
     .map_err(|error| anyhow::anyhow!("soft logout restore request canonicalization: {error}"))
 }
 
 /// Build the soft-logout refresh challenge from a pure 128-bit random nonce +
-/// millisecond timestamp. The DPoP jkt is intentionally not mixed in: holder-key
-/// binding is carried by the signed proof payload and request digest.
+/// millisecond timestamp. The DPoP jkt is intentionally not mixed in: the
+/// grant-binding key id is carried by the signed proof payload and request
+/// digest.
 fn soft_logout_refresh_challenge() -> anyhow::Result<String> {
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce).map_err(|err| anyhow::anyhow!("refresh challenge RNG: {err}"))?;
@@ -690,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_clears_grant_when_refresh_rejects_holder_proof() {
+    fn commit_clears_grant_when_refresh_rejects_grant_binding_proof() {
         let mut store = isolated_store("invalid-proof-grant");
         store.set_session_grant(Some(grant_with_expiry(86400)));
         let error: anyhow::Error = crate::api::CokretApiError {

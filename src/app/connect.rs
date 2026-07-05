@@ -119,7 +119,7 @@ pub(super) async fn refresh_session_credential_for_active_context(
 
     // ②(A+②): multi-day sliding session. The held credential is the grant
     // itself; when it is near its own expiry the refresh path rotates it (DPoP
-    // holder proof signed by the durable device key bound into `cnf.jkt`) onto a
+    // grant-binding DPoP proof signed by the durable grant-binding key bound into `cnf.jkt`) onto a
     // fresh grant, and the rotated grant JWT becomes the live credential.
     // `prepare_refresh_for_server_after_unauthorized` forces a rotation attempt
     // even when the local expiry metadata looks fresh (the server may have
@@ -303,7 +303,7 @@ fn current_authed_api(
 
 /// ②(A+②) — build a `/_cokret/self/*`-ready client: the credential
 /// (`ck.session.grant` JWT) in the HTTP Bearer authorization slot plus the
-/// device DPoP holder key so each request carries a per-request `DPoP` proof
+/// grant-binding (DPoP) key so each request carries a per-request `DPoP` proof
 /// (api-conventions.md §3.3).
 /// Used by standalone (non-`connect`) self-path call sites that build their own
 /// `CokretApi`. Best-effort on the DPoP key: if it cannot be loaded the
@@ -399,7 +399,7 @@ async fn enroll_current_session_device(
     let device_key = {
         let mut store = state_store.write();
         crate::auth_dpop::ensure_device_key(&mut store)
-            .map_err(|error| anyhow::anyhow!("load device holder key: {error}"))?
+            .map_err(|error| anyhow::anyhow!("load grant-binding key: {error}"))?
     };
     let htu = coauth.endpoint_url("device-enroll")?;
     let dpop_proof = device_key

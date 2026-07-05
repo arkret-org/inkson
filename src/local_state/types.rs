@@ -906,7 +906,7 @@ pub struct DevicePrefs {
 pub struct PendingLogin {
     /// Freshly-minted device id carried in the authorize request.
     pub device_id: String,
-    /// RFC 7638 thumbprint of the freshly-minted DPoP holder key. Diagnostic
+    /// RFC 7638 thumbprint of the freshly-minted grant-binding (DPoP) key. Diagnostic
     /// mirror of the key whose private seed lives under the
     /// `pending.<device_id>` secure-store namespace.
     #[serde(default)]
@@ -1025,11 +1025,11 @@ pub struct UserActionLogEntry {
 /// client-visible local session credential. Each request presents `Authorization: Bearer
 /// <grant_jwt>` + a per-request `DPoP` proof bound to the device key. Keeping
 /// the grant on disk lets the client keep using it directly and rotate it (DPoP
-/// holder proof → fresh grant) before its own expiry — no user-visible re-login
+/// grant-binding DPoP proof → fresh grant) before its own expiry — no user-visible re-login
 /// as long as the grant chain is still rotatable.
 ///
 /// `session_private_key_pem` is retained for the introspection-proof helper; the
-/// rotation/holder proof is signed by the durable device DPoP key whose
+/// rotation proof is signed by the durable grant-binding DPoP key whose
 /// thumbprint is the grant's `cnf.jkt`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedSessionGrant {

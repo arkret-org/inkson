@@ -263,7 +263,7 @@ pub(super) fn inject_test_session_grant(
     let now = chrono::Utc::now();
     let grant = PersistedSessionGrant {
         grant_jwt: grant_jwt.clone(),
-        // ②(A+②): the grant rotation/holder proof is signed by the device DPoP
+        // ②(A+②): the grant rotation proof is signed by the grant-binding DPoP
         // key, not a separate session key, so no PEM is needed; e2e never
         // refreshes the injected grant.
         session_private_key_pem: String::new(),

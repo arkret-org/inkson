@@ -25,7 +25,7 @@ use crate::secure_key_store::SigningSeedMaterial;
 pub struct DeviceEnrollmentRequest {
     /// Active `ck.session.grant` JWT used for the enrollment endpoint.
     pub grant_jwt: String,
-    /// Device holder DPoP proof bound to the grant `cnf.jkt`, minted for
+    /// Grant-binding DPoP proof bound to the grant `cnf.jkt`, minted for
     /// `POST <gate_account_base>/device-enroll`.
     pub dpop_proof: String,
     /// This session's `device_id` (`ck:device:<uuid>`). The enrollment authority

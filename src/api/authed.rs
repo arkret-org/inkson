@@ -17,7 +17,7 @@ pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<
 /// for read-your-writes consistency on subsequent reads.
 ///
 /// ②(A+②): `session_credential` is the `ck.session.grant` JWT.
-/// The client also binds the device DPoP holder key so every `/_cokret/self/*`
+/// The client also binds the grant-binding (DPoP) key so every `/_cokret/self/*`
 /// request carries a per-request `DPoP` proof bound to the grant
 /// (api-conventions.md §3.3). This is the centralized self-path credential
 /// builder used across views.
@@ -46,7 +46,7 @@ pub fn authed_api_with_sync(
     Ok(api)
 }
 
-/// ②(A+②) — best-effort attach the device DPoP holder key to a client so its
+/// ②(A+②) — best-effort attach the grant-binding (DPoP) key to a client so its
 /// `/_cokret/self/*` requests are sender-constrained (api-conventions.md §3.3).
 /// In production the seed is read from the secure key store (independent of the
 /// passed state store); in tests no key is present and the client stays

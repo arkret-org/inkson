@@ -7,7 +7,7 @@
 //!
 //! T1.Y3 — this is now a SINGLE client-visible call to the Account Authority
 //! `POST {gate_account_base}/logout` (service-surface §2.5.1) carrying
-//! `Authorization: Bearer <ck.session.grant>` + a `DPoP` holder proof bound to
+//! `Authorization: Bearer <ck.session.grant>` + a grant-binding `DPoP` proof bound to
 //! that grant. The Account Authority internally terminates BOTH the Auth-side
 //! grant rotation chain + `browser_session` AND the Principal-side
 //! account/device session + to-device drop. The client MUST NOT fan out to two
@@ -21,7 +21,7 @@
 //! This module closes that hole by journalling the logout intent to the
 //! [`SecureKeyStore`](crate::secure_key_store) **before** the local wipe,
 //! retrying it in the background, and on the next app boot. The record
-//! embeds the device holder seed, so it is classified seed-grade
+//! embeds the grant-binding seed, so it is classified seed-grade
 //! (`PENDING_LOGOUT_SECRET_KEY`): IndexedDB-only on wasm with no localStorage
 //! unload-race mirror, OS keyring on native. The record is cleared only once
 //! the coauth revoke has definitively succeeded (or the grant is already
@@ -57,7 +57,7 @@ pub struct PendingLogout {
     /// Base64url seed of the device DPoP key whose thumbprint is bound
     /// into the grant's `cnf.jkt`. Stashed because the hard logout wipes
     /// the live device key (to rotate `cnf.jkt` on next sign-in); this
-    /// copy exists solely to mint the holder proof for the revoke.
+    /// copy exists solely to mint the grant-binding DPoP proof for the revoke.
     #[serde(default)]
     pub device_seed_b64: Option<String>,
     /// Thumbprint that must re-derive from `device_seed_b64`.
@@ -86,7 +86,7 @@ pub struct PendingLogout {
 }
 
 impl Drop for PendingLogout {
-    /// Defence-in-depth: wipe the stashed device seed (the holder secret bound
+    /// Defence-in-depth: wipe the stashed device seed (the grant-binding secret bound
     /// into the grant's `cnf.jkt`) when the journal record drops, so the
     /// plaintext key material does not linger in freed heap. `zeroize`'s
     /// `serde` feature is not enabled in this workspace, so the field stays a
@@ -108,7 +108,7 @@ impl PendingLogout {
     }
 
     /// True when there is a server-side grant chain to terminate. Requires the
-    /// grant JWT + holder material + a routable Account Authority base (either
+    /// grant JWT + grant-binding material + a routable Account Authority base (either
     /// the journalled `gate_account_base` or a `principal_server_url` to
     /// re-resolve it from).
     pub fn has_coauth_revoke(&self) -> bool {
@@ -145,7 +145,7 @@ pub async fn execute_pending_logout(
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> LogoutRunOutcome {
     if !record.has_coauth_revoke() {
-        // No grant / holder material to terminate server-side — nothing to do.
+        // No grant / grant-binding material to terminate server-side — nothing to do.
         let _ = clear_pending_logout(store);
         return LogoutRunOutcome::Completed;
     }
@@ -167,7 +167,7 @@ pub async fn execute_pending_logout(
 }
 
 /// T1.Y3 — single hard logout to `{gate_account_base}/logout` with the grant
-/// plus a DPoP holder proof minted from the stashed device seed (the live
+/// plus a grant-binding DPoP proof minted from the stashed device seed (the live
 /// key is already wiped). The DPoP `htu` MUST equal the `/logout` URL and `ath`
 /// MUST bind the grant.
 async fn hard_logout_at_authority(
@@ -211,13 +211,13 @@ async fn hard_logout_at_authority(
 }
 
 /// Journal a logout intent to the secure key store. Call this **before**
-/// wiping local credentials so the retry can still mint a holder proof.
+/// wiping local credentials so the retry can still mint a grant-binding DPoP proof.
 ///
-/// The journal holds the device holder seed, so it goes through the
+/// The journal holds the grant-binding seed, so it goes through the
 /// [`SecureKeyStore`](crate::secure_key_store::SecureKeyStore) (OS keyring on
 /// native) rather than a plaintext file. Its key is classified seed-grade, so
 /// on wasm it is IndexedDB-only with NO localStorage unload-race mirror — the
-/// holder seed never touches the weak localStorage tier.
+/// grant-binding seed never touches the weak localStorage tier.
 pub fn persist_pending_logout(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,

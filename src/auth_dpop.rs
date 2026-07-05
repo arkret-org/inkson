@@ -99,7 +99,7 @@ impl DpopHandle {
     /// ([`crate::pending_logout`]): the logout wipes the live key, so a
     /// copy of the seed is stashed (alongside [`Self::jkt`]) purely so a
     /// later boot can rebuild this handle via
-    /// [`device_handle_from_seed`] and mint the holder proof that revokes
+    /// [`device_handle_from_seed`] and mint the grant-binding DPoP proof that revokes
     /// the *old* grant. This is the same secret already held in the secure
     /// key store; it is cleared as soon as the revoke succeeds.
     pub fn seed_b64(&self) -> Zeroizing<String> {
@@ -362,7 +362,7 @@ pub fn load_or_recover_device_key_with_secure_store(
 /// ([`crate::pending_logout`]): a logout wipes the active device key so
 /// the next sign-in rotates `cnf.jkt`, but the pending-logout record
 /// stashes a copy of the *old* seed purely so a later boot can still mint
-/// the holder proof needed to revoke the *old* grant. The thumbprint is
+/// the grant-binding DPoP proof needed to revoke the *old* grant. The thumbprint is
 /// re-derived and checked against `jkt` to reject a tampered record.
 pub fn device_handle_from_seed(seed_b64: &str, jkt: &str) -> Result<DpopHandle, AuthDpopError> {
     decode_record(&DpopDeviceKeyRecord {
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn seed_export_rebuilds_an_equivalent_handle() {
         // The durable hard-logout journal stashes seed_b64 + jkt and later
-        // rebuilds the holder key via device_handle_from_seed. The rebuilt
+        // rebuilds the grant-binding key via device_handle_from_seed. The rebuilt
         // handle must mint proofs under the same cnf.jkt as the original.
         let mut store = isolated_store("seed-roundtrip");
         let original = ensure_device_key(&mut store).unwrap();

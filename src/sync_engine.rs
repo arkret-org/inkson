@@ -702,7 +702,7 @@ async fn run_iteration(
     }
 
     // ②(A+②): `token` is the `ck.session.grant`; every self-path sync request
-    // must include the device DPoP holder key instead of falling back to a bare
+    // must include the grant-binding (DPoP) key instead of falling back to a bare
     // bearer request that the server will reject.
     let api = match crate::api::authed_api(&base, token.clone()) {
         Ok(api) => api,

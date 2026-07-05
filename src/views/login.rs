@@ -229,7 +229,7 @@ pub fn LoginPanel(
             {
                 tracing::warn!(%error, "reset device seed scope for sign-in failed");
             }
-            // Drop the cached DPoP record so the grant holder is rebuilt from
+            // Drop the cached DPoP record so the grant-binding key is rebuilt from
             // the freshly-rotated grant-binding seed.
             reset_state_store.write().set_dpop_device_key(None);
             // Pre-DID: record the sign-in device id as the pending login so the
@@ -697,7 +697,7 @@ async fn finish_oidc_callback(
     }
     let device = normalize_device_id(&device);
     restore_oidc_callback_device_seed_scope(&device);
-    // T1.Y1 — DPoP holder proof bound to the session-grants URL; this is what
+    // T1.Y1 — grant-binding DPoP proof bound to the session-grants URL; this is what
     // makes the issued grant device-bound (cnf.jkt) at the Account Authority.
     let session_grants_url = gate_account
         .endpoint_url("session-grants")
@@ -809,7 +809,7 @@ async fn finish_oidc_callback(
 
     let resolved_device = device;
     // Persist the principal session grant as the live credential. The refresh
-    // path keeps it fresh by rotating it (DPoP holder proof → fresh grant) when
+    // path keeps it fresh by rotating it (grant-binding DPoP proof → fresh grant) when
     // near expiry.
     let persisted_session_grant = persisted_session_grant_from_parts(
         &session_grant,

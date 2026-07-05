@@ -252,7 +252,7 @@ impl LocalStateStore {
     }
 
     /// Pre-DID login kickoff: record the freshly-minted `device_id` (+ optional
-    /// holder `jkt`) into the root index `pending_login` and pin the
+    /// grant-binding `jkt`) into the root index `pending_login` and pin the
     /// process-global pending namespace so the bootstrap wrap_seed / secrets
     /// land under `pending.<device_id>` until the principal DID resolves.
     pub fn begin_pending_login(&mut self, device_id: &str, dpop_jkt: Option<&str>) {
@@ -311,7 +311,7 @@ impl LocalStateStore {
 
     /// G3.Y0 — hard logout: wipe everything `clear_account_scoped`
     /// would wipe, PLUS the device DPoP key, push registration, and
-    /// local identity. The next sign-in rotates the grant holder (`cnf.jkt`);
+    /// local identity. The next sign-in rotates the grant-binding key (`cnf.jkt`);
     /// account-scoped E2EE device identity is kept by the caller's soft
     /// logout/config path.
     ///

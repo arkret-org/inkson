@@ -5,7 +5,7 @@
 //! arbitrary short-string secrets that should land in the OS keychain
 //! rather than `state.json`. Today's callers:
 //!
-//! * coauth-issued session credential and session-grant holder material.
+//! * coauth-issued session credential and session-grant grant-binding material.
 //! * Push provider auth bundles for FCM / APNs once the host adapters land.
 //!
 //! ## Backends
@@ -85,7 +85,7 @@ pub(crate) const WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND: &str = "indexed_db_sub
 const WASM_LOCAL_IDENTITY_SEED_KEY: &str = "identity.local.primary.v1";
 
 /// Secure-store key for the durable hard-logout journal
-/// ([`crate::pending_logout`]). The record embeds the device DPoP holder
+/// ([`crate::pending_logout`]). The record embeds the grant-binding (DPoP)
 /// seed, so it is classified as a seed-grade secret: IndexedDB-only on wasm
 /// (no localStorage tier) and excluded from the unload-race localStorage
 /// mirror, exactly like an Ed25519 signing seed.

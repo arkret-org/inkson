@@ -5101,12 +5101,12 @@ pub fn RouterView() -> Element {
                                                 let actor = account_did();
                                                 let device = device_id();
                                                 let api_token = token();
-                                                // Capture the grant + device holder key BEFORE the
+                                                // Capture the grant + grant-binding key BEFORE the
                                                 // local wipe below: hard logout MUST also terminate
                                                 // the Auth Server session (revoke grant + finish
                                                 // browser session) so the rotation chain can't be
                                                 // resumed (account-lifecycle §4.1), and that needs
-                                                // the grant JWT + a device holder proof.
+                                                // the grant JWT + a grant-binding DPoP proof.
                                                 let logout_grant =
                                                     state_store.read().session_grant();
                                                 let logout_device_handle = {
@@ -5119,7 +5119,7 @@ pub fn RouterView() -> Element {
                                                 // (`run_pending_logout_if_any`) retries the server-side
                                                 // termination so the rotation chain can't outlive the
                                                 // "logout". The record stashes the device seed (the live
-                                                // key is wiped below) purely to mint the revoke holder
+                                                // key is wiped below) purely to mint the revoke DPoP
                                                 // proof; it is cleared once coauth confirms the grant is
                                                 // gone (account-lifecycle §4.1).
                                                 let pending_logout =

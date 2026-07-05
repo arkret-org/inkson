@@ -186,7 +186,7 @@ impl CoauthApi {
     /// `{gate_account_base}/session-grants`; the Account Authority redeems the
     /// `authorization_code` + `code_verifier` at the issuer `token_endpoint`,
     /// validates issuer/state/nonce/redirect/PKCE/principal/audience and the
-    /// `DPoP` holder proof (binding the grant to `cnf.jkt`), and returns a
+    /// grant-binding `DPoP` proof (binding the grant to `cnf.jkt`), and returns a
     /// device-bound [`cokret_sdk::SessionGrantOutcome`].
     ///
     /// `self` MUST be rooted at the resolved `gate_account_base`.
@@ -226,7 +226,7 @@ impl CoauthApi {
             .map_err(|error| anyhow::anyhow!("invalid device_id: {error}"))?;
         let proof = cokret_sdk::SessionGrantRequestProof {
             proof_kind: cokret_sdk::SessionGrantProofKind::OidcCodeExchange,
-            // The DPoP holder proof (DPoP header) carries the device binding;
+            // The grant-binding DPoP proof (DPoP header) carries the device binding;
             // the authorization-code exchange itself is the authentication
             // material. `challenge` / `signature` are not consulted for the
             // oidc_code_exchange branch, but the wire struct requires them.
@@ -270,7 +270,7 @@ impl CoauthApi {
 
     /// T1.Y3 — single client-visible hard logout (account-lifecycle §4.1).
     /// POSTs to `{gate_account_base}/logout` with `Authorization: Bearer
-    /// <ck.session.grant>` + a `DPoP` holder proof; the Account Authority
+    /// <ck.session.grant>` + a grant-binding `DPoP` proof; the Account Authority
     /// internally terminates BOTH the Auth-side grant rotation chain +
     /// `browser_session` AND the Principal-side account/device session. The
     /// client MUST NOT fan out to two origins.
@@ -334,7 +334,7 @@ impl CoauthApi {
     /// verbatim to the Principal Server's `POST /_cokret/self/events`.
     ///
     /// `self` MUST be rooted at the resolved `gate_account_base`. `grant_jwt` is
-    /// the active `ck.session.grant`; `dpop_proof` is the device holder proof
+    /// the active `ck.session.grant`; `dpop_proof` is the grant-binding DPoP proof
     /// bound to the grant's `cnf.jkt`.
     #[allow(clippy::too_many_arguments)]
     pub async fn device_enroll_signed_event(

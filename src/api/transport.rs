@@ -66,7 +66,7 @@ impl CokretApi {
         self
     }
 
-    /// ②(A+②) — bind the device DPoP holder key so every `/_cokret/self/*`
+    /// ②(A+②) — bind the grant-binding (DPoP) key so every `/_cokret/self/*`
     /// request mints a fresh per-request `DPoP` proof (RFC 9449) bound to the
     /// grant in `authorization_credential`. Centralized minting happens in the
     /// request pipeline ([`Self::attach_session_grant_dpop`]); call sites only

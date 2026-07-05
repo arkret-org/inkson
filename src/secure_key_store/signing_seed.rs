@@ -332,7 +332,7 @@ pub fn ensure_signing_seed_scoped(
 // The grant-binding key is a SESSION-auth credential, distinct from the
 // per-account device identity signing seed ([`SIGNING_SEED_KEY`] above): its
 // RFC 7638 JWK thumbprint is the grant's `cnf.jkt`, it signs DPoP proofs and the
-// grant-rotation / logout-revoke holder proofs, and it MUST NOT feed the event
+// grant-rotation / logout-revoke DPoP proofs, and it MUST NOT feed the event
 // signer — rotating or clearing it must never change the device identity key
 // that signs events / KeyPackages / MLS. It is minted fresh on interactive
 // sign-in, cleared on hard logout, and preserved across grant rotation and soft

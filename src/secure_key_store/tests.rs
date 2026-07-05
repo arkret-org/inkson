@@ -199,7 +199,7 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(
         "coauth.session_credential.did:example:alice"
     ));
-    // The hard-logout journal embeds a holder seed → seed-grade: both
+    // The hard-logout journal embeds a grant-binding seed → seed-grade: both
     // IndexedDB-required and excluded from the localStorage mirror.
     assert!(is_wasm_indexeddb_required_secret_key(
         PENDING_LOGOUT_SECRET_KEY

@@ -769,7 +769,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         // removed once the IndexedDB put succeeds, and the boot-time H6
         // migration sweeps any unload-race survivor back into IndexedDB.
         // Ed25519 signing seeds — and the hard-logout journal, which embeds a
-        // holder seed — stay IndexedDB-only (H6 fail-closed): never mirrored to
+        // grant-binding seed — stay IndexedDB-only (H6 fail-closed): never mirrored to
         // the localStorage unload-race copy.
         let mirrored = if is_wasm_no_localstorage_mirror_key(key) {
             false

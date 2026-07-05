@@ -120,7 +120,7 @@ pub struct CokretApi {
     /// signature (api-conventions.md §3.2).
     session_signing_key: Option<ed25519_dalek::SigningKey>,
     session_key_id: Option<String>,
-    /// ②(A+②) — device DPoP holder key. When set together with a grant in
+    /// ②(A+②) — grant-binding (DPoP) key. When set together with a grant in
     /// `authorization_credential`, every `/_cokret/self/*` request carries a freshly-minted
     /// per-request `DPoP` proof (RFC 9449) bound to `htm`/`htu`/`ath=hash(grant)`
     /// (api-conventions.md §3.3). This is the default `/_cokret/self/*` session
