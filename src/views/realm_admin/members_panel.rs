@@ -1,26 +1,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use cokret_sdk::models::{
-    AgentGrantAttachRequestBody, AgentParticipation, AgentParticipationEntry,
-    AgentParticipationScope, AgentProvisionRequestBody,
-};
+use cokret_sdk::models::{AgentParticipation, AgentParticipationEntry, AgentParticipationScope};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
+use dioxus_router::Link;
 use serde_json::{Value, json};
-// Shared JS-interop helpers (single source, YGN-DRY-04).
-use yoface::utils::dom::{copy_text_to_clipboard, open_url_in_new_tab};
 
 use super::capabilities::{RealmMemberCapabilities, authz_json_allowed};
 use crate::components::SelfAttributionBadge;
 use crate::local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
 use crate::operation::ck_ops;
+use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::agents::{
-    AgentGrantPreset, agent_pair_url, expand_preset_grant, requested_scope_for_presets,
-};
 use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, display_name_for_did, handle_display_from_did,
     short_protocol_id,
@@ -188,18 +182,6 @@ impl MemberProfile {
 
 fn member_identity_fallback_label(did: &str) -> String {
     handle_display_from_did(did).unwrap_or_else(|| short_protocol_id(did))
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct AgentProvisionSummary {
-    agent_principal_id: String,
-    pairing_request_id: String,
-    pairing_code: Option<String>,
-    expires_at: String,
-    pair_url: String,
-    attached_grants: usize,
-    grant_errors: Vec<String>,
-    grant_expires_at: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1188,14 +1170,6 @@ fn agent_invite_target(agent_principal_id: &str, service_did: &str) -> String {
         agent_principal_id.trim(),
         service_did.trim()
     )
-}
-
-fn member_agent_default_presets() -> Vec<AgentGrantPreset> {
-    vec![AgentGrantPreset::ReadOnly, AgentGrantPreset::DraftOnly]
-}
-
-fn member_agent_grant_expires_at(now: chrono::DateTime<chrono::Utc>) -> String {
-    (now + chrono::Duration::days(30)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn member_avatar_initial_from_value(value: &str) -> String {
@@ -2975,12 +2949,7 @@ pub fn RealmMembersPanel(
     let mut status_msg = use_signal(String::new);
     let mut members = use_signal(Vec::<MemberProfile>::new);
     let mut owned_agents = use_signal(Vec::<MemberAgentRow>::new);
-    let mut owned_agents_refresh_nonce = use_signal(|| 0_u64);
     let mut self_agent_settings_open = use_signal(|| false);
-    let mut new_agent_display_name = use_signal(|| "my-personal-agent".to_owned());
-    let mut new_agent_slug = use_signal(|| "summary".to_owned());
-    let mut new_agent_presets = use_signal(member_agent_default_presets);
-    let mut new_agent_pairing = use_signal(|| Option::<AgentProvisionSummary>::None);
     let block_confirm_did = use_signal(|| Option::<String>::None);
     let mut permissions = use_signal(RealmMemberCapabilities::default);
     let mut member_roster_section = use_signal(|| MemberRosterSection::Members);
@@ -3057,7 +3026,6 @@ pub fn RealmMembersPanel(
         let realm = selected_realm_id.clone();
         let fallback_controller_did = account_did.clone();
         use_effect(move || {
-            let _refresh_nonce = owned_agents_refresh_nonce();
             let api_token = token();
             if api_token.trim().is_empty() {
                 owned_agents.set(Vec::new());
@@ -3266,1231 +3234,991 @@ pub fn RealmMembersPanel(
     let refresh_label = crate::i18n::tr("realm_admin.refresh_members");
 
     rsx! {
-        div { class: "timeline", "data-testid": "realm-members-panel",
-            if can_invite && invite_modal_open() {
-                crate::components::DismissiblePopup {
-                    overlay_class: "modal-backdrop",
-                    surface_class: "modal invite-modal",
-                    overlay_test_id: Some("invite-member-modal".to_owned()),
-                    aria_label: "Invite member",
-                    on_dismiss: move |_| invite_modal_open.set(false),
-                        div { class: "modal-head",
-                            h3 { "Invite member" }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                class: "icon-button close",
-                                "aria-label": "Close",
-                                "data-testid": "invite-modal-close",
-                                onclick: move |_| invite_modal_open.set(false),
-                                "\u{2715}"
+            div { class: "timeline", "data-testid": "realm-members-panel",
+                if can_invite && invite_modal_open() {
+                    crate::components::DismissiblePopup {
+                        overlay_class: "modal-backdrop",
+                        surface_class: "modal invite-modal",
+                        overlay_test_id: Some("invite-member-modal".to_owned()),
+                        aria_label: "Invite member",
+                        on_dismiss: move |_| invite_modal_open.set(false),
+                            div { class: "modal-head",
+                                h3 { "Invite member" }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    class: "icon-button close",
+                                    "aria-label": "Close",
+                                    "data-testid": "invite-modal-close",
+                                    onclick: move |_| invite_modal_open.set(false),
+                                    "\u{2715}"
+                                }
                             }
-                        }
-                        div { class: "modal-body workflow-form",
-                            // U3 — primary, natural path: pull existing contacts
-                            // into the Realm directly via their consent grant.
-                            div { class: "invite-from-contacts", "data-testid": "realm-invite-from-contacts",
-                                div { class: "event-head",
-                                    span { {crate::i18n::tr("realm_admin.invite_from_contacts")} }
-                                    span { {crate::i18n::tr("realm_admin.invite_recommended")} }
-                                }
-                                if !invite_contacts_status().is_empty() {
-                                    div { class: "muted", "data-testid": "realm-invite-contacts-status", "{invite_contacts_status}" }
-                                }
-                                if !invite_contacts.read().is_empty() {
-                                    div { class: "settings-list",
-                                        for contact in invite_contacts.read().clone() {
-                                            {
-                                                let did = contact.peer.clone();
-                                                let did_label = display_name_for_did(&state_store.read(), &did);
-                                                let checked = selected_contacts.read().contains(&did);
-                                                let eligible = contact.grants_me_invite();
-                                                let has_ref = contact.invite_consent_ref().is_some();
-                                                let usable = eligible && has_ref;
-                                                // Distinguish "peer never authorised invite" (no real
-                                                // consent grant ref) from other not-yet-usable states so
-                                                // the badge tells the user why the row is disabled.
-                                                let not_authorized = !usable;
-                                                let did_for_toggle = did.clone();
-                                                rsx! {
-                                                    label {
-                                                        class: "metric invite-contact-row",
-                                                        "data-testid": "realm-invite-contact-{did}",
-                                                        "data-eligible": "{usable}",
-                                                        Checkbox {
-                                                            checked: if checked { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                                            disabled: !usable,
-                                                            on_checked_change: move |state: CheckboxState| {
-                                                                let mut next = selected_contacts.read().clone();
-                                                                if bool::from(state) {
-                                                                    next.insert(did_for_toggle.clone());
-                                                                } else {
-                                                                    next.remove(&did_for_toggle);
+                            div { class: "modal-body workflow-form",
+                                // U3 — primary, natural path: pull existing contacts
+                                // into the Realm directly via their consent grant.
+                                div { class: "invite-from-contacts", "data-testid": "realm-invite-from-contacts",
+                                    div { class: "event-head",
+                                        span { {crate::i18n::tr("realm_admin.invite_from_contacts")} }
+                                        span { {crate::i18n::tr("realm_admin.invite_recommended")} }
+                                    }
+                                    if !invite_contacts_status().is_empty() {
+                                        div { class: "muted", "data-testid": "realm-invite-contacts-status", "{invite_contacts_status}" }
+                                    }
+                                    if !invite_contacts.read().is_empty() {
+                                        div { class: "settings-list",
+                                            for contact in invite_contacts.read().clone() {
+                                                {
+                                                    let did = contact.peer.clone();
+                                                    let did_label = display_name_for_did(&state_store.read(), &did);
+                                                    let checked = selected_contacts.read().contains(&did);
+                                                    let eligible = contact.grants_me_invite();
+                                                    let has_ref = contact.invite_consent_ref().is_some();
+                                                    let usable = eligible && has_ref;
+                                                    // Distinguish "peer never authorised invite" (no real
+                                                    // consent grant ref) from other not-yet-usable states so
+                                                    // the badge tells the user why the row is disabled.
+                                                    let not_authorized = !usable;
+                                                    let did_for_toggle = did.clone();
+                                                    rsx! {
+                                                        label {
+                                                            class: "metric invite-contact-row",
+                                                            "data-testid": "realm-invite-contact-{did}",
+                                                            "data-eligible": "{usable}",
+                                                            Checkbox {
+                                                                checked: if checked { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                disabled: !usable,
+                                                                on_checked_change: move |state: CheckboxState| {
+                                                                    let mut next = selected_contacts.read().clone();
+                                                                    if bool::from(state) {
+                                                                        next.insert(did_for_toggle.clone());
+                                                                    } else {
+                                                                        next.remove(&did_for_toggle);
+                                                                    }
+                                                                    selected_contacts.set(next);
+                                                                },
+                                                            }
+                                                            span { title: "{did}", " {did_label}" }
+                                                            if not_authorized {
+                                                                span {
+                                                                    class: "badge",
+                                                                    "data-testid": "realm-invite-contact-unauthorized-{did}",
+                                                                    {crate::i18n::tr("realm_admin.invite_unauthorized")}
                                                                 }
-                                                                selected_contacts.set(next);
-                                                            },
-                                                        }
-                                                        span { title: "{did}", " {did_label}" }
-                                                        if not_authorized {
-                                                            span {
-                                                                class: "badge",
-                                                                "data-testid": "realm-invite-contact-unauthorized-{did}",
-                                                                {crate::i18n::tr("realm_admin.invite_unauthorized")}
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
                                         }
-                                    }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Primary,
-                                            "data-testid": "realm-invite-send",
-                                            disabled: selected_contacts.read().is_empty(),
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                let actor = account_did.clone();
-                                                let device = device_id.clone();
-                                                let realm = selected_realm_id.clone();
-                                                let state_store = state_store;
-                                                move |_| {
-                                                    let base = base.clone();
-                                                    let actor = actor.clone();
-                                                    let device = device.clone();
-                                                    let realm = realm.clone();
-                                                    let mut state_store = state_store;
-                                                    let api_token = token();
-                                                    // Resolve the (did, consent_ref) pairs up front so the
-                                                    // async task doesn't borrow the rendered rows.
-                                                    let targets: Vec<(String, String)> = invite_contacts
-                                                        .read()
-                                                        .iter()
-                                                        .filter(|c| selected_contacts.read().contains(&c.peer))
-                                                        .filter_map(|c| {
-                                                            c.invite_consent_ref().map(|r| (c.peer.clone(), r.to_owned()))
-                                                        })
-                                                        .collect();
-                                                    if targets.is_empty() {
-                                                        status_msg.set(crate::i18n::tr("realm_admin.invite_none_eligible"));
-                                                        return;
+                                        div { class: "actions",
+                                            Button {
+                                                variant: ButtonVariant::Primary,
+                                                "data-testid": "realm-invite-send",
+                                                disabled: selected_contacts.read().is_empty(),
+                                                onclick: {
+                                                    let base = base_url.clone();
+                                                    let actor = account_did.clone();
+                                                    let device = device_id.clone();
+                                                    let realm = selected_realm_id.clone();
+                                                    let state_store = state_store;
+                                                    move |_| {
+                                                        let base = base.clone();
+                                                        let actor = actor.clone();
+                                                        let device = device.clone();
+                                                        let realm = realm.clone();
+                                                        let mut state_store = state_store;
+                                                        let api_token = token();
+                                                        // Resolve the (did, consent_ref) pairs up front so the
+                                                        // async task doesn't borrow the rendered rows.
+                                                        let targets: Vec<(String, String)> = invite_contacts
+                                                            .read()
+                                                            .iter()
+                                                            .filter(|c| selected_contacts.read().contains(&c.peer))
+                                                            .filter_map(|c| {
+                                                                c.invite_consent_ref().map(|r| (c.peer.clone(), r.to_owned()))
+                                                            })
+                                                            .collect();
+                                                        if targets.is_empty() {
+                                                            status_msg.set(crate::i18n::tr("realm_admin.invite_none_eligible"));
+                                                            return;
+                                                        }
+                                                        let total = targets.len();
+                                                        status_msg.set(
+                                                            crate::i18n::tr("realm_admin.invite_sending")
+                                                                .replace("{total}", &total.to_string()),
+                                                        );
+                                                        spawn(async move {
+                                                            let api = match crate::views::helpers::authed_api(&base, api_token) {
+                                                                Ok(api) => api,
+                                                                Err(err) => {
+                                                                    status_msg.set(
+                                                                        crate::i18n::tr("realm_admin.invite_bad_server")
+                                                                            .replace("{error}", &err.to_string()),
+                                                                    );
+                                                                    return;
+                                                                }
+                                                            };
+                                                            let mut ok = 0_usize;
+                                                            let mut last_err = String::new();
+                                                            let mut last_mls_err = String::new();
+                                                            let mut mls_ok = 0_usize;
+                                                            let mut ok_invites =
+                                                                Vec::<(String, String, String)>::new();
+                                                            for (did, consent_ref) in targets {
+                                                                match api
+                                                                    .invite_contact_to_realm(&realm, &actor, &did, &consent_ref)
+                                                                    .await
+                                                                {
+                                                                    Ok((event_id, invite_id)) => {
+                                                                        ok += 1;
+                                                                        match submit_mls_admission_for_invitee(
+                                                                            &api,
+                                                                            state_store,
+                                                                            realm.clone(),
+                                                                            actor.clone(),
+                                                                            device.clone(),
+                                                                            did.clone(),
+                                                                        )
+                                                                        .await
+                                                                        {
+                                                                            Ok(Some(_)) => mls_ok += 1,
+                                                                            Ok(None) => {}
+                                                                            Err(err) => last_mls_err = err.to_string(),
+                                                                        }
+                                                                        ok_invites.push((
+                                                                            did,
+                                                                            event_id.clone(),
+                                                                            invite_id,
+                                                                        ));
+                                                                        frontier_state.set(event_id);
+                                                                    }
+                                                                    Err(err) => last_err = err.to_string(),
+                                                                }
+                                                            }
+                                                            if !ok_invites.is_empty() {
+                                                                let mut next_members = members.read().clone();
+                                                                {
+                                                                    let mut store = state_store.write();
+                                                                    for (did, event_id, invite_id) in ok_invites {
+                                                                        upsert_pending_invite_profile(&mut next_members, &did, None, Some(&invite_id));
+                                                                        store.append_raw_operation(
+                                                                            event_id.clone(),
+                                                                            Some(realm.clone()),
+                                                                            json!({
+                                                                                "kind": "ck.invite.create",
+                                                                                "invite_id": invite_id,
+                                                                                "invitee": did,
+                                                                                "state": "pending",
+                                                                                "event_id": event_id,
+                                                                            }),
+                                                                        );
+                                                                    }
+                                                                }
+                                                                members.set(next_members);
+                                                            }
+                                                            selected_contacts.set(std::collections::BTreeSet::new());
+                                                            if ok == total {
+                                                                invite_modal_open.set(false);
+                                                                let mut message = crate::i18n::tr("realm_admin.invite_sent")
+                                                                    .replace("{ok}", &ok.to_string());
+                                                                if !last_mls_err.is_empty() {
+                                                                    message.push_str(&format!(
+                                                                        "; MLS admission failed for at least one invite: {last_mls_err}"
+                                                                    ));
+                                                                } else if mls_ok > 0 {
+                                                                    message.push_str(&format!(
+                                                                        "; MLS Welcome queued for {mls_ok}"
+                                                                    ));
+                                                                }
+                                                                status_msg.set(message);
+                                                            } else {
+                                                                let mut message = crate::i18n::tr("realm_admin.invite_partial")
+                                                                    .replace("{ok}", &ok.to_string())
+                                                                    .replace("{total}", &total.to_string())
+                                                                    .replace("{error}", &last_err);
+                                                                if !last_mls_err.is_empty() {
+                                                                    message.push_str(&format!(
+                                                                        "; MLS admission failed for at least one invite: {last_mls_err}"
+                                                                    ));
+                                                                }
+                                                                status_msg.set(message);
+                                                            }
+                                                        });
                                                     }
-                                                    let total = targets.len();
-                                                    status_msg.set(
-                                                        crate::i18n::tr("realm_admin.invite_sending")
-                                                            .replace("{total}", &total.to_string()),
-                                                    );
-                                                    spawn(async move {
-                                                        let api = match crate::views::helpers::authed_api(&base, api_token) {
-                                                            Ok(api) => api,
-                                                            Err(err) => {
-                                                                status_msg.set(
-                                                                    crate::i18n::tr("realm_admin.invite_bad_server")
-                                                                        .replace("{error}", &err.to_string()),
-                                                                );
+                                                },
+                                                {crate::i18n::tr("realm_admin.invite_selected")}
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "invite-divider muted", "data-testid": "realm-invite-divider", {crate::i18n::tr("realm_admin.invite_divider")} }
+
+                                div { class: "invite-by-handle", "data-testid": "realm-invite-by-handle",
+                                    div { class: "event-head",
+                                        span { {crate::i18n::tr("realm_admin.invite_by_handle")} }
+                                        span { {crate::i18n::tr("realm_admin.invite_handle_opt_in")} }
+                                    }
+                                    Label { html_for: "invite-target-input", {crate::i18n::tr("realm_admin.invite_target_label")} }
+                                    Input {
+                                        id: "invite-target-input",
+                                        "data-testid": "invite-target-input",
+                                        value: "{invite_target}",
+                                        placeholder: "alice:example.com",
+                                        oninput: move |event: FormEvent| invite_target.set(event.value()),
+                                    }
+                                    div { class: "muted members-invite-hint",
+                                        {crate::i18n::tr("realm_admin.invite_hint")}
+                                    }
+                                }
+                            }
+                            div { class: "modal-foot",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "invite-modal-cancel",
+                                    onclick: move |_| invite_modal_open.set(false),
+                                    "Cancel"
+                                }
+                                Button {
+                                    variant: ButtonVariant::Primary,
+                                    "data-testid": "send-invite-button",
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let actor = account_did.clone();
+                                        let device = device_id.clone();
+                                        let realm = selected_realm_id.clone();
+                                        let state_store = state_store;
+                                        move |_| {
+                                            let base = base.clone();
+                                            let actor = actor.clone();
+                                            let device = device.clone();
+                                            let realm = realm.clone();
+                                            let mut state_store = state_store;
+                                            let api_token = token();
+                                            let target = invite_target().trim().to_owned();
+                                            if target.is_empty() {
+                                                status_msg.set("invite target is required".to_owned());
+                                                return;
+                                            }
+                                            let wait_for = active_sync_token(sync_cursor());
+                                            let invite_id = format!(
+                                                "ck:invite:{}",
+                                                crate::operation::uuid_v7()
+                                            );
+                                            spawn(async move {
+                                                match authed_api_with_sync(&base, api_token, wait_for) {
+                                                    Ok(api) => {
+                                                        let invitee = match api
+                                                            .resolve_invitee_for_invite(
+                                                                &target,
+                                                                &realm,
+                                                                &actor,
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(did) => did,
+                                                            Err(error) => {
+                                                                status_msg.set(format!("invite target resolve failed: {error}"));
                                                                 return;
                                                             }
                                                         };
-                                                        let mut ok = 0_usize;
-                                                        let mut last_err = String::new();
-                                                        let mut last_mls_err = String::new();
-                                                        let mut mls_ok = 0_usize;
-                                                        let mut ok_invites =
-                                                            Vec::<(String, String, String)>::new();
-                                                        for (did, consent_ref) in targets {
-                                                            match api
-                                                                .invite_contact_to_realm(&realm, &actor, &did, &consent_ref)
-                                                                .await
-                                                            {
-                                                                Ok((event_id, invite_id)) => {
-                                                                    ok += 1;
-                                                                    match submit_mls_admission_for_invitee(
-                                                                        &api,
-                                                                        state_store,
-                                                                        realm.clone(),
-                                                                        actor.clone(),
-                                                                        device.clone(),
-                                                                        did.clone(),
-                                                                    )
-                                                                    .await
-                                                                    {
-                                                                        Ok(Some(_)) => mls_ok += 1,
-                                                                        Ok(None) => {}
-                                                                        Err(err) => last_mls_err = err.to_string(),
-                                                                    }
-                                                                    ok_invites.push((
-                                                                        did,
-                                                                        event_id.clone(),
-                                                                        invite_id,
-                                                                    ));
-                                                                    frontier_state.set(event_id);
-                                                                }
-                                                                Err(err) => last_err = err.to_string(),
+                                                        let invitee_label = invitee
+                                                            .handle
+                                                            .clone()
+                                                            .unwrap_or_else(|| invitee.did.clone());
+                                                        let invitee_did = invitee.did.clone();
+                                                        let op = match ck_ops::invite_create_structured(
+                                                            &realm,
+                                                            &actor,
+                                                            &invite_id,
+                                                            &invitee_did,
+                                                            None,
+                                                            invitee.invite_delivery_target.clone(),
+                                                            &invitee.introduction_evidence_digest,
+                                                        ) {
+                                                            Ok(builder) => builder
+                                                                .build_sdk_event("yougen"),
+                                                            Err(err) => {
+                                                                status_msg.set(format!("invite failed: {err:#}"));
+                                                                return;
                                                             }
-                                                        }
-                                                        if !ok_invites.is_empty() {
-                                                            let mut next_members = members.read().clone();
-                                                            {
-                                                                let mut store = state_store.write();
-                                                                for (did, event_id, invite_id) in ok_invites {
-                                                                    upsert_pending_invite_profile(&mut next_members, &did, None, Some(&invite_id));
+                                                        };
+                                                        let submit_event = match op {
+                                                            Ok(event) => event,
+                                                            Err(err) => {
+                                                                status_msg.set(format!("invite failed: {err:#}"));
+                                                                return;
+                                                            }
+                                                        };
+                                                        let op_id = submit_event
+                                                            .unsigned
+                                                            .get("local_operation_idempotency_alias")
+                                                            .and_then(|value| value.as_str())
+                                                            .unwrap_or_else(|| submit_event.event_id.as_str())
+                                                            .to_owned();
+                                                        status_msg.set(format!(
+                                                            "submitting invite for {}",
+                                                            invitee_label
+                                                        ));
+                                                        match api.submit_sdk_event(&submit_event).await {
+                                                            Ok(submitted) => {
+                                                                frontier_state.set(submitted.event_id.clone());
+                                                                {
+                                                                    let mut store = state_store.write();
                                                                     store.append_raw_operation(
-                                                                        event_id.clone(),
+                                                                        op_id.clone(),
                                                                         Some(realm.clone()),
                                                                         json!({
                                                                             "kind": "ck.invite.create",
                                                                             "invite_id": invite_id,
-                                                                            "invitee": did,
+                                                                            "invitee": invitee_did.clone(),
+                                                                            "invitee_label": invitee_label.clone(),
                                                                             "state": "pending",
-                                                                            "event_id": event_id,
+                                                                            "event_id": submitted.event_id,
                                                                         }),
                                                                     );
                                                                 }
-                                                            }
-                                                            members.set(next_members);
-                                                        }
-                                                        selected_contacts.set(std::collections::BTreeSet::new());
-                                                        if ok == total {
-                                                            invite_modal_open.set(false);
-                                                            let mut message = crate::i18n::tr("realm_admin.invite_sent")
-                                                                .replace("{ok}", &ok.to_string());
-                                                            if !last_mls_err.is_empty() {
-                                                                message.push_str(&format!(
-                                                                    "; MLS admission failed for at least one invite: {last_mls_err}"
-                                                                ));
-                                                            } else if mls_ok > 0 {
-                                                                message.push_str(&format!(
-                                                                    "; MLS Welcome queued for {mls_ok}"
-                                                                ));
-                                                            }
-                                                            status_msg.set(message);
-                                                        } else {
-                                                            let mut message = crate::i18n::tr("realm_admin.invite_partial")
-                                                                .replace("{ok}", &ok.to_string())
-                                                                .replace("{total}", &total.to_string())
-                                                                .replace("{error}", &last_err);
-                                                            if !last_mls_err.is_empty() {
-                                                                message.push_str(&format!(
-                                                                    "; MLS admission failed for at least one invite: {last_mls_err}"
-                                                                ));
-                                                            }
-                                                            status_msg.set(message);
-                                                        }
-                                                    });
-                                                }
-                                            },
-                                            {crate::i18n::tr("realm_admin.invite_selected")}
-                                        }
-                                    }
-                                }
-                            }
-
-                            div { class: "invite-divider muted", "data-testid": "realm-invite-divider", {crate::i18n::tr("realm_admin.invite_divider")} }
-
-                            div { class: "invite-by-handle", "data-testid": "realm-invite-by-handle",
-                                div { class: "event-head",
-                                    span { {crate::i18n::tr("realm_admin.invite_by_handle")} }
-                                    span { {crate::i18n::tr("realm_admin.invite_handle_opt_in")} }
-                                }
-                                Label { html_for: "invite-target-input", {crate::i18n::tr("realm_admin.invite_target_label")} }
-                                Input {
-                                    id: "invite-target-input",
-                                    "data-testid": "invite-target-input",
-                                    value: "{invite_target}",
-                                    placeholder: "alice:example.com",
-                                    oninput: move |event: FormEvent| invite_target.set(event.value()),
-                                }
-                                div { class: "muted members-invite-hint",
-                                    {crate::i18n::tr("realm_admin.invite_hint")}
-                                }
-                            }
-                        }
-                        div { class: "modal-foot",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "invite-modal-cancel",
-                                onclick: move |_| invite_modal_open.set(false),
-                                "Cancel"
-                            }
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                "data-testid": "send-invite-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let actor = account_did.clone();
-                                    let device = device_id.clone();
-                                    let realm = selected_realm_id.clone();
-                                    let state_store = state_store;
-                                    move |_| {
-                                        let base = base.clone();
-                                        let actor = actor.clone();
-                                        let device = device.clone();
-                                        let realm = realm.clone();
-                                        let mut state_store = state_store;
-                                        let api_token = token();
-                                        let target = invite_target().trim().to_owned();
-                                        if target.is_empty() {
-                                            status_msg.set("invite target is required".to_owned());
-                                            return;
-                                        }
-                                        let wait_for = active_sync_token(sync_cursor());
-                                        let invite_id = format!(
-                                            "ck:invite:{}",
-                                            crate::operation::uuid_v7()
-                                        );
-                                        spawn(async move {
-                                            match authed_api_with_sync(&base, api_token, wait_for) {
-                                                Ok(api) => {
-                                                    let invitee = match api
-                                                        .resolve_invitee_for_invite(
-                                                            &target,
-                                                            &realm,
-                                                            &actor,
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(did) => did,
-                                                        Err(error) => {
-                                                            status_msg.set(format!("invite target resolve failed: {error}"));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let invitee_label = invitee
-                                                        .handle
-                                                        .clone()
-                                                        .unwrap_or_else(|| invitee.did.clone());
-                                                    let invitee_did = invitee.did.clone();
-                                                    let op = match ck_ops::invite_create_structured(
-                                                        &realm,
-                                                        &actor,
-                                                        &invite_id,
-                                                        &invitee_did,
-                                                        None,
-                                                        invitee.invite_delivery_target.clone(),
-                                                        &invitee.introduction_evidence_digest,
-                                                    ) {
-                                                        Ok(builder) => builder
-                                                            .build_sdk_event("yougen"),
-                                                        Err(err) => {
-                                                            status_msg.set(format!("invite failed: {err:#}"));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let submit_event = match op {
-                                                        Ok(event) => event,
-                                                        Err(err) => {
-                                                            status_msg.set(format!("invite failed: {err:#}"));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let op_id = submit_event
-                                                        .unsigned
-                                                        .get("local_operation_idempotency_alias")
-                                                        .and_then(|value| value.as_str())
-                                                        .unwrap_or_else(|| submit_event.event_id.as_str())
-                                                        .to_owned();
-                                                    status_msg.set(format!(
-                                                        "submitting invite for {}",
-                                                        invitee_label
-                                                    ));
-                                                    match api.submit_sdk_event(&submit_event).await {
-                                                        Ok(submitted) => {
-                                                            frontier_state.set(submitted.event_id.clone());
-                                                            {
-                                                                let mut store = state_store.write();
-                                                                store.append_raw_operation(
-                                                                    op_id.clone(),
-                                                                    Some(realm.clone()),
-                                                                    json!({
-                                                                        "kind": "ck.invite.create",
-                                                                        "invite_id": invite_id,
-                                                                        "invitee": invitee_did.clone(),
-                                                                        "invitee_label": invitee_label.clone(),
-                                                                        "state": "pending",
-                                                                        "event_id": submitted.event_id,
-                                                                    }),
+                                                                let mut next_members = members.read().clone();
+                                                                upsert_pending_invite_profile(
+                                                                    &mut next_members,
+                                                                    &invitee_did,
+                                                                    Some(&invitee_label),
+                                                                    Some(&invite_id),
                                                                 );
-                                                            }
-                                                            let mut next_members = members.read().clone();
-                                                            upsert_pending_invite_profile(
-                                                                &mut next_members,
-                                                                &invitee_did,
-                                                                Some(&invitee_label),
-                                                                Some(&invite_id),
-                                                            );
-                                                            members.set(next_members);
-                                                            invite_target.set(String::new());
-                                                            invite_modal_open.set(false);
-                                                            match submit_mls_admission_for_invitee(
-                                                                &api,
-                                                                state_store,
-                                                                realm.clone(),
-                                                                actor.clone(),
-                                                                device.clone(),
-                                                                invitee_did.clone(),
-                                                            )
-                                                            .await
-                                                            {
-                                                                Ok(Some(epoch)) => status_msg.set(format!(
-                                                                    "invited {} (pending) fact {}; MLS Welcome queued at epoch {}",
-                                                                    invitee_label,
-                                                                    short_protocol_id(&op_id),
-                                                                    epoch
-                                                                )),
-                                                                Ok(None) => status_msg.set(format!(
-                                                                    "invited {} (pending) fact {}",
-                                                                    invitee_label,
-                                                                    short_protocol_id(&op_id)
-                                                                )),
-                                                                Err(error) => status_msg.set(format!(
-                                                                    "invited {} (pending) fact {}; MLS admission failed: {error}",
-                                                                    invitee_label,
-                                                                    short_protocol_id(&op_id)
-                                                                )),
-                                                            }
-                                                        }
-                                                        Err(error) => status_msg.set(format!("invite failed: {error}")),
-                                                    }
-                                                }
-                                                Err(error) => status_msg.set(format!("invalid server URL: {error}")),
-                                            }
-                                        });
-                                    }
-                                },
-                                "Send Invite"
-                            }
-                        }
-                }
-            }
-
-            div { class: "event member-list-card", "data-testid": "member-table",
-                div { class: "event-head",
-                    span { "Members" }
-                    div { class: "member-head-actions",
-                        span {
-                            class: "badge member-count-badge",
-                            "data-testid": "realm-members-count",
-                            "{total_members}"
-                        }
-                        if total_pending_invites > 0 {
-                            span {
-                                class: "badge member-pending-count-badge",
-                                "data-testid": "realm-pending-invite-count",
-                                "{total_pending_invites} pending"
-                            }
-                        }
-                        if can_invite {
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                size: ButtonSize::IconSm,
-                                class: "member-head-icon-btn member-head-icon-btn-accent",
-                                "data-testid": "open-invite-modal-button",
-                                title: "Invite member",
-                                "aria-label": "Invite member",
-                                onclick: move |_| invite_modal_open.set(true),
-                                crate::components::UiIcon { name: "plus" }
-                            }
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            size: ButtonSize::IconSm,
-                            class: "member-head-icon-btn",
-                            "data-testid": "refresh-members-button",
-                            title: "{refresh_label}",
-                            "aria-label": "{refresh_label}",
-                            onclick: {
-                                let realm = selected_realm_id.clone();
-                                move |_| {
-                                    let store = state_store.read();
-                                    let next = projected_member_profiles_for_realm(&store, &realm);
-                                    let count = next.len();
-                                    members.set(next);
-                                    member_visible.set(MEMBER_PAGE_SIZE);
-                                    status_msg.set(format!(
-                                        "members refreshed ({count}) from local sync state"
-                                    ));
-                                }
-                            },
-                            crate::components::UiIcon { name: "refresh" }
-                        }
-                    }
-                }
-                if !status_msg().is_empty() {
-                    div { class: "muted", "data-testid": "realm-members-status", "{status_msg()}" }
-                }
-                if member_permissions.loaded && !can_invite && !can_cancel_invite && !can_remove {
-                    div {
-                        class: "muted",
-                        "data-testid": "realm-member-actions-hidden",
-                        "Member-management actions are not available for this account."
-                    }
-                }
-                if show_search {
-                    Input {
-                        class: "member-search-input",
-                        "data-testid": "member-search-input",
-                        value: "{member_filter}",
-                        placeholder: "Search members…",
-                        oninput: move |event: FormEvent| {
-                            member_filter.set(event.value());
-                            member_visible.set(MEMBER_PAGE_SIZE);
-                        },
-                    }
-                }
-                div { class: "members-admin-layout",
-                    nav { class: "members-admin-menu", "aria-label": "Member sections",
-                        button {
-                            class: "{members_section_class}",
-                            "data-testid": "members-section-members",
-                            onclick: move |_| {
-                                member_roster_section.set(MemberRosterSection::Members);
-                                member_visible.set(MEMBER_PAGE_SIZE);
-                            },
-                            span { "Members" }
-                            span { class: "badge", "{total_regular_members}" }
-                        }
-                        button {
-                            class: "{owners_section_class}",
-                            "data-testid": "members-section-owners",
-                            onclick: move |_| {
-                                member_roster_section.set(MemberRosterSection::Owners);
-                                member_visible.set(MEMBER_PAGE_SIZE);
-                            },
-                            span { "Owners" }
-                            span { class: "badge", "{total_owner_members}" }
-                        }
-                        button {
-                            class: "{admins_section_class}",
-                            "data-testid": "members-section-admins",
-                            onclick: move |_| {
-                                member_roster_section.set(MemberRosterSection::Admins);
-                                member_visible.set(MEMBER_PAGE_SIZE);
-                            },
-                            span { "Admins" }
-                            span { class: "badge", "{total_admin_members}" }
-                        }
-                        button {
-                            class: "{pending_section_class}",
-                            "data-testid": "members-section-pending-invites",
-                            onclick: move |_| {
-                                member_roster_section.set(MemberRosterSection::PendingInvites);
-                                member_visible.set(MEMBER_PAGE_SIZE);
-                            },
-                            span { "Pending invites" }
-                            span { class: "badge member-pending-count-badge", "{total_pending_invites}" }
-                        }
-                    }
-                    div { class: "members-admin-content",
-                        div { class: "member-section-head",
-                            div {
-                                div { class: "entity-title", "{selected_section_title}" }
-                                div { class: "muted", "{selected_section_description}" }
-                            }
-                            span {
-                                class: "badge member-count-badge",
-                                "data-testid": "member-section-visible-count",
-                                "{selected_section_visible_count} shown"
-                            }
-                        }
-                        if selected_section == MemberRosterSection::PendingInvites {
-                            div {
-                                class: "member-pending-invites",
-                                "data-testid": "pending-invites-list",
-                                if pending_invite_match_count == 0 {
-                                    div {
-                                        class: "muted member-pending-invite-empty",
-                                        "data-testid": "pending-invites-no-match",
-                                        "No pending invites match your search."
-                                    }
-                                }
-                                for invite in visible_pending_invites {
-                                    PendingInviteRow {
-                                        profile: invite.clone(),
-                                        base_url: base_url.clone(),
-                                        token,
-                                        account_did: account_did.clone(),
-                                        selected_realm_id: selected_realm_id.clone(),
-                                        can_cancel_invite,
-                                        members,
-                                        state_store,
-                                        frontier_state,
-                                        status_msg,
-                                    }
-                                }
-                            }
-                        }
-                for group in visible_groups {
-                    {
-                        let member_profile = group.controller.clone();
-                        let member = member_profile.actor_id.clone();
-                        let member_label = member_profile.primary_label();
-                        let public_label = member_profile.public_label();
-                        let is_self = member.trim() == account_did.trim();
-                        let has_agents = !group.agents.is_empty();
-                        let group_class = if has_agents {
-                            "member-group has-agents"
-                        } else {
-                            "member-group"
-                        };
-                        let avatar_initial = member_avatar_initial(&member_profile);
-                        let avatar_blob_ref = member_profile.avatar_blob_ref.clone();
-                        let avatar_url = member_profile.avatar_url.clone();
-                        let role_label = member_profile.role_label();
-                        let remark_name = member_profile.remark_name.clone().unwrap_or_default();
-                        let remark_note = member_profile.remark_note.clone().unwrap_or_default();
-                        let display_name = member_profile.display_name.clone().unwrap_or_default();
-                        let subject_id = member_profile.subject_id.clone().unwrap_or_default();
-                        let handles = member_profile.handles.clone();
-                        let member_identity_label = handles
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| member_identity_fallback_label(&member));
-                        let subject_label = member_identity_fallback_label(&subject_id);
-                        let self_leave_reason = if is_self {
-                            self_leave_disabled_reason.clone()
-                        } else {
-                            None
-                        };
-                        rsx! {
-                            div {
-                                class: "{group_class}",
-                                "data-testid": "member-group",
-                                "data-controller-did": "{member}",
-                                div { class: "event member-row member-controller-row", "data-testid": "member-row", "data-member-did": "{member}",
-                                    div { class: "event-head member-row-main",
-                                        if is_self {
-                                            button {
-                                                class: "member-avatar member-avatar-button",
-                                                "data-testid": "member-self-avatar-button",
-                                                "aria-label": "Open my AI agent settings",
-                                                title: "Open my AI agent settings",
-                                                onclick: move |_| self_agent_settings_open.set(!self_agent_settings_open()),
-                                                if let Some(blob_ref) = avatar_blob_ref.clone() {
-                                                    div { class: "member-avatar-image",
-                                                        crate::content::renderer::AuthenticatedBlobImage {
-                                                            blob_ref,
-                                                            alt_text: member_label.clone(),
-                                                        }
-                                                    }
-                                                } else if let Some(url) = avatar_url.clone() {
-                                                    img {
-                                                        class: "member-avatar-img",
-                                                        src: "{url}",
-                                                        alt: "{member_label}",
-                                                        title: "{member}"
-                                                    }
-                                                } else {
-                                                    "{avatar_initial}"
-                                                }
-                                            }
-                                        } else {
-                                            div {
-                                                class: "member-avatar",
-                                                "data-testid": "member-avatar",
-                                                title: "{member}",
-                                                if let Some(blob_ref) = avatar_blob_ref.clone() {
-                                                    div { class: "member-avatar-image",
-                                                        crate::content::renderer::AuthenticatedBlobImage {
-                                                            blob_ref,
-                                                            alt_text: member_label.clone(),
-                                                        }
-                                                    }
-                                                } else if let Some(url) = avatar_url.clone() {
-                                                    img {
-                                                        class: "member-avatar-img",
-                                                        src: "{url}",
-                                                        alt: "{member_label}",
-                                                        title: "{member}"
-                                                    }
-                                                } else {
-                                                    "{avatar_initial}"
-                                                }
-                                            }
-                                        }
-                                        div { class: "member-row-text",
-                                            div { class: "member-row-title",
-                                                span { class: "member-row-primary", title: "{member}", "{member_label}" }
-                                                if is_self {
-                                                    SelfAttributionBadge {
-                                                        class: Some("member-you-badge".to_owned()),
-                                                        test_id: Some("member-self-badge".to_owned()),
-                                                    }
-                                                    button {
-                                                        class: "badge member-agent-settings-toggle",
-                                                        "data-testid": "member-agent-settings-toggle",
-                                                        title: "AI agents",
-                                                        "aria-label": "AI agents",
-                                                        onclick: move |_| self_agent_settings_open.set(!self_agent_settings_open()),
-                                                        crate::components::UiIcon { name: "bot" }
-                                                        span { "AI agents" }
-                                                    }
-                                                }
-                                                if member_profile.is_owner {
-                                                    span { class: "badge amber", "Owner" }
-                                                } else if member_profile.is_admin {
-                                                    span { class: "badge blue", "Admin" }
-                                                }
-                                                if has_agents {
-                                                    span {
-                                                        class: "badge blue",
-                                                        "data-testid": "member-agent-count",
-                                                        "{group.agents.len()} AI"
-                                                    }
-                                                }
-                                            }
-                                            div { class: "muted member-row-sub member-profile-lines",
-                                                div { class: "member-profile-line",
-                                                    span { "{role_label}" }
-                                                    span { title: "{member}", "{member_identity_label}" }
-                                                }
-                                                if !remark_name.is_empty() && remark_name != public_label {
-                                                    div { class: "member-profile-line",
-                                                        span { class: "member-profile-label", "My name" }
-                                                        span { "{remark_name}" }
-                                                    }
-                                                }
-                                                if !display_name.is_empty() && display_name != member_label {
-                                                    div { class: "member-profile-line",
-                                                        span { class: "member-profile-label", "Display" }
-                                                        span { "{display_name}" }
-                                                    }
-                                                }
-                                                if !handles.is_empty() {
-                                                    div { class: "member-profile-line member-handle-list",
-                                                        span { class: "member-profile-label", "Handles" }
-                                                        for handle in handles.clone() {
-                                                            span { class: "member-handle-chip", "{handle}" }
-                                                        }
-                                                    }
-                                                }
-                                                if !remark_note.is_empty() {
-                                                    div { class: "member-profile-line",
-                                                        span { class: "member-profile-label", "Note" }
-                                                        span { "{remark_note}" }
-                                                    }
-                                                }
-                                                if !subject_id.is_empty() && subject_id != member {
-                                                    div { class: "member-profile-line",
-                                                        span { class: "member-profile-label", "Subject" }
-                                                        span { title: "{subject_id}", "{subject_label}" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    MemberRowActions {
-                                        base_url: base_url.clone(),
-                                        token,
-                                        account_did: account_did.clone(),
-                                        selected_realm_id: selected_realm_id.clone(),
-                                        target_did: member.clone(),
-                                        target_label: member_label.clone(),
-                                        can_remove,
-                                        is_self,
-                                        leave_disabled_reason: self_leave_reason,
-                                        sync_cursor,
-                                        state_store,
-                                        status_msg,
-                                        block_confirm_did,
-                                    }
-                                }
-                                if is_self && self_agent_settings_open() {
-                                    div { class: "member-self-agent-settings", "data-testid": "member-self-agent-settings",
-                                        div { class: "member-self-agent-settings-head",
-                                            div {
-                                                div { class: "entity-title", "My AI agents in this Realm" }
-                                                div { class: "muted", "Create Realm-scoped grants, pair runtime keys, and control who can @ your agents." }
-                                            }
-                                            span { class: "badge", "{self_owned_agent_rows.len()} total" }
-                                        }
-                                        div { class: "member-agent-create-card", "data-testid": "member-self-agent-create",
-                                            div { class: "member-agent-create-grid",
-                                                div {
-                                                    Label { html_for: "member-agent-display-name", "Display name" }
-                                                    Input {
-                                                        id: "member-agent-display-name",
-                                                        "data-testid": "member-agent-display-name",
-                                                        value: "{new_agent_display_name}",
-                                                        placeholder: "my-personal-agent",
-                                                        oninput: move |event: FormEvent| new_agent_display_name.set(event.value()),
-                                                    }
-                                                }
-                                                div {
-                                                    Label { html_for: "member-agent-slug", "Slug" }
-                                                    Input {
-                                                        id: "member-agent-slug",
-                                                        "data-testid": "member-agent-slug",
-                                                        value: "{new_agent_slug}",
-                                                        placeholder: "summary",
-                                                        oninput: move |event: FormEvent| new_agent_slug.set(event.value()),
-                                                    }
-                                                }
-                                            }
-                                            div { class: "member-agent-preset-list", "data-testid": "member-agent-preset-list",
-                                                for preset in AgentGrantPreset::ALL {
-                                                    {
-                                                        let preset_on = new_agent_presets.read().contains(&preset);
-                                                        rsx! {
-                                                            label {
-                                                                class: "member-agent-preset-row",
-                                                                "data-testid": "member-agent-preset-row",
-                                                                "data-preset": preset.preset_name(),
-                                                                Checkbox {
-                                                                    "data-testid": "member-agent-preset-checkbox",
-                                                                    checked: if preset_on { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                                                    on_checked_change: move |state: CheckboxState| {
-                                                                        let mut current = new_agent_presets.write();
-                                                                        if bool::from(state) {
-                                                                            if !current.contains(&preset) {
-                                                                                current.push(preset);
-                                                                            }
-                                                                        } else {
-                                                                            current.retain(|item| *item != preset);
-                                                                        }
-                                                                    },
-                                                                }
-                                                                span {
-                                                                    strong { "{preset.label()}" }
-                                                                    span { class: "muted", "{preset.help()}" }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            div { class: "actions member-agent-create-actions",
-                                                Button {
-                                                    variant: ButtonVariant::Primary,
-                                                    "data-testid": "member-agent-create-button",
-                                                    onclick: {
-                                                        let base = base_url.clone();
-                                                        let selected_realm_for_create = selected_realm_id.clone();
-                                                        move |_| {
-                                                            let display = new_agent_display_name().trim().to_owned();
-                                                            if display.is_empty() {
-                                                                status_msg.set("agent display name is required".to_owned());
-                                                                return;
-                                                            }
-                                                            let slug = new_agent_slug().trim().to_owned();
-                                                            let presets = new_agent_presets.read().clone();
-                                                            if presets.is_empty() {
-                                                                status_msg.set("select at least one agent permission preset".to_owned());
-                                                                return;
-                                                            }
-                                                            let realm_for_grants = selected_realm_for_create.clone();
-                                                            let grant_expires_at = member_agent_grant_expires_at(chrono::Utc::now());
-                                                            let body = AgentProvisionRequestBody {
-                                                                display_name: Some(display.clone()),
-                                                                agent_slug: if slug.is_empty() { None } else { Some(slug) },
-                                                                requested_scope: requested_scope_for_presets(&presets, Some(realm_for_grants.as_str())),
-                                                                accountability: Value::Null,
-                                                                pairing_ttl_ms: None,
-                                                            };
-                                                            let base = base.clone();
-                                                            let api_token = token();
-                                                            spawn(async move {
-                                                                let outcome = match crate::views::helpers::with_authed_api(
-                                                                    &base,
-                                                                    api_token.clone(),
-                                                                    move |api| {
-                                                                        let body = body.clone();
-                                                                        async move { api.agent_provision(&body).await }
-                                                                    },
+                                                                members.set(next_members);
+                                                                invite_target.set(String::new());
+                                                                invite_modal_open.set(false);
+                                                                match submit_mls_admission_for_invitee(
+                                                                    &api,
+                                                                    state_store,
+                                                                    realm.clone(),
+                                                                    actor.clone(),
+                                                                    device.clone(),
+                                                                    invitee_did.clone(),
                                                                 )
                                                                 .await
                                                                 {
-                                                                    Ok(outcome) => outcome,
-                                                                    Err(err) => {
-                                                                        status_msg.set(format!(
-                                                                        "agent create failed: {}",
-                                                                        err.display()
-                                                                        ));
-                                                                        return;
-                                                                    }
-                                                                };
-                                                                let agent_id = outcome.agent_principal_id.to_string();
-                                                                let mut attached_grants = 0usize;
-                                                                let mut grant_errors = Vec::<String>::new();
-                                                                for preset in presets.iter() {
-                                                                    let grant = expand_preset_grant(
-                                                                        *preset,
-                                                                        &agent_id,
-                                                                        Some(&realm_for_grants),
-                                                                        &grant_expires_at,
-                                                                    );
-                                                                    let attach_body = AgentGrantAttachRequestBody { grant };
-                                                                    let agent_id_for_call = agent_id.clone();
-                                                                    match crate::views::helpers::with_authed_api(
-                                                                        &base,
-                                                                        api_token.clone(),
-                                                                        move |api| {
-                                                                            let body = attach_body.clone();
-                                                                            let id = agent_id_for_call.clone();
-                                                                            async move { api.agent_grant_attach(&id, &body).await }
-                                                                        },
-                                                                    )
-                                                                    .await
-                                                                    {
-                                                                        Ok(_) => attached_grants += 1,
-                                                                        Err(err) => grant_errors.push(format!(
-                                                                            "{}: {}",
-                                                                            preset.preset_name(),
-                                                                            err.display()
-                                                                        )),
-                                                                    }
+                                                                    Ok(Some(epoch)) => status_msg.set(format!(
+                                                                        "invited {} (pending) fact {}; MLS Welcome queued at epoch {}",
+                                                                        invitee_label,
+                                                                        short_protocol_id(&op_id),
+                                                                        epoch
+                                                                    )),
+                                                                    Ok(None) => status_msg.set(format!(
+                                                                        "invited {} (pending) fact {}",
+                                                                        invitee_label,
+                                                                        short_protocol_id(&op_id)
+                                                                    )),
+                                                                    Err(error) => status_msg.set(format!(
+                                                                        "invited {} (pending) fact {}; MLS admission failed: {error}",
+                                                                        invitee_label,
+                                                                        short_protocol_id(&op_id)
+                                                                    )),
                                                                 }
-                                                                let pair_url = agent_pair_url(&base, &outcome.pairing_request_id);
-                                                                let expires_at = outcome.expires_at.to_rfc3339();
-                                                                new_agent_pairing.set(Some(AgentProvisionSummary {
-                                                                    agent_principal_id: agent_id.clone(),
-                                                                    pairing_request_id: outcome.pairing_request_id.clone(),
-                                                                    pairing_code: outcome.pairing_code.clone(),
-                                                                    expires_at,
-                                                                    pair_url,
-                                                                    attached_grants,
-                                                                    grant_errors: grant_errors.clone(),
-                                                                    grant_expires_at: grant_expires_at.clone(),
-                                                                }));
-                                                                owned_agents_refresh_nonce.set(owned_agents_refresh_nonce() + 1);
-                                                                if grant_errors.is_empty() {
-                                                                    status_msg.set(format!(
-                                                                        "created AI agent {} with {} Realm grant(s)",
-                                                                        short_protocol_id(&agent_id),
-                                                                        attached_grants
-                                                                    ));
-                                                                } else {
-                                                                    status_msg.set(format!(
-                                                                        "created AI agent {}; {} grant(s) attached, errors: {}",
-                                                                        short_protocol_id(&agent_id),
-                                                                        attached_grants,
-                                                                        grant_errors.join("; ")
-                                                                    ));
-                                                                }
-                                                            });
-                                                        }
-                                                    },
-                                                    "Create and authorize"
-                                                }
-                                            }
-                                            if let Some(pairing) = new_agent_pairing() {
-                                                div { class: "member-agent-pairing", "data-testid": "member-agent-pairing",
-                                                    div { class: "member-agent-pairing-head",
-                                                        span { "Pair runtime" }
-                                                        span { class: "badge amber", "pending_runtime_key" }
-                                                    }
-                                                    div { class: "muted", "Runtime pairing must finish before the attached grants can be used." }
-                                                    div { class: "member-profile-line",
-                                                        span { class: "member-profile-label", "Agent" }
-                                                        span { class: "mono", title: "{pairing.agent_principal_id}", "{short_protocol_id(&pairing.agent_principal_id)}" }
-                                                    }
-                                                    div { class: "member-profile-line",
-                                                        span { class: "member-profile-label", "Pairing" }
-                                                        span { class: "mono", "{pairing.pairing_request_id}" }
-                                                    }
-                                                    if let Some(code) = pairing.pairing_code.clone() {
-                                                        div { class: "member-profile-line",
-                                                            span { class: "member-profile-label", "Code" }
-                                                            span { class: "mono", "{code}" }
-                                                        }
-                                                    }
-                                                    div { class: "member-profile-line",
-                                                        span { class: "member-profile-label", "Expires" }
-                                                        span { "{pairing.expires_at}" }
-                                                    }
-                                                    div { class: "member-profile-line",
-                                                        span { class: "member-profile-label", "Grants" }
-                                                        span { "{pairing.attached_grants} attached until {pairing.grant_expires_at}" }
-                                                    }
-                                                    if !pairing.grant_errors.is_empty() {
-                                                        div { class: "member-agent-grant-errors", "data-testid": "member-agent-grant-errors",
-                                                            for error in pairing.grant_errors.clone() {
-                                                                div { "{error}" }
                                                             }
+                                                            Err(error) => status_msg.set(format!("invite failed: {error}")),
                                                         }
                                                     }
-                                                    div { class: "member-agent-pairing-url mono", title: "{pairing.pair_url}", "data-testid": "member-agent-pairing-url", "{pairing.pair_url}" }
-                                                    div { class: "actions member-agent-create-actions",
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            "data-testid": "member-agent-pairing-open",
-                                                            onclick: {
-                                                                let pair_url = pairing.pair_url.clone();
-                                                                move |_| open_url_in_new_tab(&pair_url)
-                                                            },
-                                                            "Open pairing page"
-                                                        }
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            "data-testid": "member-agent-pairing-copy-link",
-                                                            onclick: {
-                                                                let pair_url = pairing.pair_url.clone();
-                                                                move |_| copy_text_to_clipboard(&pair_url)
-                                                            },
-                                                            "Copy link"
-                                                        }
-                                                        if let Some(code) = pairing.pairing_code.clone() {
-                                                            Button {
-                                                                variant: ButtonVariant::Secondary,
-                                                                "data-testid": "member-agent-pairing-copy-code",
-                                                                onclick: move |_| copy_text_to_clipboard(&code),
-                                                                "Copy code"
-                                                            }
-                                                        }
-                                                    }
-                                                    if can_invite {
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            "data-testid": "member-agent-created-add-to-realm",
-                                                            disabled: active_service_did.trim().is_empty(),
-                                                            onclick: {
-                                                                let agent_id = pairing.agent_principal_id.clone();
-                                                                let service_did = active_service_did.clone();
-                                                                move |_| {
-                                                                    if service_did.trim().is_empty() {
-                                                                        status_msg.set("current service DID is unavailable; cannot prepare agent invite".to_owned());
-                                                                        return;
-                                                                    }
-                                                                    invite_target.set(agent_invite_target(&agent_id, &service_did));
-                                                                    invite_modal_open.set(true);
-                                                                }
-                                                            },
-                                                            "Invite to Realm"
-                                                        }
-                                                    }
+                                                    Err(error) => status_msg.set(format!("invalid server URL: {error}")),
                                                 }
-                                            }
+                                            });
                                         }
-                                        if self_owned_agent_rows.is_empty() {
-                                            div { class: "members-empty compact", "data-testid": "member-self-agent-empty",
-                                                div { class: "members-empty-icon", crate::components::UiIcon { name: "bot" } }
-                                                div { class: "members-empty-title", "No AI agents yet." }
-                                            }
-                                        } else {
-                                            div { class: "member-self-agent-list",
-                                                for owned_agent in self_owned_agent_rows.clone() {
-                                                    {
-                                                        let agent_in_realm = member_set.contains(&owned_agent.agent_principal_id);
-                                                        let policy = owned_agent.mention_policy;
-                                                        let policy_class = policy.badge_class();
-                                                        let policy_label = policy.label();
-                                                        let agent_id = owned_agent.agent_principal_id.clone();
-                                                        let agent_title = owned_agent.display_name.clone();
-                                                        let status_class = crate::views::agents::agent_state_badge_class(&owned_agent.status);
-                                                        let status_label = crate::views::agents::agent_state_label(&owned_agent.status).to_owned();
-                                                        let can_enable = agent_in_realm;
-                                                        rsx! {
-                                                            div { class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-did": "{agent_id}",
-                                                                div { class: "member-agent-summary",
-                                                                    div { class: "member-avatar member-avatar-agent", "aria-hidden": "true",
-                                                                        crate::components::UiIcon { name: "bot" }
-                                                                    }
-                                                                    div { class: "member-row-text",
-                                                                        div { class: "member-row-title",
-                                                                            span { title: "{agent_id}", "{agent_title}" }
-                                                                            span { class: "{status_class}", "{status_label}" }
-                                                                            if !owned_agent.agent_slug.is_empty() {
-                                                                                span { class: "badge", "/{owned_agent.agent_slug}" }
-                                                                            }
-                                                                        }
-                                                                        div { class: "muted member-row-sub mono", title: "{agent_id}", "{short_protocol_id(&agent_id)}" }
-                                                                    }
-                                                                }
-                                                                div { class: "member-self-agent-actions",
-                                                                    if agent_in_realm {
-                                                                        span { class: "{policy_class}", "data-testid": "member-agent-mention-policy", "{policy_label}" }
-                                                                        Button {
-                                                                            variant: ButtonVariant::Secondary,
-                                                                            "data-testid": "member-agent-mention-toggle",
-                                                                            disabled: !can_enable,
-                                                                            onclick: {
-                                                                                let base = base_url.clone();
-                                                                                let realm = selected_realm_id.clone();
-                                                                                let agent_id = agent_id.clone();
-                                                                                let previous = owned_agent.selection;
-                                                                                move |_| {
-                                                                                    let base = base.clone();
-                                                                                    let realm = realm.clone();
-                                                                                    let agent_id = agent_id.clone();
-                                                                                    let api_token = token();
-                                                                                    let next_mention = !matches!(policy, AgentMentionPolicy::Allowed);
-                                                                                    spawn(async move {
-                                                                                        let body = cokret_sdk::models::AgentParticipationSetRequestBody {
-                                                                                            scope: AgentParticipationScope::Realm {
-                                                                                                realm_id: match cokret_sdk::RealmId::new(realm.clone()) {
-                                                                                                    Ok(realm_id) => realm_id,
-                                                                                                    Err(err) => {
-                                                                                                        status_msg.set(format!("invalid realm id: {err:?}"));
-                                                                                                        return;
-                                                                                                    }
-                                                                                                },
-                                                                                            },
-                                                                                            selection: AgentParticipation {
-                                                                                                reply: previous.reply,
-                                                                                                accept_third_party_mention: next_mention,
-                                                                                                act_on_behalf: previous.act_on_behalf,
-                                                                                            },
-                                                                                        };
-                                                                                        match crate::views::helpers::with_authed_api(&base, api_token, |api| {
-                                                                                            let body = body.clone();
-                                                                                            let agent_id = agent_id.clone();
-                                                                                            async move { api.agent_participation_set(&agent_id, &body).await }
-                                                                                        })
-                                                                                        .await
-                                                                                        {
-                                                                                            Ok(outcome) => {
-                                                                                                let (mention_policy, selection) =
-                                                                                                    mention_state_from_entries(&outcome.entries, &realm);
-                                                                                                let mut next_agents = owned_agents.read().clone();
-                                                                                                for row in &mut next_agents {
-                                                                                                    if row.agent_principal_id == outcome.agent_principal_id {
-                                                                                                        row.mention_policy = mention_policy;
-                                                                                                        row.selection = selection;
-                                                                                                    }
-                                                                                                }
-                                                                                                owned_agents.set(next_agents);
-                                                                                                status_msg.set(format!(
-                                                                                                    "agent @ policy updated for {}",
-                                                                                                    short_protocol_id(&outcome.agent_principal_id)
-                                                                                                ));
-                                                                                            }
-                                                                                            Err(err) => status_msg.set(format!(
-                                                                                                "agent @ policy update failed: {}",
-                                                                                                err.display()
-                                                                                            )),
-                                                                                        }
-                                                                                    });
-                                                                                }
-                                                                            },
-                                                                            if matches!(policy, AgentMentionPolicy::Allowed) {
-                                                                                "Disable @"
-                                                                            } else {
-                                                                                "Allow @"
-                                                                            }
-                                                                        }
-                                                                    } else if can_invite {
-                                                                        Button {
-                                                                            variant: ButtonVariant::Secondary,
-                                                                            "data-testid": "member-agent-add-to-realm",
-                                                                            disabled: active_service_did.trim().is_empty(),
-                                                                            onclick: {
-                                                                                let agent_id = agent_id.clone();
-                                                                                let service_did = active_service_did.clone();
-                                                                                move |_| {
-                                                                                    if service_did.trim().is_empty() {
-                                                                                        status_msg.set("current service DID is unavailable; cannot prepare agent invite".to_owned());
-                                                                                        return;
-                                                                                    }
-                                                                                    invite_target.set(agent_invite_target(&agent_id, &service_did));
-                                                                                    invite_modal_open.set(true);
-                                                                                }
-                                                                            },
-                                                                            "Invite to Realm"
-                                                                        }
-                                                                    } else {
-                                                                        span { class: "badge", "not in Realm" }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if has_agents {
-                                    div { class: "member-agent-list", "data-testid": "member-agent-list",
-                                        for agent in group.agents {
-                                            {
-                                                let agent_id = agent.agent_principal_id.clone();
-                                                let agent_label = agent.display_name.clone();
-                                                let agent_initial = member_avatar_initial_from_value(&agent_label);
-                                                let policy_class = agent.mention_policy.badge_class();
-                                                let policy_label = agent.mention_policy.label();
-                                                let status_class = crate::views::agents::agent_state_badge_class(&agent.status);
-                                                let status_label = crate::views::agents::agent_state_label(&agent.status).to_owned();
-                                                rsx! {
-                                                    div { class: "event member-row member-agent-row", "data-testid": "member-agent-row", "data-member-did": "{agent_id}",
-                                                        div { class: "event-head member-row-main",
-                                                            div { class: "member-avatar member-avatar-agent", "data-testid": "member-agent-avatar", "aria-hidden": "true",
-                                                                if agent_initial == "?" {
-                                                                    crate::components::UiIcon { name: "bot" }
-                                                                } else {
-                                                                    "{agent_initial}"
-                                                                }
-                                                            }
-                                                            div { class: "member-row-text",
-                                                                div { class: "member-row-title",
-                                                                    span { title: "{agent_id}", "{agent_label}" }
-                                                                    span { class: "badge member-badge member-badge-agent", "data-testid": "member-badge-agent", "AI agent" }
-                                                                    span { class: "{status_class}", "{status_label}" }
-                                                                    span { class: "{policy_class}", "{policy_label}" }
-                                                                }
-                                                                div { class: "muted member-row-sub",
-                                                                    "owned by "
-                                                                    span { class: "mono", title: "{member}", "{member_label}" }
-                                                                    if !agent.agent_slug.is_empty() {
-                                                                        span { " · /{agent.agent_slug}" }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        MemberRowActions {
-                                                            base_url: base_url.clone(),
-                                                            token,
-                                                            account_did: account_did.clone(),
-                                                            selected_realm_id: selected_realm_id.clone(),
-                                                            target_did: agent_id.clone(),
-                                                            target_label: agent_label.clone(),
-                                                            can_remove,
-                                                            is_self: false,
-                                                            sync_cursor,
-                                                            state_store,
-                                                            status_msg,
-                                                            block_confirm_did,
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                    },
+                                    "Send Invite"
                                 }
                             }
-                        }
                     }
                 }
-                if selected_section_empty && selected_section != MemberRosterSection::PendingInvites {
-                    div { class: "members-empty", "data-testid": "members-empty-state",
-                        if selected_section_total == 0 && filter_query.is_empty() {
-                            div { class: "members-empty-icon", crate::components::UiIcon { name: "users" } }
-                            div { class: "members-empty-title", {crate::i18n::tr("realm_admin.no_members_loaded")} }
-                            if can_invite {
-                                div { class: "muted members-empty-hint",
-                                    {crate::i18n::tr("realm_admin.members_empty_hint")}
-                                }
-                            }
-                        } else {
-                            div { class: "members-empty-icon", crate::components::UiIcon { name: "search" } }
-                            div { class: "members-empty-title", {crate::i18n::tr("realm_admin.members_no_match")} }
-                        }
-                    }
-                }
-                if has_more {
-                    div { class: "member-load-more",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "load-more-members-button",
-                            onclick: move |_| {
-                                let next = member_visible() + MEMBER_PAGE_SIZE;
-                                member_visible.set(next);
-                            },
-                            "Load more — showing {visible} of {filtered_count} groups"
-                        }
-                    }
-                }
-                    }
-                }
-            }
 
+                div { class: "event member-list-card", "data-testid": "member-table",
+                    div { class: "event-head",
+                        span { "Members" }
+                        div { class: "member-head-actions",
+                            span {
+                                class: "badge member-count-badge",
+                                "data-testid": "realm-members-count",
+                                "{total_members}"
+                            }
+                            if total_pending_invites > 0 {
+                                span {
+                                    class: "badge member-pending-count-badge",
+                                    "data-testid": "realm-pending-invite-count",
+                                    "{total_pending_invites} pending"
+                                }
+                            }
+                            if can_invite {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    size: ButtonSize::IconSm,
+                                    class: "member-head-icon-btn member-head-icon-btn-accent",
+                                    "data-testid": "open-invite-modal-button",
+                                    title: "Invite member",
+                                    "aria-label": "Invite member",
+                                    onclick: move |_| invite_modal_open.set(true),
+                                    crate::components::UiIcon { name: "plus" }
+                                }
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::IconSm,
+                                class: "member-head-icon-btn",
+                                "data-testid": "refresh-members-button",
+                                title: "{refresh_label}",
+                                "aria-label": "{refresh_label}",
+                                onclick: {
+                                    let realm = selected_realm_id.clone();
+                                    move |_| {
+                                        let store = state_store.read();
+                                        let next = projected_member_profiles_for_realm(&store, &realm);
+                                        let count = next.len();
+                                        members.set(next);
+                                        member_visible.set(MEMBER_PAGE_SIZE);
+                                        status_msg.set(format!(
+                                            "members refreshed ({count}) from local sync state"
+                                        ));
+                                    }
+                                },
+                                crate::components::UiIcon { name: "refresh" }
+                            }
+                        }
+                    }
+                    if !status_msg().is_empty() {
+                        div { class: "muted", "data-testid": "realm-members-status", "{status_msg()}" }
+                    }
+                    if member_permissions.loaded && !can_invite && !can_cancel_invite && !can_remove {
+                        div {
+                            class: "muted",
+                            "data-testid": "realm-member-actions-hidden",
+                            "Member-management actions are not available for this account."
+                        }
+                    }
+                    if show_search {
+                        Input {
+                            class: "member-search-input",
+                            "data-testid": "member-search-input",
+                            value: "{member_filter}",
+                            placeholder: "Search members…",
+                            oninput: move |event: FormEvent| {
+                                member_filter.set(event.value());
+                                member_visible.set(MEMBER_PAGE_SIZE);
+                            },
+                        }
+                    }
+                    div { class: "members-admin-layout",
+                        nav { class: "members-admin-menu", "aria-label": "Member sections",
+                            button {
+                                class: "{members_section_class}",
+                                "data-testid": "members-section-members",
+                                onclick: move |_| {
+                                    member_roster_section.set(MemberRosterSection::Members);
+                                    member_visible.set(MEMBER_PAGE_SIZE);
+                                },
+                                span { "Members" }
+                                span { class: "badge", "{total_regular_members}" }
+                            }
+                            button {
+                                class: "{owners_section_class}",
+                                "data-testid": "members-section-owners",
+                                onclick: move |_| {
+                                    member_roster_section.set(MemberRosterSection::Owners);
+                                    member_visible.set(MEMBER_PAGE_SIZE);
+                                },
+                                span { "Owners" }
+                                span { class: "badge", "{total_owner_members}" }
+                            }
+                            button {
+                                class: "{admins_section_class}",
+                                "data-testid": "members-section-admins",
+                                onclick: move |_| {
+                                    member_roster_section.set(MemberRosterSection::Admins);
+                                    member_visible.set(MEMBER_PAGE_SIZE);
+                                },
+                                span { "Admins" }
+                                span { class: "badge", "{total_admin_members}" }
+                            }
+                            button {
+                                class: "{pending_section_class}",
+                                "data-testid": "members-section-pending-invites",
+                                onclick: move |_| {
+                                    member_roster_section.set(MemberRosterSection::PendingInvites);
+                                    member_visible.set(MEMBER_PAGE_SIZE);
+                                },
+                                span { "Pending invites" }
+                                span { class: "badge member-pending-count-badge", "{total_pending_invites}" }
+                            }
+                        }
+                        div { class: "members-admin-content",
+                            div { class: "member-section-head",
+                                div {
+                                    div { class: "entity-title", "{selected_section_title}" }
+                                    div { class: "muted", "{selected_section_description}" }
+                                }
+                                span {
+                                    class: "badge member-count-badge",
+                                    "data-testid": "member-section-visible-count",
+                                    "{selected_section_visible_count} shown"
+                                }
+                            }
+                            if selected_section == MemberRosterSection::PendingInvites {
+                                div {
+                                    class: "member-pending-invites",
+                                    "data-testid": "pending-invites-list",
+                                    if pending_invite_match_count == 0 {
+                                        div {
+                                            class: "muted member-pending-invite-empty",
+                                            "data-testid": "pending-invites-no-match",
+                                            "No pending invites match your search."
+                                        }
+                                    }
+                                    for invite in visible_pending_invites {
+                                        PendingInviteRow {
+                                            profile: invite.clone(),
+                                            base_url: base_url.clone(),
+                                            token,
+                                            account_did: account_did.clone(),
+                                            selected_realm_id: selected_realm_id.clone(),
+                                            can_cancel_invite,
+                                            members,
+                                            state_store,
+                                            frontier_state,
+                                            status_msg,
+                                        }
+                                    }
+                                }
+                            }
+                    for group in visible_groups {
+                        {
+                            let member_profile = group.controller.clone();
+                            let member = member_profile.actor_id.clone();
+                            let member_label = member_profile.primary_label();
+                            let public_label = member_profile.public_label();
+                            let is_self = member.trim() == account_did.trim();
+                            let has_agents = !group.agents.is_empty();
+                            let group_class = if has_agents {
+                                "member-group has-agents"
+                            } else {
+                                "member-group"
+                            };
+                            let avatar_initial = member_avatar_initial(&member_profile);
+                            let avatar_blob_ref = member_profile.avatar_blob_ref.clone();
+                            let avatar_url = member_profile.avatar_url.clone();
+                            let role_label = member_profile.role_label();
+                            let remark_name = member_profile.remark_name.clone().unwrap_or_default();
+                            let remark_note = member_profile.remark_note.clone().unwrap_or_default();
+                            let display_name = member_profile.display_name.clone().unwrap_or_default();
+                            let subject_id = member_profile.subject_id.clone().unwrap_or_default();
+                            let handles = member_profile.handles.clone();
+                            let member_identity_label = handles
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| member_identity_fallback_label(&member));
+                            let subject_label = member_identity_fallback_label(&subject_id);
+                            let self_leave_reason = if is_self {
+                                self_leave_disabled_reason.clone()
+                            } else {
+                                None
+                            };
+                            rsx! {
+                                div {
+                                    class: "{group_class}",
+                                    "data-testid": "member-group",
+                                    "data-controller-did": "{member}",
+                                    div { class: "event member-row member-controller-row", "data-testid": "member-row", "data-member-did": "{member}",
+                                        div { class: "event-head member-row-main",
+                                            if is_self {
+                                                button {
+                                                    class: "member-avatar member-avatar-button",
+                                                    "data-testid": "member-self-avatar-button",
+                                                    "aria-label": "Open my AI agent settings",
+                                                    title: "Open my AI agent settings",
+                                                    onclick: move |_| self_agent_settings_open.set(!self_agent_settings_open()),
+                                                    if let Some(blob_ref) = avatar_blob_ref.clone() {
+                                                        div { class: "member-avatar-image",
+                                                            crate::content::renderer::AuthenticatedBlobImage {
+                                                                blob_ref,
+                                                                alt_text: member_label.clone(),
+                                                            }
+                                                        }
+                                                    } else if let Some(url) = avatar_url.clone() {
+                                                        img {
+                                                            class: "member-avatar-img",
+                                                            src: "{url}",
+                                                            alt: "{member_label}",
+                                                            title: "{member}"
+                                                        }
+                                                    } else {
+                                                        "{avatar_initial}"
+                                                    }
+                                                }
+                                            } else {
+                                                div {
+                                                    class: "member-avatar",
+                                                    "data-testid": "member-avatar",
+                                                    title: "{member}",
+                                                    if let Some(blob_ref) = avatar_blob_ref.clone() {
+                                                        div { class: "member-avatar-image",
+                                                            crate::content::renderer::AuthenticatedBlobImage {
+                                                                blob_ref,
+                                                                alt_text: member_label.clone(),
+                                                            }
+                                                        }
+                                                    } else if let Some(url) = avatar_url.clone() {
+                                                        img {
+                                                            class: "member-avatar-img",
+                                                            src: "{url}",
+                                                            alt: "{member_label}",
+                                                            title: "{member}"
+                                                        }
+                                                    } else {
+                                                        "{avatar_initial}"
+                                                    }
+                                                }
+                                            }
+                                            div { class: "member-row-text",
+                                                div { class: "member-row-title",
+                                                    span { class: "member-row-primary", title: "{member}", "{member_label}" }
+                                                    if is_self {
+                                                        SelfAttributionBadge {
+                                                            class: Some("member-you-badge".to_owned()),
+                                                            test_id: Some("member-self-badge".to_owned()),
+                                                        }
+                                                        button {
+                                                            class: "badge member-agent-settings-toggle",
+                                                            "data-testid": "member-agent-settings-toggle",
+                                                            title: "AI agents",
+                                                            "aria-label": "AI agents",
+                                                            onclick: move |_| self_agent_settings_open.set(!self_agent_settings_open()),
+                                                            crate::components::UiIcon { name: "bot" }
+                                                            span { "AI agents" }
+                                                        }
+                                                    }
+                                                    if member_profile.is_owner {
+                                                        span { class: "badge amber", "Owner" }
+                                                    } else if member_profile.is_admin {
+                                                        span { class: "badge blue", "Admin" }
+                                                    }
+                                                    if has_agents {
+                                                        span {
+                                                            class: "badge blue",
+                                                            "data-testid": "member-agent-count",
+                                                            "{group.agents.len()} AI"
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "muted member-row-sub member-profile-lines",
+                                                    div { class: "member-profile-line",
+                                                        span { "{role_label}" }
+                                                        span { title: "{member}", "{member_identity_label}" }
+                                                    }
+                                                    if !remark_name.is_empty() && remark_name != public_label {
+                                                        div { class: "member-profile-line",
+                                                            span { class: "member-profile-label", "My name" }
+                                                            span { "{remark_name}" }
+                                                        }
+                                                    }
+                                                    if !display_name.is_empty() && display_name != member_label {
+                                                        div { class: "member-profile-line",
+                                                            span { class: "member-profile-label", "Display" }
+                                                            span { "{display_name}" }
+                                                        }
+                                                    }
+                                                    if !handles.is_empty() {
+                                                        div { class: "member-profile-line member-handle-list",
+                                                            span { class: "member-profile-label", "Handles" }
+                                                            for handle in handles.clone() {
+                                                                span { class: "member-handle-chip", "{handle}" }
+                                                            }
+                                                        }
+                                                    }
+                                                    if !remark_note.is_empty() {
+                                                        div { class: "member-profile-line",
+                                                            span { class: "member-profile-label", "Note" }
+                                                            span { "{remark_note}" }
+                                                        }
+                                                    }
+                                                    if !subject_id.is_empty() && subject_id != member {
+                                                        div { class: "member-profile-line",
+                                                            span { class: "member-profile-label", "Subject" }
+                                                            span { title: "{subject_id}", "{subject_label}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        MemberRowActions {
+                                            base_url: base_url.clone(),
+                                            token,
+                                            account_did: account_did.clone(),
+                                            selected_realm_id: selected_realm_id.clone(),
+                                            target_did: member.clone(),
+                                            target_label: member_label.clone(),
+                                            can_remove,
+                                            is_self,
+                                            leave_disabled_reason: self_leave_reason,
+                                            sync_cursor,
+                                            state_store,
+                                            status_msg,
+                                            block_confirm_did,
+                                        }
+                                    }
+                                    if is_self && self_agent_settings_open() {
+                                        div { class: "member-self-agent-settings", "data-testid": "member-self-agent-settings",
+                                            div { class: "member-self-agent-settings-head",
+                                                div {
+                                                    div { class: "entity-title", "My AI agents in this Realm" }
+                                                    div { class: "muted", "Choose which existing agents are available in this Realm and control who can @ them." }
+                                                }
+                                                span { class: "badge", "{self_owned_agent_rows.len()} total" }
+                                            }
+                                            div { class: "member-agent-scope-note", "data-testid": "member-agent-scope-note",
+                                                div { class: "muted",
+                                                    "Create, pair, pause, and deactivate AI agents in Settings. This Realm panel only selects which existing agents are available here."
+                                                }
+                                                Link {
+                                                    class: "secondary",
+                                                    "data-testid": "member-agent-open-settings",
+                                                    to: Route::SettingsSection { section: "agents".to_owned() },
+                                                    "Open My Agents"
+                                                }
+                                            }
+                                            if self_owned_agent_rows.is_empty() {
+                                                div { class: "members-empty compact", "data-testid": "member-self-agent-empty",
+                                                    div { class: "members-empty-icon", crate::components::UiIcon { name: "bot" } }
+                                                    div { class: "members-empty-title", "No AI agents yet." }
+                                                    Link {
+                                                        class: "secondary",
+                                                        "data-testid": "member-agent-empty-open-settings",
+                                                        to: Route::SettingsSection { section: "agents".to_owned() },
+                                                        "Create one in My Agents"
+                                                    }
+                                                }
+                                            } else {
+                                                div { class: "member-self-agent-list",
+                                                    for owned_agent in self_owned_agent_rows.clone() {
+                                                        {
+                                                            let agent_in_realm = member_set.contains(&owned_agent.agent_principal_id);
+                                                            let policy = owned_agent.mention_policy;
+                                                            let policy_class = policy.badge_class();
+                                                            let policy_label = policy.label();
+                                                            let agent_id = owned_agent.agent_principal_id.clone();
+                                                            let agent_title = owned_agent.display_name.clone();
+                                                            let status_class = crate::views::agents::agent_state_badge_class(&owned_agent.status);
+                                                            let status_label = crate::views::agents::agent_state_label(&owned_agent.status).to_owned();
+                                                            let can_enable = agent_in_realm;
+                                                            rsx! {
+                                                                div { class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-did": "{agent_id}",
+                                                                    div { class: "member-agent-summary",
+                                                                        div { class: "member-avatar member-avatar-agent", "aria-hidden": "true",
+                                                                            crate::components::UiIcon { name: "bot" }
+                                                                        }
+                                                                        div { class: "member-row-text",
+                                                                            div { class: "member-row-title",
+                                                                                span { title: "{agent_id}", "{agent_title}" }
+                                                                                span { class: "{status_class}", "{status_label}" }
+                                                                                if !owned_agent.agent_slug.is_empty() {
+                                                                                    span { class: "badge", "/{owned_agent.agent_slug}" }
+                                                                                }
+                                                                            }
+                                                                            div { class: "muted member-row-sub mono", title: "{agent_id}", "{short_protocol_id(&agent_id)}" }
+                                                                        }
+                                                                    }
+                                                                    div { class: "member-self-agent-actions",
+                                                                        if agent_in_realm {
+                                                                            span { class: "{policy_class}", "data-testid": "member-agent-mention-policy", "{policy_label}" }
+                                                                            Button {
+                                                                                variant: ButtonVariant::Secondary,
+                                                                                "data-testid": "member-agent-mention-toggle",
+                                                                                disabled: !can_enable,
+                                                                                onclick: {
+                                                                                    let base = base_url.clone();
+                                                                                    let realm = selected_realm_id.clone();
+                                                                                    let agent_id = agent_id.clone();
+                                                                                    let previous = owned_agent.selection;
+                                                                                    move |_| {
+                                                                                        let base = base.clone();
+                                                                                        let realm = realm.clone();
+                                                                                        let agent_id = agent_id.clone();
+                                                                                        let api_token = token();
+                                                                                        let next_mention = !matches!(policy, AgentMentionPolicy::Allowed);
+                                                                                        spawn(async move {
+                                                                                            let body = cokret_sdk::models::AgentParticipationSetRequestBody {
+                                                                                                scope: AgentParticipationScope::Realm {
+                                                                                                    realm_id: match cokret_sdk::RealmId::new(realm.clone()) {
+                                                                                                        Ok(realm_id) => realm_id,
+                                                                                                        Err(err) => {
+                                                                                                            status_msg.set(format!("invalid realm id: {err:?}"));
+                                                                                                            return;
+                                                                                                        }
+                                                                                                    },
+                                                                                                },
+                                                                                                selection: AgentParticipation {
+                                                                                                    reply: previous.reply,
+                                                                                                    accept_third_party_mention: next_mention,
+                                                                                                    act_on_behalf: previous.act_on_behalf,
+                                                                                                },
+                                                                                            };
+                                                                                            match crate::views::helpers::with_authed_api(&base, api_token, |api| {
+                                                                                                let body = body.clone();
+                                                                                                let agent_id = agent_id.clone();
+                                                                                                async move { api.agent_participation_set(&agent_id, &body).await }
+                                                                                            })
+                                                                                            .await
+                                                                                            {
+                                                                                                Ok(outcome) => {
+                                                                                                    let (mention_policy, selection) =
+                                                                                                        mention_state_from_entries(&outcome.entries, &realm);
+                                                                                                    let mut next_agents = owned_agents.read().clone();
+                                                                                                    for row in &mut next_agents {
+                                                                                                        if row.agent_principal_id == outcome.agent_principal_id {
+                                                                                                            row.mention_policy = mention_policy;
+                                                                                                            row.selection = selection;
+                                                                                                        }
+                                                                                                    }
+                                                                                                    owned_agents.set(next_agents);
+                                                                                                    status_msg.set(format!(
+                                                                                                        "agent @ policy updated for {}",
+                                                                                                        short_protocol_id(&outcome.agent_principal_id)
+                                                                                                    ));
+                                                                                                }
+                                                                                                Err(err) => status_msg.set(format!(
+                                                                                                    "agent @ policy update failed: {}",
+                                                                                                    err.display()
+                                                                                                )),
+                                                                                            }
+                                                                                        });
+                                                                                    }
+                                                                                },
+                                                                                if matches!(policy, AgentMentionPolicy::Allowed) {
+                                                                                    "Disable @"
+                                                                                } else {
+                                                                                    "Allow @"
+                                                                                }
+                                                                            }
+                                                                        } else if can_invite {
+                                                                            Button {
+                                                                                variant: ButtonVariant::Secondary,
+                                                                                "data-testid": "member-agent-add-to-realm",
+                                                                                disabled: active_service_did.trim().is_empty(),
+                                                                                onclick: {
+                                                                                    let agent_id = agent_id.clone();
+                                                                                    let service_did = active_service_did.clone();
+                                                                                    move |_| {
+                                                                                        if service_did.trim().is_empty() {
+                                                                                            status_msg.set("current service DID is unavailable; cannot prepare agent invite".to_owned());
+                                                                                            return;
+                                                                                        }
+                                                                                        invite_target.set(agent_invite_target(&agent_id, &service_did));
+                                                                                        invite_modal_open.set(true);
+                                                                                    }
+                                                                                },
+                                                                                "Invite to Realm"
+                                                                            }
+                                                                        } else {
+                                                                            span { class: "badge", "not in Realm" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if has_agents {
+                                        div { class: "member-agent-list", "data-testid": "member-agent-list",
+                                            for agent in group.agents {
+                                                {
+                                                    let agent_id = agent.agent_principal_id.clone();
+                                                    let agent_label = agent.display_name.clone();
+                                                    let agent_initial = member_avatar_initial_from_value(&agent_label);
+                                                    let policy_class = agent.mention_policy.badge_class();
+                                                    let policy_label = agent.mention_policy.label();
+                                                    let status_class = crate::views::agents::agent_state_badge_class(&agent.status);
+                                                    let status_label = crate::views::agents::agent_state_label(&agent.status).to_owned();
+                                                    rsx! {
+                                                        div { class: "event member-row member-agent-row", "data-testid": "member-agent-row", "data-member-did": "{agent_id}",
+                                                            div { class: "event-head member-row-main",
+                                                                div { class: "member-avatar member-avatar-agent", "data-testid": "member-agent-avatar", "aria-hidden": "true",
+                                                                    if agent_initial == "?" {
+                                                                        crate::components::UiIcon { name: "bot" }
+                                                                    } else {
+                                                                        "{agent_initial}"
+                                                                    }
+                                                                }
+                                                                div { class: "member-row-text",
+                                                                    div { class: "member-row-title",
+                                                                        span { title: "{agent_id}", "{agent_label}" }
+                                                                        span { class: "badge member-badge member-badge-agent", "data-testid": "member-badge-agent", "AI agent" }
+                                                                        span { class: "{status_class}", "{status_label}" }
+                                                                        span { class: "{policy_class}", "{policy_label}" }
+                                                                    }
+                                                                    div { class: "muted member-row-sub",
+                                                                        "owned by "
+                                                                        span { class: "mono", title: "{member}", "{member_label}" }
+                                                                        if !agent.agent_slug.is_empty() {
+                                                                            span { " · /{agent.agent_slug}" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            MemberRowActions {
+                                                                base_url: base_url.clone(),
+                                                                token,
+                                                                account_did: account_did.clone(),
+                                                                selected_realm_id: selected_realm_id.clone(),
+                                                                target_did: agent_id.clone(),
+                                                                target_label: agent_label.clone(),
+                                                                can_remove,
+                                                                is_self: false,
+                                                                sync_cursor,
+                                                                state_store,
+                                                                status_msg,
+                                                                block_confirm_did,
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if selected_section_empty && selected_section != MemberRosterSection::PendingInvites {
+                        div { class: "members-empty", "data-testid": "members-empty-state",
+                            if selected_section_total == 0 && filter_query.is_empty() {
+                                div { class: "members-empty-icon", crate::components::UiIcon { name: "users" } }
+                                div { class: "members-empty-title", {crate::i18n::tr("realm_admin.no_members_loaded")} }
+                                if can_invite {
+                                    div { class: "muted members-empty-hint",
+                                        {crate::i18n::tr("realm_admin.members_empty_hint")}
+                                    }
+                                }
+                            } else {
+                                div { class: "members-empty-icon", crate::components::UiIcon { name: "search" } }
+                                div { class: "members-empty-title", {crate::i18n::tr("realm_admin.members_no_match")} }
+                            }
+                        }
+                    }
+                    if has_more {
+                        div { class: "member-load-more",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "load-more-members-button",
+                                onclick: move |_| {
+                                    let next = member_visible() + MEMBER_PAGE_SIZE;
+                                    member_visible.set(next);
+                                },
+                                "Load more — showing {visible} of {filtered_count} groups"
+                            }
+                        }
+                    }
+                        }
+                    }
+                }
+
+            }
         }
     }
 }
@@ -5482,42 +5210,6 @@ mod tests {
         });
 
         assert!(parse_realm_key_request_envelope(&envelope).is_none());
-    }
-
-    #[test]
-    fn member_agent_default_presets_are_conservative() {
-        let presets = member_agent_default_presets();
-
-        assert_eq!(
-            presets,
-            vec![AgentGrantPreset::ReadOnly, AgentGrantPreset::DraftOnly]
-        );
-        // The spec AgentKeyScope object requires a Realm-scoped resource
-        // selector; the conservative default presets carry only read/draft
-        // actions and (without a Realm) no requested_scope at all.
-        assert!(requested_scope_for_presets(&presets, None).is_none());
-        let scope = requested_scope_for_presets(
-            &presets,
-            Some("ck:realm:01904100-0000-7000-8000-000000000001"),
-        )
-        .expect("realm-scoped presets produce a scope");
-        assert_eq!(
-            scope.actions,
-            vec![
-                "ck.event.read",
-                "ck.agent.draft.propose",
-                "ck.agent.action_request"
-            ]
-        );
-    }
-
-    #[test]
-    fn member_agent_grant_expiry_is_independent_from_pairing_window() {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-06-29T00:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-
-        assert_eq!(member_agent_grant_expires_at(now), "2026-07-29T00:00:00Z");
     }
 
     #[test]

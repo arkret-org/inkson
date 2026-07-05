@@ -96,35 +96,34 @@ const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.query.list_handles_
 const MIN_SIDEBAR_WIDTH: f64 = 280.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
-// Each stylesheet below is assembled from ordered section files via `concat!`.
-// The result is a single compile-time `&'static str` byte-identical to the
-// former monolithic file, so injection order and final rendering are unchanged.
+// Each stylesheet below is assembled from semantic section files via `concat!`.
+// Injection order is explicit here rather than encoded in file-name prefixes.
 const STYLE: &str = concat!(
-    include_str!("../styles/app/01-base-auth-layout.css"),
-    include_str!("../styles/app/02-a11y-responsive-print.css"),
-    include_str!("../styles/app/03-app-theme-shell.css"),
-    include_str!("../styles/app/04-workflow-cards-a.css"),
-    include_str!("../styles/app/04-workflow-cards-b.css"),
-    include_str!("../styles/app/04-workflow-cards-c.css"),
-    include_str!("../styles/app/05-cokret-impl-contacts.css"),
+    include_str!("../styles/app/base-auth-layout.css"),
+    include_str!("../styles/app/accessibility-responsive-print.css"),
+    include_str!("../styles/app/app-theme-shell.css"),
+    include_str!("../styles/app/workflow-card-detail.css"),
+    include_str!("../styles/app/workflow-card-assignees.css"),
+    include_str!("../styles/app/workflow-editor-settings.css"),
+    include_str!("../styles/app/shell-contacts-settings.css"),
 );
 
 const DESIGN_STYLE: &str = concat!(
-    include_str!("../styles/design/01-tokens-reset-i18n.css"),
-    include_str!("../styles/design/02-controls-gallery-chrome.css"),
-    include_str!("../styles/design/03-common-components.css"),
-    include_str!("../styles/design/04-auth-kanban-strand-chat.css"),
-    include_str!("../styles/design/05-event-mobile-device-tables-call.css"),
-    include_str!("../styles/design/06-discovery-metrics-errors-doc-content.css"),
+    include_str!("../styles/design/tokens-reset-i18n.css"),
+    include_str!("../styles/design/controls-gallery-chrome.css"),
+    include_str!("../styles/design/common-components.css"),
+    include_str!("../styles/design/auth-kanban-strand-chat.css"),
+    include_str!("../styles/design/event-mobile-device-tables-call.css"),
+    include_str!("../styles/design/discovery-metrics-errors-doc-content.css"),
 );
 
 const APP_OVERRIDES: &str = concat!(
-    include_str!("../styles/app_overrides/01-base.css"),
-    include_str!("../styles/app_overrides/02-watch-handle-e2ee-tabs.css"),
-    include_str!("../styles/app_overrides/03-circle-composer-misc.css"),
-    include_str!("../styles/app_overrides/04-sidebar-actions.css"),
-    include_str!("../styles/app_overrides/05-account-trigger-menu.css"),
-    include_str!("../styles/app_overrides/06-members-admin-invite.css"),
+    include_str!("../styles/app_overrides/theme-shell-overrides.css"),
+    include_str!("../styles/app_overrides/watch-handle-e2ee-tabs.css"),
+    include_str!("../styles/app_overrides/circle-composer-mentions.css"),
+    include_str!("../styles/app_overrides/sidebar-actions.css"),
+    include_str!("../styles/app_overrides/account-trigger-menu.css"),
+    include_str!("../styles/app_overrides/members-agents-admin.css"),
 );
 
 /// C3: yoface shared-component design tokens. The first layer is shadcn
