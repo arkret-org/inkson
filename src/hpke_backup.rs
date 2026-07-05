@@ -1,5 +1,5 @@
-//! DHKEM(X25519, HKDF-SHA256) + XChaCha20-Poly1305 base-mode seal/open for
-//! `recipient_method=recovery_public_key` key backups.
+//! RFC 9180 HPKE base-mode seal/open for `recipient_method=recovery_public_key`
+//! key backups.
 //!
 //! Spec: `identity/key-management.md` §7.5.2 — a backup DEK / payload is
 //! public-key sealed to the actor's recovery public key. The recovery PUBLIC
@@ -12,43 +12,24 @@
 //! "new device must already have a secret to read its own backups" circularity).
 //!
 //! Suite (NORMATIVE): this surface pins the v1 **default-MUST** application-layer
-//! HPKE suite `ck.hpke_x25519_aead_xchacha20poly1305.v1`
-//! (`hpke-suite-registry.json`): KEM `DHKEM(X25519, HKDF-SHA256)`, KDF
-//! `HKDF-SHA256`, AEAD **XChaCha20-Poly1305** (extended 192-bit nonce). The
-//! AEAD is outside RFC 9180's base AEAD registry, so this is a hand-rolled
-//! DHKEM + HKDF + XChaCha20 construction (the same crypto stack the SDK uses in
-//! `secret_share::seal_history_secret_to_device_pubkey`), NOT the `hpke-rs`
-//! RFC 9180 single-shot API — which only offers the 96-bit-nonce ChaCha20
-//! variant and would force the non-default `ck.hpke_x25519_aead_chacha20poly1305.v1`
-//! interop suite, breaking the omitted-`hpke_suite`-selector default and
-//! producing an `aead.name` that contradicts the default-MUST row.
+//! HPKE suite `ck.hpke_x25519_aead_chacha20poly1305.v1`
+//! (`hpke-suite-registry.json`): standard RFC 9180 base mode —
+//! KEM `DHKEM(X25519, HKDF-SHA256)`, KDF `HKDF-SHA256`, AEAD ChaCha20-Poly1305
+//! (96-bit nonce). The AEAD nonce is the key-schedule-derived `base_nonce`
+//! (single-shot seq=0) and is NOT carried on the wire.
 //!
-//! Wire shape ([`HpkeSealed`]): `enc` = the 32-byte ephemeral X25519 public key
-//! (the KEM encapsulation); `ciphertext` = `nonce(24) || AEAD ciphertext+tag`.
-//! Both travel base64url in the `recovery_public_key` envelope. The caller's
-//! `info` transcript is bound into the HKDF context and `aad` into the AEAD AAD,
-//! exactly as the opener reconstructs them.
-//!
-//! NOT delegated to `cokret_sdk::secret_share::{seal_base_mode_to_x25519_pubkey,
-//! open_base_mode_with_x25519_privkey}` (YGN-DRY-06 verdict): the two
-//! constructions are deliberately NOT byte-isomorphic, and already-sealed
-//! backups pin this one —
-//! 1. Nonce: this surface uses a fresh random 24-byte XNonce carried on the
-//!    wire (`nonce || ct`); the SDK base-mode entry uses a fixed zero nonce
-//!    (single-use key) and carries no nonce.
-//! 2. Wire framing: this surface keeps `enc` and `ciphertext` as two separate
-//!    envelope fields; the SDK returns one `base64url(ephemeral_pub || ct)`
-//!    blob.
-//! 3. HKDF info: this surface expands with
-//!    `HPKE_KEY_SCHEDULE_INFO || 0x00 || caller_info`; the SDK expands with
-//!    the caller `info` bytes verbatim (transformable, but moot given 1–2).
-//! Switching would make every existing `recovery_public_key`-sealed backup
-//! unopenable. If convergence is ever wanted it needs a versioned envelope
-//! migration, not a drop-in swap.
+//! The seal/open crypto is delegated to
+//! `cokret_sdk::secret_share::{seal_base_mode_to_x25519_pubkey,
+//! open_base_mode_with_x25519_privkey}` (the SDK's RFC 9180 SetupBase, validated
+//! byte-for-byte against the RFC 9180 CFRG KAT). This module keeps the
+//! recovery-keypair derivation and re-frames the SDK's single
+//! `base64url(enc || ct)` blob into the envelope's separate `enc` / `ciphertext`
+//! fields ([`HpkeSealed`]). The former YGN-DRY-06 non-convergence no longer
+//! holds: with both sides on standard RFC 9180 the constructions are identical.
 
 use anyhow::{Result, anyhow};
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hkdf::Hkdf;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
@@ -56,24 +37,25 @@ use zeroize::{Zeroize, Zeroizing};
 
 /// Canonical wire scheme / `hpke_suite` selector for this surface: the v1
 /// default-MUST application-layer HPKE suite. Emitted into the envelope so the
-/// AEAD `name` (`xchacha20_poly1305`) is unambiguously consistent with the
+/// AEAD `name` (`chacha20_poly1305`) is unambiguously consistent with the
 /// selected suite per `hpke-suite-registry.json` registry rules.
-pub const HPKE_SUITE: &str = "ck.hpke_x25519_aead_xchacha20poly1305.v1";
+pub const HPKE_SUITE: &str = "ck.hpke_x25519_aead_chacha20poly1305.v1";
 
-/// HKDF info domain separator for the DHKEM key schedule of this surface.
+/// HKDF info domain separator for deriving the recovery X25519 keypair from
+/// BIP-39 entropy (see [`derive_recovery_keypair_from_entropy`]). This is an
+/// opaque, stable domain tag — its byte value MUST NOT change or existing
+/// recovery keys would derive a different keypair.
 const HPKE_KEY_SCHEDULE_INFO: &[u8] = b"cokret-recovery-public-key-hpke-x25519-xchacha20-v1";
 
-/// XChaCha20-Poly1305 nonce length (extended 192-bit nonce).
-const XNONCE_LEN: usize = 24;
-
-/// Output of [`hpke_seal`]: the KEM encapsulated key (`enc`, the 32-byte
-/// ephemeral X25519 public key) and the AEAD ciphertext (`nonce || ct+tag`).
-/// Both travel on the wire (base64url) in the `recovery_public_key` envelope.
+/// Output of [`hpke_seal`]: the RFC 9180 DHKEM encapsulated key (`enc`, the
+/// 32-byte ephemeral X25519 public key) and the AEAD ciphertext (`ct+tag`, no
+/// wire nonce — the AEAD nonce is the key-schedule-derived `base_nonce`). Both
+/// travel base64url in the `recovery_public_key` envelope.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HpkeSealed {
-    /// KEM output / encapsulated ephemeral public key (32 bytes).
+    /// DHKEM encapsulated ephemeral public key (32 bytes).
     pub enc: Vec<u8>,
-    /// `nonce(24) || AEAD ciphertext (tag appended)`.
+    /// RFC 9180 AEAD ciphertext (Poly1305 tag appended); no wire nonce.
     pub ciphertext: Vec<u8>,
 }
 
@@ -82,29 +64,6 @@ fn x25519_32(bytes: &[u8], label: &str) -> Result<[u8; 32]> {
     bytes
         .try_into()
         .map_err(|_| anyhow!("{label} must be 32 bytes, got {}", bytes.len()))
-}
-
-/// Derive the per-message XChaCha20-Poly1305 key from the DH shared secret,
-/// binding the encapsulated key, recipient public key and the caller's `info`
-/// transcript into the HKDF salt/info so the opener reproduces it byte-for-byte.
-fn derive_aead_key(
-    shared_secret: &[u8],
-    enc: &[u8; 32],
-    recipient_pub: &[u8; 32],
-    info: &[u8],
-) -> Result<Zeroizing<[u8; 32]>> {
-    let mut salt = Vec::with_capacity(enc.len() + recipient_pub.len());
-    salt.extend_from_slice(enc);
-    salt.extend_from_slice(recipient_pub);
-    let mut hkdf_info = Vec::with_capacity(HPKE_KEY_SCHEDULE_INFO.len() + 1 + info.len());
-    hkdf_info.extend_from_slice(HPKE_KEY_SCHEDULE_INFO);
-    hkdf_info.push(0);
-    hkdf_info.extend_from_slice(info);
-    let hkdf = Hkdf::<Sha256>::new(Some(&salt), shared_secret);
-    let mut key = Zeroizing::new([0u8; 32]);
-    hkdf.expand(&hkdf_info, key.as_mut_slice())
-        .map_err(|_| anyhow!("hpke aead key hkdf expand failed"))?;
-    Ok(key)
 }
 
 /// Generate a fresh X25519 recovery keypair. Returns `(private_key, public_key)`
@@ -147,57 +106,44 @@ pub fn derive_recovery_keypair_from_entropy(entropy: &[u8]) -> Result<(Vec<u8>, 
     Ok((secret.to_bytes().to_vec(), public.as_bytes().to_vec()))
 }
 
-/// DHKEM(X25519) + XChaCha20-Poly1305 base-mode seal `plaintext` to
-/// `recipient_public_key`. `info` and `aad` are bound into the context exactly
-/// as the receiver must reproduce them (§7.5.2: `info` = canonical_json of the
-/// envelope identity tuple; `aad` = the envelope AEAD AAD).
+/// RFC 9180 base-mode seal `plaintext` to `recipient_public_key`, delegating to
+/// the SDK's SetupBase implementation. `info` and `aad` are bound exactly as the
+/// receiver must reproduce them (§7.5.2: `info` = canonical_json of the envelope
+/// identity tuple; `aad` = the envelope AEAD AAD). The SDK returns one
+/// `base64url(enc || ct)` blob; we split it into the envelope's `enc` /
+/// `ciphertext` fields.
 pub fn hpke_seal(
     recipient_public_key: &[u8],
     info: &[u8],
     aad: &[u8],
     plaintext: &[u8],
 ) -> Result<HpkeSealed> {
-    let recipient_pub = x25519_32(recipient_public_key, "recovery HPKE public key")?;
-    let recipient_public = X25519PublicKey::from(recipient_pub);
-
-    let mut seed = [0u8; 32];
-    getrandom::fill(&mut seed).map_err(|err| anyhow!("hpke ephemeral rng: {err}"))?;
-    let ephemeral = StaticSecret::from(seed);
-    seed.zeroize();
-    let enc = *X25519PublicKey::from(&ephemeral).as_bytes();
-
-    let shared = ephemeral.diffie_hellman(&recipient_public);
-    if shared.as_bytes().iter().all(|b| *b == 0) {
-        return Err(anyhow!("hpke x25519 shared secret must not be all zero"));
-    }
-    let key = derive_aead_key(shared.as_bytes(), &enc, &recipient_pub, info)?;
-
-    let cipher = XChaCha20Poly1305::new_from_slice(key.as_slice())
-        .map_err(|_| anyhow!("hpke invalid aead key"))?;
-    let mut nonce = [0u8; XNONCE_LEN];
-    getrandom::fill(&mut nonce).map_err(|err| anyhow!("hpke nonce rng: {err}"))?;
-    let aead_ct = cipher
-        .encrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: plaintext,
-                aad,
-            },
+    // Validate the key length up front for a clearer error than the SDK's.
+    let _ = x25519_32(recipient_public_key, "recovery HPKE public key")?;
+    let blob_b64 =
+        cokret_sdk::secret_share::seal_base_mode_to_x25519_pubkey(
+            recipient_public_key,
+            plaintext,
+            info,
+            aad,
         )
-        .map_err(|_| anyhow!("hpke aead seal failed"))?;
-
-    let mut ciphertext = Vec::with_capacity(XNONCE_LEN + aead_ct.len());
-    ciphertext.extend_from_slice(&nonce);
-    ciphertext.extend_from_slice(&aead_ct);
+        .map_err(|err| anyhow!("hpke seal: {err}"))?;
+    let blob = URL_SAFE_NO_PAD
+        .decode(blob_b64.as_bytes())
+        .map_err(|err| anyhow!("hpke seal blob decode: {err}"))?;
+    if blob.len() <= 32 {
+        return Err(anyhow!("hpke seal blob too short for enc + ciphertext"));
+    }
     Ok(HpkeSealed {
-        enc: enc.to_vec(),
-        ciphertext,
+        enc: blob[..32].to_vec(),
+        ciphertext: blob[32..].to_vec(),
     })
 }
 
-/// DHKEM(X25519) + XChaCha20-Poly1305 base-mode open: recover the plaintext
-/// with the recovery private key. Fails (wrong key / tampered ciphertext /
-/// mismatched info or aad) → `Err`.
+/// RFC 9180 base-mode open: recover the plaintext with the recovery private key,
+/// delegating to the SDK's SetupBaseR. Re-frames the envelope's separate `enc` /
+/// `ciphertext` fields into the SDK's `base64url(enc || ct)` blob. Fails (wrong
+/// key / tampered ciphertext / mismatched info or aad) → `Err`.
 pub fn hpke_open(
     recipient_private_key: &[u8],
     enc: &[u8],
@@ -205,33 +151,18 @@ pub fn hpke_open(
     aad: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>> {
-    let mut privkey = Zeroizing::new(x25519_32(
+    let _ = x25519_32(enc, "hpke enc (encapsulated key)")?;
+    let mut blob = Vec::with_capacity(enc.len() + ciphertext.len());
+    blob.extend_from_slice(enc);
+    blob.extend_from_slice(ciphertext);
+    let blob_b64 = URL_SAFE_NO_PAD.encode(&blob);
+    cokret_sdk::secret_share::open_base_mode_with_x25519_privkey(
         recipient_private_key,
-        "recovery HPKE private key",
-    )?);
-    let enc_arr = x25519_32(enc, "hpke enc (encapsulated key)")?;
-    if ciphertext.len() < XNONCE_LEN {
-        return Err(anyhow!("hpke ciphertext shorter than nonce"));
-    }
-
-    // SEC-06: build the StaticSecret from the wrapped copy, then drop the raw
-    // array via Zeroizing (StaticSecret itself zeroizes on drop).
-    let recipient_secret = StaticSecret::from(*privkey);
-    privkey.zeroize();
-    let recipient_pub = *X25519PublicKey::from(&recipient_secret).as_bytes();
-    let ephemeral_public = X25519PublicKey::from(enc_arr);
-    let shared = recipient_secret.diffie_hellman(&ephemeral_public);
-    if shared.as_bytes().iter().all(|b| *b == 0) {
-        return Err(anyhow!("hpke x25519 shared secret must not be all zero"));
-    }
-    let key = derive_aead_key(shared.as_bytes(), &enc_arr, &recipient_pub, info)?;
-
-    let (nonce, aead_ct) = ciphertext.split_at(XNONCE_LEN);
-    let cipher = XChaCha20Poly1305::new_from_slice(key.as_slice())
-        .map_err(|_| anyhow!("hpke invalid aead key"))?;
-    cipher
-        .decrypt(XNonce::from_slice(nonce), Payload { msg: aead_ct, aad })
-        .map_err(|_| anyhow!("hpke aead open failed"))
+        &blob_b64,
+        info,
+        aad,
+    )
+    .map_err(|err| anyhow!("hpke open: {err}"))
 }
 
 #[cfg(test)]
@@ -261,8 +192,8 @@ mod tests {
     fn open_rejects_tampered_ciphertext() {
         let (sk, pk) = generate_recovery_keypair().unwrap();
         let mut sealed = hpke_seal(&pk, b"info", b"aad", b"secret").unwrap();
-        // Tamper a byte past the 24-byte nonce so we hit the AEAD tag check.
-        if let Some(byte) = sealed.ciphertext.get_mut(XNONCE_LEN) {
+        // Flip the first ciphertext byte so we hit the AEAD tag check.
+        if let Some(byte) = sealed.ciphertext.get_mut(0) {
             *byte ^= 0xFF;
         }
         assert!(hpke_open(&sk, &sealed.enc, b"info", b"aad", &sealed.ciphertext).is_err());

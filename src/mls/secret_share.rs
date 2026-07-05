@@ -43,7 +43,7 @@ pub const SECRET_SHARE_KIND_SEND: &str = "ck.secret.send";
 /// device HPKE label in `device-lifecycle.md` §4. The crypto suite is the
 /// RFC 9180 base mode of [`crate::hpke_backup`] (DHKEM-X25519 / HKDF-SHA256 /
 /// ChaCha20Poly1305).
-pub const SECRET_SHARE_SCHEME: &str = "ck.hpke_x25519_aead_xchacha20poly1305.v1";
+pub const SECRET_SHARE_SCHEME: &str = "ck.hpke_x25519_aead_chacha20poly1305.v1";
 /// `secret_id` for the account MLS snapshot secret — the only secret class the
 /// D2D direct-share path ships in v1. Equal to
 /// [`crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID`].
