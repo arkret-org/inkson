@@ -38,6 +38,8 @@ use crate::ui::input::Input;
 use crate::views::ConnectionState;
 use crate::views::helpers::{display_name_for_did, persist_config, short_protocol_id};
 
+const REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS: u64 = 60_000;
+
 // YOU-07-001: post-login / startup-check effects and small types moved to
 // `crate::app::bootstrap` (move-only; logic, signatures, and bytes unchanged).
 // The re-export keeps existing app.rs call sites and `app_tests.rs`
@@ -783,6 +785,7 @@ pub fn RouterView() -> Element {
     // re-requested — but an unchanged state never re-emits the same request on
     // every sync tick.
     let realm_key_request_dedup = use_signal(|| Option::<String>::None);
+    let realm_key_answer_backoff_until = use_signal(BTreeMap::<String, u64>::new);
     // Step 3 of the account-MLS-secret auto-unlock strand: set by the bootstrap
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
@@ -2239,6 +2242,7 @@ pub fn RouterView() -> Element {
         let share_sync_cursor = sync_cursor;
         let mut share_in_flight = realm_key_sharing_in_flight;
         let mut share_request_dedup = realm_key_request_dedup;
+        let mut share_answer_backoff = realm_key_answer_backoff_until;
         let secure_store_ready_for_share = secure_store_bootstrap_ready;
         let share_did_cache = did_cache;
         use_effect(move || {
@@ -2279,6 +2283,8 @@ pub fn RouterView() -> Element {
             let (shares_by_realm, requests, pull_request_key) = {
                 let store = share_state_store.read();
                 let inbox = store.to_device_inbox();
+                let answer_backoff = share_answer_backoff.peek().clone();
+                let now_ms = crate::clock::now_unix_ms();
                 let mut shares_by_realm = BTreeMap::<String, Vec<serde_json::Value>>::new();
                 for message in &inbox {
                     let kind = message
@@ -2304,6 +2310,13 @@ pub fn RouterView() -> Element {
                     .filter(|request| {
                         request.payload.target_principal_id.as_str().trim() == actor.trim()
                             && request.payload.target_source_ref.trim() == device.trim()
+                            && answer_backoff
+                                .get(
+                                    &crate::views::realm_admin::realm_key_request_answer_dedup_key(
+                                        request,
+                                    ),
+                                )
+                                .is_none_or(|retry_after_ms| *retry_after_ms <= now_ms)
                     })
                     .collect();
                 let pull_request_key = active_realm_id.as_ref().and_then(|realm_id| {
@@ -2393,7 +2406,11 @@ pub fn RouterView() -> Element {
                 }
                 for request_envelope in requests {
                     let realm = request_envelope.realm_id.clone();
+                    let realm_for_log = realm.clone();
                     let request_id = request_envelope.request_id.clone();
+                    let request_key = crate::views::realm_admin::realm_key_request_answer_dedup_key(
+                        &request_envelope,
+                    );
                     let request = request_envelope.payload;
                     let actor_c = actor.clone();
                     let device_c = device.clone();
@@ -2413,16 +2430,38 @@ pub fn RouterView() -> Element {
                         },
                     )
                     .await;
-                    if matches!(outcome, Ok(true))
-                        && let Some(request_id) = request_id
-                    {
-                        let removed = share_state_store
-                            .write()
-                            .dismiss_realm_key_request_to_device_message(&request_id);
-                        if removed > 0 {
-                            tracing::debug!(
-                                request_id = %short_protocol_id(&request_id),
-                                "dismissed answered ck.realm_key.request from local inbox"
+                    match outcome {
+                        Ok(true) => {
+                            share_answer_backoff.write().remove(&request_key);
+                            if let Some(request_id) = request_id {
+                                let removed = share_state_store
+                                    .write()
+                                    .dismiss_realm_key_request_to_device_message(&request_id);
+                                if removed > 0 {
+                                    tracing::debug!(
+                                        request_id = %short_protocol_id(&request_id),
+                                        "dismissed answered ck.realm_key.request from local inbox"
+                                    );
+                                }
+                            }
+                        }
+                        Ok(false) => {
+                            let retry_after_ms = crate::clock::now_unix_ms()
+                                .saturating_add(REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS);
+                            share_answer_backoff
+                                .write()
+                                .insert(request_key, retry_after_ms);
+                        }
+                        Err(error) => {
+                            let retry_after_ms = crate::clock::now_unix_ms()
+                                .saturating_add(REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS);
+                            share_answer_backoff
+                                .write()
+                                .insert(request_key, retry_after_ms);
+                            tracing::warn!(
+                                realm = %short_protocol_id(&realm_for_log),
+                                ?error,
+                                "ck.realm_key.share answer failed; backing off request retry"
                             );
                         }
                     }

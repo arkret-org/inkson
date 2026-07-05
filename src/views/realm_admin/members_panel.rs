@@ -1955,6 +1955,31 @@ pub(crate) fn parse_realm_key_request_envelope(
     })
 }
 
+pub(crate) fn realm_key_request_answer_dedup_key(
+    envelope: &ParsedRealmKeyRequestEnvelope,
+) -> String {
+    if let Some(request_id) = envelope
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|request_id| !request_id.is_empty())
+    {
+        return format!("id:{request_id}");
+    }
+    let request = &envelope.payload;
+    format!(
+        "scope:{}|target:{}|{}|recipient:{}|{}|range:{}..{}|hpke:{}",
+        envelope.realm_id.trim(),
+        request.target_principal_id.as_str().trim(),
+        request.target_source_ref.trim(),
+        request.recipient_principal_id.as_str().trim(),
+        request.recipient_device_id.trim(),
+        request.key_scope.from_epoch,
+        request.key_scope.to_epoch,
+        request.recipient_hpke_public_key.trim()
+    )
+}
+
 /// Provider-side: answer one `ck.realm_key.request` from a late joiner by
 /// sealing the retained `history_secret` range to the requester's advertised
 /// HPKE public key and submitting a durable `ck.realm_key.share`
@@ -5356,6 +5381,77 @@ mod tests {
             Some("sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9")
         );
         assert_eq!(parsed.payload.target_source_ref, PROVIDER_DEVICE);
+    }
+
+    #[test]
+    fn realm_key_request_answer_dedup_key_prefers_request_id() {
+        let realm = "ck:realm:abc";
+        let request = cokret_sdk::RealmKeyRequestPayload {
+            key_scope: cokret_sdk::RealmKeyRequestScope {
+                effective_scope: json!({ "kind": "realm", "realm_id": realm }),
+                policy_digest: None,
+                membership_frontier_digest: None,
+                from_epoch: 0,
+                to_epoch: 2,
+                history_visibility: None,
+            },
+            recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_device_id: "ck:device:self".to_owned(),
+            recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
+            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            target_source_ref: PROVIDER_DEVICE.to_owned(),
+            target_principal_id: cokret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
+        let envelope = json!({
+            "kind": "ck.realm_key.request",
+            "realm_id": realm,
+            "request_id": "sha256:answer-dedup",
+            "payload": request,
+        });
+        let parsed = parse_realm_key_request_envelope(&envelope).unwrap();
+
+        assert_eq!(
+            realm_key_request_answer_dedup_key(&parsed),
+            "id:sha256:answer-dedup"
+        );
+    }
+
+    #[test]
+    fn realm_key_request_answer_dedup_key_falls_back_to_payload() {
+        let realm = "ck:realm:abc";
+        let request = cokret_sdk::RealmKeyRequestPayload {
+            key_scope: cokret_sdk::RealmKeyRequestScope {
+                effective_scope: json!({ "kind": "realm", "realm_id": realm }),
+                policy_digest: None,
+                membership_frontier_digest: None,
+                from_epoch: 1,
+                to_epoch: 3,
+                history_visibility: None,
+            },
+            recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_device_id: "ck:device:self".to_owned(),
+            recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
+            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            target_source_ref: PROVIDER_DEVICE.to_owned(),
+            target_principal_id: cokret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
+        let envelope = json!({
+            "kind": "ck.realm_key.request",
+            "realm_id": realm,
+            "payload": request,
+        });
+        let parsed = parse_realm_key_request_envelope(&envelope).unwrap();
+        let key = realm_key_request_answer_dedup_key(&parsed);
+
+        assert!(key.contains("scope:ck:realm:abc|target:did:web:provider.example|"));
+        assert!(key.contains("|recipient:did:web:self.example|ck:device:self|"));
+        assert!(key.contains("|range:1..3|"));
     }
 
     #[test]
