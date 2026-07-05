@@ -532,7 +532,9 @@ mod tests {
             EXPIRES,
         )
         .unwrap_err();
-        assert!(format!("{err}").contains("hpke aead open failed"));
+        // RFC 9180 HPKE (hpke_backup::hpke_open) surfaces the AEAD open failure as
+        // "hpke open: <backend error>"; a wrong recipient key still fails closed.
+        assert!(format!("{err}").contains("hpke open"));
     }
 
     #[test]
