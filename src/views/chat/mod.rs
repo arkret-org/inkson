@@ -141,6 +141,10 @@ pub fn ChatPanel(
     initial_strand_id: String,
     embedded: bool,
     direct_mode: bool,
+    /// Optional deep-link target: when non-empty, the message with this id is
+    /// scrolled into view and flashed on mount (design/route-view-ia.md §3.2).
+    #[props(default)]
+    focus_message_id: String,
 ) -> Element {
     let navigator = use_navigator();
     let did_cache = use_context::<Signal<crate::did_resolver::DidResolutionCache>>();
@@ -1756,6 +1760,9 @@ pub fn ChatPanel(
                                 outbox_message_id_set.contains(&msg.id);
                             let sender_is_own =
                                 is_own_message_sender(&msg.sender, &account_did);
+                            // Deep-link focus target (design/route-view-ia.md §3.2).
+                            let is_focus_message =
+                                !focus_message_id.is_empty() && msg.id == focus_message_id;
                             // T7: shared per-message action dispatchers. The hover
                             // action row and the right-click context menu both call
                             // these closures so the two surfaces expose an identical
@@ -1896,6 +1903,7 @@ pub fn ChatPanel(
                             rsx! {
                         div {
                             key: "{msg.id}",
+                            id: "chat-msg-{msg.id}",
                             class: {
                                 let mut base = if sender_is_own {
                                     if msg.failed { "discussion-message is-own is-failed".to_owned() } else { "discussion-message is-own".to_owned() }
@@ -1912,10 +1920,22 @@ pub fn ChatPanel(
                                 if message_is_pinned {
                                     base.push_str(" is-pinned");
                                 }
+                                if is_focus_message {
+                                    base.push_str(" is-highlighted");
+                                }
                                 base.push_str(scope_class);
                                 base
                             },
-                            "data-testid": "chat-message",
+                            // Deep-linked message swaps its testid so the e2e
+                            // harness can assert the scroll/highlight landed.
+                            "data-testid": if is_focus_message { "chat-highlighted-message" } else { "chat-message" },
+                            onmounted: move |event: MountedEvent| async move {
+                                if is_focus_message {
+                                    // Scroll the deep-linked message into view once it
+                                    // mounts; harmless no-op if already visible.
+                                    let _ = event.scroll_to(ScrollBehavior::Smooth).await;
+                                }
+                            },
                             "data-circle-scope-id": "{scope_attr}",
                             "data-crypto-state": match msg.crypto_state {
                                 MessageCryptoState::Plaintext => "plaintext",

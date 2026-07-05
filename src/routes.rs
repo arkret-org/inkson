@@ -23,8 +23,12 @@ pub enum Route {
     #[route("/realms/:realm_id", RealmPage)]
     Realm { realm_id: String },
 
-    #[route("/chat/:realm_id", ChatRealmPage)]
-    Chat { realm_id: String },
+    /// Optional `?message=` deep-links a single message: the ChatPanel
+    /// scrolls it into view and flashes it on arrival. Empty (the common
+    /// case) keeps the plain per-realm behavior. See design/route-view-ia.md
+    /// §3.2.
+    #[route("/chat/:realm_id?:message", ChatRealmPage)]
+    Chat { realm_id: String, message: String },
 
     #[route("/direct/:realm_id/:strand_id", DirectConversationPage)]
     DirectConversation { realm_id: String, strand_id: String },
@@ -172,8 +176,8 @@ fn RoutePage() -> Element {
 }
 
 #[component]
-fn ChatRealmPage(realm_id: String) -> Element {
-    let _ = realm_id;
+fn ChatRealmPage(realm_id: String, message: String) -> Element {
+    let _ = (realm_id, message);
     rsx! {}
 }
 
@@ -266,7 +270,11 @@ impl Route {
         match self {
             Route::Dashboard => AppView::Dashboard,
             Route::Login | Route::AuthCallback => AppView::Login,
-            Route::RealmsManage | Route::Realm { .. } => AppView::Kanban,
+            Route::RealmsManage => AppView::RealmsManage,
+            // `/realms/:id` is an entry point, not a surface: it resolves the
+            // user's RealmSurface preference and renders the board
+            // (design/route-view-ia.md §3.1, plan A). It shares the Kanban view.
+            Route::Realm { .. } => AppView::Kanban,
             Route::Chat { .. } | Route::DirectConversation { .. } => AppView::Chat,
             Route::Contacts | Route::ContactsManage => AppView::Contacts,
             Route::FileTransfer => AppView::FileTransfer,
@@ -285,9 +293,8 @@ impl Route {
             Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
             | Route::RealmAdminSection { .. } => AppView::RealmAdmin,
-            // Call / Applets routes still render their own panels but no
-            // longer have dedicated `View` enum variants.
-            Route::Call { .. } | Route::Applets => AppView::Dashboard,
+            Route::Call { .. } => AppView::Call,
+            Route::Applets => AppView::Applets,
             Route::Kanban
             | Route::KanbanRealm { .. }
             | Route::KanbanBoard { .. }
@@ -305,7 +312,7 @@ impl Route {
     pub fn realm_id(&self) -> Option<&str> {
         match self {
             Route::Realm { realm_id }
-            | Route::Chat { realm_id }
+            | Route::Chat { realm_id, .. }
             | Route::DirectConversation { realm_id, .. }
             | Route::KanbanRealm { realm_id }
             | Route::KanbanBoard { realm_id, .. }
@@ -356,6 +363,7 @@ impl From<AppView> for Route {
             AppView::Login => Route::Login,
             AppView::Chat => Route::Chat {
                 realm_id: String::new(),
+                message: String::new(),
             },
             AppView::Contacts => Route::Contacts,
             AppView::FileTransfer => Route::FileTransfer,
@@ -369,6 +377,15 @@ impl From<AppView> for Route {
                 realm_id: String::new(),
             },
             AppView::Kanban => Route::Kanban,
+            AppView::RealmsManage => Route::RealmsManage,
+            AppView::Call => Route::Call {
+                call_id: String::new(),
+                peer: String::new(),
+                realm_id: String::new(),
+                video: String::new(),
+                incoming: String::new(),
+            },
+            AppView::Applets => Route::Applets,
             AppView::Notifications => Route::Notifications,
             AppView::Recovery => Route::Recovery,
             AppView::Onboarding => Route::Onboarding,
@@ -409,9 +426,15 @@ mod tests {
             },
             Route::Audit,
             Route::Developer,
-            // NOTE: Route::Call / Route::Applets are intentionally omitted.
-            // Their dedicated `View` enum variants were removed, so they map
-            // to `AppView::Dashboard` and would not roundtrip.
+            Route::RealmsManage,
+            Route::Call {
+                call_id: String::new(),
+                peer: String::new(),
+                realm_id: String::new(),
+                video: String::new(),
+                incoming: String::new(),
+            },
+            Route::Applets,
             Route::Kanban,
             Route::Notifications,
             Route::Recovery,

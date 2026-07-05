@@ -5325,7 +5325,7 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "minimal_client" } }
                         }
                     },
-                    Route::Chat { .. } => {
+                    Route::Chat { message, .. } => {
                         if let Some(sid) = route.realm_id()
                             && selected_realm_id() != sid
                         {
@@ -5346,6 +5346,7 @@ pub fn RouterView() -> Element {
                                     initial_strand_id: default_strand_id_for_realm(&active_realm_id),
                                     embedded: false,
                                     direct_mode: false,
+                                    focus_message_id: message.clone(),
                                 }
                             }
                         } else {

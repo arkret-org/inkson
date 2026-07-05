@@ -183,6 +183,27 @@
   display: grid;
   gap: 6px;
 }
+.settings-nav-search {
+  margin: 0 0 8px 0;
+}
+.settings-nav-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid var(--border, var(--ck-border));
+  border-radius: 8px;
+  background: var(--surface-2, var(--ck-surface));
+  color: var(--text, var(--ck-ink));
+  font-size: 13px;
+}
+.settings-nav-search-input:focus {
+  outline: none;
+  border-color: var(--accent, var(--ck-accent));
+}
+.settings-nav-empty {
+  padding: 8px 4px;
+  font-size: 12px;
+}
 .settings-nav-group-label {
   margin: 0 0 2px 4px;
   color: var(--text-3, var(--ck-muted));

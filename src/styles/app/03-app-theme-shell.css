@@ -724,6 +724,21 @@ body {
   overflow-wrap: anywhere;
 }
 
+.board-column-title .column-rename-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--accent, var(--ck-accent));
+  border-radius: 6px;
+  background: var(--surface-1, var(--ck-surface));
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.board-column-title .column-rename-input:focus {
+  outline: none;
+}
+
 .board-column-title .column-drag-handle {
   width: 24px;
   height: 24px;

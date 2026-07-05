@@ -414,6 +414,10 @@ pub fn SettingsPanel(
 ) -> Element {
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());
+    // Settings-nav filter: matches section labels in the active locale so the
+    // sidebar collapses to the sections whose (localised) name contains the
+    // query. Empty query shows every group (design/settings-ia-reorg.md §3.4).
+    let mut settings_nav_filter = use_signal(String::new);
     let mut presence_visibility_choice = use_signal(|| {
         state_store
             .read()
@@ -617,21 +621,68 @@ pub fn SettingsPanel(
         div { class: "settings", "data-testid": "settings-panel",
             div { class: "settings-shell",
                 aside { class: "settings-sidebar-column",
-                    for (group_index, (group_label, _, sections)) in SETTINGS_NAV_GROUPS.iter().copied().enumerate() {
-                        div { class: "settings-nav-cluster",
-                            div { class: "settings-nav-group-label", "{group_label}" }
-                            for section in sections.iter().copied() {
-                                Link {
-                                    class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
-                                    "data-testid": "settings-nav-item-{section.slug()}",
-                                    "aria-current": if active_section == section { "page" } else { "false" },
-                                    to: section.route(),
-                                    strong { "{section.label()}" }
+                    {
+                        let query = settings_nav_filter().trim().to_lowercase();
+                        rsx! {
+                            div { class: "settings-nav-search",
+                                input {
+                                    r#type: "search",
+                                    class: "settings-nav-search-input",
+                                    "data-testid": "settings-nav-search",
+                                    placeholder: crate::i18n::tr("settings.search.placeholder"),
+                                    "aria-label": crate::i18n::tr("settings.search.placeholder"),
+                                    value: "{settings_nav_filter}",
+                                    oninput: move |event: FormEvent| settings_nav_filter.set(event.value()),
                                 }
                             }
-                        }
-                        if group_index + 1 < SETTINGS_NAV_GROUPS.len() {
-                            div { class: "settings-nav-divider", "aria-hidden": "true" }
+                            {
+                                let visible_groups: Vec<_> = SETTINGS_NAV_GROUPS
+                                    .iter()
+                                    .copied()
+                                    .filter_map(|(group_label, hint, sections)| {
+                                        let matched: Vec<SettingsSection> = sections
+                                            .iter()
+                                            .copied()
+                                            .filter(|section| {
+                                                query.is_empty()
+                                                    || section.label().to_lowercase().contains(&query)
+                                            })
+                                            .collect();
+                                        if matched.is_empty() {
+                                            None
+                                        } else {
+                                            Some((group_label, hint, matched))
+                                        }
+                                    })
+                                    .collect();
+                                let group_count = visible_groups.len();
+                                rsx! {
+                                    if group_count == 0 {
+                                        div {
+                                            class: "settings-nav-empty muted",
+                                            "data-testid": "settings-nav-empty",
+                                            "{crate::i18n::tr(\"settings.search.no_results\")}"
+                                        }
+                                    }
+                                    for (group_index, (group_label, _, sections)) in visible_groups.into_iter().enumerate() {
+                                        div { class: "settings-nav-cluster",
+                                            div { class: "settings-nav-group-label", "{crate::i18n::tr(group_label)}" }
+                                            for section in sections.into_iter() {
+                                                Link {
+                                                    class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
+                                                    "data-testid": "settings-nav-item-{section.slug()}",
+                                                    "aria-current": if active_section == section { "page" } else { "false" },
+                                                    to: section.route(),
+                                                    strong { "{section.label()}" }
+                                                }
+                                            }
+                                        }
+                                        if group_index + 1 < group_count {
+                                            div { class: "settings-nav-divider", "aria-hidden": "true" }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

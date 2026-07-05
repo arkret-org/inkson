@@ -757,6 +757,15 @@ pub fn KanbanPanel(
     let mut card_edit_due = use_signal(String::new);
     let mut dragging_card = use_signal(|| Option::<DraggedCard>::None);
     let mut dragging_column = use_signal(|| Option::<DraggedColumn>::None);
+    // Column id currently under the drag pointer, used to paint the
+    // `.is-drop-target` accent border while a card is being dragged over it
+    // (design/kanban-baseline.md M1). Cleared on dragleave / drop / dragend.
+    let mut drop_target_column = use_signal(|| Option::<String>::None);
+    // Inline list-rename state (design/kanban-baseline.md M1): the id of the
+    // column being renamed and its draft title. Double-clicking the title
+    // opens the editor; Enter commits a `ck.space.update`, Esc cancels.
+    let mut editing_column_id = use_signal(|| Option::<String>::None);
+    let mut editing_column_title = use_signal(String::new);
     let write_records = use_signal(Vec::<BoardWriteRecord>::new);
     let mut board_status = use_signal(|| {
         if initial_source == BoardProjectionSource::Unavailable {
@@ -2226,11 +2235,38 @@ pub fn KanbanPanel(
                     // the aria/title attributes, so we format `column.title` directly
                     // instead of cloning it twice.
                     let column_id = column.id.clone();
+                    let is_active_drop_target =
+                        drop_target_column().as_deref() == Some(column_id.as_str());
+                    let column_div_class = if is_active_drop_target {
+                        format!("{board_column_class} is-drop-target")
+                    } else {
+                        board_column_class.to_owned()
+                    };
                     rsx! {
                     div {
-                        class: "{board_column_class}",
+                        class: "{column_div_class}",
                         "data-testid": "kanban-column",
-                        ondragover: move |event| event.prevent_default(),
+                        ondragover: {
+                            let column_id = column_id.clone();
+                            move |event: DragEvent| {
+                                event.prevent_default();
+                                // Only paint the accent while a card (not a
+                                // column reorder) is in flight.
+                                if dragging_card().is_some()
+                                    && drop_target_column().as_deref() != Some(column_id.as_str())
+                                {
+                                    drop_target_column.set(Some(column_id.clone()));
+                                }
+                            }
+                        },
+                        ondragleave: {
+                            let column_id = column_id.clone();
+                            move |_| {
+                                if drop_target_column().as_deref() == Some(column_id.as_str()) {
+                                    drop_target_column.set(None);
+                                }
+                            }
+                        },
                         ondrop: {
                             // Drop landing on the column background (not on
                             // a card) lands the card at the END of the
@@ -2243,6 +2279,7 @@ pub fn KanbanPanel(
                             let actor = account_did.clone();
                             move |event| {
                                 event.prevent_default();
+                                drop_target_column.set(None);
                                 let Some(dragged) = dragging_card() else {
                                     return;
                                 };
@@ -2349,10 +2386,83 @@ pub fn KanbanPanel(
                                     ondragend: move |_| dragging_column.set(None),
                                     "::"
                                 }
-                                span {
-                                    class: "entity-title",
-                                    "data-testid": "kanban-column-title",
-                                    "{column.title}"
+                                if editing_column_id().as_deref() == Some(column_id.as_str()) {
+                                    input {
+                                        class: "entity-title column-rename-input",
+                                        "data-testid": "column-rename-input",
+                                        r#type: "text",
+                                        autofocus: true,
+                                        maxlength: "512",
+                                        value: "{editing_column_title}",
+                                        oninput: move |event: FormEvent| editing_column_title.set(event.value()),
+                                        onkeydown: {
+                                            let column_id = column_id.clone();
+                                            let base = base_url.clone();
+                                            let realm = selected_realm_id.clone();
+                                            let actor = account_did.clone();
+                                            move |event: KeyboardEvent| match event.key().to_string().as_str() {
+                                                "Enter" => {
+                                                    event.prevent_default();
+                                                    submit_column_rename(
+                                                        base.clone(),
+                                                        token,
+                                                        realm.clone(),
+                                                        actor.clone(),
+                                                        column_id.clone(),
+                                                        editing_column_title(),
+                                                        selected_scope_security_encrypted,
+                                                        state_store,
+                                                        board_status,
+                                                    );
+                                                    editing_column_id.set(None);
+                                                }
+                                                "Escape" => {
+                                                    event.prevent_default();
+                                                    editing_column_id.set(None);
+                                                }
+                                                _ => {}
+                                            }
+                                        },
+                                        onblur: {
+                                            let column_id = column_id.clone();
+                                            let base = base_url.clone();
+                                            let realm = selected_realm_id.clone();
+                                            let actor = account_did.clone();
+                                            move |_| {
+                                                // Commit on blur so a click elsewhere keeps the edit;
+                                                // an empty draft is ignored by `submit_column_rename`.
+                                                if editing_column_id().as_deref() == Some(column_id.as_str()) {
+                                                    submit_column_rename(
+                                                        base.clone(),
+                                                        token,
+                                                        realm.clone(),
+                                                        actor.clone(),
+                                                        column_id.clone(),
+                                                        editing_column_title(),
+                                                        selected_scope_security_encrypted,
+                                                        state_store,
+                                                        board_status,
+                                                    );
+                                                    editing_column_id.set(None);
+                                                }
+                                            }
+                                        },
+                                    }
+                                } else {
+                                    span {
+                                        class: "entity-title",
+                                        "data-testid": "kanban-column-title",
+                                        title: crate::i18n::tr("kanban.rename_list_hint"),
+                                        ondoubleclick: {
+                                            let column_id = column_id.clone();
+                                            let column_title = column.title.clone();
+                                            move |_| {
+                                                editing_column_title.set(column_title.clone());
+                                                editing_column_id.set(Some(column_id.clone()));
+                                            }
+                                        },
+                                        "{column.title}"
+                                    }
                                 }
                             }
                         }
@@ -2454,7 +2564,10 @@ pub fn KanbanPanel(
                                         }));
                                     }
                                 },
-                                ondragend: move |_| dragging_card.set(None),
+                                ondragend: move |_| {
+                                    dragging_card.set(None);
+                                    drop_target_column.set(None);
+                                },
                                 onclick: {
                                     let c = card.clone();
                                     let route_realm_id = card_detail_route_realm_id(&selected_realm_id);
@@ -2735,8 +2848,12 @@ pub fn KanbanPanel(
                                                     write_records,
                                                     board_status,
                                                 );
+                                                // Continuous-create (design/kanban-baseline.md M1):
+                                                // keep the composer open and clear the field so the
+                                                // user can add several cards without re-opening it.
+                                                // The textarea stays mounted, so focus is retained;
+                                                // the ✕ cancel button closes it explicitly.
                                                 new_card_title.set(String::new());
-                                                adding_card_to.set(None);
                                             }
                                         },
                                         UiIcon { name: "check" }

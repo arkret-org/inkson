@@ -85,28 +85,38 @@ impl SettingsSection {
         }
     }
 
-    pub(super) fn label(self) -> &'static str {
+    /// i18n key for the section label. Render sites resolve it through
+    /// [`crate::i18n::tr`]; terminology was humanised here (TSP
+    /// connections → External connections, Capabilities → App
+    /// authorizations, Blocked actors → Block list, Consent → Invites &
+    /// consent, Diagnostics → Release status).
+    pub(super) fn label_key(self) -> &'static str {
         match self {
-            Self::Account => "Account information",
-            Self::Agents => "My Agents",
-            Self::Server => "Server information",
-            Self::Devices => "Devices",
-            Self::Storage => "Data & sync",
-            Self::Encryption => "Security",
-            Self::Recovery => "Recovery",
-            Self::Mimi => "Integrations",
-            Self::Connections => "TSP connections",
-            Self::Notifications => "Notifications",
-            Self::Privacy => "Privacy & sharing",
-            Self::InvitePolicy => "Who can invite me",
-            Self::Consent => "Consent",
-            Self::Blocklist => "Blocked actors",
-            Self::Capabilities => "Capabilities",
-            Self::Theme => "Appearance & locale",
-            Self::Release => "Diagnostics",
-            Self::Audit => "Audit log",
-            Self::Developer => "Developer tools",
+            Self::Account => "settings.section.account",
+            Self::Agents => "settings.section.agents",
+            Self::Server => "settings.section.server",
+            Self::Devices => "settings.section.devices",
+            Self::Storage => "settings.section.storage",
+            Self::Encryption => "settings.section.encryption",
+            Self::Recovery => "settings.section.recovery",
+            Self::Mimi => "settings.section.mimi",
+            Self::Connections => "settings.section.connections",
+            Self::Notifications => "settings.section.notifications",
+            Self::Privacy => "settings.section.privacy",
+            Self::InvitePolicy => "settings.section.invite_policy",
+            Self::Consent => "settings.section.consent",
+            Self::Blocklist => "settings.section.blocklist",
+            Self::Capabilities => "settings.section.capabilities",
+            Self::Theme => "settings.section.theme",
+            Self::Release => "settings.section.release",
+            Self::Audit => "settings.section.audit",
+            Self::Developer => "settings.section.developer",
         }
+    }
+
+    /// Resolve the section label in the active locale.
+    pub(super) fn label(self) -> String {
+        crate::i18n::tr(self.label_key())
     }
 
     pub(super) fn route(self) -> Route {
@@ -122,50 +132,74 @@ impl SettingsSection {
     }
 }
 
+// Six-group taxonomy (design/settings-ia-reorg.md §3.1): 账号 / 设备与安全 /
+// 隐私 / 通知 / 外观与语言 / 高级. `Mimi` is intentionally absent from every
+// group — the MIMI interop test surface stays reachable only by direct route
+// so it does not leak into normal settings navigation (design §3.3).
 pub(super) const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[
     SettingsSection::Account,
     SettingsSection::Agents,
     SettingsSection::Server,
+];
+pub(super) const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
     SettingsSection::Devices,
     SettingsSection::Recovery,
-];
-pub(super) const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
-    SettingsSection::Notifications,
-    SettingsSection::Privacy,
-    // U4 invite_receive_policy is an actor-private
-    // disclosure control, so it sits with the other privacy surfaces.
-    SettingsSection::InvitePolicy,
-    // Holder-private consent decisions (spec identity/consent-model.md §2)
-    // sit with the other actor-private disclosure controls.
-    SettingsSection::Consent,
-    // G3.Y3 blocklist sits next to Privacy because it is an actor-private
-    // disclosure control (spec governance/content-moderation.md §4).
-    SettingsSection::Blocklist,
-];
-pub(super) const SETTINGS_CLIENT_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
-pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
+    SettingsSection::Encryption,
+    // Capability delegation ("App authorizations") is a device-scoped
+    // security control, so it sits with devices/recovery.
     SettingsSection::Capabilities,
-    SettingsSection::Connections,
+];
+pub(super) const SETTINGS_PRIVACY_GROUP: &[SettingsSection] = &[
+    SettingsSection::Privacy,
+    // G3.Y3 blocklist is an actor-private disclosure control
+    // (spec governance/content-moderation.md §4).
+    SettingsSection::Blocklist,
+    // U4 invite_receive_policy is an actor-private disclosure control.
+    SettingsSection::InvitePolicy,
+    // Holder-private consent decisions (spec identity/consent-model.md §2).
+    SettingsSection::Consent,
+];
+pub(super) const SETTINGS_NOTIFICATIONS_GROUP: &[SettingsSection] =
+    &[SettingsSection::Notifications];
+pub(super) const SETTINGS_APPEARANCE_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
+pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
     SettingsSection::Storage,
+    SettingsSection::Connections,
     SettingsSection::Release,
     SettingsSection::Audit,
     SettingsSection::Developer,
 ];
+/// `(group_label_key, group_hint_key, sections)`. Both text slots are i18n
+/// keys resolved through [`crate::i18n::tr`] at render time.
 pub(super) const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
     (
-        "Account",
-        "Identity, server, and signed-in devices.",
+        "settings.group.account",
+        "settings.group.account.hint",
         SETTINGS_ACCOUNT_GROUP,
     ),
     (
-        "Notifications & privacy",
-        "Notification delivery behavior and actor-private disclosure controls.",
-        SETTINGS_DELIVERY_GROUP,
+        "settings.group.security",
+        "settings.group.security.hint",
+        SETTINGS_SECURITY_GROUP,
     ),
-    ("App", "Appearance and locale.", SETTINGS_CLIENT_GROUP),
     (
-        "Advanced",
-        "Capability, storage, and protocol diagnostics.",
+        "settings.group.privacy",
+        "settings.group.privacy.hint",
+        SETTINGS_PRIVACY_GROUP,
+    ),
+    (
+        "settings.group.notifications",
+        "settings.group.notifications.hint",
+        SETTINGS_NOTIFICATIONS_GROUP,
+    ),
+    (
+        "settings.group.appearance",
+        "settings.group.appearance.hint",
+        SETTINGS_APPEARANCE_GROUP,
+    ),
+    (
+        "settings.group.advanced",
+        "settings.group.advanced.hint",
         SETTINGS_ADVANCED_GROUP,
     ),
 ];

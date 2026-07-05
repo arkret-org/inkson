@@ -153,6 +153,63 @@ pub(super) fn submit_column_order_updates(
     }
 }
 
+/// Rename a list (column) by submitting a `ck.space.update` title patch.
+/// The optimistic projection folds the patch into the `columns` memo, so the
+/// new title renders immediately while the envelope is in flight
+/// (design/kanban-baseline.md M1).
+pub(super) fn submit_column_rename(
+    base_url: String,
+    token: Signal<String>,
+    realm_id: String,
+    actor_id: String,
+    column_id: String,
+    title: String,
+    // R4: three-state security signal (see `kanban_plaintext_block_reason`).
+    scope_security_encrypted: Option<bool>,
+    state_store: Signal<LocalStateStore>,
+    mut board_status: Signal<String>,
+) {
+    let title = title.trim().to_owned();
+    if title.is_empty() {
+        return;
+    }
+    if actor_id.trim().is_empty() {
+        board_status.set("sign in before renaming lists".to_owned());
+        return;
+    }
+    if realm_id.trim().is_empty() {
+        board_status.set("select a Realm before renaming lists".to_owned());
+        return;
+    }
+    let op = match crate::operation::ck_ops::space_update_patch(
+        &realm_id,
+        &actor_id,
+        &column_id,
+        json!({ "title": title }),
+    ) {
+        Ok(builder) => match builder.build_sdk_event("yougen") {
+            Ok(event) => event,
+            Err(err) => {
+                board_status.set(format!("List rename failed: {err}"));
+                return;
+            }
+        },
+        Err(err) => {
+            board_status.set(format!("List rename failed: {err:#}"));
+            return;
+        }
+    };
+    submit_kanban_operation_event(
+        base_url,
+        token,
+        realm_id,
+        op,
+        scope_security_encrypted,
+        state_store,
+        board_status,
+    );
+}
+
 /// Build + submit a Kanban event and record it in the board write queue.
 /// Card creates emit real `ck.strand.create` envelopes with an initial
 /// `ck.component.strand.position.v1` component; metadata writes go through

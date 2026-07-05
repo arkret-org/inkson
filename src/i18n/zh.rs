@@ -323,6 +323,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.add_list", "添加列表");
     dict.set("kanban.save_card", "保存");
     dict.set("kanban.cancel_card", "取消");
+    dict.set("kanban.rename_list_hint", "双击重命名");
     dict.set(
         "kanban.security_not_ready",
         "安全状态未就绪,请稍候重试后再写入该 Realm。",
@@ -456,6 +457,42 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.store_backup", "存储备份");
     dict.set("settings.register_push", "注册推送");
     dict.set("settings.unregister_push", "注销推送");
+    // Settings navigation - section labels (design/settings-ia-reorg.md 3.1).
+    dict.set("settings.section.account", "账号信息");
+    dict.set("settings.section.agents", "我的智能体");
+    dict.set("settings.section.server", "服务器信息");
+    dict.set("settings.section.devices", "设备");
+    dict.set("settings.section.storage", "数据与同步");
+    dict.set("settings.section.encryption", "安全");
+    dict.set("settings.section.recovery", "恢复");
+    dict.set("settings.section.mimi", "集成");
+    dict.set("settings.section.connections", "外部连接");
+    dict.set("settings.section.notifications", "通知");
+    dict.set("settings.section.privacy", "隐私与分享");
+    dict.set("settings.section.invite_policy", "谁能邀请我");
+    dict.set("settings.section.consent", "邀请与同意");
+    dict.set("settings.section.blocklist", "屏蔽名单");
+    dict.set("settings.section.capabilities", "应用授权");
+    dict.set("settings.section.theme", "外观与语言");
+    dict.set("settings.section.release", "发布状态");
+    dict.set("settings.section.audit", "审计日志");
+    dict.set("settings.section.developer", "开发者工具");
+    // Settings navigation - group labels + hints.
+    dict.set("settings.group.account", "账号");
+    dict.set("settings.group.account.hint", "身份、智能体与服务器。");
+    dict.set("settings.group.security", "设备与安全");
+    dict.set("settings.group.security.hint", "已登录设备、恢复与应用授权。");
+    dict.set("settings.group.privacy", "隐私");
+    dict.set("settings.group.privacy.hint", "个人私密的披露控制。");
+    dict.set("settings.group.notifications", "通知");
+    dict.set("settings.group.notifications.hint", "通知投递行为。");
+    dict.set("settings.group.appearance", "外观与语言");
+    dict.set("settings.group.appearance.hint", "主题与语言。");
+    dict.set("settings.group.advanced", "高级");
+    dict.set("settings.group.advanced.hint", "数据、连接与协议诊断。");
+    // Settings-nav filter (design 3.4).
+    dict.set("settings.search.placeholder", "搜索设置…");
+    dict.set("settings.search.no_results", "无匹配的设置项");
     // T1.3 - event signature / proof mode status display.
     dict.set("settings.proof_mode.label", "事件签名");
     dict.set(

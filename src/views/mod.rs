@@ -94,6 +94,16 @@ pub enum AppView {
     VerifyDevice,
     RealmAdmin,
     Kanban,
+    /// Realm management list (`/realms/manage`). Distinct from `Kanban` so the
+    /// management surface round-trips 1:1 with its route
+    /// (design/route-view-ia.md §3.1).
+    RealmsManage,
+    /// Live call surface (`/call?…`). Its own view variant so the route maps
+    /// 1:1 instead of masquerading as `Dashboard`.
+    Call,
+    /// Applets host (`/applets`). Own view variant for the same 1:1 reason;
+    /// gated behind the `experimental-applets` feature at render time.
+    Applets,
     /// Notifications. Per `models/object-model-core.md` §1,
     /// `notification` is a *derived* projection — NOT a canonical wire object.
     /// The only canonical events feeding this view are `ck.read_cursor.advance`,

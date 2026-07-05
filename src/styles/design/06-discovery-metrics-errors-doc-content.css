@@ -787,6 +787,13 @@
     background-color: color-mix(in srgb, var(--accent, #7c83ff) 6%, transparent);
     transition: background-color 120ms ease-out, outline-color 120ms ease-out;
 }
+/* The specific column under the drag pointer gets a solid accent border +
+   stronger tint so the drop destination is unambiguous (M1). */
+.board-column.is-drop-target {
+    outline: 2px solid var(--accent, #7c83ff);
+    outline-offset: -2px;
+    background-color: color-mix(in srgb, var(--accent, #7c83ff) 14%, transparent);
+}
 .board-card.dragging-source {
     opacity: 0.35;
     filter: saturate(60%);

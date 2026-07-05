@@ -280,7 +280,10 @@ impl OpenedLink {
                 _ => Route::Directory,
             },
             TargetKind::Message => match typed_realm_route_id(&self.address.realm) {
-                Some(realm_id) => Route::Chat { realm_id },
+                Some(realm_id) => Route::Chat {
+                    realm_id,
+                    message: String::new(),
+                },
                 _ => Route::Directory,
             },
         }
@@ -418,7 +421,7 @@ mod tests {
         let opened = OpenedLink::parse(&links.web_cokret).unwrap();
         assert!(opened.address.is_message());
         match opened.route_for(TargetKind::Message) {
-            Route::Chat { realm_id } => {
+            Route::Chat { realm_id, .. } => {
                 assert_eq!(realm_id, format!("ck:realm:{R}"));
             }
             other => panic!("expected Chat route, got {other:?}"),

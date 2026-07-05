@@ -237,6 +237,28 @@
   align-self: flex-end;
 }
 
+/* Deep-link focus flash (design/route-view-ia.md §3.2): the message named by
+   `?message=` pulses an accent ring for ~2s on arrival, then settles. */
+.discussion-message.is-highlighted {
+  animation: chat-message-focus-flash 2s ease-out 1;
+  border-radius: 10px;
+  scroll-margin: 16px;
+}
+@keyframes chat-message-focus-flash {
+  0% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #7c83ff) 70%, transparent);
+    background: color-mix(in srgb, var(--accent, #7c83ff) 16%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #7c83ff) 40%, transparent);
+    background: color-mix(in srgb, var(--accent, #7c83ff) 8%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    background: transparent;
+  }
+}
+
 .discussion-message .msg-body {
   max-width: 100%;
   position: relative;

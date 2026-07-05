@@ -88,6 +88,58 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.dark", "Dark");
     dict.set("settings.system", "System");
 
+    // Settings navigation — section labels (design/settings-ia-reorg.md §3.1).
+    // Terminology humanised: TSP connections → External connections,
+    // Capabilities → App authorizations, Blocked actors → Block list,
+    // Consent → Invites & consent, Diagnostics → Release status.
+    dict.set("settings.section.account", "Account information");
+    dict.set("settings.section.agents", "My Agents");
+    dict.set("settings.section.server", "Server information");
+    dict.set("settings.section.devices", "Devices");
+    dict.set("settings.section.storage", "Data & sync");
+    dict.set("settings.section.encryption", "Security");
+    dict.set("settings.section.recovery", "Recovery");
+    dict.set("settings.section.mimi", "Integrations");
+    dict.set("settings.section.connections", "External connections");
+    dict.set("settings.section.notifications", "Notifications");
+    dict.set("settings.section.privacy", "Privacy & sharing");
+    dict.set("settings.section.invite_policy", "Who can invite me");
+    dict.set("settings.section.consent", "Invites & consent");
+    dict.set("settings.section.blocklist", "Block list");
+    dict.set("settings.section.capabilities", "App authorizations");
+    dict.set("settings.section.theme", "Appearance & locale");
+    dict.set("settings.section.release", "Release status");
+    dict.set("settings.section.audit", "Audit log");
+    dict.set("settings.section.developer", "Developer tools");
+    // Settings navigation — group labels + hints.
+    dict.set("settings.group.account", "Account");
+    dict.set("settings.group.account.hint", "Identity, agents, and server.");
+    dict.set("settings.group.security", "Devices & security");
+    dict.set(
+        "settings.group.security.hint",
+        "Signed-in devices, recovery, and app authorizations.",
+    );
+    dict.set("settings.group.privacy", "Privacy");
+    dict.set(
+        "settings.group.privacy.hint",
+        "Actor-private disclosure controls.",
+    );
+    dict.set("settings.group.notifications", "Notifications");
+    dict.set(
+        "settings.group.notifications.hint",
+        "Notification delivery behavior.",
+    );
+    dict.set("settings.group.appearance", "Appearance & language");
+    dict.set("settings.group.appearance.hint", "Theme and locale.");
+    dict.set("settings.group.advanced", "Advanced");
+    dict.set(
+        "settings.group.advanced.hint",
+        "Data, connections, and protocol diagnostics.",
+    );
+    // Settings-nav filter (design §3.4).
+    dict.set("settings.search.placeholder", "Search settings…");
+    dict.set("settings.search.no_results", "No matching settings");
+
     // T1.3 — proof mode (event signing) status. Exposed in the settings
     // panel and the top status bar so the user can confirm at a glance
     // whether outgoing events are placeholder-dev, real-Ed25519, or
@@ -275,6 +327,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.add_list", "Add List");
     dict.set("kanban.save_card", "Save");
     dict.set("kanban.cancel_card", "Cancel");
+    dict.set("kanban.rename_list_hint", "Double-click to rename");
     dict.set(
         "kanban.security_not_ready",
         "Security state not ready; please retry shortly before writing to this Realm.",

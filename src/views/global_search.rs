@@ -180,8 +180,12 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
 
     if let Some(message_id) = string_field(result, &["message_id", "event_id", "object_id"]) {
         return Some(SearchDestination {
+            // Carry the message id in the `?message=` query so ChatPanel
+            // scrolls to and flashes the exact hit (design/route-view-ia.md
+            // §3.2), mirroring the task deep-link above.
             route: Route::Chat {
                 realm_id: realm_id.to_owned(),
+                message: message_id.clone(),
             },
             seal: Some(message_id),
             label: "Open message".to_owned(),
@@ -195,6 +199,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
     let route = match surface {
         "message" => Route::Chat {
             realm_id: realm_id.to_owned(),
+            message: String::new(),
         },
         "kanban" | "board" => Route::KanbanRealm {
             realm_id: realm_id.to_owned(),
@@ -496,8 +501,9 @@ mod tests {
         let destination = result_destination(&row).expect("destination");
         assert_eq!(destination.seal.as_deref(), Some("ck:event:message"));
         match destination.route {
-            Route::Chat { realm_id } => {
+            Route::Chat { realm_id, message } => {
                 assert_eq!(realm_id, "ck:realm:demo");
+                assert_eq!(message, "ck:event:message");
             }
             other => panic!("expected Chat, got {other:?}"),
         }
