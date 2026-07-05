@@ -114,7 +114,7 @@ fn mls_self_update_membership_frontier(
         })
 }
 
-pub(super) fn mls_policy_root_from_seal_view(
+pub(crate) fn mls_policy_root_from_seal_view(
     seal_view: &LocalSealView,
     realm_id: &str,
 ) -> Result<cokret_sdk::Hash, String> {

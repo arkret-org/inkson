@@ -277,7 +277,8 @@ impl CokretApi {
     ) -> anyhow::Result<cokret_sdk::EphemeralSubmitOutcome> {
         let payload = cokret_sdk::RealmKeyRequestPayload {
             key_scope: cokret_sdk::RealmKeyRequestScope {
-                effective_scope: json!({ "realm_id": crate::operation::trim_realm_id(realm_id) }),
+                effective_scope: crate::operation::realm_effective_scope_value(realm_id)
+                    .map_err(anyhow::Error::msg)?,
                 policy_digest: None,
                 membership_frontier_digest: None,
                 from_epoch,

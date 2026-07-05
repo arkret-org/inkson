@@ -2451,16 +2451,18 @@ pub fn RouterView() -> Element {
                     )
                     .await;
                     match outcome {
-                        // Record the dedup key whether or not a request was
-                        // actually emitted: a `None` means "no eligible provider /
-                        // gap right now", and re-trying every sync tick against the
-                        // same unchanged state would only spam. The key changes as
-                        // soon as a share installs a secret, releasing the guard.
-                        Ok(_) => {
+                        // Record the dedup key only after a request was actually
+                        // emitted. `pending_history_request_dedup_key` and the
+                        // async requester read state at different times; if the
+                        // second read observes a transiently incomplete inbox /
+                        // projection and returns `None`, deduping would suppress
+                        // the only retry path for late-join history.
+                        Ok(Some(_)) => {
                             if let Some(key) = pull_request_key.clone() {
                                 share_request_dedup.set(Some(key));
                             }
                         }
+                        Ok(None) => {}
                         Err(error) => {
                             tracing::debug!(
                                 realm = %short_protocol_id(&realm_for_log),

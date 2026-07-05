@@ -1996,7 +1996,25 @@ pub(crate) async fn share_history_to_requester(
             &device_id,
         );
     }
-    let all = state_store.read().history_secrets_for(&realm_id);
+    let (all, policy_digest) = {
+        let store = state_store.read();
+        let policy_digest = match store.genesis_policy_root_for_effective_scope(&realm_id, None) {
+            Some(stored) => {
+                cokret_sdk::Hash::new(stored.clone()).map_err(|err| {
+                    anyhow::anyhow!("stored MLS genesis policy_root invalid: {err:?}")
+                })?;
+                stored
+            }
+            None => crate::mls::group_events::mls_policy_root_from_seal_view(
+                &store.seal_view_for_realm(&realm_id),
+                &realm_id,
+            )
+            .map_err(|err| anyhow::anyhow!(err))?
+            .as_str()
+            .to_owned(),
+        };
+        (store.history_secrets_for(&realm_id), policy_digest)
+    };
     if all.is_empty() {
         return Ok(false);
     }
@@ -2028,6 +2046,7 @@ pub(crate) async fn share_history_to_requester(
         &request.recipient_device_id,
         min_epoch,
         max_epoch,
+        policy_digest,
         sealed,
     )
     .map_err(|err| anyhow::anyhow!(err))?;
@@ -2191,12 +2210,22 @@ fn projected_history_visibility_for_realm(
 
 /// A planned `ck.realm_key.request`: the provider device to ask and the epoch
 /// range whose `history_secret`s are missing locally.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HistoryKeyRequestPlan {
     pub provider_principal_id: String,
     pub provider_device_ref: String,
     pub from_epoch: u64,
     pub to_epoch: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryKeyRequestDiagnostics {
+    pub is_encrypted: bool,
+    pub join_epoch: Option<u64>,
+    pub installed_epochs: Vec<u64>,
+    pub history_visibility: String,
+    pub provider_count: usize,
+    pub plan: Option<HistoryKeyRequestPlan>,
 }
 
 /// Pure planning core for the receiver-initiated history pull. Decides whether
@@ -2335,6 +2364,29 @@ pub(crate) fn pending_history_request_dedup_key(
     realm_id: &str,
     actor_id: &str,
 ) -> Option<String> {
+    let diagnostics = history_key_request_diagnostics(store, realm_id, actor_id);
+    if !diagnostics.is_encrypted {
+        return None;
+    }
+    diagnostics.join_epoch?;
+    let plan = diagnostics.plan?;
+    let installed_signature = diagnostics
+        .installed_epochs
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    Some(format!(
+        "{realm_id}|{}|{}|{installed_signature}",
+        plan.from_epoch, plan.to_epoch
+    ))
+}
+
+pub(crate) fn history_key_request_diagnostics(
+    store: &LocalStateStore,
+    realm_id: &str,
+    actor_id: &str,
+) -> HistoryKeyRequestDiagnostics {
     let is_encrypted = store.realm_projection_is_mls_encrypted(realm_id);
     let snapshot = store.mls_snapshot_for(realm_id);
     let join_epoch = snapshot.as_ref().map(|s| s.epoch);
@@ -2357,20 +2409,14 @@ pub(crate) fn pending_history_request_dedup_key(
             &providers,
         )
     });
-    if !is_encrypted {
-        return None;
+    HistoryKeyRequestDiagnostics {
+        is_encrypted,
+        join_epoch,
+        installed_epochs,
+        history_visibility,
+        provider_count: providers.len(),
+        plan,
     }
-    let _snapshot = snapshot?;
-    let plan = plan?;
-    let installed_signature = installed_epochs
-        .iter()
-        .map(u64::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    Some(format!(
-        "{realm_id}|{}|{}|{installed_signature}",
-        plan.from_epoch, plan.to_epoch
-    ))
 }
 
 /// Receiver-initiated history pull (history sharing, last leg): when this device
@@ -5198,11 +5244,86 @@ mod tests {
     }
 
     #[test]
+    fn harvests_provider_candidate_from_projected_device_welcome_envelope() {
+        let inbox = vec![json!({
+            "kind": "ck.mls.welcome",
+            "sender_principal_id": PROVIDER_DID,
+            "sender_device_id": PROVIDER_DEVICE,
+            "recipient_principal_id": SELF_DID,
+            "recipient_device_id": "ck:device:self",
+            "sent_at": "2026-07-05T00:00:00Z",
+            "expires_at": "2099-07-05T00:01:00Z",
+            "content": {
+                "group_id": "test-group",
+                "epoch": 1,
+                "recipient_principal_id": SELF_DID,
+                "recipient_device_id": "ck:device:self",
+                "welcome": "b3BhcXVl",
+                "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "unsigned": {
+                "source_event_id": "ck:event:welcome",
+                "mls_welcome_id": "ck:mls_welcome:welcome",
+                "key_package_id": "ck:mls_keypackage:key"
+            }
+        })];
+
+        let candidates = provider_candidates_from_inbox(&inbox, "ck:realm:abc", SELF_DID);
+
+        assert_eq!(
+            candidates,
+            vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())]
+        );
+    }
+
+    #[test]
+    fn pending_history_key_request_uses_projected_shared_realm_and_welcome_provider() {
+        let realm = "ck:realm:abc";
+        let mut store = temp_store("pending-history-key-request");
+        store.save_realm_tree_projection(
+            realm,
+            json!({
+                "schema": "ck.schema.realm.v1",
+                "object": {
+                    "history_visibility": "shared",
+                    "encryption_profile": "mls_rfc9420",
+                    "content_scheme": "mls-exporter-aead-v1"
+                }
+            }),
+        );
+        let mut snapshot = dummy_mls_snapshot(realm);
+        snapshot.epoch = 1;
+        store.save_mls_snapshot(realm.to_owned(), snapshot);
+        store.ingest_to_device_messages(&[json!({
+            "kind": "ck.mls.welcome",
+            "sender_principal_id": PROVIDER_DID,
+            "sender_device_id": PROVIDER_DEVICE,
+            "recipient_principal_id": SELF_DID,
+            "recipient_device_id": "ck:device:self",
+            "sent_at": "2026-07-05T00:00:00Z",
+            "expires_at": "2099-07-05T00:01:00Z",
+            "content": {
+                "group_id": "test-group",
+                "epoch": 1,
+                "recipient_principal_id": SELF_DID,
+                "recipient_device_id": "ck:device:self",
+                "welcome": "b3BhcXVl",
+                "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+        })]);
+
+        let key = pending_history_request_dedup_key(&store, realm, SELF_DID)
+            .expect("shared pre-join gap with a Welcome provider should request history keys");
+
+        assert!(key.contains("ck:realm:abc|0|0|"), "{key}");
+    }
+
+    #[test]
     fn parses_projected_realm_key_request_payload_envelope() {
         let realm = "ck:realm:abc";
         let request = cokret_sdk::RealmKeyRequestPayload {
             key_scope: cokret_sdk::RealmKeyRequestScope {
-                effective_scope: json!({ "realm_id": realm }),
+                effective_scope: json!({ "kind": "realm", "realm_id": realm }),
                 policy_digest: None,
                 membership_frontier_digest: None,
                 from_epoch: 0,
@@ -5241,7 +5362,7 @@ mod tests {
     fn rejects_realm_key_request_when_envelope_realm_mismatches_payload() {
         let request = cokret_sdk::RealmKeyRequestPayload {
             key_scope: cokret_sdk::RealmKeyRequestScope {
-                effective_scope: json!({ "realm_id": "ck:realm:abc" }),
+                effective_scope: json!({ "kind": "realm", "realm_id": "ck:realm:abc" }),
                 policy_digest: None,
                 membership_frontier_digest: None,
                 from_epoch: 0,

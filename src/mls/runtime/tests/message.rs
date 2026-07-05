@@ -8,6 +8,26 @@ use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
 
 #[cfg(not(target_arch = "wasm32"))]
+struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::YougenEventSigner>>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ActiveSignerGuard {
+    fn install(seed: [u8; 32], signer_did: &str) -> Self {
+        let signer =
+            std::sync::Arc::new(crate::event_signer::build_ed25519_signer(seed, signer_did));
+        Self(crate::event_signer::replace_active_signer(Some(signer)))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for ActiveSignerGuard {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        let _ = crate::event_signer::replace_active_signer(previous);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let mut state = temp_state_store("creator-bootstrap");
@@ -72,6 +92,9 @@ fn authoring_exporter_aead_content_retains_history_secret() {
     // this test MUST use a realm id no other test writes, or the `is_none()`
     // precondition below would observe another test's retained secret.
     let realm = "ck:realm:01904100-0000-7000-8000-0000000000f7";
+    let history_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
+    let _ = history_store.delete_secret(&history_key);
 
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
@@ -100,6 +123,7 @@ fn authoring_exporter_aead_content_retains_history_secret() {
         .history_secret_for(realm, 0)
         .expect("authoring exporter-aead content must retain the epoch history_secret");
     assert!(!retained.is_empty());
+    let _ = history_store.delete_secret(&history_key);
 }
 
 // ── YOU-02-004: receive-chain persistence (§5.6) ─────────────────
@@ -709,6 +733,8 @@ fn realm_key_share_envelope(
     recipient_pub: &[u8],
     secrets: &[(u64, Vec<u8>)],
 ) -> serde_json::Value {
+    let _signer_guard =
+        ActiveSignerGuard::install([17u8; 32], "did:key:zRealmKeyShareRuntimeTestSigner");
     let sealed =
         cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(recipient_pub, secrets)
             .unwrap();
@@ -723,6 +749,7 @@ fn realm_key_share_envelope(
         recipient_device,
         lo,
         hi,
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         sealed,
     )
     .unwrap();
@@ -1039,21 +1066,10 @@ fn realm_key_share_sender_signature_round_trips() {
     // tolerate an absent one).
     use ed25519_dalek::SigningKey;
 
-    let _signer_guard = {
-        let seed = [42u8; 32];
-        let verifying = SigningKey::from_bytes(&seed).verifying_key();
-        let did = crate::did_key::did_key_from_verifying_key(&verifying);
-        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_signer(seed, did));
-        crate::event_signer::replace_active_signer(Some(signer));
-        // Restore the global signer slot when the test ends.
-        struct Restore;
-        impl Drop for Restore {
-            fn drop(&mut self) {
-                crate::event_signer::replace_active_signer(None);
-            }
-        }
-        Restore
-    };
+    let seed = [42u8; 32];
+    let verifying = SigningKey::from_bytes(&seed).verifying_key();
+    let did = crate::did_key::did_key_from_verifying_key(&verifying);
+    let _signer_guard = ActiveSignerGuard::install(seed, &did);
 
     let realm = "ck:realm:01904100-0000-7000-8000-0000000000f5";
     let recipient_actor = "did:web:bob.example";
@@ -1068,6 +1084,7 @@ fn realm_key_share_sender_signature_round_trips() {
         recipient_device,
         3,
         4,
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "c2VhbGVk".to_owned(),
     )
     .unwrap();

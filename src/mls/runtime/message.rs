@@ -395,21 +395,12 @@ pub fn ingest_realm_key_share(
         return 0;
     }
     // SEC-02 / device-lifecycle.md §13: sender-device authentication. When the
-    // share carries a populated `sender_device_signature`, verify it over
-    // `sender_signing_input()`. The verifying key is bound to the sender's
-    // device-directory record (`(sender_principal_id, sender_device_id)`) when
-    // that record is cached: the self-asserted `signer_public_key_multibase` MUST
-    // byte-equal the directory key, and a revoked / absent device (NegativeHit)
-    // is rejected outright. When no directory record is cached (Miss — keys not
-    // prefetched) we fall back to the self-asserted key, since the per-secret
-    // HPKE seal still gates confidentiality/integrity. An empty / absent
-    // signature is tolerated (legacy provider) only on the Miss path.
+    // share carries a sender principal, the sender device must sign the share;
+    // a revoked/absent device is rejected, and a cache miss after prefetch still
+    // fails closed for empty signatures.
     let sender_principal_id = realm_key_share_sender_principal_id(share_envelope);
     if !verify_realm_key_share_sender_signature(&payload, sender_principal_id.as_deref()) {
-        tracing::debug!(
-            %realm_id,
-            "reject ck.realm_key.share: sender_device_signature failed device-bound verification"
-        );
+        tracing::debug!(%realm_id, "reject ck.realm_key.share: sender_device_signature failed");
         return 0;
     }
     let Some(sealed) = payload

@@ -21,8 +21,12 @@ pub(crate) fn now_utc() -> DateTime<Utc> {
     Utc::now()
 }
 
+pub(crate) fn now_utc_secs() -> DateTime<Utc> {
+    DateTime::<Utc>::from_timestamp(now_utc().timestamp(), 0).unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+}
+
 pub(crate) fn now_rfc3339_secs() -> String {
-    now_utc().to_rfc3339_opts(SecondsFormat::Secs, true)
+    now_utc_secs().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 /// RFC3339 (seconds precision) timestamp `minutes` into the future. Used to

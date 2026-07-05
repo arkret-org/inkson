@@ -91,7 +91,7 @@ pub fn seal_history_secrets(
         scope,
         sender_device_id.to_owned(),
         sender_device_signature,
-        crate::clock::now_utc(),
+        crate::clock::now_utc_secs(),
         None,
     )
     .map_err(|err| format!("seal history secrets to RRK: {err:?}"))

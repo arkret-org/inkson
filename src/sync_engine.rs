@@ -817,6 +817,14 @@ async fn run_iteration(
                 last_error.set(Some(format!("sync_engine to-device: {error}")));
                 return IterationOutcome::Transient(format!("sync_engine to-device: {error}"));
             }
+            if let Err(error) = poll_device_message_queue(&api, ctx).await {
+                if is_auth_expired_error(&error) {
+                    return IterationOutcome::AuthExpired;
+                }
+                let mut last_error = ctx.last_error;
+                last_error.set(Some(format!("sync_engine to-device poll: {error}")));
+                return IterationOutcome::Transient(format!("sync_engine to-device poll: {error}"));
+            }
             IterationOutcome::Ok {
                 realm_ids: response.realms.keys().cloned().collect(),
             }
@@ -1443,6 +1451,53 @@ async fn process_to_device_delivery(
     Ok(())
 }
 
+async fn poll_device_message_queue(api: &CokretApi, ctx: &SyncEngineContext) -> anyhow::Result<()> {
+    let first_page = api.receive_device_messages().await?;
+    ingest_device_message_pages(api, first_page, ctx).await
+}
+
+async fn ingest_device_message_pages(
+    api: &CokretApi,
+    first_page: DeviceMessagesGetOutcome,
+    ctx: &SyncEngineContext,
+) -> anyhow::Result<()> {
+    let mut page = first_page;
+    let mut page_count = 0usize;
+    loop {
+        let messages = device_messages_get_values(&page)?;
+        let persisted = {
+            let mut state_store = ctx.state_store;
+            state_store.write().ingest_to_device_messages(&messages);
+            state_store.read().persist_error().is_none()
+        };
+        if persisted
+            && to_device_batch_all_ack_safe(&messages)
+            && !messages.is_empty()
+            && let Some(ack_token) = page.ack_token.as_deref()
+        {
+            api.ack_device_messages(ack_token).await?;
+        }
+        if !(page.has_more || page.limited) {
+            break;
+        }
+        page_count += 1;
+        if page_count > MAX_TO_DEVICE_BACKFILL_PAGES {
+            anyhow::bail!(
+                "to-device poll exceeded {MAX_TO_DEVICE_BACKFILL_PAGES} pages without finishing"
+            );
+        }
+        let Some(cursor) = page.next_cursor.clone() else {
+            anyhow::bail!("to-device poll page reported more data without next_cursor");
+        };
+        page = api
+            .receive_device_messages_page(Some(&cursor), Some(TO_DEVICE_PAGE_LIMIT))
+            .await?;
+    }
+    let mut device_queue = ctx.device_queue;
+    device_queue.set(ctx.state_store.read().load().to_device_inbox.len());
+    Ok(())
+}
+
 fn device_messages_get_values(page: &DeviceMessagesGetOutcome) -> anyhow::Result<Vec<Value>> {
     page.messages
         .iter()
@@ -1459,6 +1514,7 @@ fn to_device_batch_all_ack_safe(messages: &[Value]) -> bool {
             .unwrap_or_default();
         kind.starts_with("ck.key.verification.")
             || kind == crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST
+            || kind == "ck.realm_key.request"
     })
 }
 
@@ -2148,6 +2204,7 @@ mod tests {
         assert!(to_device_batch_all_ack_safe(&[
             to_device_message("ck.key.verification.request"),
             to_device_message(crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST),
+            to_device_message("ck.realm_key.request"),
         ]));
         assert!(to_device_batch_allows_cursor_advance(
             &[to_device_message("ck.key.verification.request")],

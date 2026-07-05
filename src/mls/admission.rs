@@ -187,16 +187,16 @@ pub(crate) fn build_realm_key_share_event(
     recipient_device_id: &str,
     from_epoch: u64,
     to_epoch: u64,
+    policy_digest: String,
     sealed_ciphertext: String,
 ) -> Result<cokret_sdk::Event, String> {
     let recipient_did = cokret_sdk::Did::new(recipient_principal_id.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share recipient DID: {err:?}"))?;
+    let policy_digest = cokret_sdk::Hash::new(policy_digest.trim().to_owned())
+        .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
     let key_scope = cokret_sdk::RealmKeyScope {
-        // `effective_scope` is the Realm the shared keys belong to; the
-        // soland reducer treats it opaquely (policy_extra). A bare realm id
-        // is the minimal, deterministic binding both sides agree on.
-        effective_scope: json!({ "realm_id": trim_realm_id(realm_id) }),
-        policy_digest: Value::Null,
+        effective_scope: crate::operation::realm_effective_scope_value(realm_id)?,
+        policy_digest: Value::String(policy_digest.as_str().to_owned()),
         membership_frontier_digest: None,
         from_epoch: Some(from_epoch),
         to_epoch: Some(to_epoch),
@@ -209,10 +209,10 @@ pub(crate) fn build_realm_key_share_event(
         recipient_verification_method: None,
         recovery_recipient_id: None,
         sender_device_id: sender_device_id.trim().to_owned(),
-        // Filled below: a real Ed25519 signature over
+        // Filled below with a real Ed25519 signature over
         // `RealmKeySharePayload::sender_signing_input()` (device-lifecycle.md
-        // §13). Initialized empty so the payload validates even if no active
-        // signer is installed (best-effort, see below). The per-secret HPKE seal
+        // §13). Initialized empty only while constructing the signing input and
+        // replaced before the Event is serialized. The per-secret HPKE seal
         // (AEAD tag) bound to the recipient device already covers confidentiality
         // + integrity of the shared keys; this detached signature additionally
         // authenticates the *sender device* to the receiver, independent of the
@@ -223,14 +223,14 @@ pub(crate) fn build_realm_key_share_event(
         encrypted_key_ref: None,
         aad_digest: None,
         expires_at: None,
-        created_at: crate::clock::now_utc(),
+        created_at: crate::clock::now_utc_secs(),
     };
     // Sign `sender_signing_input()` with this device's active Ed25519 event
-    // signer and embed the detached signature. If no signer is installed we
-    // degrade to the empty object (the HPKE seal still protects the payload);
-    // the receiver verifies the signature only when present.
-    payload.sender_device_signature =
-        sign_realm_key_share_sender_signature(&payload).unwrap_or_else(|| json!({}));
+    // signer and embed the detached signature. The registered payload schema
+    // requires this signature, so a provider without an active signer must
+    // fail closed and retry after device signing is ready.
+    payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
+        .ok_or_else(|| "ck.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
     crate::operation::OperationBuilder::new(
@@ -247,9 +247,9 @@ pub(crate) fn build_realm_key_share_event(
 /// provider-initiated RRK seal produced by
 /// `cokret_sdk::history_recovery::seal_history_secrets_to_recovery_recipient`)
 /// into a durable `ck.realm_key.share` Event, filling the
-/// `sender_device_signature` with this device's active Ed25519 signer
-/// (best-effort: an empty object if no signer is installed — the per-secret HPKE
-/// seal still gates confidentiality / integrity).
+/// `sender_device_signature` with this device's active Ed25519 signer. The
+/// registered payload schema requires this signature, so this fails closed when
+/// no active signer is installed.
 ///
 /// Unlike [`build_realm_key_share_event`], the seal + payload are already done by
 /// the SDK authority; this only authenticates the sender device and converts to
@@ -259,8 +259,8 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     actor_id: &str,
     mut payload: cokret_sdk::RealmKeySharePayload,
 ) -> Result<cokret_sdk::Event, String> {
-    payload.sender_device_signature =
-        sign_realm_key_share_sender_signature(&payload).unwrap_or_else(|| json!({}));
+    payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
+        .ok_or_else(|| "ck.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
     crate::operation::OperationBuilder::new(
@@ -282,9 +282,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
 /// ```json
 /// { "alg": "Ed25519", "signature": "<b64url>", "signer_public_key_multibase": "z.." }
 /// ```
-/// or `None` when no raw-capable signer is installed (best-effort: the caller
-/// then emits an empty object and the share still validates; the per-secret
-/// HPKE seal remains the integrity gate).
+/// or `None` when no raw-capable signer is installed.
 pub(crate) fn sign_realm_key_share_sender_signature(
     payload: &cokret_sdk::RealmKeySharePayload,
 ) -> Option<Value> {
@@ -442,6 +440,23 @@ mod tests {
     };
     use crate::secure_key_store::MemorySecureKeyStore;
 
+    struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::YougenEventSigner>>);
+
+    impl ActiveSignerGuard {
+        fn install(seed: [u8; 32], signer_did: &str) -> Self {
+            let signer =
+                std::sync::Arc::new(crate::event_signer::build_ed25519_signer(seed, signer_did));
+            Self(crate::event_signer::replace_active_signer(Some(signer)))
+        }
+    }
+
+    impl Drop for ActiveSignerGuard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            let _ = crate::event_signer::replace_active_signer(previous);
+        }
+    }
+
     fn install_cross_signing(
         state: &mut LocalStateStore,
         secure: &MemorySecureKeyStore,
@@ -543,6 +558,47 @@ mod tests {
                 .is_ok()
         );
         let _ = crate::event_signer::replace_active_signer(previous);
+    }
+
+    #[test]
+    fn realm_key_share_event_matches_registered_payload_schema() {
+        let _signer_guard =
+            ActiveSignerGuard::install([9u8; 32], "did:key:zRealmKeyShareSchemaTest");
+        let realm = "ck:realm:01904100-0000-7000-8000-0000000000d7";
+        let policy_digest =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
+        let event = build_realm_key_share_event(
+            realm,
+            "did:web:alice.example",
+            "ck:device:01904100-0000-7000-8000-0000000000a1",
+            "did:web:bob.example",
+            "ck:device:01904100-0000-7000-8000-0000000000b1",
+            0,
+            2,
+            policy_digest.clone(),
+            "c2VhbGVk".to_owned(),
+        )
+        .unwrap();
+
+        let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
+        catalog
+            .validate_payload(event.kind.as_str(), &event.content)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "ck.realm_key.share payload violates registered schema: {err}\npayload: {}",
+                    serde_json::to_string_pretty(&event.content).unwrap()
+                )
+            });
+        assert_eq!(
+            event.content["key_scope"]["effective_scope"],
+            json!({ "kind": "realm", "realm_id": realm })
+        );
+        assert_eq!(event.content["key_scope"]["policy_digest"], policy_digest);
+        let created_at = event.content["created_at"]
+            .as_str()
+            .expect("realm_key.share created_at is a string");
+        cokret_sdk::canonical::validate_timestamp_canonical(created_at)
+            .expect("realm_key.share created_at is canonical RFC3339 UTC");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
