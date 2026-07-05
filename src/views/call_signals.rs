@@ -893,10 +893,10 @@ mod tests {
     // ── Receiver proof verification (device-identity Phase 2) ──────────
 
     /// Build a real signed `ck.call.signal` envelope the same way the sender
-    /// (`api::media::submit_call_signal_v1`) does: detached-JWS over the
-    /// canonical proof *binding object* `{event_digest, actor_id,
-    /// verification_method, created_at}`, with `event_digest` = canonical hash
-    /// of the envelope without `proof`.
+    /// (`api::ephemeral::attach_broadcast_ephemeral_proof`) does: a detached JWS
+    /// over the SDK's authoritative proof binding object (which folds in the
+    /// `context = "ck-event-proof-v1"` domain tag), with `event_digest` =
+    /// canonical hash of the envelope without `proof`.
     fn signed_call_signal_envelope(
         signer: &crate::event_signer::YougenEventSigner,
         actor_id: &str,
@@ -918,27 +918,29 @@ mod tests {
         });
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        let verification_method = format!("{actor_id}#device");
-        let created_at = "2026-06-16T00:00:00Z";
-        let binding = json!({
-            "event_digest": event_digest,
-            "actor_id": actor_id,
-            "verification_method": verification_method,
-            "created_at": created_at,
-        });
-        let binding_bytes = crate::canonical::canonical_json_bytes(&binding).unwrap();
-        let jws = signer.detached_jws_over(&binding_bytes).unwrap();
-        envelope.as_object_mut().unwrap().insert(
-            "proof".to_owned(),
-            json!({
-                "kind": "detached_jws",
-                "alg": signer.algorithm(),
-                "verification_method": verification_method,
-                "event_digest": event_digest,
-                "created_at": created_at,
-                "jws": jws,
-            }),
-        );
+        // Binding transcript via the SDK's authoritative `canonical_binding_bytes`
+        // (context tag folded in), matching the production ephemeral sender and the
+        // receiver-side verifier — so this test can never drift from the wire binding.
+        let created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let did = cokret_sdk::Did::new(actor_id.to_owned()).unwrap();
+        let mut proof = cokret_sdk::Proof {
+            kind: cokret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+            alg: signer.algorithm().to_owned(),
+            verification_method: format!("{actor_id}#device"),
+            event_digest: cokret_sdk::Hash::new(event_digest).unwrap(),
+            created_at,
+            domain: None,
+            audience: None,
+            jws: String::new(),
+        };
+        let binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
+        proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
+        envelope
+            .as_object_mut()
+            .unwrap()
+            .insert("proof".to_owned(), serde_json::to_value(&proof).unwrap());
         envelope
     }
 
@@ -992,8 +994,13 @@ mod tests {
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let mut envelope = signed_call_signal_envelope(&signer, actor, device);
         // Flip the JWS tail → signature no longer matches the binding object.
+        // Replace the last base64url char with a guaranteed-different one (a bare
+        // "always set to 'A'" is a no-op when the signature already ends in 'A',
+        // which flaked once the binding — and thus the signature — changed).
         let jws = envelope["proof"]["jws"].as_str().unwrap().to_owned();
-        let tampered = format!("{}A", &jws[..jws.len() - 1]);
+        let last = jws.chars().next_back().unwrap();
+        let replacement = if last == 'A' { 'B' } else { 'A' };
+        let tampered = format!("{}{}", &jws[..jws.len() - 1], replacement);
         envelope["proof"]["jws"] = json!(tampered);
         let key = pubkey_material(seed);
         assert!(!crate::device_directory::verify_ephemeral_envelope_proof(
