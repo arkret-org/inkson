@@ -1014,17 +1014,15 @@ pub fn KanbanPanel(
             }
             bootstrapped.set(true);
             let api_token = auto_token();
-            let view = auto_board_view_id();
             if api_token.trim().is_empty() {
                 return;
             }
-            if view.trim().is_empty() {
-                board_status.set(
-                    "No board View selected; using Space-container/Strand projections and local queue only"
-                        .to_owned(),
-                );
-                return;
-            }
+            // Backfill the realm's durable events into the op log FIRST, before the
+            // materialized-board-View gate below. This is how the event-sourced
+            // Space-container / Strand projections (and therefore the board
+            // switcher) discover content created by OTHER members — including a
+            // board an invited member deep-links into before its create arrives on
+            // the live subscribe. It depends only on the realm, not on a View.
             let events_res = if lifecycle_realm_id.trim().is_empty() {
                 None
             } else {
@@ -1039,6 +1037,32 @@ pub fn KanbanPanel(
                     Err(_) => None,
                 }
             };
+            // Ingest the backfilled events into `raw_operations` so the event-
+            // sourced board/list/card projection sees cross-member content.
+            // Previously the bootstrap used these events ONLY for the strand
+            // overlay (`strand_update_operations_from_events`) and never folded
+            // them into `raw_operations`; combined with the empty-View early-return
+            // below skipping the backfill entirely, a joined member who deep-linked
+            // to another member's board ingested nothing and saw an empty board
+            // switcher. `ingest_kanban_events` handles the backfill event shape
+            // (`event_kind`/`kind`, `operation_id`/`event_id`) and dedups by id.
+            if let Some(resp) = events_res.as_ref() {
+                let mut guard = state_store.write();
+                crate::sync_engine::ingest_kanban_events(
+                    &mut guard,
+                    &lifecycle_realm_id,
+                    &resp.events,
+                );
+            }
+
+            let view = auto_board_view_id();
+            if view.trim().is_empty() {
+                board_status.set(
+                    "No board View selected; using Space-container/Strand projections and local queue only"
+                        .to_owned(),
+                );
+                return;
+            }
             let remote_update_operations = events_res
                 .as_ref()
                 .map(|resp| strand_update_operations_from_events(&resp.events))
