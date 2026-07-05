@@ -363,6 +363,7 @@ impl CokretApi {
         let response: cokret_sdk::EventsSubmitOutcome = self
             .send_json_retryable(self.prepare_request(request), Method::POST)
             .await?;
+        ensure_events_submit_accepted(&response)?;
         Ok(SubmitEventResult::from(response))
     }
 
@@ -524,7 +525,7 @@ impl CokretApi {
         let response: cokret_sdk::EventsSubmitOutcome = self
             .send_json_retryable(self.prepare_request(request), Method::POST)
             .await?;
-        ensure_events_submit_batch_accepted(&response)?;
+        ensure_events_submit_accepted(&response)?;
         Ok(response)
     }
 

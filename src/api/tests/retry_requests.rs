@@ -66,7 +66,7 @@ fn events_batch_response_rejects_partial_acceptance() {
         "rejected": []
     }))
     .unwrap();
-    ensure_events_submit_batch_accepted(&accepted).expect("fully accepted batch should pass");
+    ensure_events_submit_accepted(&accepted).expect("fully accepted submit should pass");
 
     let partial: cokret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "partial",
@@ -79,9 +79,9 @@ fn events_batch_response_rejects_partial_acceptance() {
         ]
     }))
     .unwrap();
-    let err =
-        ensure_events_submit_batch_accepted(&partial).expect_err("partial batch must fail fast");
+    let err = ensure_events_submit_accepted(&partial).expect_err("partial submit must fail fast");
     assert!(err.to_string().contains("capability_denied"));
+    assert!(err.to_string().contains("status=partial"));
 }
 
 #[test]

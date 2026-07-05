@@ -44,7 +44,7 @@ pub fn build_read_cursor_advance_event(
         .build_sdk_event(&marker.device_id)
 }
 
-pub(crate) fn ensure_events_submit_batch_accepted(
+pub(crate) fn ensure_events_submit_accepted(
     response: &cokret_sdk::EventsSubmitOutcome,
 ) -> anyhow::Result<()> {
     if response.rejected.is_empty()
@@ -77,9 +77,7 @@ pub(crate) fn ensure_events_submit_batch_accepted(
         cokret_sdk::EventsSubmitStatus::Partial => "partial",
         cokret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
     };
-    anyhow::bail!(
-        "events batch submit was not fully accepted: status={status}, rejected=[{details}]"
-    );
+    anyhow::bail!("events submit was not fully accepted: status={status}, rejected=[{details}]");
 }
 
 /// Round R2/R3 (T02) — default ephemeral TTL for long-lived ephemeral
