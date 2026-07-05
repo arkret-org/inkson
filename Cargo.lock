@@ -1005,10 +1005,12 @@ dependencies = [
  "getrandom 0.4.2",
  "hex",
  "hkdf 0.13.0",
+ "hpke",
  "openmls",
  "openmls_basic_credential",
  "openmls_rust_crypto",
  "parking_lot",
+ "rand_core 0.9.5",
  "regex",
  "reqwest 0.13.4",
  "serde",
@@ -3516,6 +3518,26 @@ dependencies = [
  "cfg-if",
  "libc",
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "hpke"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f65d16b699dd1a1fa2d851c970b0c971b388eeeb40f744252b8de48860980c8f"
+dependencies = [
+ "aead",
+ "aes-gcm",
+ "chacha20poly1305",
+ "digest 0.10.7",
+ "generic-array",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
+ "rand_core 0.9.5",
+ "sha2 0.10.9",
+ "subtle",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
