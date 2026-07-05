@@ -332,6 +332,102 @@ pub fn ensure_signing_seed_scoped(
     store_signing_seed_scoped(store, scope, &seed)
 }
 
+// ---------------------------------------------------------------------------
+// Grant-binding (DPoP) key — decision 0004 / spec device-lifecycle §3.3.
+//
+// The grant-binding key is a SESSION-auth credential, distinct from the
+// per-account device identity signing seed ([`SIGNING_SEED_KEY`] above): its
+// RFC 7638 JWK thumbprint is the grant's `cnf.jkt`, it signs DPoP proofs and the
+// grant-rotation / logout-revoke holder proofs, and it MUST NOT feed the event
+// signer — rotating or clearing it must never change the device identity key
+// that signs events / KeyPackages / MLS. It is minted fresh on interactive
+// sign-in, cleared on hard logout, and preserved across grant rotation and soft
+// recovery. Unlike the signing seed it is NOT per-account: only one browser
+// session holds a live grant at a time, so a single bare entry suffices.
+// ---------------------------------------------------------------------------
+
+/// Canonical key name for the browser-session grant-binding (DPoP) key in the
+/// secure-key store. Scoped only by `service_name` (bootstrap-style, no account
+/// segment) — see the module note above.
+pub const GRANT_BINDING_SEED_KEY: &str = "device.ed25519.grant_binding.v1";
+
+/// Read the browser-session grant-binding seed. `Ok(None)` when absent (vs
+/// `Err(...)` for backend / decode failures). Mirrors [`load_signing_seed`] but
+/// resolves the single session-scoped entry rather than a per-account one.
+pub fn load_grant_binding_seed(
+    store: &dyn SecureKeyStore,
+) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
+    require_wasm_indexeddb_ed25519_seed_store(store)?;
+    let Some(raw) = store.get_secret(GRANT_BINDING_SEED_KEY)? else {
+        return Ok(None);
+    };
+    let bytes = STANDARD_NO_PAD.decode(raw.as_bytes()).map_err(|err| {
+        SecureKeyStoreError::Backend(format!("grant-binding seed base64 decode: {err}"))
+    })?;
+    if bytes.len() != 32 {
+        return Err(SecureKeyStoreError::Backend(format!(
+            "grant-binding seed length {}, expected 32",
+            bytes.len()
+        )));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&bytes);
+    let did = ed25519_seed_to_did_key(&seed);
+    Ok(Some(SigningSeedMaterial {
+        seed,
+        local_signing_did: did,
+    }))
+}
+
+/// Persist `seed` as the browser-session grant-binding key. Overwrites silently.
+pub fn store_grant_binding_seed(
+    store: &dyn SecureKeyStore,
+    seed: &[u8; 32],
+) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    require_wasm_indexeddb_ed25519_seed_store(store)?;
+    let encoded = STANDARD_NO_PAD.encode(seed);
+    store.store_secret(GRANT_BINDING_SEED_KEY, &encoded)?;
+    Ok(SigningSeedMaterial {
+        seed: *seed,
+        local_signing_did: ed25519_seed_to_did_key(seed),
+    })
+}
+
+/// Load the existing grant-binding seed, or generate + persist a fresh one if
+/// none exists (soft recovery / grant rotation reuse the same key).
+pub fn ensure_grant_binding_seed(
+    store: &dyn SecureKeyStore,
+) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    if let Some(material) = load_grant_binding_seed(store)? {
+        return Ok(material);
+    }
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).map_err(|err| {
+        SecureKeyStoreError::Backend(format!("getrandom grant-binding seed: {err}"))
+    })?;
+    store_grant_binding_seed(store, &seed)
+}
+
+/// Mint a fresh grant-binding seed, replacing any existing one. Used at the
+/// start of an interactive sign-in so the grant issued this session binds to a
+/// brand-new `cnf.jkt` (spec device-lifecycle §4.1: hard logout / re-login
+/// rotates the grant-binding key), independent of the device identity key.
+pub fn rotate_grant_binding_seed(
+    store: &dyn SecureKeyStore,
+) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).map_err(|err| {
+        SecureKeyStoreError::Backend(format!("getrandom grant-binding seed: {err}"))
+    })?;
+    store_grant_binding_seed(store, &seed)
+}
+
+/// Delete the grant-binding seed (hard logout). Best-effort; a missing entry is
+/// not an error at the backend level. Soft recovery MUST NOT call this.
+pub fn delete_grant_binding_seed(store: &dyn SecureKeyStore) -> Result<(), SecureKeyStoreError> {
+    store.delete_secret(GRANT_BINDING_SEED_KEY)
+}
+
 /// Canonical storage key for the stable protocol `device_id`
 /// (`ck:device:<uuidv7>`), scoped per account.
 ///
@@ -457,4 +553,55 @@ fn ed25519_seed_to_did_key(seed: &[u8; 32]) -> String {
     let signing = ed25519_dalek::SigningKey::from_bytes(seed);
     let verifying = signing.verifying_key();
     crate::did_key::did_key_from_verifying_key(&verifying)
+}
+
+#[cfg(test)]
+mod grant_binding_tests {
+    use super::*;
+    use crate::secure_key_store::MemorySecureKeyStore;
+
+    #[test]
+    fn ensure_is_idempotent_and_load_round_trips() {
+        let store = MemorySecureKeyStore::default();
+        let first = ensure_grant_binding_seed(&store).unwrap();
+        let second = ensure_grant_binding_seed(&store).unwrap();
+        assert_eq!(first.seed, second.seed);
+        let loaded = load_grant_binding_seed(&store).unwrap().expect("loaded");
+        assert_eq!(loaded.seed, first.seed);
+        assert_eq!(loaded.local_signing_did, first.local_signing_did);
+    }
+
+    #[test]
+    fn rotate_replaces_with_a_fresh_seed() {
+        let store = MemorySecureKeyStore::default();
+        let original = ensure_grant_binding_seed(&store).unwrap();
+        let rotated = rotate_grant_binding_seed(&store).unwrap();
+        assert_ne!(original.seed, rotated.seed);
+        let loaded = load_grant_binding_seed(&store).unwrap().expect("loaded");
+        assert_eq!(loaded.seed, rotated.seed);
+    }
+
+    #[test]
+    fn delete_clears_the_entry() {
+        let store = MemorySecureKeyStore::default();
+        ensure_grant_binding_seed(&store).unwrap();
+        delete_grant_binding_seed(&store).unwrap();
+        assert!(load_grant_binding_seed(&store).unwrap().is_none());
+    }
+
+    #[test]
+    fn grant_binding_key_is_independent_of_the_account_signing_seed() {
+        // The two subjects use different store keys, so writing one never
+        // perturbs the other — the core invariant of decision 0004.
+        let store = MemorySecureKeyStore::default();
+        let device_identity = ensure_signing_seed_scoped(&store, Some("did:web:alice")).unwrap();
+        let grant_binding = ensure_grant_binding_seed(&store).unwrap();
+        assert_ne!(device_identity.seed, grant_binding.seed);
+        // Rotating the grant-binding key leaves the device identity seed intact.
+        rotate_grant_binding_seed(&store).unwrap();
+        let identity_after = load_signing_seed_scoped(&store, Some("did:web:alice"))
+            .unwrap()
+            .expect("device identity seed survives grant-binding rotation");
+        assert_eq!(identity_after.seed, device_identity.seed);
+    }
 }
