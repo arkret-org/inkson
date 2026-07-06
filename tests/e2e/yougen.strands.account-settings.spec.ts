@@ -243,20 +243,22 @@ test("account settings split account/server info and surface personal agents", a
   await page.getByTestId("agent-admin-create-open-button").click();
   await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
   const scrollLayout = await page.evaluate(() => {
+    const root = document.documentElement;
     const workspace = document.querySelector(".workspace-body") as HTMLElement | null;
-    window.scrollTo(0, 200);
     if (workspace) {
       workspace.scrollTop = 200;
     }
     return {
-      windowScrollY: window.scrollY,
+      rootOverflowY: getComputedStyle(root).overflowY,
       bodyOverflowY: getComputedStyle(document.body).overflowY,
+      viewportScrollbarGap: window.innerWidth - root.clientWidth,
       workspaceOverflowY: workspace ? getComputedStyle(workspace).overflowY : null,
       workspaceScrollTop: workspace?.scrollTop ?? 0,
     };
   });
-  expect(scrollLayout.windowScrollY).toBe(0);
+  expect(scrollLayout.rootOverflowY).toBe("hidden");
   expect(scrollLayout.bodyOverflowY).toBe("hidden");
+  expect(scrollLayout.viewportScrollbarGap).toBe(0);
   expect(scrollLayout.workspaceOverflowY).toBe("auto");
   expect(scrollLayout.workspaceScrollTop).toBeGreaterThan(0);
   await expect(page.getByTestId("agent-admin-content-preset-row")).toHaveCount(5);

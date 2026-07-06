@@ -335,12 +335,6 @@
   padding: 18px 12px;
 }
 
-html:has(.shell.app),
-body:has(.shell.app) {
-  height: 100%;
-  overflow: hidden;
-}
-
 /* Right-aligned cluster in the list header: count badge, +invite, refresh. */
 .member-head-actions {
   display: flex;
