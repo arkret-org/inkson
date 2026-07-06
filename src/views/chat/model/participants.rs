@@ -223,6 +223,36 @@ pub(crate) fn mention_label_for_participant(participant: &SpaceParticipant) -> O
         .or_else(|| crate::views::helpers::handle_display_from_did(&participant.did))
 }
 
+pub(crate) fn apply_cached_participant_handle_labels(
+    participants: &mut [SpaceParticipant],
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    account_did: &str,
+    account_display_label: &str,
+    base_url: &str,
+) {
+    for participant in participants {
+        if participant.handle_label.is_some() {
+            continue;
+        }
+        let account_handle = (participant.did.trim() == account_did.trim())
+            .then(|| {
+                account_handle_display_from_server(account_display_label, base_url).or_else(|| {
+                    state_store
+                        .primary_handle_for_did(&participant.did)
+                        .and_then(|handle| mention_handle_label_from_value(&handle))
+                })
+            })
+            .flatten();
+        let cached_handle = state_store
+            .cached_member_handle_lookup(&participant.did, Some(realm_id), None)
+            .or_else(|| state_store.cached_member_handle_lookup(&participant.did, None, None))
+            .and_then(|entry| entry.primary_handle)
+            .and_then(|handle| mention_handle_label_from_value(&handle));
+        participant.handle_label = account_handle.or(cached_handle);
+    }
+}
+
 pub(crate) fn upsert_participant(
     participants: &mut Vec<SpaceParticipant>,
     did: &str,
@@ -679,21 +709,13 @@ pub(crate) fn mention_candidate_for_participant(
         });
     }
 
-    let handle_label = mention_label_for_participant(participant);
-    let has_handle_label = handle_label.is_some();
-    let display_name = handle_label
-        .clone()
-        .or_else(|| participant.display_name.clone())
-        .unwrap_or_else(|| short_principal_label(&participant.did));
+    let handle_label = mention_label_for_participant(participant)?;
+    let display_name = handle_label.clone();
     Some(crate::messaging::mentions::MentionCandidate {
         did: participant.did.clone(),
         display_name,
-        insert_label: handle_label.unwrap_or_else(|| short_principal_label(&participant.did)),
-        subtitle: if has_handle_label {
-            String::new()
-        } else {
-            "member DID".to_owned()
-        },
+        insert_label: handle_label,
+        subtitle: String::new(),
         is_agent: false,
         controller_subject_id: String::new(),
         controller_handle_at_time: String::new(),

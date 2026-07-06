@@ -1,4 +1,7 @@
-use cokret_sdk::models::{AgentParticipationOutcome, AgentParticipationSetRequestBody};
+use cokret_sdk::models::{
+    AgentKeyPairOutcome, AgentKeyPairRequestBody, AgentParticipationOutcome,
+    AgentParticipationSetRequestBody,
+};
 
 use super::*;
 
@@ -19,6 +22,28 @@ impl CokretApi {
         body: &cokret_sdk::AgentProvisionRequestBody,
     ) -> anyhow::Result<cokret_sdk::AgentProvisionOutcome> {
         self.post_json("_cokret/self/agents", body).await
+    }
+
+    /// `POST /_cokret/gate/account/agent-key-pair` —
+    /// `ck.gate.account.command.pair_agent_key`. The runtime generated the
+    /// key and PoP; the controller signs `authorize_event` locally before this
+    /// method submits the pairing request.
+    pub(crate) async fn agent_key_pair(
+        &self,
+        body: &AgentKeyPairRequestBody,
+    ) -> anyhow::Result<AgentKeyPairOutcome> {
+        self.post_json("_cokret/gate/account/agent-key-pair", body)
+            .await
+    }
+
+    pub(crate) async fn agent_key_pair_with_authorize_event(
+        &self,
+        mut body: AgentKeyPairRequestBody,
+        authorize_event: &cokret_sdk::Event,
+    ) -> anyhow::Result<AgentKeyPairOutcome> {
+        let (signed, _) = self.prepare_sdk_event_for_submit(authorize_event).await?;
+        body.authorize_event = serde_json::to_value(signed)?;
+        self.agent_key_pair(&body).await
     }
 
     /// `GET /_cokret/self/agents` — `ck.self.agent.query.list`. Returns the

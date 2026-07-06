@@ -53,6 +53,10 @@ pub struct MentionPickerState {
     pub open: bool,
     /// Active filter, derived from the text after the most recent `@`.
     pub query: String,
+    /// Byte range in the draft for the active `@...` token. The picker
+    /// replaces this exact range so choosing a member after typing `@bo`
+    /// updates the text at the cursor position instead of appending.
+    pub active_range: Option<(usize, usize)>,
     /// DIDs already inserted into the current draft. The picker uses
     /// this to render `mention-chip` rows above the textarea and to
     /// avoid suggesting the same actor twice.
@@ -71,10 +75,17 @@ impl MentionPickerState {
     pub fn close(&mut self) {
         self.open = false;
         self.query.clear();
+        self.active_range = None;
     }
 
     pub fn set_query(&mut self, query: String) {
         self.query = query;
+    }
+
+    pub fn set_active_token(&mut self, query: String, start: usize, end: usize) {
+        self.open = true;
+        self.query = query;
+        self.active_range = Some((start, end));
     }
 
     /// Filter `candidates` down to those whose `display_name` or `did`
@@ -127,6 +138,64 @@ impl MentionPickerState {
         self.query.clear();
         self.open = false;
     }
+}
+
+pub fn active_mention_token_at_end(value: &str) -> Option<(String, usize, usize)> {
+    let end = value.len();
+    let token_start = value
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .unwrap_or(0);
+    let token = &value[token_start..end];
+    let at_offset = token.rfind('@')?;
+    let start = token_start + at_offset;
+    if start > 0 {
+        let before = value[..start].chars().next_back();
+        if before.is_some_and(|ch| !ch.is_whitespace() && !matches!(ch, '(' | '[' | '{')) {
+            return None;
+        }
+    }
+    let query = &value[start + '@'.len_utf8()..end];
+    if query.chars().any(|ch| ch.is_whitespace()) {
+        return None;
+    }
+    Some((query.to_owned(), start, end))
+}
+
+pub fn replace_active_mention_token(
+    value: &str,
+    active_range: Option<(usize, usize)>,
+    insert_label: &str,
+) -> String {
+    let mention = format!("@{}", insert_label.trim().trim_start_matches('@'));
+    let Some((start, end)) = active_range else {
+        let needs_space = value
+            .chars()
+            .next_back()
+            .is_some_and(|ch| !ch.is_whitespace());
+        return format!("{value}{}{mention} ", if needs_space { " " } else { "" });
+    };
+    if start > end
+        || end > value.len()
+        || !value.is_char_boundary(start)
+        || !value.is_char_boundary(end)
+    {
+        let needs_space = value
+            .chars()
+            .next_back()
+            .is_some_and(|ch| !ch.is_whitespace());
+        return format!("{value}{}{mention} ", if needs_space { " " } else { "" });
+    }
+    let before = &value[..start];
+    let after = &value[end..];
+    let spacer = if after.chars().next().is_some_and(|ch| ch.is_whitespace()) {
+        ""
+    } else {
+        " "
+    };
+    format!("{before}{mention}{spacer}{after}")
 }
 
 /// E2EE-safe mention routing hash.
@@ -241,6 +310,36 @@ mod tests {
         assert!(state.insert(alice()));
         assert!(!state.insert(alice()));
         assert_eq!(state.inserted.len(), 1);
+    }
+
+    #[test]
+    fn active_mention_token_tracks_query_at_current_input_end() {
+        assert_eq!(
+            active_mention_token_at_end("hello @bo"),
+            Some(("bo".to_owned(), 6, 9))
+        );
+        assert_eq!(
+            active_mention_token_at_end("hello (@ali"),
+            Some(("ali".to_owned(), 7, 11))
+        );
+        assert!(active_mention_token_at_end("email@host").is_none());
+        assert!(active_mention_token_at_end("hello @bob done").is_none());
+    }
+
+    #[test]
+    fn replace_active_mention_token_replaces_in_place() {
+        assert_eq!(
+            replace_active_mention_token("hello @bo", Some((6, 9)), "bob:local.host"),
+            "hello @bob:local.host "
+        );
+        assert_eq!(
+            replace_active_mention_token("@bo please", Some((0, 3)), "bob:local.host"),
+            "@bob:local.host please"
+        );
+        assert_eq!(
+            replace_active_mention_token("hello", None, "bob:local.host"),
+            "hello @bob:local.host "
+        );
     }
 
     #[test]

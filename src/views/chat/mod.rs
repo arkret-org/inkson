@@ -675,7 +675,19 @@ pub fn ChatPanel(
         .realm_tree_projections
         .get(&selected_realm_id)
         .cloned();
+    let account_display_label = account_display_name();
     let mut participants = space_participants(participant_projection.as_ref(), &account_did);
+    {
+        let store = state_store.read();
+        apply_cached_participant_handle_labels(
+            &mut participants,
+            &store,
+            &selected_realm_id,
+            &account_did,
+            &account_display_label,
+            &base_url,
+        );
+    }
     // Mark agent endpoints registered in this Realm so the @mention
     // picker, member list, and sender row can render a 🤖 badge.
     // Source of truth is the local store's `ck.agent.endpoint` raw
@@ -693,7 +705,6 @@ pub fn ChatPanel(
         annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }
     let participants_for_messages = participants.clone();
-    let account_display_label = account_display_name();
 
     let mut participant_dids_for_presence = participants_for_messages
         .iter()
@@ -3979,8 +3990,14 @@ pub fn ChatPanel(
                                 // composer reads `mention_picker_state.open`
                                 // to know whether to render the
                                 // `mention-picker` element.
-                                if value.ends_with('@') {
-                                    mention_picker_state.write().open();
+                                if let Some((query, start, end)) =
+                                    crate::messaging::mentions::active_mention_token_at_end(&value)
+                                {
+                                    mention_picker_state
+                                        .write()
+                                        .set_active_token(query, start, end);
+                                } else if mention_picker_state.read().open {
+                                    mention_picker_state.write().close();
                                 }
                                 // G3.Y2 — typing signal, fire-and-forget so the
                                 // composer never blocks; failures fall back
@@ -4038,13 +4055,114 @@ pub fn ChatPanel(
                             }
                         },
                     }
-                    // G3.Y2 — mention chip row + picker. Sits below
-                    // the textarea so picker rows can overlay the
-                    // message list without changing the textarea's
-                    // size. The trigger button is a dev-mode handle
-                    // for cotest — production users open the picker
-                    // by typing `@`, but having the explicit button
-                    // gives the tests a stable click target.
+                    if mention_picker_state.read().open {
+                        div { class: "mention-picker",
+                            "data-testid": "mention-picker",
+                            div { class: "mention-picker-head",
+                                Input {
+                                    r#type: "text",
+                                    class: "mention-picker-query",
+                                    placeholder: "Search members",
+                                    value: "{mention_picker_state.read().query}",
+                                    oninput: move |event: FormEvent| {
+                                        mention_picker_state.write().set_query(event.value());
+                                    },
+                                }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    r#type: "button",
+                                    "data-testid": "mention-picker-close-button",
+                                    onclick: move |_| mention_picker_state.write().close(),
+                                    "Close"
+                                }
+                            }
+                            {
+                                let candidates: Vec<crate::messaging::mentions::MentionCandidate> =
+                                    participants_for_messages
+                                        .iter()
+                                        .filter_map(|p| mention_candidate_for_participant(p, &participants_for_messages))
+                                        .collect();
+                                // `filter` borrows from `candidates`, not from the
+                                // picker state, so we run it under the read guard and
+                                // only clone the matched candidates we actually render
+                                // instead of cloning the whole picker state first.
+                                let matches: Vec<crate::messaging::mentions::MentionCandidate> =
+                                    mention_picker_state
+                                        .read()
+                                        .filter(&candidates)
+                                        .into_iter()
+                                        .cloned()
+                                        .collect();
+                                rsx! {
+                                    div { class: "mention-suggestions",
+                                        if matches.is_empty() {
+                                            div { class: "muted", "No matches" }
+                                        } else {
+                                            for candidate in matches {
+                                                {
+                                                    rsx! {
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
+                                                            key: "{candidate.did}",
+                                                            r#type: "button",
+                                                            class: "mention-suggestion",
+                                                            "data-testid": "mention-suggestion",
+                                                            "data-mention-did": "{candidate.did}",
+                                                            title: "@{candidate.insert_label()}",
+                                                            onclick: {
+                                                                let candidate = candidate.clone();
+                                                                move |_| {
+                                                                    let inserted = mention_picker_state
+                                                                        .write()
+                                                                        .insert(candidate.clone());
+                                                                    if inserted {
+                                                                        let current = chat_draft();
+                                                                        let active_range =
+                                                                            mention_picker_state
+                                                                                .read()
+                                                                                .active_range;
+                                                                        let insert_label =
+                                                                            candidate.insert_label().to_owned();
+                                                                        chat_draft.set(
+                                                                            crate::messaging::mentions::replace_active_mention_token(
+                                                                                &current,
+                                                                                active_range,
+                                                                                &insert_label,
+                                                                            ),
+                                                                        );
+                                                                    }
+                                                                    mention_picker_state.write().close();
+                                                                }
+                                                            },
+                                                            span { class: "mention-suggestion-name",
+                                                                "@{candidate.insert_label()}"
+                                                            }
+                                                            if !candidate.subtitle.is_empty() {
+                                                                span { class: "mention-suggestion-subtitle",
+                                                                    "{candidate.subtitle}"
+                                                                }
+                                                            }
+                                                            if candidate.is_agent {
+                                                                span {
+                                                                    class: "badge member-badge member-badge-agent",
+                                                                    "data-testid": "mention-suggestion-agent-badge",
+                                                                    {crate::i18n::tr("member.badge.agent")}
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // G3.Y2 — mention chip row. The picker renders directly
+                    // below the textarea; this row keeps the explicit trigger
+                    // button for cotest while production users open the picker
+                    // by typing `@`.
                     div { class: "mention-chip-row",
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -4129,114 +4247,6 @@ pub fn ChatPanel(
                                         move |_| mention_picker_state.write().remove(&did)
                                     },
                                     "\u{00d7}"
-                                }
-                            }
-                        }
-                    }
-                    if mention_picker_state.read().open {
-                        div { class: "mention-picker",
-                            "data-testid": "mention-picker",
-                            div { class: "mention-picker-head",
-                                Input {
-                                    r#type: "text",
-                                    class: "mention-picker-query",
-                                    placeholder: "Search members",
-                                    value: "{mention_picker_state.read().query}",
-                                    oninput: move |event: FormEvent| {
-                                        mention_picker_state.write().set_query(event.value());
-                                    },
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    r#type: "button",
-                                    "data-testid": "mention-picker-close-button",
-                                    onclick: move |_| mention_picker_state.write().close(),
-                                    "Close"
-                                }
-                            }
-                            {
-                                let candidates: Vec<crate::messaging::mentions::MentionCandidate> =
-                                    participants_for_messages
-                                        .iter()
-                                        .filter_map(|p| mention_candidate_for_participant(p, &participants_for_messages))
-                                        .collect();
-                                // `filter` borrows from `candidates`, not from the
-                                // picker state, so we run it under the read guard and
-                                // only clone the matched candidates we actually render
-                                // instead of cloning the whole picker state first.
-                                let matches: Vec<crate::messaging::mentions::MentionCandidate> =
-                                    mention_picker_state
-                                        .read()
-                                        .filter(&candidates)
-                                        .into_iter()
-                                        .cloned()
-                                        .collect();
-                                rsx! {
-                                    div { class: "mention-suggestions",
-                                        if matches.is_empty() {
-                                            div { class: "muted", "No matches" }
-                                        } else {
-                                            for candidate in matches {
-                                                {
-                                                    rsx! {
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            key: "{candidate.did}",
-                                                            r#type: "button",
-                                                            class: "mention-suggestion",
-                                                            "data-testid": "mention-suggestion",
-                                                            "data-mention-did": "{candidate.did}",
-                                                            title: "@{candidate.insert_label()}",
-                                                            onclick: {
-                                                                let candidate = candidate.clone();
-                                                                move |_| {
-                                                                    let inserted = mention_picker_state
-                                                                        .write()
-                                                                        .insert(candidate.clone());
-                                                                    if inserted {
-                                                                        // Replace the trailing `@`
-                                                                        // (if any) with the chip
-                                                                        // mention so the draft text
-                                                                        // and the chip list stay in
-                                                                        // sync.
-                                                                        let current = chat_draft();
-                                                                        let trimmed = current
-                                                                            .strip_suffix('@')
-                                                                            .unwrap_or(&current)
-                                                                            .to_owned();
-                                                                        let needs_space = !trimmed.is_empty()
-                                                                            && !trimmed.ends_with(' ');
-                                                                        let insert_label = candidate.insert_label();
-                                                                        chat_draft.set(format!(
-                                                                            "{trimmed}{}@{} ",
-                                                                            if needs_space { " " } else { "" },
-                                                                            insert_label,
-                                                                        ));
-                                                                    }
-                                                                    mention_picker_state.write().close();
-                                                                }
-                                                            },
-                                                            span { class: "mention-suggestion-name",
-                                                                "@{candidate.insert_label()}"
-                                                            }
-                                                            if !candidate.subtitle.is_empty() {
-                                                                span { class: "mention-suggestion-subtitle",
-                                                                    "{candidate.subtitle}"
-                                                                }
-                                                            }
-                                                            if candidate.is_agent {
-                                                                span {
-                                                                    class: "badge member-badge member-badge-agent",
-                                                                    "data-testid": "mention-suggestion-agent-badge",
-                                                                    {crate::i18n::tr("member.badge.agent")}
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         }

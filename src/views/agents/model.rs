@@ -5,10 +5,16 @@
 //! endpoint registry, the personal-agent admin, and the handoff
 //! surfaces.
 
+use chrono::{Duration, Utc};
 use cokret_sdk::models::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation, AgentView,
 };
-use serde::Serialize;
+use cokret_sdk::{
+    AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
+    AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
+    AgentKeyRuntimeAttestationKind, Did, Hash, PublicKey, RealmId,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 // ─────────────────────────────────────────────────────────────────────
@@ -283,6 +289,7 @@ struct SavfoxPairingBootstrap<'a> {
     bootstrap_kind: &'static str,
     protocol_version: &'static str,
     base_url: &'a str,
+    service_did: &'a str,
     agent_principal_id: String,
     pairing_request_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -295,6 +302,7 @@ struct SavfoxPairingBootstrap<'a> {
 
 pub fn build_savfox_pairing_bootstrap_json(
     base_url: &str,
+    service_did: &str,
     outcome: &cokret_sdk::AgentProvisionOutcome,
     requested_scope: &AgentKeyScope,
     content_presets: &[AgentGrantPreset],
@@ -313,10 +321,13 @@ pub fn build_savfox_pairing_bootstrap_json(
         bootstrap_kind: "cokret.savfox.agent_pairing_bootstrap.v1",
         protocol_version: "v1",
         base_url,
+        service_did,
         agent_principal_id: outcome.agent_principal_id.to_string(),
         pairing_request_id: outcome.pairing_request_id.as_str(),
         pairing_code: outcome.pairing_code.as_deref(),
-        expires_at: outcome.expires_at.to_rfc3339(),
+        expires_at: outcome
+            .expires_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         requested_service_scope: requested_scope
             .actions
             .iter()
@@ -327,6 +338,123 @@ pub fn build_savfox_pairing_bootstrap_json(
         content_grant_summary,
     };
     serde_json::to_string_pretty(&bootstrap)
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SavfoxRuntimeKeyApprovalRequest {
+    pub pairing_request_id: String,
+    pub agent_principal_id: Did,
+    pub verification_method: String,
+    pub public_key: Value,
+    pub proof_of_possession: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_attestation: Option<Value>,
+}
+
+impl SavfoxRuntimeKeyApprovalRequest {
+    pub fn into_pair_request(self) -> AgentKeyPairRequestBody {
+        AgentKeyPairRequestBody {
+            pairing_request_id: self.pairing_request_id,
+            agent_principal_id: self.agent_principal_id,
+            verification_method: self.verification_method,
+            public_key: self.public_key,
+            proof_of_possession: self.proof_of_possession,
+            runtime_attestation: self.runtime_attestation,
+            authorize_event: Value::Null,
+        }
+    }
+}
+
+pub fn parse_savfox_runtime_key_approval_request(
+    raw: &str,
+) -> anyhow::Result<AgentKeyPairRequestBody> {
+    let request: SavfoxRuntimeKeyApprovalRequest = serde_json::from_str(raw.trim())?;
+    Ok(request.into_pair_request())
+}
+
+fn key_state_str<'a>(key_state: &'a Value, key: &str) -> anyhow::Result<&'a str> {
+    key_state
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("agent key_state.{key} is required"))
+}
+
+pub fn build_agent_key_authorize_event_for_pairing(
+    controller_did: &str,
+    service_did: &str,
+    key_state: &Value,
+    request: &AgentKeyPairRequestBody,
+) -> anyhow::Result<cokret_sdk::Event> {
+    let controller = Did::new(controller_did.trim().to_owned())?;
+    if request.pairing_request_id != key_state_str(key_state, "pairing_request_id")? {
+        anyhow::bail!("runtime request pairing_request_id does not match this agent");
+    }
+    let pairing_code = key_state_str(key_state, "pairing_code")?;
+    let pairing_expires_at = key_state_str(key_state, "pairing_expires_at")?;
+    let requested_scope: AgentKeyScope = serde_json::from_value(
+        key_state
+            .get("requested_scope")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("agent key_state.requested_scope is required"))?,
+    )?;
+    let runtime_public_key_digest =
+        cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?;
+    let runtime_public_key: PublicKey = serde_json::from_value(request.public_key.clone())?;
+    if runtime_public_key.kid != request.verification_method {
+        anyhow::bail!("runtime request public_key.kid does not match verification_method");
+    }
+    let pairing_digest = cokret_sdk::agent::agent_key_pairing_request_binding_digest(
+        &controller,
+        &request.agent_principal_id,
+        &request.verification_method,
+        &runtime_public_key_digest,
+        &request.pairing_request_id,
+        pairing_code,
+        pairing_expires_at,
+        service_did,
+    )?;
+    let issued_at = Utc::now();
+    let expires_at = issued_at + Duration::days(30);
+    let runtime_attestation = request.runtime_attestation.as_ref().and_then(|value| {
+        (value.get("kind").and_then(Value::as_str) == Some("self_asserted")).then(|| {
+            AgentKeyAuthorizePayloadRuntimeAttestation {
+                kind: AgentKeyRuntimeAttestationKind::SelfAsserted,
+                software: None,
+                version: None,
+                attestation_digest: None,
+                evidence_ref: None,
+            }
+        })
+    });
+    let payload = AgentKeyAuthorizePayload {
+        agent_principal_id: request.agent_principal_id.clone(),
+        key_id: request.verification_method.clone(),
+        verification_method: request.verification_method.clone(),
+        public_key_digest: Some(Hash::new(runtime_public_key_digest.as_str().to_owned())?),
+        accountable_principal_id: controller.clone(),
+        agent_key_scope: requested_scope,
+        audience: vec![service_did.to_owned()],
+        issued_at,
+        expires_at,
+        approval_evidence: AgentKeyApprovalEvidence {
+            kind: AgentKeyApprovalEvidenceKind::ApprovalEvent,
+            r#ref: request.pairing_request_id.clone(),
+            request_canonical_digest: Some(Hash::new(pairing_digest.as_str().to_owned())?),
+            approved_by: Some(controller.clone()),
+        },
+        revocation_check_ref: None,
+        runtime_attestation,
+    };
+    let realm_id = RealmId::new(cokret_sdk::auth::principal_control_realm_id(&controller))?;
+    let hlc = cokret_sdk::Hlc::new(crate::hlc::Hlc::now("yougen").encode())?;
+    let mut event =
+        cokret_sdk::agent::build_agent_key_authorize_event(&payload, realm_id, controller, 1, hlc)?;
+    event.unsigned.insert(
+        "pairing_request_id".to_owned(),
+        json!(request.pairing_request_id),
+    );
+    Ok(event)
 }
 
 /// Expand one preset into a canonical `ck.capability.grant` object for
