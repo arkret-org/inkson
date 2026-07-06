@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
+  DEMO_REALM,
   latestTestId,
   dismissBlockingRecoveryModal,
   refreshServer,
   gotoAndDismissRecovery,
   openSettings,
+  writeSessionGrantInjection,
 } from "./strandsHarness";
 
 registerStrandsBeforeEach();
@@ -216,17 +218,17 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
 });
 
 test("account settings split account/server info and surface personal agents", async ({ page }) => {
+  await writeSessionGrantInjection(page);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await dismissBlockingRecoveryModal(page);
+
   // Account information is its own section (identity + invite locator).
   await gotoAndDismissRecovery(page, "/settings/account");
   await expect(page.getByTestId("settings-panel")).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId("settings-nav-item-account")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
   await expect(page.getByTestId("settings-account-did")).toBeVisible();
-  const accountNavGroup = page
-    .locator(".settings-nav-cluster")
-    .filter({ hasText: "Account" })
-    .first();
-  await expect(accountNavGroup.getByTestId("settings-nav-item-recovery")).toBeVisible();
+  await expect(page.getByTestId("settings-nav-item-recovery")).toBeVisible();
 
   // Server information is a separate section (transport context).
   await page.getByTestId("settings-nav-item-server").click();
@@ -238,7 +240,41 @@ test("account settings split account/server info and surface personal agents", a
   await page.getByTestId("settings-nav-item-agents").click();
   await expect(page).toHaveURL(/\/settings\/agents$/);
   await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await page.getByTestId("agent-admin-create-open-button").click();
   await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-content-preset-row")).toHaveCount(5);
+  await expect(page.getByTestId("agent-admin-service-scope-row")).toHaveCount(4);
+  await page.getByTestId("agent-admin-provision-realm-input").fill(DEMO_REALM);
+  const provisionRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/_cokret/self/agents",
+  );
+  await page.getByTestId("agent-admin-provision-button").click();
+  const provisionBody = (await provisionRequest).postDataJSON();
+  expect(provisionBody.requested_scope.actions).toEqual([
+    "ck.self.events.stream.subscribe",
+    "ck.self.events.query.scan",
+    "ck.self.events.command.submit",
+    "ck.event.read",
+    "ck.message.create",
+    "ck.reaction.add",
+  ]);
+  await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
+  const bootstrap = JSON.parse(
+    (await page.getByTestId("agent-admin-savfox-bootstrap-json").innerText()).trim(),
+  );
+  expect(bootstrap.bootstrap_kind).toBe("cokret.savfox.agent_pairing_bootstrap.v1");
+  expect(bootstrap.agent_principal_id).toBe("did:web:agents.example:summary");
+  expect(bootstrap.pairing_code).toBe("246810");
+  expect(bootstrap.requested_service_scope).toEqual([
+    "ck.self.events.stream.subscribe",
+    "ck.self.events.query.scan",
+    "ck.self.events.command.submit",
+  ]);
+  expect(JSON.stringify(bootstrap)).not.toContain("private_key");
+  await expect(page.getByTestId("agent-admin-pairing-url")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-pairing-open-button")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-participation")).toBeVisible();
   await expect(page.getByTestId("agent-admin-participation-realm-input")).toBeVisible();
   await expect(page.getByTestId("agent-admin-participation-reply")).toBeVisible();

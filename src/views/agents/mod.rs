@@ -48,12 +48,13 @@ pub use components::{
     SidecarThreadGuard,
 };
 pub use model::{
-    ActionApproveDialogState, ActionRequestNonceStatus, AgentGrantPreset, AuditChainVerifyOutcome,
-    HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState, actor_kind_badge_class,
-    actor_kind_label, agent_pair_url, agent_state_badge_class, agent_state_is_terminal,
+    ActionApproveDialogState, ActionRequestNonceStatus, AgentGrantPreset, AgentServiceScopePreset,
+    AuditChainVerifyOutcome, HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState,
+    actor_kind_badge_class, actor_kind_label, agent_state_badge_class, agent_state_is_terminal,
     agent_state_label, agents_enabled, build_act_on_behalf_message_operation,
-    build_action_approve_payload, build_action_reject_payload, expand_preset_grant,
-    is_action_request_expired, is_pairing_request_expired, live_session_rows,
-    participation_ceiling_reason, requested_scope_for_presets, verify_audit_chain,
+    build_action_approve_payload, build_action_reject_payload, build_savfox_pairing_bootstrap_json,
+    content_actions_for_presets, expand_preset_grant, is_action_request_expired,
+    is_pairing_request_expired, live_session_rows, participation_ceiling_reason,
+    requested_scope_for_presets, service_actions_for_presets, verify_audit_chain,
 };
 pub use panel::AgentsPanel;

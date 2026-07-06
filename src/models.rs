@@ -1166,7 +1166,7 @@ pub use cokret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 // mirrors drifted from `agent-operations.schema.json` (extra required
 // fields, non-spec `todos`, wrong outcome shapes) and were removed. The
 // agent surface now uses the SDK's authoritative types
-// (`cokret_sdk::AgentKeyPairRequestBody` / `AgentProvisionOutcome` /
-// `AgentList` / `AgentView` / `AgentRotateKeyOutcome` /
-// `AgentGrantAttachOutcome` / `AgentSidecarThreadEnsureOutcome` / ...)
-// directly in `api::agent` and `views::agents`.
+// (`cokret_sdk::AgentProvisionOutcome` / `AgentList` / `AgentView` /
+// `AgentRotateKeyOutcome` / `AgentGrantAttachOutcome` /
+// `AgentSidecarThreadEnsureOutcome` / ...) directly in `api::agent` and
+// `views::agents`.

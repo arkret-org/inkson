@@ -91,24 +91,43 @@ mod personal_agent_tests {
     fn agent_grant_preset_names_are_positive_capabilities() {
         assert_eq!(AgentGrantPreset::Read.preset_name(), "read");
         assert_eq!(AgentGrantPreset::Draft.preset_name(), "draft");
+        assert_eq!(
+            AgentServiceScopePreset::SubscribeEvents.preset_name(),
+            "subscribe_events"
+        );
     }
 
     #[test]
-    fn requested_scope_unions_preset_actions_and_requires_realm() {
+    fn requested_scope_unions_service_and_content_actions_and_requires_realm() {
         const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
         // No preset / no realm → omit requested_scope entirely (schema
         // requires non-empty resources, so there is nothing valid to send).
-        assert!(requested_scope_for_presets(&[], Some(REALM)).is_none());
-        assert!(requested_scope_for_presets(&[AgentGrantPreset::Read], None).is_none());
+        assert!(requested_scope_for_presets(&[], &[], Some(REALM)).is_none());
+        assert!(
+            requested_scope_for_presets(
+                &[AgentGrantPreset::Read],
+                &[AgentServiceScopePreset::SubscribeEvents],
+                None
+            )
+            .is_none()
+        );
 
         let scope = requested_scope_for_presets(
             &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
+            &AgentServiceScopePreset::DEFAULTS,
             Some(REALM),
         )
         .expect("realm-scoped presets produce a scope");
         assert_eq!(
             scope.actions,
-            vec!["ck.event.read", "ck.message.create", "ck.reaction.add"]
+            vec![
+                "ck.self.events.stream.subscribe",
+                "ck.self.events.query.scan",
+                "ck.self.events.command.submit",
+                "ck.event.read",
+                "ck.message.create",
+                "ck.reaction.add"
+            ]
         );
         let wire = serde_json::to_value(&scope).unwrap();
         assert_eq!(wire["resources"][0]["kind"], "realm");
@@ -121,6 +140,7 @@ mod personal_agent_tests {
         const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
         let scope = requested_scope_for_presets(
             &[AgentGrantPreset::Read, AgentGrantPreset::Draft],
+            &[AgentServiceScopePreset::SubscribeEvents],
             Some(REALM),
         )
         .expect("read plus draft is a valid additive scope");
@@ -128,10 +148,30 @@ mod personal_agent_tests {
         assert_eq!(
             scope.actions,
             vec![
+                "ck.self.events.stream.subscribe",
                 "ck.event.read",
                 "ck.agent.draft.propose",
                 "ck.agent.action_request"
             ]
+        );
+    }
+
+    #[test]
+    fn requested_scope_can_include_service_surface_without_content_grant() {
+        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let scope = requested_scope_for_presets(
+            &[],
+            &[
+                AgentServiceScopePreset::ScanCatchUp,
+                AgentServiceScopePreset::ResolveResources,
+            ],
+            Some(REALM),
+        )
+        .expect("service-only scope is still a valid agent key ceiling");
+
+        assert_eq!(
+            scope.actions,
+            vec!["ck.self.events.query.scan", "ck.self.events.resource.get"]
         );
     }
 
@@ -173,14 +213,6 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn agent_pair_url_uses_https_and_request_param() {
-        assert_eq!(
-            agent_pair_url("https://cokret.example/", "0197-req"),
-            "https://cokret.example/auth/account/agent-pair?request=0197-req"
-        );
-    }
-
-    #[test]
     fn pairing_request_expiry_parses_rfc3339_offsets() {
         assert!(is_pairing_request_expired(
             "2026-06-26T00:00:00+00:00",
@@ -194,6 +226,60 @@ mod personal_agent_tests {
             "not-a-timestamp",
             "2026-06-26T00:00:01Z"
         ));
+    }
+
+    #[test]
+    fn savfox_bootstrap_serializes_pairing_handle_and_scope_without_private_key() {
+        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
+            &AgentServiceScopePreset::DEFAULTS,
+            Some(REALM),
+        )
+        .unwrap();
+        let outcome = cokret_sdk::AgentProvisionOutcome {
+            agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+            pairing_request_id: "0197-req".to_owned(),
+            pairing_code: Some("123456".to_owned()),
+            expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
+
+        let raw = build_savfox_pairing_bootstrap_json(
+            "https://cokret.example/",
+            &outcome,
+            &scope,
+            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+
+        assert_eq!(
+            value["bootstrap_kind"],
+            "cokret.savfox.agent_pairing_bootstrap.v1"
+        );
+        assert_eq!(value["base_url"], "https://cokret.example");
+        assert_eq!(
+            value["agent_principal_id"],
+            "did:web:agents.example:summary"
+        );
+        assert_eq!(value["pairing_request_id"], "0197-req");
+        assert_eq!(value["pairing_code"], "123456");
+        assert_eq!(
+            value["requested_service_scope"],
+            serde_json::json!([
+                "ck.self.events.stream.subscribe",
+                "ck.self.events.query.scan",
+                "ck.self.events.command.submit"
+            ])
+        );
+        assert_eq!(
+            value["content_grant_summary"]["actions"],
+            serde_json::json!(["ck.event.read", "ck.message.create", "ck.reaction.add"])
+        );
+        assert!(!raw.contains("private_key"));
+        assert!(!raw.contains("/auth/account/agent-pair"));
     }
 
     #[test]

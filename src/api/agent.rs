@@ -11,17 +11,6 @@ impl CokretApi {
     // mirrors were removed.
     // ────────────────────────────────────────────────────────────────
 
-    /// `POST /_cokret/gate/account/agent-key-pair` — `ck.gate.account.command.pair_agent_key`.
-    /// Authorizes a fresh agent runtime key pair against an agent
-    /// principal.
-    pub async fn agent_key_pair(
-        &self,
-        body: &cokret_sdk::AgentKeyPairRequestBody,
-    ) -> anyhow::Result<cokret_sdk::AgentKeyPairOutcome> {
-        self.post_json("_cokret/gate/account/agent-key-pair", body)
-            .await
-    }
-
     /// `POST /_cokret/self/agents` — `ck.self.agent.command.provision`. Provisions a new
     /// personal agent principal; the spec outcome is the pairing handle
     /// (`agent_principal_id` + `pairing_request_id` + `expires_at`).

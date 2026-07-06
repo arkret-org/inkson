@@ -212,6 +212,9 @@ export async function mockCokretApi(
   });
   let recoveryPolicy: Record<string, unknown> | null = null;
   const keyBackups = new Map<string, Record<string, unknown>>();
+  const personalAgents = new Map<string, Record<string, unknown>>();
+  const personalAgentGrants = new Map<string, Array<Record<string, unknown>>>();
+  let personalAgentCounter = 0;
   const eventRealmId = (event: Record<string, unknown>) =>
     String(event.realm_id ?? "");
   const accountDeviceSummaries = () =>
@@ -1846,6 +1849,97 @@ export async function mockCokretApi(
         };
       }
       return json(route, viewer);
+    }
+
+    if (
+      url.pathname === "/_cokret/self/agents" &&
+      route.request().method() === "GET"
+    ) {
+      return json(route, {
+        agents: Array.from(personalAgents.values()),
+        has_more: false,
+      });
+    }
+
+    if (
+      url.pathname === "/_cokret/self/agents" &&
+      route.request().method() === "POST"
+    ) {
+      const body = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      personalAgentCounter += 1;
+      const slug =
+        typeof body.agent_slug === "string" && body.agent_slug.trim()
+          ? body.agent_slug.trim()
+          : `agent-${personalAgentCounter}`;
+      const agentPrincipalId = `did:web:agents.example:${slug}`;
+      const agent = {
+        agent_principal_id: agentPrincipalId,
+        display_name:
+          typeof body.display_name === "string" ? body.display_name : slug,
+        agent_slug: slug,
+        status: "pending_runtime_key",
+        created_at: "2026-07-06T00:00:00Z",
+        updated_at: "2026-07-06T00:00:00Z",
+        requested_scope: body.requested_scope ?? null,
+        controller_principal_id: accountPrincipalId,
+      };
+      personalAgents.set(agentPrincipalId, agent);
+      personalAgentGrants.set(agentPrincipalId, []);
+      return json(route, {
+        agent_principal_id: agentPrincipalId,
+        pairing_request_id: `pair-${personalAgentCounter}`,
+        pairing_code: "246810",
+        expires_at: "2099-07-06T00:10:00Z",
+      });
+    }
+
+    const agentGrantsMatch = url.pathname.match(
+      /^\/_cokret\/self\/agents\/([^/]+)\/grants$/,
+    );
+    if (agentGrantsMatch && route.request().method() === "POST") {
+      const agentPrincipalId = decodeURIComponent(agentGrantsMatch[1]);
+      const body = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const grants = personalAgentGrants.get(agentPrincipalId) ?? [];
+      const grant = {
+        grant_id: `ck:grant:01964137-0000-7000-8000-${String(grants.length + 1).padStart(12, "0")}`,
+        ...(typeof body.grant === "object" && body.grant !== null
+          ? (body.grant as Record<string, unknown>)
+          : {}),
+      };
+      grants.push(grant);
+      personalAgentGrants.set(agentPrincipalId, grants);
+      return json(route, {
+        ok: true,
+        grant_id: grant.grant_id,
+      });
+    }
+
+    const agentGetMatch = url.pathname.match(/^\/_cokret\/self\/agents\/([^/]+)$/);
+    if (agentGetMatch && route.request().method() === "GET") {
+      const agentPrincipalId = decodeURIComponent(agentGetMatch[1]);
+      const agent = personalAgents.get(agentPrincipalId);
+      if (!agent) {
+        return json(
+          route,
+          {
+            ok: false,
+            error: { code: "not_found", message: "agent not found" },
+          },
+          404,
+        );
+      }
+      return json(route, {
+        agent,
+        status: agent.status ?? "pending_runtime_key",
+        grants: personalAgentGrants.get(agentPrincipalId) ?? [],
+        key_state: null,
+      });
     }
 
     if (

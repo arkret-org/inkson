@@ -8,6 +8,7 @@
 use cokret_sdk::models::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation, AgentView,
 };
+use serde::Serialize;
 use serde_json::{Value, json};
 
 // ─────────────────────────────────────────────────────────────────────
@@ -54,13 +55,14 @@ pub fn agents_enabled() -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// CKP-0008 §4.7 — additive grant presets. The five presets are UI/SDK
-// affordances only; the canonical wire is `requested_scope`
-// (`AgentKeyScope`) for the provision call plus a fully expanded
-// `ck.capability.grant` object for each preset (actions + resource
-// selector + registered constraints + TTL). The preset names never
-// enter the canonical wire — `expand_preset_grant` materializes the
-// concrete capability grant per §4.9.
+// CKP-0008 §4.7 — additive content grant presets. The five presets are
+// UI/SDK affordances only; the canonical content authorization is the
+// expanded `ck.capability.grant` object for each preset (actions +
+// resource selector + registered constraints + TTL). Runtime endpoint
+// access is selected separately through `AgentServiceScopePreset`; both
+// layers are included in `requested_scope` so the agent key has an
+// explicit operation ceiling, while content payload access remains gated
+// by capability grants.
 // ─────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,7 +114,7 @@ impl AgentGrantPreset {
 
     pub fn help(self) -> &'static str {
         match self {
-            Self::Read => "Subscribe to and read selected objects.",
+            Self::Read => "Read payloads allowed by the Realm-scoped content grant.",
             Self::Draft => "Create controller-private draft proposals for your approval.",
             Self::ReplyAsAgent => "Post and react as the agent itself, accountable to you.",
             Self::ActOnBehalf => {
@@ -141,13 +143,60 @@ impl AgentGrantPreset {
     }
 }
 
-/// Build the pairing deep-link the controller hands to the runtime.
-/// CKP-0008 §4.3 mandates a plain HTTPS URL assembled from the
-/// deployment-known `cokret_base_url`; no custom URI scheme. Mobile OSes
-/// route this via Universal Links / App Links.
-pub fn agent_pair_url(base_url: &str, pairing_request_id: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    format!("{base}/auth/account/agent-pair?request={pairing_request_id}")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentServiceScopePreset {
+    SubscribeEvents,
+    ScanCatchUp,
+    SubmitEvents,
+    ResolveResources,
+}
+
+impl AgentServiceScopePreset {
+    pub const ALL: [AgentServiceScopePreset; 4] = [
+        Self::SubscribeEvents,
+        Self::ScanCatchUp,
+        Self::SubmitEvents,
+        Self::ResolveResources,
+    ];
+
+    pub const DEFAULTS: [AgentServiceScopePreset; 3] =
+        [Self::SubscribeEvents, Self::ScanCatchUp, Self::SubmitEvents];
+
+    pub fn preset_name(self) -> &'static str {
+        match self {
+            Self::SubscribeEvents => "subscribe_events",
+            Self::ScanCatchUp => "scan_catch_up",
+            Self::SubmitEvents => "submit_events",
+            Self::ResolveResources => "resolve_resources",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SubscribeEvents => "Subscribe events",
+            Self::ScanCatchUp => "Scan catch-up",
+            Self::SubmitEvents => "Submit events",
+            Self::ResolveResources => "Resolve resources",
+        }
+    }
+
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::SubscribeEvents => "Open the self events stream for live delivery.",
+            Self::ScanCatchUp => "Query missed events after the runtime reconnects.",
+            Self::SubmitEvents => "Call the durable submit endpoint for approved writes.",
+            Self::ResolveResources => "Fetch event resources referenced by allowed payloads.",
+        }
+    }
+
+    pub fn actions(self) -> &'static [&'static str] {
+        match self {
+            Self::SubscribeEvents => &["ck.self.events.stream.subscribe"],
+            Self::ScanCatchUp => &["ck.self.events.query.scan"],
+            Self::SubmitEvents => &["ck.self.events.command.submit"],
+            Self::ResolveResources => &["ck.self.events.resource.get"],
+        }
+    }
 }
 
 pub fn is_pairing_request_expired(expires_at: &str, now: &str) -> bool {
@@ -164,29 +213,57 @@ pub fn is_pairing_request_expired(expires_at: &str, now: &str) -> bool {
     now > expires_at
 }
 
+fn push_unique_action(actions: &mut Vec<String>, action: &str) {
+    if !actions.iter().any(|existing| existing == action) {
+        actions.push(action.to_owned());
+    }
+}
+
+pub fn content_actions_for_presets(presets: &[AgentGrantPreset]) -> Vec<String> {
+    let mut actions = Vec::new();
+    for preset in presets {
+        for action in preset.actions() {
+            push_unique_action(&mut actions, action);
+        }
+    }
+    actions
+}
+
+pub fn service_actions_for_presets(presets: &[AgentServiceScopePreset]) -> Vec<String> {
+    let mut actions = Vec::new();
+    for preset in presets {
+        for action in preset.actions() {
+            push_unique_action(&mut actions, action);
+        }
+    }
+    actions
+}
+
 /// Combine the `requested_scope` (`AgentKeyScope`, the spec object
 /// `{actions, resources, constraints}`) for the provision call from the
-/// selected presets: the union of every preset's registered actions,
-/// scoped to the selected Realm. The schema requires `resources` to be
-/// non-empty, so `None` is returned (and the provision body omits
-/// `requested_scope`, letting soland pick its default) when no preset is
-/// selected or no Realm is chosen.
+/// selected service surface and content presets. The returned
+/// `AgentKeyScope.actions` intentionally contains both endpoint
+/// operation tokens (for runtime reachability) and content action tokens
+/// (as the key's maximum content ceiling). Capability grants still decide
+/// whether payloads can be read or messages can be created. The schema
+/// requires `resources` to be non-empty, so `None` is returned when no
+/// action is selected or no Realm is chosen.
 pub fn requested_scope_for_presets(
-    presets: &[AgentGrantPreset],
+    content_presets: &[AgentGrantPreset],
+    service_presets: &[AgentServiceScopePreset],
     realm_id: Option<&str>,
 ) -> Option<AgentKeyScope> {
-    if presets.is_empty() {
-        return None;
-    }
     let realm = realm_id.map(str::trim).filter(|value| !value.is_empty())?;
     let realm_id = cokret_sdk::RealmId::new(realm.to_owned()).ok()?;
     let mut actions: Vec<String> = Vec::new();
-    for preset in presets {
-        for action in preset.actions() {
-            if !actions.iter().any(|existing| existing == action) {
-                actions.push((*action).to_owned());
-            }
-        }
+    for action in service_actions_for_presets(service_presets) {
+        push_unique_action(&mut actions, &action);
+    }
+    for action in content_actions_for_presets(content_presets) {
+        push_unique_action(&mut actions, &action);
+    }
+    if actions.is_empty() {
+        return None;
     }
     Some(AgentKeyScope {
         actions,
@@ -199,6 +276,57 @@ pub fn requested_scope_for_presets(
         }],
         constraints: Vec::new(),
     })
+}
+
+#[derive(Serialize)]
+struct SavfoxPairingBootstrap<'a> {
+    bootstrap_kind: &'static str,
+    protocol_version: &'static str,
+    base_url: &'a str,
+    agent_principal_id: String,
+    pairing_request_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pairing_code: Option<&'a str>,
+    expires_at: String,
+    requested_scope: &'a AgentKeyScope,
+    requested_service_scope: Vec<String>,
+    content_grant_summary: Value,
+}
+
+pub fn build_savfox_pairing_bootstrap_json(
+    base_url: &str,
+    outcome: &cokret_sdk::AgentProvisionOutcome,
+    requested_scope: &AgentKeyScope,
+    content_presets: &[AgentGrantPreset],
+) -> serde_json::Result<String> {
+    let base_url = base_url.trim_end_matches('/');
+    let content_actions = content_actions_for_presets(content_presets);
+    let content_grant_summary = json!({
+        "presets": content_presets
+            .iter()
+            .map(|preset| preset.preset_name())
+            .collect::<Vec<_>>(),
+        "actions": content_actions,
+        "authorization_model": "service scope gates endpoints; content capability grants gate readable payloads and writable content",
+    });
+    let bootstrap = SavfoxPairingBootstrap {
+        bootstrap_kind: "cokret.savfox.agent_pairing_bootstrap.v1",
+        protocol_version: "v1",
+        base_url,
+        agent_principal_id: outcome.agent_principal_id.to_string(),
+        pairing_request_id: outcome.pairing_request_id.as_str(),
+        pairing_code: outcome.pairing_code.as_deref(),
+        expires_at: outcome.expires_at.to_rfc3339(),
+        requested_service_scope: requested_scope
+            .actions
+            .iter()
+            .filter(|action| action.starts_with("ck.self."))
+            .cloned()
+            .collect(),
+        requested_scope,
+        content_grant_summary,
+    };
+    serde_json::to_string_pretty(&bootstrap)
 }
 
 /// Expand one preset into a canonical `ck.capability.grant` object for

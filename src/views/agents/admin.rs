@@ -14,12 +14,12 @@ use cokret_sdk::models::{
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
-use yoface::utils::dom::{copy_text_to_clipboard, open_url_in_new_tab};
+use yoface::utils::dom::copy_text_to_clipboard;
 
 use super::model::{
-    AgentGrantPreset, agent_pair_url, agent_state_badge_class, agent_state_label,
-    agent_view_from_directory_row, expand_preset_grant, is_pairing_request_expired,
-    participation_ceiling_reason, requested_scope_for_presets,
+    AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
+    agent_view_from_directory_row, build_savfox_pairing_bootstrap_json, expand_preset_grant,
+    is_pairing_request_expired, participation_ceiling_reason, requested_scope_for_presets,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -182,9 +182,12 @@ pub fn PersonalAgentAdminPanel(
     let mut create_mode = use_signal(|| false);
     let mut new_display_name = use_signal(|| "my-personal-agent".to_owned());
     let mut new_agent_slug = use_signal(|| "summary".to_owned());
-    let mut provision_presets = use_signal(Vec::<AgentGrantPreset>::new);
+    let mut provision_presets =
+        use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
+    let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
     let mut provision_realm = use_signal(String::new);
     let mut pairing_outcome = use_signal(|| Option::<cokret_sdk::AgentProvisionOutcome>::None);
+    let mut pairing_bootstrap_json = use_signal(|| Option::<String>::None);
     let mut selected_grants = use_signal(Vec::<Value>::new);
     let mut rotate_body_json = use_signal(String::new);
     let mut grant_json = use_signal(|| "{}".to_owned());
@@ -366,7 +369,7 @@ pub fn PersonalAgentAdminPanel(
                             div { class: "agent-admin-detail-head",
                                 div {
                                     div { class: "entity-title", "Create agent" }
-                                    div { class: "muted", "Create a personal AI agent and optionally attach starter grants scoped to a Realm." }
+                                    div { class: "muted", "Create a personal AI agent with explicit runtime endpoint scope and separate Realm-scoped content grants." }
                                 }
                             }
                             div { class: "workflow-form",
@@ -384,9 +387,14 @@ pub fn PersonalAgentAdminPanel(
                                 }
                                 Input {
                                     "data-testid": "agent-admin-provision-realm-input",
-                                    placeholder: "Optional Realm ID for starter grants",
+                                    placeholder: "Realm ID for runtime scope and starter grants",
                                     value: "{provision_realm}",
                                     oninput: move |event: FormEvent| provision_realm.set(event.value()),
+                                }
+                                div { class: "muted", "Service scope lets the runtime call subscribe, scan, submit, and resource endpoints. Content grants decide whether payloads can be read or messages can be created." }
+                                div { class: "agent-admin-section-head",
+                                    strong { "Content capability grants" }
+                                    span { class: "muted", "Payload and write authority" }
                                 }
                                 div { class: "agent-admin-preset-list",
                                     for preset in AgentGrantPreset::ALL {
@@ -395,13 +403,49 @@ pub fn PersonalAgentAdminPanel(
                                             rsx! {
                                                 label {
                                                     class: "agent-admin-preset-row",
-                                                    "data-testid": "agent-admin-preset-row",
+                                                    "data-testid": "agent-admin-content-preset-row",
                                                     "data-preset": preset.preset_name(),
                                                     Checkbox {
-                                                        "data-testid": "agent-admin-preset-checkbox",
+                                                        "data-testid": "agent-admin-content-preset-checkbox",
                                                         checked: if is_on { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                                         on_checked_change: move |s: CheckboxState| {
                                                             let mut current = provision_presets.write();
+                                                            if bool::from(s) {
+                                                                if !current.contains(&preset) {
+                                                                    current.push(preset);
+                                                                }
+                                                            } else {
+                                                                current.retain(|p| *p != preset);
+                                                            }
+                                                        },
+                                                    }
+                                                    span {
+                                                        strong { "{preset.label()}" }
+                                                        span { class: "muted", "{preset.help()}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                div { class: "agent-admin-section-head",
+                                    strong { "Runtime service surface" }
+                                    span { class: "muted", "Endpoint operations for the agent key" }
+                                }
+                                div { class: "agent-admin-preset-list", "data-testid": "agent-admin-service-scope-list",
+                                    for preset in AgentServiceScopePreset::ALL {
+                                        {
+                                            let is_on = provision_service_scopes.read().contains(&preset);
+                                            rsx! {
+                                                label {
+                                                    class: "agent-admin-preset-row",
+                                                    "data-testid": "agent-admin-service-scope-row",
+                                                    "data-service-preset": preset.preset_name(),
+                                                    Checkbox {
+                                                        "data-testid": "agent-admin-service-scope-checkbox",
+                                                        checked: if is_on { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                        on_checked_change: move |s: CheckboxState| {
+                                                            let mut current = provision_service_scopes.write();
                                                             if bool::from(s) {
                                                                 if !current.contains(&preset) {
                                                                     current.push(preset);
@@ -439,19 +483,32 @@ pub fn PersonalAgentAdminPanel(
                                                     Some(slug_value.clone())
                                                 };
                                                 let presets = provision_presets.read().clone();
+                                                let service_scopes = provision_service_scopes.read().clone();
                                                 let realm = provision_realm();
                                                 let realm_for_grant = if realm.trim().is_empty() {
                                                     None
                                                 } else {
                                                     Some(realm.trim().to_owned())
                                                 };
+                                                if realm_for_grant.is_none() {
+                                                    last_op_status.set("Realm ID is required to build an explicit agent key scope.".to_owned());
+                                                    return;
+                                                }
+                                                let requested_scope = match requested_scope_for_presets(
+                                                    &presets,
+                                                    &service_scopes,
+                                                    realm_for_grant.as_deref(),
+                                                ) {
+                                                    Some(scope) => scope,
+                                                    None => {
+                                                        last_op_status.set("Select at least one content grant or runtime service surface.".to_owned());
+                                                        return;
+                                                    }
+                                                };
                                                 let body = AgentProvisionRequestBody {
                                                     display_name: Some(display.clone()),
                                                     agent_slug,
-                                                    requested_scope: requested_scope_for_presets(
-                                                        &presets,
-                                                        realm_for_grant.as_deref(),
-                                                    ),
+                                                    requested_scope: Some(requested_scope.clone()),
                                                     accountability: Value::Null,
                                                     pairing_ttl_ms: None,
                                                 };
@@ -480,6 +537,20 @@ pub fn PersonalAgentAdminPanel(
                                                     let created_agent_id =
                                                         outcome.agent_principal_id.to_string();
                                                     let expires_at = outcome.expires_at.to_rfc3339();
+                                                    match build_savfox_pairing_bootstrap_json(
+                                                        &base,
+                                                        &outcome,
+                                                        &requested_scope,
+                                                        &presets,
+                                                    ) {
+                                                        Ok(bootstrap) => pairing_bootstrap_json.set(Some(bootstrap)),
+                                                        Err(err) => {
+                                                            pairing_bootstrap_json.set(None);
+                                                            last_op_status.set(format!(
+                                                                "Created pairing handle but Savfox bootstrap serialization failed: {err}"
+                                                            ));
+                                                        }
+                                                    }
                                                     pairing_outcome.set(Some(outcome));
 
                                                     let mut attached = 0usize;
@@ -640,11 +711,11 @@ pub fn PersonalAgentAdminPanel(
                                 let request_id = outcome.pairing_request_id.clone();
                                 let pairing_code = outcome.pairing_code.clone();
                                 let expires_at = outcome.expires_at.to_rfc3339();
-                                let pair_url = agent_pair_url(&base_url, &request_id);
+                                let bootstrap_json = pairing_bootstrap_json().unwrap_or_else(|| "{}".to_owned());
                                 let pairing_expired =
                                     is_pairing_request_expired(&expires_at, &crate::clock::now_rfc3339_secs());
                                 let pairing_badge = if pairing_expired { "badge red" } else { "badge green" };
-                                let pairing_label = if pairing_expired { "Expired" } else { "Ready" };
+                                let pairing_label = if pairing_expired { "Expired" } else { "Bootstrap ready" };
                                 if agent_id == selected_id_now {
                                     rsx! {
                                         div {
@@ -652,11 +723,11 @@ pub fn PersonalAgentAdminPanel(
                                             "data-testid": "agent-admin-pairing-card",
                                             "data-pairing-request-id": "{request_id}",
                                         div { class: "agent-admin-section-head",
-                                            strong { "Pair runtime" }
+                                            strong { "Connect with Savfox" }
                                             span { class: "{pairing_badge}", "{pairing_label}" }
                                         }
                                         div { class: "muted",
-                                            "Use this one-time link or code to authorize the runtime key. It expires at {expires_at}."
+                                            "Copy this bootstrap into Savfox. Savfox generates and keeps the runtime private key; this bootstrap only carries the short-lived pairing handle, requested service scope, and content grant summary. It expires at {expires_at}."
                                         }
                                         div { class: "metric-grid",
                                             div { class: "metric",
@@ -672,36 +743,24 @@ pub fn PersonalAgentAdminPanel(
                                                 span { class: "mono", "data-testid": "agent-admin-pairing-request-id", "{request_id}" }
                                             }
                                         }
-                                        div { class: "muted agent-admin-url", "data-testid": "agent-admin-pairing-url", title: "{pair_url}", "{pair_url}" }
+                                        div { class: "muted",
+                                            "Yougen does not yet approve a returned runtime public key in this panel; the old dead pairing page link was removed until that controller-signing flow is implemented."
+                                        }
+                                        pre {
+                                            class: "agent-admin-url",
+                                            "data-testid": "agent-admin-savfox-bootstrap-json",
+                                            "{bootstrap_json}"
+                                        }
                                         div { class: "actions",
                                             Button {
                                                 variant: ButtonVariant::Primary,
-                                                "data-testid": "agent-admin-pairing-open-button",
+                                                "data-testid": "agent-admin-copy-savfox-bootstrap-button",
                                                 disabled: pairing_expired,
                                                 onclick: {
-                                                    let pair_url = pair_url.clone();
-                                                    move |_| open_url_in_new_tab(&pair_url)
+                                                    let bootstrap_json = bootstrap_json.clone();
+                                                    move |_| copy_text_to_clipboard(&bootstrap_json)
                                                 },
-                                                "Open"
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                "data-testid": "agent-admin-pairing-copy-url-button",
-                                                disabled: pairing_expired,
-                                                onclick: {
-                                                    let pair_url = pair_url.clone();
-                                                    move |_| copy_text_to_clipboard(&pair_url)
-                                                },
-                                                "Copy link"
-                                            }
-                                            if let Some(code) = pairing_code.clone() {
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "agent-admin-pairing-copy-code-button",
-                                                    disabled: pairing_expired,
-                                                    onclick: move |_| copy_text_to_clipboard(&code),
-                                                    "Copy code"
-                                                }
+                                                "Copy bootstrap"
                                             }
                                         }
                                     }
