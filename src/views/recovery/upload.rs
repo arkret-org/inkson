@@ -6,10 +6,10 @@ use crate::local_state::LocalStateStore;
 use crate::views::helpers::with_authed_api;
 
 /// RK-as-authority backup: publish the active recovery policy and a
-/// `did_recovery` backup immediately, then wrap the local account MLS secret
-/// behind the just generated 24-word Recovery Key when the account secret
-/// already exists. This keeps the server-side first-backup gate satisfied even
-/// before the user has sent encrypted content.
+/// `did_recovery` backup immediately, then create or load the account MLS
+/// secret and wrap it behind the just generated 24-word Recovery Key. This
+/// keeps the server-side first-backup gate satisfied and closes the window
+/// where a user has DID recovery but no fresh-device content bootstrap path.
 /// Outcome of attempting to establish a freshly generated account Recovery Key
 /// on the server, reported back to the setup prompt so it can stay fail-closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,23 +82,22 @@ pub(crate) fn upload_recovery_key_account_backup(
                 )
                 .await?;
             let secure = crate::secure_key_store::default_secure_key_store("yougen");
-            let account_backup_id = if matches!(
-                crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &actor),
-                Ok(Some(_))
-            ) {
-                Some(
-                    crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
-                        &api,
-                        secure.as_ref(),
-                        &actor,
-                        &device,
-                        &recovery_secret,
-                    )
-                    .await?,
+            crate::mls::runtime::load_or_create_account_mls_secret(
+                secure.as_ref(),
+                &actor,
+                &device,
+            )
+            .map_err(|err| anyhow::anyhow!("ensure account MLS secret before backup: {err}"))?;
+            let account_backup_id = Some(
+                crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
+                    &api,
+                    secure.as_ref(),
+                    &actor,
+                    &device,
+                    &recovery_secret,
                 )
-            } else {
-                None
-            };
+                .await?,
+            );
             Ok::<_, anyhow::Error>((did_backup_id, account_backup_id))
         })
         .await;
