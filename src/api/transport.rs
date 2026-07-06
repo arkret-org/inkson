@@ -475,10 +475,11 @@ impl CokretApi {
     /// requests that present `ck.session.grant` (api-conventions.md §3.3 and
     /// account-lifecycle.md §4.1). Centralized single mint point: every request
     /// builder funnels through `send_with_retry`, so binding the device key once
-    /// via [`Self::with_dpop_device`] covers self/root requests and the
-    /// client-visible gate/account operations that authenticate with the current
-    /// session grant. No-op when no DPoP device key is bound or for public gate
-    /// surfaces such as register/session-grants issue.
+    /// via [`Self::with_dpop_device`] covers self/root requests, authenticated
+    /// directory queries, and the client-visible gate/account operations that
+    /// authenticate with the current session grant. No-op when no DPoP device
+    /// key is bound or for public gate surfaces such as register/session-grants
+    /// issue.
     ///
     /// Binding (RFC 9449): `htm` = request method, `htu` = the absolute request
     /// URL, `ath` = base64url(sha256(grant)) where the grant is the HTTP Bearer
@@ -503,7 +504,7 @@ impl CokretApi {
         let ath = self.authorization_credential.as_deref();
         let proof = handle
             .mint_proof(&htm, &htu, ath)
-            .map_err(|error| anyhow::anyhow!("mint self-path DPoP proof: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("mint session-grant DPoP proof: {error}"))?;
         request
             .headers_mut()
             .insert("dpop", reqwest::header::HeaderValue::from_str(&proof)?);
@@ -548,6 +549,7 @@ fn is_http_signature_surface(path: &str) -> bool {
 
 fn is_session_grant_dpop_surface(path: &str) -> bool {
     is_http_signature_surface(path)
+        || path.starts_with("/_cokret/find/directory/")
         || matches!(
             path,
             "/_cokret/gate/account/device-pair"
@@ -580,6 +582,27 @@ mod transport_tests {
         let request = api
             .http
             .post(api.endpoint("_cokret/gate/account/device-pair").unwrap())
+            .body("{}")
+            .build()
+            .unwrap();
+
+        let request = api.attach_session_grant_dpop(request).unwrap();
+
+        assert!(request.headers().get("dpop").is_some());
+    }
+
+    #[test]
+    fn directory_search_actors_gets_session_grant_dpop_header() {
+        let api = CokretApi::new("https://soland.example.com")
+            .unwrap()
+            .with_bearer("grant.jwt")
+            .with_dpop_device(test_dpop_handle());
+        let request = api
+            .http
+            .post(
+                api.endpoint("_cokret/find/directory/search-actors")
+                    .unwrap(),
+            )
             .body("{}")
             .build()
             .unwrap();

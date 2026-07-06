@@ -166,19 +166,42 @@ pub(crate) fn chat_message_revise_operation(
 pub(crate) fn chat_message_redact_operation(
     realm_id: &str,
     actor: &str,
-    event_id: &str,
+    target_id: &str,
     reason: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
+    let target_id = target_id.trim();
+    let mut payload = cokret_sdk::MessageRedactPayload {
+        message_id: None,
+        target_ref: None,
+        event_id: None,
+        target_event_id: None,
+        track_name: None,
+        reason: Some(reason.to_owned()),
+        preserve: None,
+    };
+    if target_id.starts_with("ck:event:") {
+        payload.target_event_id = Some(
+            cokret_sdk::EventId::new(target_id.to_owned())
+                .map_err(|err| anyhow::anyhow!("invalid redaction event target: {err}"))?,
+        );
+    } else if target_id.starts_with("ck:message:") {
+        payload.message_id = Some(
+            cokret_sdk::MessageId::new(target_id.to_owned())
+                .map_err(|err| anyhow::anyhow!("invalid redaction message target: {err}"))?,
+        );
+    } else {
+        payload.target_ref = Some(target_id.to_owned());
+    }
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("serialize message redaction payload: {err}"))?;
+
     OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::MessageRedact,
     )
-    .target_ref(event_id)
-    .body(json!({
-        "reason": reason,
-        "target_event_id": event_id,
-    }))
+    .target_ref(target_id)
+    .body(body)
     .build_sdk_event("yougen")
 }
 

@@ -133,6 +133,14 @@ impl ChatMessage {
                 is_schema_message_id(id).then_some(id)
             })
     }
+
+    pub(crate) fn mutation_target_ref(&self) -> &str {
+        self.protocol_message_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| is_schema_message_id(value))
+            .unwrap_or(self.id.as_str())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

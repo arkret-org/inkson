@@ -970,6 +970,46 @@ pub fn ChatPanel(
             initial_sync_finished_for_load.set(true);
         });
     }
+    let mut local_timeline_sync_key_seen = use_signal(String::new);
+    {
+        let selected_realm_for_local_timeline = selected_realm_id.clone();
+        let account_did_for_local_timeline = account_did.clone();
+        let device_id_for_local_timeline = device_id.clone();
+        use_effect(move || {
+            let cursor = sync_cursor();
+            let cursor = cursor.trim();
+            if cursor.is_empty() || cursor == "-" {
+                return;
+            }
+            let realm = selected_realm_for_local_timeline.trim().to_owned();
+            if realm.is_empty() {
+                return;
+            }
+            let sync_key = format!("{realm}|{cursor}");
+            if local_timeline_sync_key_seen.peek().as_str() == sync_key {
+                return;
+            }
+            local_timeline_sync_key_seen.set(sync_key);
+            let next_messages = {
+                let store = state_store.read();
+                let snapshot = store.load();
+                chat_messages_from_local_state_with_sidecar(
+                    &snapshot,
+                    Some(&store),
+                    Some((
+                        account_did_for_local_timeline.as_str(),
+                        device_id_for_local_timeline.as_str(),
+                    )),
+                )
+                .into_iter()
+                .filter(|message| message.realm_id == realm)
+                .collect::<Vec<_>>()
+            };
+            if !next_messages.is_empty() {
+                merge_chat_messages(&mut messages.write(), next_messages);
+            }
+        });
+    }
 
     // T7.4: safety-net crypto state refresh for rows built without the
     // decrypt-on-read context. The model layer marks attempted decrypt
@@ -3116,6 +3156,7 @@ pub fn ChatPanel(
                                                     let actor = account_did.clone();
                                                     let device = device_id.clone();
                                                     let msg_id = msg.id.clone();
+                                                    let target_ref = msg.mutation_target_ref().to_owned();
                                                     let emoji = emoji.to_string();
                                                     let channel_encrypted = selected_channel_security_encrypted;
                                                     move |_| {
@@ -3136,7 +3177,7 @@ pub fn ChatPanel(
                                                             &realm,
                                                             &actor,
                                                             &device,
-                                                            &msg_id,
+                                                            &target_ref,
                                                             &emoji,
                                                             channel_encrypted,
                                                         ) {
@@ -3191,6 +3232,7 @@ pub fn ChatPanel(
                                                     let realm = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let msg_id = msg.id.clone();
+                                                    let target_ref = msg.mutation_target_ref().to_owned();
                                                     move |_| {
                                                         let content = edit_draft().trim().to_owned();
                                                         if content.is_empty() {
@@ -3211,12 +3253,13 @@ pub fn ChatPanel(
                                                         let realm = realm.clone();
                                                         let actor = actor.clone();
                                                         let msg_id = msg_id.clone();
+                                                        let target_ref = target_ref.clone();
                                                         let api_token = token();
                                                         let wait_for = active_sync_token(sync_cursor());
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
-                                                                    let op = match chat_message_revise_operation(&realm, &actor, &msg_id, &content) {
+                                                                    let op = match chat_message_revise_operation(&realm, &actor, &target_ref, &content) {
                                                                         Ok(op) => op,
                                                                         Err(error) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
@@ -3274,6 +3317,7 @@ pub fn ChatPanel(
                                                     let realm = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let msg_id = msg.id.clone();
+                                                    let target_ref = msg.mutation_target_ref().to_owned();
                                                     move |_| {
                                                         if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                             found.redacted = true;
@@ -3287,12 +3331,13 @@ pub fn ChatPanel(
                                                         let realm = realm.clone();
                                                         let actor = actor.clone();
                                                         let msg_id = msg_id.clone();
+                                                        let target_ref = target_ref.clone();
                                                         let api_token = token();
                                                         let wait_for = active_sync_token(sync_cursor());
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
-                                                                    let op = match chat_message_redact_operation(&realm, &actor, &msg_id, "user requested tombstone") {
+                                                                    let op = match chat_message_redact_operation(&realm, &actor, &target_ref, "user requested tombstone") {
                                                                         Ok(op) => op,
                                                                         Err(error) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {

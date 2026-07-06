@@ -261,6 +261,7 @@ impl CoauthApi {
             requested_scope,
             agent_key_authorization_ref: None,
             agent_scope_request: Value::Null,
+            dpop_binding_proof: None,
             applet_delegation: None,
             proof,
         };

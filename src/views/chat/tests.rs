@@ -498,6 +498,35 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
 }
 
 #[test]
+fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
+    let message = ChatMessage {
+        realm_id: "ck:realm:demo".to_owned(),
+        id: "ck:operation:01964137-0000-7000-8000-000000000001".to_owned(),
+        protocol_message_id: Some("ck:message:01964137-0000-7000-8000-000000000002".to_owned()),
+        sender: "did:web:example.com:users:bob".to_owned(),
+        executed_by: None,
+        body: "edited".to_owned(),
+        timestamp: "10:00".to_owned(),
+        strand_id: "ck:strand:demo".to_owned(),
+        reply_to: None,
+        reactions: Vec::new(),
+        redacted: false,
+        edited: true,
+        revisions: vec!["hello".to_owned()],
+        pending: false,
+        failed: false,
+        error: None,
+        mentions: Vec::new(),
+        crypto_state: MessageCryptoState::Plaintext,
+    };
+
+    assert_eq!(
+        message.mutation_target_ref(),
+        "ck:message:01964137-0000-7000-8000-000000000002"
+    );
+}
+
+#[test]
 fn shared_pin_operations_use_pin_events_not_account_data() {
     let strand_id = "ck:strand:01904100-0000-7000-8000-000000000001";
     let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
@@ -2056,6 +2085,70 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
     assert_eq!(op.content["content"]["kind"], "ck.content.text");
     assert_eq!(op.content["content"]["body"], "edited");
     assert!(op.content.get("body").is_none());
+    assert!(op.content.get("target_event_id").is_none());
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
+        .validate_payload(op.kind.as_str(), &op.content)
+        .unwrap();
+}
+
+#[test]
+fn chat_message_revise_operation_accepts_message_id_target_ref() {
+    let op = chat_message_revise_operation(
+        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "did:web:bob.example",
+        "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+        "edited",
+    )
+    .expect("builds");
+
+    assert_eq!(
+        op.content["target_ref"],
+        "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+    );
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
+        .validate_payload(op.kind.as_str(), &op.content)
+        .unwrap();
+}
+
+#[test]
+fn chat_message_redact_operation_uses_event_target_for_event_id() {
+    let op = chat_message_redact_operation(
+        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "did:web:bob.example",
+        "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+        "author_redaction",
+    )
+    .expect("builds");
+
+    assert_eq!(
+        op.content["target_event_id"],
+        "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+    );
+    assert_eq!(op.content["reason"], "author_redaction");
+    assert!(op.content.get("message_id").is_none());
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
+        .validate_payload(op.kind.as_str(), &op.content)
+        .unwrap();
+}
+
+#[test]
+fn chat_message_redact_operation_uses_message_id_for_message_target() {
+    let op = chat_message_redact_operation(
+        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "did:web:bob.example",
+        "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+        "author_redaction",
+    )
+    .expect("builds");
+
+    assert_eq!(
+        op.content["message_id"],
+        "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+    );
+    assert_eq!(op.content["reason"], "author_redaction");
     assert!(op.content.get("target_event_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()

@@ -233,7 +233,8 @@ fn apply_reorder_to_view(view: &mut crate::api::StrandProjectionView, record: &R
 /// Reduce the operation stream into the current set of strands. Folds CREATE
 /// (base view) + MOVE / REORDER (placement) + ARCHIVE / RESTORE (lifecycle) in
 /// causal order; content updates and assignments are layered later at the card
-/// level. Archived strands are dropped from the board.
+/// level. Archived strands are retained so maintenance views can restore them;
+/// the board renderer hides non-active cards from the active columns.
 pub(crate) fn strand_views_from_ops(
     ops: &[RawOperationRecord],
 ) -> Vec<crate::api::StrandProjectionView> {
@@ -294,7 +295,6 @@ pub(crate) fn strand_views_from_ops(
     order
         .into_iter()
         .filter_map(|id| by_id.remove(&id))
-        .filter(|view| view.state == "active")
         .collect()
 }
 
@@ -575,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn strand_archive_removes_card_from_board() {
+    fn strand_archive_marks_card_archived_for_maintenance_drawer() {
         let strand = "ck:strand:019f1072-0004-73b2-9c7e-1bb33a924b5c";
         let events = vec![
             space_create_event(BOARD, "board", "Board1", None),
@@ -597,9 +597,14 @@ mod tests {
             .iter()
             .find(|column| column.title == "Todos")
             .unwrap();
+        assert_eq!(todos.cards.len(), 1);
+        assert_eq!(todos.cards[0].lifecycle, StrandLifecycleState::Archived);
         assert!(
-            todos.cards.is_empty(),
-            "archived card is removed from the board"
+            todos
+                .cards
+                .iter()
+                .all(|card| card.lifecycle != StrandLifecycleState::Active),
+            "archived card remains available to the drawer but leaves active board rendering"
         );
     }
 

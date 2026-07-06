@@ -2260,6 +2260,12 @@ pub fn KanbanPanel(
                     // the aria/title attributes, so we format `column.title` directly
                     // instead of cloning it twice.
                     let column_id = column.id.clone();
+                    let active_cards = column
+                        .cards
+                        .iter()
+                        .filter(|card| card.lifecycle == StrandLifecycleState::Active)
+                        .cloned()
+                        .collect::<Vec<_>>();
                     let is_active_drop_target =
                         drop_target_column().as_deref() == Some(column_id.as_str());
                     let column_div_class = if is_active_drop_target {
@@ -2298,7 +2304,7 @@ pub fn KanbanPanel(
                             // column. Drops on individual cards (handled
                             // by their own `ondrop`) land ABOVE that card.
                             let target_column_id = column.id.clone();
-                            let last_rank = column.cards.last().map(|c| c.rank.clone());
+                            let last_rank = active_cards.last().map(|c| c.rank.clone());
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
@@ -2492,11 +2498,7 @@ pub fn KanbanPanel(
                             }
                         }
 
-                for (card_index, card) in column
-                    .cards
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, c)| c.lifecycle == StrandLifecycleState::Active)
+                for (card_index, card) in active_cards.iter().enumerate()
                 {
                             div {
                                 key: "{card.id}",
@@ -2536,7 +2538,7 @@ pub fn KanbanPanel(
                                     let prev_rank = if card_index == 0 {
                                         None
                                     } else {
-                                        Some(column.cards[card_index - 1].rank.clone())
+                                        Some(active_cards[card_index - 1].rank.clone())
                                     };
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
