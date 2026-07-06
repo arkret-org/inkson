@@ -1132,11 +1132,19 @@ pub fn KanbanPanel(
             let initial_view = board_view_id.peek().clone();
             let initial_cursor = sync_cursor.peek().clone();
             let initial_epoch = *realm_live_epoch.peek();
+            let initial_mls_unlock = {
+                let store = state_store.peek();
+                kanban_mls_unlock_signature(
+                    !store.mls_snapshots().is_empty(),
+                    crate::app::local_mls_epoch_floor_all(&store),
+                )
+            };
             kanban_projection_refresh_key(
                 &initial_realm_id,
                 &initial_view,
                 &initial_cursor,
                 initial_epoch,
+                &initial_mls_unlock,
             )
         }
     });
@@ -1165,12 +1173,28 @@ pub fn KanbanPanel(
         // events engine, so fresh cross-member events trigger a reproject even
         // when the account `sync_cursor` never advanced for them.
         let live_epoch = realm_live_epoch();
+        // Third freshness axis: read the MLS-unlock state through `.read()` so
+        // this effect subscribes to `state_store` and re-runs when a snapshot is
+        // installed. An invitee's Welcome/snapshot can land AFTER the one-shot
+        // bootstrap backfill, while the account cursor and events engine are both
+        // stale — folding snapshot-presence + epoch floor into the refresh key
+        // makes that arrival re-trigger the backfill so the pre-join history can
+        // finally decrypt, instead of staying blank until a manual page refresh.
+        // (invitee-history-late-decrypt)
+        let mls_unlock = {
+            let store = state_store.read();
+            kanban_mls_unlock_signature(
+                !store.mls_snapshots().is_empty(),
+                crate::app::local_mls_epoch_floor_all(&store),
+            )
+        };
         let Some(refresh_key) = next_kanban_projection_refresh_key(
             live_refresh_key_seen.peek().as_str(),
             &lifecycle_realm_id,
             &view,
             &cursor,
             live_epoch,
+            &mls_unlock,
         ) else {
             return;
         };
