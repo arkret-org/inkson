@@ -242,6 +242,23 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
   await page.getByTestId("agent-admin-create-open-button").click();
   await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
+  const scrollLayout = await page.evaluate(() => {
+    const workspace = document.querySelector(".workspace-body") as HTMLElement | null;
+    window.scrollTo(0, 200);
+    if (workspace) {
+      workspace.scrollTop = 200;
+    }
+    return {
+      windowScrollY: window.scrollY,
+      bodyOverflowY: getComputedStyle(document.body).overflowY,
+      workspaceOverflowY: workspace ? getComputedStyle(workspace).overflowY : null,
+      workspaceScrollTop: workspace?.scrollTop ?? 0,
+    };
+  });
+  expect(scrollLayout.windowScrollY).toBe(0);
+  expect(scrollLayout.bodyOverflowY).toBe("hidden");
+  expect(scrollLayout.workspaceOverflowY).toBe("auto");
+  expect(scrollLayout.workspaceScrollTop).toBeGreaterThan(0);
   await expect(page.getByTestId("agent-admin-content-preset-row")).toHaveCount(5);
   await expect(page.getByTestId("agent-admin-service-scope-row")).toHaveCount(4);
   await page.getByTestId("agent-admin-provision-realm-input").fill(DEMO_REALM);
