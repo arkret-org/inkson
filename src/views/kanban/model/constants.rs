@@ -186,7 +186,10 @@ mod tests {
         );
 
         // Still no realm/view selector → no refresh even with an epoch.
-        assert_eq!(next_kanban_projection_refresh_key("", "", "", "-", 5, ""), None);
+        assert_eq!(
+            next_kanban_projection_refresh_key("", "", "", "-", 5, ""),
+            None
+        );
     }
 
     #[test]
@@ -218,14 +221,8 @@ mod tests {
         );
 
         let after = kanban_mls_unlock_signature(true, 1);
-        let unlocked = next_kanban_projection_refresh_key(
-            &boot_key,
-            "ck:realm:r1",
-            "",
-            "-",
-            0,
-            &after,
-        );
+        let unlocked =
+            next_kanban_projection_refresh_key(&boot_key, "ck:realm:r1", "", "-", 0, &after);
         assert_eq!(unlocked, Some("ck:realm:r1||-|0|snap:1|ep:1".to_owned()));
 
         // Same snapshot signature again → no churn.

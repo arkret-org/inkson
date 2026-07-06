@@ -3179,6 +3179,7 @@ pub fn RouterView() -> Element {
         style { "{APP_OVERRIDES}" }
         document::Title { "{document_title}" }
         if matches!(auth_surface, AuthSurface::AppShell) {
+        style { "html, body, #main {{ height: 100%; overflow: hidden; }}" }
         div {
             class: shell_class,
             style: "{sidebar_style}",
