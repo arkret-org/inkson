@@ -529,11 +529,12 @@ fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
 #[test]
 fn shared_pin_operations_use_pin_events_not_account_data() {
     let strand_id = "ck:strand:01904100-0000-7000-8000-000000000001";
+    let pin_scope = SharedPinScope::strand(strand_id);
     let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
     let add = shared_message_pin_add_operation(
         "ck:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        strand_id,
+        &pin_scope,
         target_ref,
         "r100",
     )
@@ -551,7 +552,7 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     let remove = shared_message_pin_remove_operation(
         "ck:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        strand_id,
+        &pin_scope,
         target_ref,
     )
     .expect("shared pin remove builds");
@@ -565,6 +566,31 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(remove.kind.as_str(), &remove.content)
+        .unwrap();
+}
+
+#[test]
+fn default_discussion_shared_pin_uses_realm_scope() {
+    let realm_id = "ck:realm:01904100-0000-7000-8000-000000000010";
+    let strand_id = default_discussion_strand_id(realm_id);
+    let pin_scope = shared_pin_scope_for_message(realm_id, &strand_id);
+    let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
+    let add = shared_message_pin_add_operation(
+        realm_id,
+        "did:web:alice.example",
+        &pin_scope,
+        target_ref,
+        "r100",
+    )
+    .expect("shared pin add builds");
+
+    assert_eq!(add.kind.as_str(), "ck.pin.add");
+    assert_eq!(add.content["pin_scope"]["kind"], "realm");
+    assert_eq!(add.content["pin_scope"]["id"], realm_id);
+    assert_eq!(add.content["target_ref"], target_ref);
+    cokret_sdk::schema::event_payload_validator_catalog()
+        .unwrap()
+        .validate_payload(add.kind.as_str(), &add.content)
         .unwrap();
 }
 
@@ -609,6 +635,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
     use chrono::Utc;
 
     let strand_id = "ck:strand:01904100-0000-7000-8000-000000000001";
+    let pin_scope = SharedPinScope::strand(strand_id);
     let other_strand_id = "ck:strand:01904100-0000-7000-8000-000000000099";
     let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
     let other_target = "ck:message:01904100-0000-7000-8000-000000000003";
@@ -671,14 +698,14 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
         },
     ];
 
-    let pins = shared_message_pins_from_raw_operations(&records, strand_id);
+    let pins = shared_message_pins_from_raw_operations(&records, &pin_scope);
     assert_eq!(
         pins,
-        vec![SharedMessagePin {
-            pin_scope_id: strand_id.to_owned(),
+        vec![SharedMessagePin::new(
+            &pin_scope,
             target_ref: target_ref.to_owned(),
             rank: "r050".to_owned(),
-        }]
+        )]
     );
 }
 
@@ -830,6 +857,7 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
 #[test]
 fn message_operations_from_events_folds_shared_pin_control_events() {
     let strand_id = "ck:strand:topic";
+    let pin_scope = SharedPinScope::strand(strand_id);
     let target_ref = "ck:message:pinned";
     let pin = json!({
         "event_id": "ck:event:pin-1",
@@ -849,14 +877,14 @@ fn message_operations_from_events_folds_shared_pin_control_events() {
     assert_eq!(records[0].operation_id, "ck:event:pin-1");
     assert_eq!(records[0].realm_id.as_deref(), Some("ck:realm:r1"));
 
-    let pins = shared_message_pins_from_raw_operations(&records, strand_id);
+    let pins = shared_message_pins_from_raw_operations(&records, &pin_scope);
     assert_eq!(
         pins,
-        vec![SharedMessagePin {
-            pin_scope_id: strand_id.to_owned(),
+        vec![SharedMessagePin::new(
+            &pin_scope,
             target_ref: target_ref.to_owned(),
             rank: "r001".to_owned(),
-        }]
+        )]
     );
 }
 

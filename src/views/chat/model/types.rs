@@ -44,6 +44,42 @@ pub(crate) struct StrandScopeCircle {
     pub(crate) member_count: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SharedPinScopeKind {
+    Realm,
+    Strand,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SharedPinScope {
+    pub(crate) kind: SharedPinScopeKind,
+    pub(crate) id: String,
+}
+
+impl SharedPinScope {
+    pub(crate) fn realm(id: impl Into<String>) -> Self {
+        Self {
+            kind: SharedPinScopeKind::Realm,
+            id: id.into(),
+        }
+    }
+
+    pub(crate) fn strand(id: impl Into<String>) -> Self {
+        Self {
+            kind: SharedPinScopeKind::Strand,
+            id: id.into(),
+        }
+    }
+
+    pub(crate) fn from_wire(kind: &str, id: &str) -> Option<Self> {
+        match kind {
+            "realm" => Some(Self::realm(id.to_owned())),
+            "strand" => Some(Self::strand(id.to_owned())),
+            _ => None,
+        }
+    }
+}
+
 /// T7.4: end-to-end encryption decryption state for a message.
 ///
 /// Derived from the presence of `content.encrypted_content` on the
@@ -145,9 +181,25 @@ impl ChatMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SharedMessagePin {
+    pub(crate) pin_scope_kind: SharedPinScopeKind,
     pub(crate) pin_scope_id: String,
     pub(crate) target_ref: String,
     pub(crate) rank: String,
+}
+
+impl SharedMessagePin {
+    pub(crate) fn new(pin_scope: &SharedPinScope, target_ref: String, rank: String) -> Self {
+        Self {
+            pin_scope_kind: pin_scope.kind,
+            pin_scope_id: pin_scope.id.clone(),
+            target_ref,
+            rank,
+        }
+    }
+
+    pub(crate) fn matches_scope(&self, pin_scope: &SharedPinScope) -> bool {
+        self.pin_scope_kind == pin_scope.kind && self.pin_scope_id == pin_scope.id
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

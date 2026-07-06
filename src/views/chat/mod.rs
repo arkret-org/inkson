@@ -350,11 +350,16 @@ pub fn ChatPanel(
         let mut shared_pins_for_sync = shared_pins;
         let mut private_saved_targets_for_sync = private_saved_targets;
         let mut private_saved_account_data_for_sync = private_saved_account_data;
+        let selected_realm_for_pin_sync = selected_realm_id.clone();
         use_effect(move || {
             let active_strand = selected_channel();
             let snapshot = state_store.read().load();
-            let next_shared =
-                shared_message_pins_from_raw_operations(&snapshot.raw_operations, &active_strand);
+            let active_pin_scope =
+                shared_pin_scope_for_message(&selected_realm_for_pin_sync, &active_strand);
+            let next_shared = shared_message_pins_from_raw_operations(
+                &snapshot.raw_operations,
+                &active_pin_scope,
+            );
             if *shared_pins_for_sync.peek() != next_shared {
                 shared_pins_for_sync.set(next_shared);
             }
@@ -2048,6 +2053,8 @@ pub fn ChatPanel(
                                             private_saved_targets().contains(&target_ref);
                                         let realm_for_pin = msg.realm_id.clone();
                                         let strand_for_pin = msg.strand_id.clone();
+                                        let pin_scope_for_pin =
+                                            shared_pin_scope_for_message(&realm_for_pin, &strand_for_pin);
                                         let actor_for_pin = account_did.clone();
                                         let base_for_pin = base_url.clone();
                                         let target_for_pin = target_ref.clone();
@@ -2131,14 +2138,14 @@ pub fn ChatPanel(
                                                         shared_message_pin_remove_operation(
                                                             &realm_for_pin,
                                                             &actor_for_pin,
-                                                            &strand_for_pin,
+                                                            &pin_scope_for_pin,
                                                             &target_for_pin,
                                                         )
                                                     } else {
                                                         shared_message_pin_add_operation(
                                                             &realm_for_pin,
                                                             &actor_for_pin,
-                                                            &strand_for_pin,
+                                                            &pin_scope_for_pin,
                                                             &target_for_pin,
                                                             &rank,
                                                         )
@@ -2153,18 +2160,18 @@ pub fn ChatPanel(
                                                     };
                                                     if is_pinned {
                                                         shared_pins.write().retain(|pin| {
-                                                            !(pin.pin_scope_id == strand_for_pin
+                                                            !(pin.matches_scope(&pin_scope_for_pin)
                                                                 && pin.target_ref == target_for_pin)
                                                         });
                                                     } else if !shared_pins().iter().any(|pin| {
-                                                        pin.pin_scope_id == strand_for_pin
+                                                        pin.matches_scope(&pin_scope_for_pin)
                                                             && pin.target_ref == target_for_pin
                                                     }) {
-                                                        shared_pins.write().push(SharedMessagePin {
-                                                            pin_scope_id: strand_for_pin.clone(),
-                                                            target_ref: target_for_pin.clone(),
-                                                            rank: rank.clone(),
-                                                        });
+                                                        shared_pins.write().push(SharedMessagePin::new(
+                                                            &pin_scope_for_pin,
+                                                            target_for_pin.clone(),
+                                                            rank.clone(),
+                                                        ));
                                                     }
                                                     message_context_menu.set(None);
                                                     status_msg.set(if is_pinned {
@@ -2176,7 +2183,7 @@ pub fn ChatPanel(
                                                     let api_token = token();
                                                     let wait_for = active_sync_token(sync_cursor());
                                                     let realm_for_store = realm_for_pin.clone();
-                                                    let strand_for_store = strand_for_pin.clone();
+                                                    let pin_scope_for_store = pin_scope_for_pin.clone();
                                                     let target_for_store = target_for_pin.clone();
                                                     let existing_for_rollback = existing_pin.clone();
                                                     spawn(async move {
@@ -2209,7 +2216,7 @@ pub fn ChatPanel(
                                                                         }
                                                                     } else {
                                                                         shared_pins.write().retain(|pin| {
-                                                                            !(pin.pin_scope_id == strand_for_store
+                                                                            !(pin.matches_scope(&pin_scope_for_store)
                                                                                 && pin.target_ref == target_for_store)
                                                                         });
                                                                     }
@@ -2223,7 +2230,7 @@ pub fn ChatPanel(
                                                                     }
                                                                 } else {
                                                                     shared_pins.write().retain(|pin| {
-                                                                        !(pin.pin_scope_id == strand_for_store
+                                                                        !(pin.matches_scope(&pin_scope_for_store)
                                                                             && pin.target_ref == target_for_store)
                                                                     });
                                                                 }
@@ -2726,6 +2733,8 @@ pub fn ChatPanel(
                                         {
                                             let realm_for_pin = msg.realm_id.clone();
                                             let strand_for_pin = msg.strand_id.clone();
+                                            let pin_scope_for_pin =
+                                                shared_pin_scope_for_message(&realm_for_pin, &strand_for_pin);
                                             let actor_for_pin = account_did.clone();
                                             let base_for_pin = base_url.clone();
                                             let target_for_pin = message_target_ref.clone();
@@ -2754,14 +2763,14 @@ pub fn ChatPanel(
                                                             shared_message_pin_remove_operation(
                                                                 &realm_for_pin,
                                                                 &actor_for_pin,
-                                                                &strand_for_pin,
+                                                                &pin_scope_for_pin,
                                                                 &target_for_pin,
                                                             )
                                                         } else {
                                                             shared_message_pin_add_operation(
                                                                 &realm_for_pin,
                                                                 &actor_for_pin,
-                                                                &strand_for_pin,
+                                                                &pin_scope_for_pin,
                                                                 &target_for_pin,
                                                                 &rank,
                                                             )
@@ -2775,18 +2784,18 @@ pub fn ChatPanel(
                                                         };
                                                         if is_pinned {
                                                             shared_pins.write().retain(|pin| {
-                                                                !(pin.pin_scope_id == strand_for_pin
+                                                                !(pin.matches_scope(&pin_scope_for_pin)
                                                                     && pin.target_ref == target_for_pin)
                                                             });
                                                         } else if !shared_pins().iter().any(|pin| {
-                                                            pin.pin_scope_id == strand_for_pin
+                                                            pin.matches_scope(&pin_scope_for_pin)
                                                                 && pin.target_ref == target_for_pin
                                                         }) {
-                                                            shared_pins.write().push(SharedMessagePin {
-                                                                pin_scope_id: strand_for_pin.clone(),
-                                                                target_ref: target_for_pin.clone(),
-                                                                rank: rank.clone(),
-                                                            });
+                                                            shared_pins.write().push(SharedMessagePin::new(
+                                                                &pin_scope_for_pin,
+                                                                target_for_pin.clone(),
+                                                                rank.clone(),
+                                                            ));
                                                         }
                                                         status_msg.set(if is_pinned {
                                                             crate::i18n::tr("message.shared_unpin_pending")
@@ -2797,7 +2806,7 @@ pub fn ChatPanel(
                                                         let api_token = token();
                                                         let wait_for = active_sync_token(sync_cursor());
                                                         let realm_for_store = realm_for_pin.clone();
-                                                        let strand_for_store = strand_for_pin.clone();
+                                                        let pin_scope_for_store = pin_scope_for_pin.clone();
                                                         let target_for_store = target_for_pin.clone();
                                                         let existing_for_rollback = existing_pin.clone();
                                                         spawn(async move {
@@ -2830,7 +2839,7 @@ pub fn ChatPanel(
                                                                             }
                                                                         } else {
                                                                             shared_pins.write().retain(|pin| {
-                                                                                !(pin.pin_scope_id == strand_for_store
+                                                                                !(pin.matches_scope(&pin_scope_for_store)
                                                                                     && pin.target_ref == target_for_store)
                                                                             });
                                                                         }
@@ -2844,7 +2853,7 @@ pub fn ChatPanel(
                                                                         }
                                                                     } else {
                                                                         shared_pins.write().retain(|pin| {
-                                                                            !(pin.pin_scope_id == strand_for_store
+                                                                            !(pin.matches_scope(&pin_scope_for_store)
                                                                                 && pin.target_ref == target_for_store)
                                                                         });
                                                                     }

@@ -673,11 +673,11 @@ pub(crate) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
 
 pub(crate) fn shared_message_pins_from_raw_operations(
     records: &[crate::local_state::RawOperationRecord],
-    active_strand_id: &str,
+    active_pin_scope: &SharedPinScope,
 ) -> Vec<SharedMessagePin> {
     let mut pins = Vec::<SharedMessagePin>::new();
     for record in records {
-        apply_shared_pin_event(&mut pins, &record.payload, active_strand_id);
+        apply_shared_pin_event(&mut pins, &record.payload, active_pin_scope);
     }
     pins.sort_by(|left, right| {
         left.rank
@@ -690,7 +690,7 @@ pub(crate) fn shared_message_pins_from_raw_operations(
 pub(crate) fn apply_shared_pin_event(
     pins: &mut Vec<SharedMessagePin>,
     event: &Value,
-    active_strand_id: &str,
+    active_pin_scope: &SharedPinScope,
 ) {
     let Some(kind) = event
         .get("kind")
@@ -710,13 +710,16 @@ pub(crate) fn apply_shared_pin_event(
     let Some(pin_scope) = payload.get("pin_scope") else {
         return;
     };
-    if pin_scope.get("kind").and_then(Value::as_str) != Some("strand") {
+    let Some(scope_kind) = pin_scope.get("kind").and_then(Value::as_str) else {
         return;
-    }
+    };
     let Some(scope_id) = pin_scope.get("id").and_then(Value::as_str) else {
         return;
     };
-    if scope_id != active_strand_id {
+    let Some(scope) = SharedPinScope::from_wire(scope_kind, scope_id) else {
+        return;
+    };
+    if &scope != active_pin_scope {
         return;
     }
     let Some(target_ref) = payload.get("target_ref").and_then(Value::as_str) else {
@@ -731,25 +734,21 @@ pub(crate) fn apply_shared_pin_event(
                 .to_owned();
             if let Some(existing) = pins
                 .iter_mut()
-                .find(|pin| pin.pin_scope_id == scope_id && pin.target_ref == target_ref)
+                .find(|pin| pin.matches_scope(&scope) && pin.target_ref == target_ref)
             {
                 existing.rank = rank;
             } else {
-                pins.push(SharedMessagePin {
-                    pin_scope_id: scope_id.to_owned(),
-                    target_ref: target_ref.to_owned(),
-                    rank,
-                });
+                pins.push(SharedMessagePin::new(&scope, target_ref.to_owned(), rank));
             }
         }
         "ck.pin.remove" => {
-            pins.retain(|pin| !(pin.pin_scope_id == scope_id && pin.target_ref == target_ref));
+            pins.retain(|pin| !(pin.matches_scope(&scope) && pin.target_ref == target_ref));
         }
         "ck.pin.reorder" => {
             if let Some(rank) = payload.get("rank").and_then(Value::as_str)
                 && let Some(existing) = pins
                     .iter_mut()
-                    .find(|pin| pin.pin_scope_id == scope_id && pin.target_ref == target_ref)
+                    .find(|pin| pin.matches_scope(&scope) && pin.target_ref == target_ref)
             {
                 existing.rank = rank.to_owned();
             }

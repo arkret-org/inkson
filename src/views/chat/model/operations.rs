@@ -38,18 +38,38 @@ pub(crate) fn next_shared_pin_rank() -> String {
     format!("r{}", chrono::Utc::now().timestamp_millis())
 }
 
+pub(crate) fn shared_pin_scope_for_message(realm_id: &str, strand_id: &str) -> SharedPinScope {
+    let realm_id = realm_id.trim();
+    let strand_id = strand_id.trim();
+    if !realm_id.is_empty() && strand_id == default_discussion_strand_id(realm_id) {
+        SharedPinScope::realm(realm_id.to_owned())
+    } else {
+        SharedPinScope::strand(strand_id.to_owned())
+    }
+}
+
+fn sdk_pin_scope(pin_scope: &SharedPinScope) -> anyhow::Result<cokret_sdk::PinScope> {
+    match pin_scope.kind {
+        SharedPinScopeKind::Realm => Ok(cokret_sdk::PinScope::Realm {
+            id: cokret_sdk::RealmId::new(pin_scope.id.clone())
+                .map_err(|error| anyhow::anyhow!("invalid pin realm scope: {error:?}"))?,
+        }),
+        SharedPinScopeKind::Strand => Ok(cokret_sdk::PinScope::Strand {
+            id: cokret_sdk::StrandId::new(pin_scope.id.clone())
+                .map_err(|error| anyhow::anyhow!("invalid pin strand scope: {error:?}"))?,
+        }),
+    }
+}
+
 pub(crate) fn shared_message_pin_add_operation(
     realm_id: &str,
     actor: &str,
-    strand_id: &str,
+    pin_scope: &SharedPinScope,
     target_ref: &str,
     rank: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
     let payload = cokret_sdk::PinAddPayload {
-        pin_scope: cokret_sdk::PinScope::Strand {
-            id: cokret_sdk::StrandId::new(strand_id.to_owned())
-                .map_err(|error| anyhow::anyhow!("invalid pin strand scope: {error:?}"))?,
-        },
+        pin_scope: sdk_pin_scope(pin_scope)?,
         target_ref: target_ref.to_owned(),
         rank: rank.to_owned(),
         note: None,
@@ -69,14 +89,11 @@ pub(crate) fn shared_message_pin_add_operation(
 pub(crate) fn shared_message_pin_remove_operation(
     realm_id: &str,
     actor: &str,
-    strand_id: &str,
+    pin_scope: &SharedPinScope,
     target_ref: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
     let payload = cokret_sdk::PinRemovePayload {
-        pin_scope: cokret_sdk::PinScope::Strand {
-            id: cokret_sdk::StrandId::new(strand_id.to_owned())
-                .map_err(|error| anyhow::anyhow!("invalid pin strand scope: {error:?}"))?,
-        },
+        pin_scope: sdk_pin_scope(pin_scope)?,
         target_ref: target_ref.to_owned(),
         expected_rank: None,
     };
