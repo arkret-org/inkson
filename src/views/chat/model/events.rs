@@ -100,6 +100,36 @@ pub(crate) fn message_is_redaction_tombstone(candidates: &[&Value]) -> bool {
     })
 }
 
+pub(crate) fn local_redaction_tombstone_for_message(
+    message: &ChatMessage,
+    redacted_at: chrono::DateTime<chrono::Utc>,
+    redaction_ref: Option<&str>,
+) -> Value {
+    let mut event = json!({
+        "kind": "ck.message.create",
+        "event_id": message.id.clone(),
+        "realm_id": message.realm_id.clone(),
+        "strand_id": message.strand_id.clone(),
+        "actor_id": message.sender.clone(),
+        "sender": message.sender.clone(),
+        "created_at": redacted_at.to_rfc3339(),
+    });
+    if let Some(message_id) = message
+        .protocol_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        && let Some(object) = event.as_object_mut()
+    {
+        object.insert(
+            "message_id".to_owned(),
+            Value::String(message_id.to_owned()),
+        );
+    }
+    cokret_sdk::events::redaction_tombstone_message_value(&mut event, redacted_at, redaction_ref);
+    event
+}
+
 pub(crate) fn text_from_blocks(value: &Value) -> Option<&str> {
     value
         .get("blocks")
@@ -583,10 +613,12 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
 /// `kanban_operations_from_events` — instead of refetching + redecrypting the
 /// whole realm on every Discussion-tab open.
 ///
-/// Only canonical `ck.message.create` events (and their server-folded redaction
-/// / expiry tombstone forms, which reuse the same kind + `event_id`) are kept.
-/// Polls / moderation / pins / reactions have their own kinds and projections
-/// and are deliberately excluded. The FULL event is stored as the record
+/// Canonical `ck.message.create` events (and their server-folded redaction /
+/// expiry tombstone forms, which reuse the same kind + `event_id`) are kept.
+/// Shared `ck.pin.*` control events are kept in the same discussion log so the
+/// pinned-message bar projects from the same local-first source. Poll responses
+/// / moderation / reactions have their own projections and are deliberately
+/// excluded. The FULL event is stored as the record
 /// payload so the receiver-proof gate, the `encrypted_content` ciphertext, and
 /// the tombstone markers all survive into the local-first render path — the
 /// decrypted plaintext is NEVER stored here (it stays in the author sidecar /
@@ -660,13 +692,21 @@ pub(crate) fn apply_shared_pin_event(
     event: &Value,
     active_strand_id: &str,
 ) {
-    let Some(kind) = event.get("kind").and_then(Value::as_str) else {
+    let Some(kind) = event
+        .get("kind")
+        .or_else(|| event.get("event_kind"))
+        .and_then(Value::as_str)
+    else {
         return;
     };
     if !matches!(kind, "ck.pin.add" | "ck.pin.remove" | "ck.pin.reorder") {
         return;
     }
-    let payload = event.get("payload").unwrap_or(event);
+    let payload = event
+        .get("payload")
+        .or_else(|| event.get("content"))
+        .or_else(|| event.get("body"))
+        .unwrap_or(event);
     let Some(pin_scope) = payload.get("pin_scope") else {
         return;
     };

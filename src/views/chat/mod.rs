@@ -3329,6 +3329,7 @@ pub fn ChatPanel(
                                                     let actor = account_did.clone();
                                                     let msg_id = msg.id.clone();
                                                     let target_ref = msg.mutation_target_ref().to_owned();
+                                                    let message_for_tombstone = msg.clone();
                                                     move |_| {
                                                         if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                             found.redacted = true;
@@ -3343,6 +3344,7 @@ pub fn ChatPanel(
                                                         let actor = actor.clone();
                                                         let msg_id = msg_id.clone();
                                                         let target_ref = target_ref.clone();
+                                                        let message_for_tombstone = message_for_tombstone.clone();
                                                         let api_token = token();
                                                         let wait_for = active_sync_token(sync_cursor());
                                                         spawn(async move {
@@ -3361,7 +3363,18 @@ pub fn ChatPanel(
                                                                         }
                                                                     };
                                                                     match api.submit_sdk_event(&op).await {
-                                                                        Ok(_resp) => {
+                                                                        Ok(resp) => {
+                                                                            let tombstone = local_redaction_tombstone_for_message(
+                                                                                &message_for_tombstone,
+                                                                                chrono::Utc::now(),
+                                                                                Some(&resp.event_id),
+                                                                            );
+                                                                            state_store.write().upsert_raw_operation(
+                                                                                message_for_tombstone.id.clone(),
+                                                                                Some(realm.clone()),
+                                                                                tombstone,
+                                                                            );
+                                                                            frontier_state.set(resp.event_id);
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                                                 found.pending = false;
                                                                                 found.failed = false;

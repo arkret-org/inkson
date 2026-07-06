@@ -1288,6 +1288,7 @@ pub fn apply_response(
                 store.set_realm_seal_view(id.clone(), view);
                 store.ingest_move_event_states(id, body);
                 ingest_kanban_state_events_from_projection(store, id, body);
+                ingest_discussion_state_events_from_projection(store, id, body);
                 ingest_membership_events_from_projection(store, id, body);
                 // Fold the discussion timeline into `raw_operations` too so the
                 // card-detail Discussion tab renders local-first instead of
@@ -1571,6 +1572,14 @@ fn ingest_message_events_from_projection(
     body: &Value,
 ) -> usize {
     ingest_message_events(store, realm_id, &sync_realm_timeline_events(body))
+}
+
+fn ingest_discussion_state_events_from_projection(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    body: &Value,
+) -> usize {
+    ingest_message_events(store, realm_id, &sync_realm_state_events(body))
 }
 
 /// Fold a batch of discussion message events into `raw_operations`. Shared by
@@ -2269,6 +2278,44 @@ mod tests {
         assert_eq!(
             state.raw_operations[0].payload["body"]["patch"]["synthesis"]["value"],
             "bob synthesis"
+        );
+    }
+
+    #[test]
+    fn sync_state_events_ingest_discussion_pin_controls_as_raw_operations() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let strand_id = "ck:strand:01904100-0000-7000-8000-000000000002";
+        let mut store = temp_store("discussion-pin-state-events");
+        let body = json!({
+            "state": {
+                "events": [{
+                    "event_id": "ck:event:01904100-0000-7000-8000-0000000000b1",
+                    "event_kind": "ck.pin.add",
+                    "actor_id": "did:web:mei.example",
+                    "created_at": "2026-06-24T10:00:00Z",
+                    "realm_id": realm_id,
+                    "payload": {
+                        "pin_scope": {"kind": "strand", "id": strand_id},
+                        "target_ref": "ck:message:01904100-0000-7000-8000-000000000101",
+                        "rank": "r001"
+                    }
+                }]
+            }
+        });
+
+        let changed = ingest_discussion_state_events_from_projection(&mut store, realm_id, &body);
+
+        assert_eq!(changed, 1);
+        let state = store.load();
+        assert_eq!(state.raw_operations.len(), 1);
+        assert_eq!(
+            state.raw_operations[0].operation_id,
+            "ck:event:01904100-0000-7000-8000-0000000000b1"
+        );
+        assert_eq!(state.raw_operations[0].payload["event_kind"], "ck.pin.add");
+        assert_eq!(
+            state.raw_operations[0].payload["payload"]["pin_scope"]["id"],
+            strand_id
         );
     }
 

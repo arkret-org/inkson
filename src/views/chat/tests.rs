@@ -828,6 +828,95 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
 }
 
 #[test]
+fn message_operations_from_events_folds_shared_pin_control_events() {
+    let strand_id = "ck:strand:topic";
+    let target_ref = "ck:message:pinned";
+    let pin = json!({
+        "event_id": "ck:event:pin-1",
+        "event_kind": "ck.pin.add",
+        "actor_id": "did:web:mei.example",
+        "realm_id": "ck:realm:r1",
+        "created_at": "2026-05-22T10:10:00Z",
+        "payload": {
+            "pin_scope": {"kind": "strand", "id": strand_id},
+            "target_ref": target_ref,
+            "rank": "r001"
+        }
+    });
+
+    let records = message_operations_from_events("ck:realm:r1", &[pin]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].operation_id, "ck:event:pin-1");
+    assert_eq!(records[0].realm_id.as_deref(), Some("ck:realm:r1"));
+
+    let pins = shared_message_pins_from_raw_operations(&records, strand_id);
+    assert_eq!(
+        pins,
+        vec![SharedMessagePin {
+            pin_scope_id: strand_id.to_owned(),
+            target_ref: target_ref.to_owned(),
+            rank: "r001".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
+    let redacted_at = chrono::DateTime::parse_from_rfc3339("2026-05-22T10:05:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let message = ChatMessage {
+        realm_id: "ck:realm:r1".to_owned(),
+        id: "ck:event:msg-3".to_owned(),
+        protocol_message_id: Some("ck:message:m3".to_owned()),
+        sender: "did:web:bob.example".to_owned(),
+        executed_by: None,
+        body: "secret".to_owned(),
+        timestamp: "10:00".to_owned(),
+        strand_id: "ck:strand:topic".to_owned(),
+        reply_to: None,
+        reactions: Vec::new(),
+        redacted: false,
+        edited: false,
+        revisions: Vec::new(),
+        pending: false,
+        failed: false,
+        error: None,
+        mentions: Vec::new(),
+        crypto_state: MessageCryptoState::Plaintext,
+    };
+
+    let tombstone =
+        local_redaction_tombstone_for_message(&message, redacted_at, Some("ck:event:redact-1"));
+    assert_eq!(tombstone["event_id"], message.id);
+    assert_eq!(tombstone["message_id"], "ck:message:m3");
+    assert_eq!(tombstone["redacted"], true);
+    assert_eq!(tombstone["state"], "redacted");
+    assert_eq!(tombstone["redaction_ref"], "ck:event:redact-1");
+    assert_eq!(
+        tombstone["content"]["body"],
+        cokret_sdk::events::REDACTED_MESSAGE_PLACEHOLDER
+    );
+    assert!(tombstone.get("body").is_none());
+
+    let state = ClientLocalState {
+        raw_operations: vec![crate::local_state::RawOperationRecord {
+            operation_id: message.id.clone(),
+            realm_id: Some(message.realm_id.clone()),
+            received_at: redacted_at,
+            payload: tombstone,
+        }],
+        ..ClientLocalState::default()
+    };
+    let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].id, message.id);
+    assert!(restored[0].redacted);
+    assert_eq!(restored[0].body, "");
+    assert_eq!(restored[0].reply_to, None);
+}
+
+#[test]
 fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
     let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
     let appellant = "did:web:appellant.example";

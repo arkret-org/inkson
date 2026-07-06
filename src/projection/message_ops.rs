@@ -58,8 +58,22 @@ pub(crate) fn message_actor_from_candidates<'a>(candidates: &[&'a Value]) -> Opt
     first_string_in_candidates(candidates, &["actor_id", "sender_actor_id", "actor"])
 }
 
+fn discussion_event_kind(value: &Value) -> Option<&str> {
+    value_string_at(
+        value,
+        &["kind", "event_kind", "type", "op_type", "event_type"],
+    )
+}
+
 pub(crate) fn message_kind_is_create(value: &Value) -> bool {
-    value_string_at(value, &["kind", "type", "op_type", "event_type"]) == Some("ck.message.create")
+    discussion_event_kind(value) == Some("ck.message.create")
+}
+
+fn discussion_kind_is_raw_operation(kind: &str) -> bool {
+    matches!(
+        kind,
+        "ck.message.create" | "ck.pin.add" | "ck.pin.remove" | "ck.pin.reorder"
+    )
 }
 
 pub(crate) fn message_operations_from_events(
@@ -74,9 +88,9 @@ pub(crate) fn message_operations_from_events(
 
 fn message_event_is_ingestable(event: &Value) -> bool {
     let candidates = message_candidates(event);
-    candidates
-        .iter()
-        .any(|candidate| message_kind_is_create(candidate))
+    candidates.iter().any(|candidate| {
+        discussion_event_kind(candidate).is_some_and(discussion_kind_is_raw_operation)
+    })
 }
 
 fn message_raw_operation_from_event(
