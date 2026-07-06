@@ -10,11 +10,12 @@ use cokret_sdk::models::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation, AgentView,
 };
 use cokret_sdk::{
-    AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
-    AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
-    AgentKeyRuntimeAttestationKind, Did, Hash, PublicKey, RealmId,
+    AGENT_PAIRING_BOOTSTRAP_SCHEMA, AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind,
+    AgentKeyAuthorizePayload, AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
+    AgentKeyRuntimeAttestationKind, AgentPairingBootstrap, AgentPairingContentGrantSummary, Did,
+    Hash, PublicKey, RealmId,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 // ─────────────────────────────────────────────────────────────────────
@@ -284,22 +285,6 @@ pub fn requested_scope_for_presets(
     })
 }
 
-#[derive(Serialize)]
-struct SavfoxPairingBootstrap<'a> {
-    bootstrap_kind: &'static str,
-    protocol_version: &'static str,
-    base_url: &'a str,
-    service_did: &'a str,
-    agent_principal_id: String,
-    pairing_request_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pairing_code: Option<&'a str>,
-    expires_at: String,
-    requested_scope: &'a AgentKeyScope,
-    requested_service_scope: Vec<String>,
-    content_grant_summary: Value,
-}
-
 pub fn build_savfox_pairing_bootstrap_json(
     base_url: &str,
     service_did: &str,
@@ -309,35 +294,34 @@ pub fn build_savfox_pairing_bootstrap_json(
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let content_actions = content_actions_for_presets(content_presets);
-    let content_grant_summary = json!({
-        "presets": content_presets
-            .iter()
-            .map(|preset| preset.preset_name())
-            .collect::<Vec<_>>(),
-        "actions": content_actions,
-        "authorization_model": "service scope gates endpoints; content capability grants gate readable payloads and writable content",
-    });
-    let bootstrap = SavfoxPairingBootstrap {
-        bootstrap_kind: "cokret.savfox.agent_pairing_bootstrap.v1",
-        protocol_version: "v1",
-        base_url,
-        service_did,
-        agent_principal_id: outcome.agent_principal_id.to_string(),
-        pairing_request_id: outcome.pairing_request_id.as_str(),
-        pairing_code: outcome.pairing_code.as_deref(),
-        expires_at: outcome
-            .expires_at
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        requested_service_scope: requested_scope
+    let bootstrap = AgentPairingBootstrap {
+        schema: AGENT_PAIRING_BOOTSTRAP_SCHEMA.to_owned(),
+        cokret_base_url: base_url.to_owned(),
+        service_did: Did::new(service_did.trim().to_owned()).map_err(json_invalid_input)?,
+        agent_principal_id: outcome.agent_principal_id.clone(),
+        pairing_request_id: outcome.pairing_request_id.clone(),
+        pairing_code: outcome.pairing_code.clone().unwrap_or_default(),
+        pairing_expires_at: outcome.expires_at,
+        requested_scope: requested_scope.clone(),
+        service_scope: requested_scope
             .actions
             .iter()
             .filter(|action| action.starts_with("ck.self."))
             .cloned()
             .collect(),
-        requested_scope,
-        content_grant_summary,
+        content_grant_summary: AgentPairingContentGrantSummary {
+            actions: content_actions,
+            grant_refs: Vec::new(),
+        },
     };
     serde_json::to_string_pretty(&bootstrap)
+}
+
+fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
+    serde_json::Error::io(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        error.to_string(),
+    ))
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -259,11 +259,8 @@ mod personal_agent_tests {
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
-        assert_eq!(
-            value["bootstrap_kind"],
-            "cokret.savfox.agent_pairing_bootstrap.v1"
-        );
-        assert_eq!(value["base_url"], "https://cokret.example");
+        assert_eq!(value["schema"], cokret_sdk::AGENT_PAIRING_BOOTSTRAP_SCHEMA);
+        assert_eq!(value["cokret_base_url"], "https://cokret.example");
         assert_eq!(value["service_did"], "did:web:cokret.example");
         assert_eq!(
             value["agent_principal_id"],
@@ -271,8 +268,20 @@ mod personal_agent_tests {
         );
         assert_eq!(value["pairing_request_id"], "0197-req");
         assert_eq!(value["pairing_code"], "123456");
+        assert_eq!(value["pairing_expires_at"], "2026-06-26T00:00:00Z");
         assert_eq!(
-            value["requested_service_scope"],
+            value["requested_scope"]["actions"],
+            serde_json::json!([
+                "ck.self.events.stream.subscribe",
+                "ck.self.events.query.scan",
+                "ck.self.events.command.submit",
+                "ck.event.read",
+                "ck.message.create",
+                "ck.reaction.add"
+            ])
+        );
+        assert_eq!(
+            value["service_scope"],
             serde_json::json!([
                 "ck.self.events.stream.subscribe",
                 "ck.self.events.query.scan",
