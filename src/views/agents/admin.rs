@@ -18,8 +18,10 @@ use yoface::utils::dom::copy_text_to_clipboard;
 
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
-    agent_view_from_directory_row, build_savfox_pairing_bootstrap_json, expand_preset_grant,
-    is_pairing_request_expired, participation_ceiling_reason, requested_scope_for_presets,
+    agent_view_from_directory_row, build_agent_key_authorize_event_for_pairing,
+    build_savfox_pairing_bootstrap_json, expand_preset_grant, is_pairing_request_expired,
+    parse_savfox_runtime_key_approval_request, participation_ceiling_reason,
+    requested_scope_for_presets,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -188,6 +190,7 @@ pub fn PersonalAgentAdminPanel(
     let mut provision_realm = use_signal(String::new);
     let mut pairing_outcome = use_signal(|| Option::<cokret_sdk::AgentProvisionOutcome>::None);
     let mut pairing_bootstrap_json = use_signal(|| Option::<String>::None);
+    let mut runtime_key_request_json = use_signal(String::new);
     let mut selected_grants = use_signal(Vec::<Value>::new);
     let mut rotate_body_json = use_signal(String::new);
     let mut grant_json = use_signal(|| "{}".to_owned());
@@ -237,6 +240,20 @@ pub fn PersonalAgentAdminPanel(
         .as_ref()
         .map(|agent| json_inline(&agent.key_state))
         .unwrap_or_else(|| "not loaded".to_owned());
+    let selected_key_state_value = selected_agent
+        .as_ref()
+        .map(|agent| agent.key_state.clone())
+        .unwrap_or(Value::Null);
+    let selected_pairing_request_id = selected_key_state_value
+        .get("pairing_request_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let selected_authorized_event_ref = selected_key_state_value
+        .get("authorized_event_ref")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let selected_created_at = selected_agent
         .as_ref()
         .map(|agent| agent_field(agent, "created_at"))
@@ -515,6 +532,22 @@ pub fn PersonalAgentAdminPanel(
                                                 let base = base.clone();
                                                 let api_token = token();
                                                 spawn(async move {
+                                                    let service_did = match with_authed_api(
+                                                        &base,
+                                                        api_token.clone(),
+                                                        |api| async move { api.describe().await },
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(describe) => describe.service_did.to_string(),
+                                                        Err(err) => {
+                                                            last_op_status.set(format!(
+                                                                "Create failed: could not load service DID: {}",
+                                                                err.display()
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
                                                     let outcome = match with_authed_api(
                                                         &base,
                                                         api_token.clone(),
@@ -536,9 +569,12 @@ pub fn PersonalAgentAdminPanel(
                                                     };
                                                     let created_agent_id =
                                                         outcome.agent_principal_id.to_string();
-                                                    let expires_at = outcome.expires_at.to_rfc3339();
+                                                    let expires_at = outcome
+                                                        .expires_at
+                                                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                                                     match build_savfox_pairing_bootstrap_json(
                                                         &base,
+                                                        &service_did,
                                                         &outcome,
                                                         &requested_scope,
                                                         &presets,
@@ -551,7 +587,7 @@ pub fn PersonalAgentAdminPanel(
                                                             ));
                                                         }
                                                     }
-                                                    pairing_outcome.set(Some(outcome));
+                                                    pairing_outcome.set(Some(outcome.clone()));
 
                                                     let mut attached = 0usize;
                                                     let mut grant_errs: Vec<String> = Vec::new();
@@ -592,11 +628,18 @@ pub fn PersonalAgentAdminPanel(
                                                         "agent_slug": slug_value,
                                                         "status": "pending_runtime_key",
                                                     });
+                                                    let key_state = json!({
+                                                        "status": "pending_runtime_key",
+                                                        "pairing_request_id": outcome.pairing_request_id,
+                                                        "pairing_code": outcome.pairing_code,
+                                                        "pairing_expires_at": expires_at,
+                                                        "requested_scope": requested_scope,
+                                                    });
                                                     let agent_view = AgentView {
                                                         agent: agent_object,
                                                         status: "pending_runtime_key".to_owned(),
                                                         grants: Vec::new(),
-                                                        key_state: Value::Null,
+                                                        key_state,
                                                     };
                                                     let created_id = agent_principal_id(&agent_view);
                                                     agents.with_mut(|rows| upsert_agent_view(rows, agent_view));
@@ -744,7 +787,7 @@ pub fn PersonalAgentAdminPanel(
                                             }
                                         }
                                         div { class: "muted",
-                                            "Yougen does not yet approve a returned runtime public key in this panel; the old dead pairing page link was removed until that controller-signing flow is implemented."
+                                            "After Savfox returns a runtime key request, paste it into the approval panel below. Yougen will sign ck.agent.key.authorize with this controller and complete the key-pair request."
                                         }
                                         pre {
                                             class: "agent-admin-url",
@@ -767,6 +810,133 @@ pub fn PersonalAgentAdminPanel(
                                     }
                                 } else {
                                     rsx! {}
+                                }
+                            }
+                        }
+
+                        if selected_status == "pending_runtime_key" && !selected_pairing_request_id.is_empty() {
+                            div {
+                                class: "agent-admin-section",
+                                "data-testid": "agent-admin-runtime-key-approval",
+                                div { class: "agent-admin-section-head",
+                                    strong { "Approve runtime key" }
+                                    span { class: "badge amber", "Pending" }
+                                }
+                                div { class: "muted",
+                                    "Paste the runtime key request generated by Savfox. Yougen signs ck.agent.key.authorize with this controller and submits the key-pair request to the Principal Server."
+                                }
+                                textarea {
+                                    class: "agent-admin-url",
+                                    "data-testid": "agent-admin-runtime-key-request-json",
+                                    placeholder: "Savfox runtime key request JSON",
+                                    value: "{runtime_key_request_json}",
+                                    oninput: move |event: FormEvent| runtime_key_request_json.set(event.value()),
+                                }
+                                div { class: "actions",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        "data-testid": "agent-admin-approve-runtime-key-button",
+                                        disabled: runtime_key_request_json().trim().is_empty(),
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let key_state = selected_key_state_value.clone();
+                                            let controller = controller_did.clone();
+                                            let selected_id = selected_id_now.clone();
+                                            move |_| {
+                                                let raw = runtime_key_request_json();
+                                                let request = match parse_savfox_runtime_key_approval_request(&raw) {
+                                                    Ok(request) => request,
+                                                    Err(err) => {
+                                                        last_op_status.set(format!(
+                                                            "Runtime key request JSON is invalid: {err}"
+                                                        ));
+                                                        return;
+                                                    }
+                                                };
+                                                if request.agent_principal_id.as_str() != selected_id {
+                                                    last_op_status.set(
+                                                        "Runtime key request targets a different agent.".to_owned(),
+                                                    );
+                                                    return;
+                                                }
+                                                let base = base.clone();
+                                                let api_token = token();
+                                                let key_state = key_state.clone();
+                                                let controller = controller.clone();
+                                                let selected_id = selected_id.clone();
+                                                spawn(async move {
+                                                    let outcome = with_authed_api(&base, api_token.clone(), move |api| {
+                                                        let request = request.clone();
+                                                        let key_state = key_state.clone();
+                                                        let controller = controller.clone();
+                                                        async move {
+                                                            let service_did = api.describe_cached().await?.service_did.to_string();
+                                                            let authorize_event = build_agent_key_authorize_event_for_pairing(
+                                                                &controller,
+                                                                &service_did,
+                                                                &key_state,
+                                                                &request,
+                                                            )?;
+                                                            api.agent_key_pair_with_authorize_event(
+                                                                request,
+                                                                &authorize_event,
+                                                            )
+                                                            .await
+                                                        }
+                                                    })
+                                                    .await;
+                                                    match outcome {
+                                                        Ok(result) => {
+                                                            agents.with_mut(|rows| {
+                                                                update_agent_status(rows, &selected_id, "active")
+                                                            });
+                                                            match with_authed_api(&base, api_token, move |api| {
+                                                                let id = selected_id.clone();
+                                                                async move { api.agent_get(&id).await }
+                                                            })
+                                                            .await
+                                                            {
+                                                                Ok(view) => {
+                                                                    agents.with_mut(|rows| upsert_agent_view(rows, view));
+                                                                }
+                                                                Err(err) => {
+                                                                    last_op_status.set(format!(
+                                                                        "Runtime key approved: {}; refresh failed: {}",
+                                                                        short_protocol_id(result.authorized_event_ref.as_str()),
+                                                                        err.display()
+                                                                    ));
+                                                                    return;
+                                                                }
+                                                            }
+                                                            runtime_key_request_json.set(String::new());
+                                                            last_op_status.set(format!(
+                                                                "Runtime key approved: {}.",
+                                                                short_protocol_id(result.authorized_event_ref.as_str())
+                                                            ));
+                                                        }
+                                                        Err(err) => last_op_status.set(format!(
+                                                            "Runtime key approval failed: {}",
+                                                            err.display()
+                                                        )),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Approve"
+                                    }
+                                }
+                            }
+                        } else if !selected_authorized_event_ref.is_empty() {
+                            div {
+                                class: "agent-admin-section",
+                                "data-testid": "agent-admin-runtime-key-authorized",
+                                div { class: "agent-admin-section-head",
+                                    strong { "Runtime key" }
+                                    span { class: "badge green", "Authorized" }
+                                }
+                                div { class: "metric",
+                                    strong { "Authorization event" }
+                                    span { class: "mono", "{selected_authorized_event_ref}" }
                                 }
                             }
                         }

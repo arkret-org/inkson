@@ -196,22 +196,6 @@
   border: 1px solid color-mix(in srgb, var(--warning) 38%, transparent);
 }
 
-.member-agent-settings-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid color-mix(in srgb, var(--info-ink) 26%, transparent);
-  background: var(--info-soft);
-  color: var(--info-ink);
-  cursor: pointer;
-  font: inherit;
-}
-
-.member-agent-settings-toggle .ui-icon {
-  width: 13px;
-  height: 13px;
-}
-
 .member-avatar {
   flex: 0 0 auto;
   display: inline-flex;
@@ -252,20 +236,6 @@
   display: none;
 }
 
-.member-avatar-button {
-  cursor: pointer;
-  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-
-.member-avatar-button:hover,
-.member-avatar-button:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-  transform: translateY(-1px);
-  outline: none;
-}
-
 .member-avatar-agent {
   background: var(--info-soft);
   color: var(--info-ink);
@@ -287,21 +257,32 @@
 }
 
 .member-agent-list {
-  display: grid;
-  gap: 8px;
-  margin-left: 20px;
-  padding-left: 18px;
-  border-left: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: 44px;
+  padding: 0 2px;
+  font-size: 12px;
 }
 
-.member-agent-row {
-  background: color-mix(in srgb, var(--surface-2) 82%, var(--info-soft));
+.member-agent-chip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--info-ink) 22%, transparent);
+  border-radius: 999px;
+  background: var(--info-soft);
+  color: var(--info-ink);
+  font-weight: 650;
 }
 
 .member-self-agent-settings {
   display: grid;
   gap: 10px;
-  margin-left: 20px;
+  margin-left: 44px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
   border-radius: 8px;
@@ -325,15 +306,6 @@
 .member-self-agent-list {
   display: grid;
   gap: 8px;
-}
-
-.member-agent-scope-note {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid color-mix(in srgb, var(--border) 84%, var(--info-soft));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 92%, var(--info-soft));
 }
 
 .member-self-agent-row {
@@ -1172,10 +1144,14 @@
     display: grid;
   }
 
-  .member-agent-list,
   .member-self-agent-settings {
     margin-left: 0;
     padding-left: 12px;
+  }
+
+  .member-agent-list {
+    margin-left: 0;
+    padding-left: 0;
   }
 
   .member-self-agent-settings-head,

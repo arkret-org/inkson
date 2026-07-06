@@ -407,7 +407,7 @@ impl CokretApi {
         }
     }
 
-    async fn prepare_sdk_event_for_submit(
+    pub(crate) async fn prepare_sdk_event_for_submit(
         &self,
         event: &cokret_sdk::Event,
     ) -> anyhow::Result<(cokret_sdk::Event, String)> {

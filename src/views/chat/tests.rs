@@ -1709,7 +1709,7 @@ fn mention_candidate_for_agent_uses_controller_scoped_selector() {
 }
 
 #[test]
-fn mention_candidate_without_handle_still_targets_member_did() {
+fn mention_candidate_without_handle_is_not_displayed_as_did() {
     let participant = SpaceParticipant {
         did: "did:web:bob.example".to_owned(),
         display_name: Some("Bob Example".to_owned()),
@@ -1721,12 +1721,51 @@ fn mention_candidate_without_handle_still_targets_member_did() {
         agent_metadata: None,
     };
 
-    let candidate =
+    assert!(
         mention_candidate_for_participant(&participant, std::slice::from_ref(&participant))
-            .expect("member mention candidate");
+            .is_none()
+    );
+}
+
+#[test]
+fn mention_candidate_uses_cached_member_handle() {
+    let temp = std::env::temp_dir().join(format!("yougen-chat-mention-handle-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    store.save_member_handle_lookup(
+        "did:web:bob.example",
+        Some("ck:realm:demo".to_owned()),
+        None,
+        Some("bob:local.host".to_owned()),
+        1,
+        None,
+        None,
+    );
+    let mut participants = vec![SpaceParticipant {
+        did: "did:web:bob.example".to_owned(),
+        display_name: Some("Bob Example".to_owned()),
+        handle_label: None,
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: false,
+        agent_metadata: None,
+    }];
+
+    apply_cached_participant_handle_labels(
+        &mut participants,
+        &store,
+        "ck:realm:demo",
+        "did:web:alice.example",
+        "alice:local.host",
+        "https://local.host",
+    );
+
+    let candidate = mention_candidate_for_participant(&participants[0], &participants)
+        .expect("member mention candidate");
     assert_eq!(candidate.did, "did:web:bob.example");
-    assert_eq!(candidate.display_name, "Bob Example");
-    assert_eq!(candidate.subtitle, "member DID");
+    assert_eq!(candidate.display_name, "bob:local.host");
+    assert_eq!(candidate.insert_label(), "bob:local.host");
+    assert_eq!(candidate.subtitle, "");
 }
 
 #[test]

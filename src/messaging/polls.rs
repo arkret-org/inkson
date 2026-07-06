@@ -333,7 +333,7 @@ pub fn build_poll_create_op(
         })
         .collect();
     let block = cokret_sdk::models::PollBlock {
-        kind: "ck.content.poll".to_owned(),
+        kind: cokret_sdk::models::PollBlockKind::Poll,
         // `body` is the fallback text for clients without poll rendering;
         // `poll.question` is omitted so the question is read from `body`
         // (content-types.md §4.9).
@@ -342,7 +342,7 @@ pub fn build_poll_create_op(
         formatted_body: None,
         reply_context: None,
         poll: cokret_sdk::models::PollBody {
-            kind: "disclosed".to_owned(),
+            kind: cokret_sdk::models::PollDisclosureKind::Disclosed,
             max_selections: u64::from(draft.max_selections.max(1)),
             question: None,
             answers,
@@ -402,7 +402,7 @@ pub fn build_poll_vote_op(
     let poll_ref = cokret_sdk::MessageId::new(poll_ref.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid poll_ref {poll_ref:?}: {err:?}"))?;
     let block = cokret_sdk::models::PollResponseBlock {
-        kind: "ck.content.poll.response".to_owned(),
+        kind: cokret_sdk::models::PollResponseBlockKind::PollResponse,
         body: "poll response".to_owned(),
         format: None,
         formatted_body: None,

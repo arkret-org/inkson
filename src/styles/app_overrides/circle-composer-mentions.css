@@ -244,6 +244,7 @@
 }
 
 .discussion-composer .compose-drop-zone {
+  position: relative;
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -277,6 +278,11 @@
   align-items: center;
   justify-content: flex-start;
   gap: 6px;
+}
+
+.discussion-composer .mention-picker {
+  width: 100%;
+  z-index: var(--layer-local-popover);
 }
 
 .composer-tool-button {
@@ -1202,4 +1208,3 @@
 .sidebar-nav-item .kbd-tag {
   justify-self: end;
 }
-

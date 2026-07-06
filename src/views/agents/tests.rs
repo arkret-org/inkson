@@ -3,6 +3,9 @@ mod personal_agent_tests {
     use cokret_sdk::models::AgentParticipation;
 
     use super::super::*;
+    use crate::views::agents::model::{
+        build_agent_key_authorize_event_for_pairing, parse_savfox_runtime_key_approval_request,
+    };
 
     #[test]
     fn actor_kind_label_maps_four_canonical_variants() {
@@ -248,6 +251,7 @@ mod personal_agent_tests {
 
         let raw = build_savfox_pairing_bootstrap_json(
             "https://cokret.example/",
+            "did:web:cokret.example",
             &outcome,
             &scope,
             &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
@@ -260,6 +264,7 @@ mod personal_agent_tests {
             "cokret.savfox.agent_pairing_bootstrap.v1"
         );
         assert_eq!(value["base_url"], "https://cokret.example");
+        assert_eq!(value["service_did"], "did:web:cokret.example");
         assert_eq!(
             value["agent_principal_id"],
             "did:web:agents.example:summary"
@@ -280,6 +285,78 @@ mod personal_agent_tests {
         );
         assert!(!raw.contains("private_key"));
         assert!(!raw.contains("/auth/account/agent-pair"));
+    }
+
+    #[test]
+    fn runtime_key_authorize_event_binds_savfox_request_and_scope() {
+        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let controller = "did:web:controller.example";
+        let service_did = "did:web:cokret.example";
+        let agent = "did:web:agents.example:summary";
+        let verification_method = "did:web:agents.example:summary#runtime-key-1";
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
+            &AgentServiceScopePreset::DEFAULTS,
+            Some(REALM),
+        )
+        .unwrap();
+        let key_state = serde_json::json!({
+            "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+            "pairing_code": "12345678",
+            "pairing_expires_at": "2026-07-06T00:15:00.000Z",
+            "requested_scope": scope,
+        });
+        let raw = serde_json::json!({
+            "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+            "agent_principal_id": agent,
+            "verification_method": verification_method,
+            "public_key": {
+                "kty": "OKP",
+                "kid": verification_method,
+                "alg": "Ed25519",
+                "key": cokret_sdk::base64url_encode([9u8; 32]),
+            },
+            "proof_of_possession": {
+                "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+                "audience": service_did,
+                "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
+                "expires_at": "2026-07-06T00:15:00.000Z",
+                "signature": cokret_sdk::base64url_encode([1u8; 64]),
+            },
+        })
+        .to_string();
+        let request = parse_savfox_runtime_key_approval_request(&raw).unwrap();
+
+        let event = build_agent_key_authorize_event_for_pairing(
+            controller,
+            service_did,
+            &key_state,
+            &request,
+        )
+        .unwrap();
+
+        let runtime_digest =
+            cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
+        let expected_pairing_digest = cokret_sdk::agent::agent_key_pairing_request_binding_digest(
+            &cokret_sdk::Did::new(controller.to_owned()).unwrap(),
+            &request.agent_principal_id,
+            verification_method,
+            &runtime_digest,
+            &request.pairing_request_id,
+            "12345678",
+            "2026-07-06T00:15:00.000Z",
+            service_did,
+        )
+        .unwrap();
+
+        assert_eq!(event.kind.as_str(), cokret_sdk::OP_AGENT_KEY_AUTHORIZE);
+        assert_eq!(event.content["agent_principal_id"], agent);
+        assert_eq!(event.content["verification_method"], verification_method);
+        assert_eq!(event.content["public_key_digest"], runtime_digest.as_str());
+        assert_eq!(
+            event.content["approval_evidence"]["request_canonical_digest"],
+            expected_pairing_digest.as_str()
+        );
     }
 
     #[test]
