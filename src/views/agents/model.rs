@@ -54,7 +54,7 @@ pub fn agents_enabled() -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// CKP-0008 §4.7 — permission presets. The five presets are UI/SDK
+// CKP-0008 §4.7 — additive grant presets. The five presets are UI/SDK
 // affordances only; the canonical wire is `requested_scope`
 // (`AgentKeyScope`) for the provision call plus a fully expanded
 // `ck.capability.grant` object for each preset (actions + resource
@@ -65,10 +65,10 @@ pub fn agents_enabled() -> bool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentGrantPreset {
-    /// `read_only` — agent subscribes/reads selected objects.
-    ReadOnly,
-    /// `draft_only` — agent proposes controller-private drafts.
-    DraftOnly,
+    /// `read` preset — agent subscribes/reads selected objects.
+    Read,
+    /// `draft` preset — agent proposes controller-private drafts.
+    Draft,
     /// `reply_as_agent` — agent posts as itself.
     ReplyAsAgent,
     /// `act_on_behalf` — controller is actor_id, agent is executed_by.
@@ -81,8 +81,8 @@ pub enum AgentGrantPreset {
 
 impl AgentGrantPreset {
     pub const ALL: [AgentGrantPreset; 5] = [
-        Self::ReadOnly,
-        Self::DraftOnly,
+        Self::Read,
+        Self::Draft,
         Self::ReplyAsAgent,
         Self::ActOnBehalf,
         Self::Organizer,
@@ -92,8 +92,8 @@ impl AgentGrantPreset {
     /// `data-preset` attribute; never written to the canonical wire.
     pub fn preset_name(self) -> &'static str {
         match self {
-            Self::ReadOnly => "read_only",
-            Self::DraftOnly => "draft_only",
+            Self::Read => "read",
+            Self::Draft => "draft",
             Self::ReplyAsAgent => "reply_as_agent",
             Self::ActOnBehalf => "act_on_behalf",
             Self::Organizer => "organizer",
@@ -102,8 +102,8 @@ impl AgentGrantPreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::ReadOnly => "Read only",
-            Self::DraftOnly => "Draft only",
+            Self::Read => "Read",
+            Self::Draft => "Draft",
             Self::ReplyAsAgent => "Reply as agent",
             Self::ActOnBehalf => "Act on my behalf",
             Self::Organizer => "Organizer",
@@ -112,10 +112,8 @@ impl AgentGrantPreset {
 
     pub fn help(self) -> &'static str {
         match self {
-            Self::ReadOnly => "Subscribe and read selected objects. No writes.",
-            Self::DraftOnly => {
-                "Propose controller-private drafts for your approval before anything is published."
-            }
+            Self::Read => "Subscribe to and read selected objects.",
+            Self::Draft => "Create controller-private draft proposals for your approval.",
             Self::ReplyAsAgent => "Post and react as the agent itself, accountable to you.",
             Self::ActOnBehalf => {
                 "Post as you (you stay the actor, the agent is recorded as executor). High risk; each action needs your approval."
@@ -129,8 +127,8 @@ impl AgentGrantPreset {
     /// are emitted so soland never fail-closes on an unknown action.
     pub fn actions(self) -> &'static [&'static str] {
         match self {
-            Self::ReadOnly => &["ck.event.read"],
-            Self::DraftOnly => &["ck.agent.draft.propose", "ck.agent.action_request"],
+            Self::Read => &["ck.event.read"],
+            Self::Draft => &["ck.agent.draft.propose", "ck.agent.action_request"],
             Self::ReplyAsAgent => &["ck.message.create", "ck.reaction.add"],
             Self::ActOnBehalf => &["ck.message.create"],
             Self::Organizer => &[

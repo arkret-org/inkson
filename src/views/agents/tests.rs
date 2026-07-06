@@ -88,15 +88,21 @@ mod personal_agent_tests {
     }
 
     #[test]
+    fn agent_grant_preset_names_are_positive_capabilities() {
+        assert_eq!(AgentGrantPreset::Read.preset_name(), "read");
+        assert_eq!(AgentGrantPreset::Draft.preset_name(), "draft");
+    }
+
+    #[test]
     fn requested_scope_unions_preset_actions_and_requires_realm() {
         const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
         // No preset / no realm → omit requested_scope entirely (schema
         // requires non-empty resources, so there is nothing valid to send).
         assert!(requested_scope_for_presets(&[], Some(REALM)).is_none());
-        assert!(requested_scope_for_presets(&[AgentGrantPreset::ReadOnly], None).is_none());
+        assert!(requested_scope_for_presets(&[AgentGrantPreset::Read], None).is_none());
 
         let scope = requested_scope_for_presets(
-            &[AgentGrantPreset::ReadOnly, AgentGrantPreset::ReplyAsAgent],
+            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
             Some(REALM),
         )
         .expect("realm-scoped presets produce a scope");
@@ -108,6 +114,25 @@ mod personal_agent_tests {
         assert_eq!(wire["resources"][0]["kind"], "realm");
         assert_eq!(wire["resources"][0]["realm_id"], REALM);
         assert!(scope.constraints.is_empty());
+    }
+
+    #[test]
+    fn requested_scope_combines_read_and_draft_without_exclusion() {
+        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::Read, AgentGrantPreset::Draft],
+            Some(REALM),
+        )
+        .expect("read plus draft is a valid additive scope");
+
+        assert_eq!(
+            scope.actions,
+            vec![
+                "ck.event.read",
+                "ck.agent.draft.propose",
+                "ck.agent.action_request"
+            ]
+        );
     }
 
     #[test]
