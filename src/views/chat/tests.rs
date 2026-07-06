@@ -703,8 +703,8 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
         pins,
         vec![SharedMessagePin::new(
             &pin_scope,
-            target_ref: target_ref.to_owned(),
-            rank: "r050".to_owned(),
+            target_ref.to_owned(),
+            "r050".to_owned(),
         )]
     );
 }
@@ -882,8 +882,8 @@ fn message_operations_from_events_folds_shared_pin_control_events() {
         pins,
         vec![SharedMessagePin::new(
             &pin_scope,
-            target_ref: target_ref.to_owned(),
-            rank: "r001".to_owned(),
+            target_ref.to_owned(),
+            "r001".to_owned(),
         )]
     );
 }

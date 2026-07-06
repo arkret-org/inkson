@@ -10,8 +10,6 @@
 // carry the stable local `ck:message:` id so replay is idempotent against
 // the reducer's `ck.message.create` de-dup.
 
-use super::*;
-
 /// A single parked outgoing message awaiting connectivity.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct OutboxMessage {
