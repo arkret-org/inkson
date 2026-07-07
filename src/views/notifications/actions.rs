@@ -310,7 +310,7 @@ fn accept_invite_notification(
         match with_authed_api(&base_url, session_credential, |api| async move {
             let account = api.account_me().await?;
             let submit = api
-                .join_realm_from_invite(&accepted_realm_for_api, &account.did, &invite_id)
+                .accept_realm_invite(&accepted_realm_for_api, &account.did, &invite_id)
                 .await?;
             let read_api = api.clone().with_wait_for(submit.cursor);
             let sync = read_api.account_subscribe_snapshot(None).await;
