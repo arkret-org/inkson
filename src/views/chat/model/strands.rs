@@ -392,27 +392,68 @@ fn chat_message_has_protocol_id(message: &ChatMessage, protocol_id: &str) -> boo
     chat_message_protocol_id(message).is_some_and(|candidate| candidate == protocol_id)
 }
 
+fn append_chat_message_revision_body(message: &mut ChatMessage, body: String) {
+    if body.is_empty() || body == message.body {
+        return;
+    }
+    if message.revisions.last().is_none_or(|last| last != &body)
+        && !message.revisions.iter().any(|existing| existing == &body)
+    {
+        message.revisions.push(body);
+    }
+}
+
+fn carry_chat_message_identity_metadata(target: &mut ChatMessage, source: &ChatMessage) {
+    if target.protocol_message_id.is_none() {
+        target.protocol_message_id = source.protocol_message_id.clone();
+    }
+    if target.reply_to.is_none() {
+        target.reply_to = source.reply_to.clone();
+    }
+}
+
 fn replace_chat_message_preserving_local_metadata(
     existing: &mut ChatMessage,
     mut message: ChatMessage,
 ) {
-    if message.protocol_message_id.is_none() {
-        message.protocol_message_id = existing.protocol_message_id.clone();
+    if existing.redacted && !message.redacted {
+        carry_chat_message_identity_metadata(existing, &message);
+        append_chat_message_revision_body(existing, message.body);
+        return;
     }
-    // Carry forward locally-tracked edit metadata. The sync projection
-    // rebuilds a message from its events but does not surface the
-    // per-message revision count, so a re-projection would otherwise wipe
-    // the write-status counter the moment a sync tick lands between two
-    // edits. Preserve the existing `edited` flag and revision history (the
-    // body still updates to the incoming/revised content) so the numeric
-    // counter is stable across re-projections.
-    if !message.edited && existing.edited {
-        message.edited = true;
+    if message.redacted || message.is_newer_or_same_lifecycle_version_than(existing) {
+        carry_chat_message_identity_metadata(&mut message, existing);
+        // Carry forward locally-tracked edit metadata. The sync projection
+        // rebuilds a message from its events but does not surface the
+        // per-message revision count, so a re-projection would otherwise wipe
+        // the write-status counter the moment a sync tick lands between two
+        // edits. Preserve the existing `edited` flag and revision history (the
+        // body still updates to the incoming/revised content) so the numeric
+        // counter is stable across re-projections.
+        if !message.edited && existing.edited {
+            message.edited = true;
+        }
+        if message.revisions.is_empty() && !existing.revisions.is_empty() {
+            message.revisions = std::mem::take(&mut existing.revisions);
+        }
+        append_chat_message_revision_body(&mut message, existing.body.clone());
+        if message.created_at.is_none() {
+            message.created_at = existing.created_at.clone();
+        }
+        *existing = message;
+    } else {
+        carry_chat_message_identity_metadata(existing, &message);
+        if message.edited {
+            existing.edited = true;
+        }
+        if existing.created_at.is_none() {
+            existing.created_at = message.created_at;
+        }
+        for revision in message.revisions {
+            append_chat_message_revision_body(existing, revision);
+        }
+        append_chat_message_revision_body(existing, message.body);
     }
-    if message.revisions.is_empty() && !existing.revisions.is_empty() {
-        message.revisions = std::mem::take(&mut existing.revisions);
-    }
-    *existing = message;
 }
 
 fn prune_duplicate_chat_message_entries(

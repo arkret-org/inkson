@@ -278,17 +278,19 @@ fn message_matches_target_ref(message: &ChatMessage, target_ref: &str) -> bool {
     })
 }
 
-fn fold_revision_message(
-    messages: &mut [ChatMessage],
-    target_ref: &str,
-    revision: ChatMessage,
-) -> bool {
-    let Some(message) = messages
-        .iter_mut()
-        .find(|message| message_matches_target_ref(message, target_ref))
-    else {
-        return false;
-    };
+fn append_revision_body(message: &mut ChatMessage, body: String) {
+    if body.is_empty() || body == message.body {
+        return;
+    }
+    if message.revisions.last().is_none_or(|last| last != &body)
+        && !message.revisions.iter().any(|existing| existing == &body)
+    {
+        message.revisions.push(body);
+    }
+}
+
+fn fold_revision_message_into(message: &mut ChatMessage, revision: ChatMessage) {
+    let revision_created_at = revision.created_at;
     if revision.redacted {
         message.redacted = true;
         message.body.clear();
@@ -297,14 +299,7 @@ fn fold_revision_message(
         message.crypto_state = MessageCryptoState::Plaintext;
     } else {
         let previous = std::mem::replace(&mut message.body, revision.body);
-        if !previous.is_empty()
-            && message
-                .revisions
-                .last()
-                .is_none_or(|last| last != &previous)
-        {
-            message.revisions.push(previous);
-        }
+        append_revision_body(message, previous);
     }
     message.edited = true;
     message.timestamp = revision.timestamp;
@@ -312,7 +307,100 @@ fn fold_revision_message(
     message.failed = revision.failed;
     message.error = revision.error;
     message.crypto_state = revision.crypto_state;
-    true
+    if revision_created_at.is_some() {
+        message.created_at = revision_created_at;
+    }
+}
+
+fn fold_revision_message(
+    messages: &mut [ChatMessage],
+    target_ref: &str,
+    revision: ChatMessage,
+) -> Option<usize> {
+    let index = messages
+        .iter()
+        .position(|message| message_matches_target_ref(message, target_ref))?;
+    fold_revision_message_into(&mut messages[index], revision);
+    Some(index)
+}
+
+fn message_created_at_from_candidates(
+    candidates: &[&Value],
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    first_string_in_candidates(candidates, &["created_at"])
+        .and_then(|created_at| chrono::DateTime::parse_from_rfc3339(created_at).ok())
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+}
+
+fn message_protocol_ids_match(left: &ChatMessage, right: &ChatMessage) -> bool {
+    let Some(left_id) = left
+        .protocol_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    right
+        .protocol_message_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|right_id| right_id == left_id)
+}
+
+fn incoming_message_is_newer(existing: &ChatMessage, incoming: &ChatMessage) -> bool {
+    incoming.is_newer_or_same_lifecycle_version_than(existing)
+}
+
+fn carry_create_metadata(target: &mut ChatMessage, source: &ChatMessage) {
+    if target.reply_to.is_none() {
+        target.reply_to = source.reply_to.clone();
+    }
+    if target.protocol_message_id.is_none() {
+        target.protocol_message_id = source.protocol_message_id.clone();
+    }
+}
+
+fn merge_duplicate_create_message(existing: &mut ChatMessage, mut incoming: ChatMessage) {
+    if existing.redacted && !incoming.redacted {
+        carry_create_metadata(existing, &incoming);
+        append_revision_body(existing, incoming.body);
+        return;
+    }
+    if incoming.redacted || incoming_message_is_newer(existing, &incoming) {
+        carry_create_metadata(&mut incoming, existing);
+        if !incoming.edited && existing.edited {
+            incoming.edited = true;
+        }
+        if incoming.revisions.is_empty() && !existing.revisions.is_empty() {
+            incoming.revisions = std::mem::take(&mut existing.revisions);
+        }
+        append_revision_body(&mut incoming, existing.body.clone());
+        *existing = incoming;
+    } else {
+        carry_create_metadata(existing, &incoming);
+        if incoming.edited {
+            existing.edited = true;
+        }
+        if existing.created_at.is_none() {
+            existing.created_at = incoming.created_at;
+        }
+        for revision in incoming.revisions {
+            append_revision_body(existing, revision);
+        }
+        append_revision_body(existing, incoming.body);
+    }
+}
+
+fn push_or_merge_create_message(messages: &mut Vec<ChatMessage>, message: ChatMessage) {
+    if let Some(index) = messages
+        .iter()
+        .position(|existing| message_protocol_ids_match(existing, &message))
+    {
+        merge_duplicate_create_message(&mut messages[index], message);
+    } else {
+        messages.push(message);
+    }
 }
 
 fn chat_messages_from_event_list_with_sidecar(
@@ -332,17 +420,17 @@ fn chat_messages_from_event_list_with_sidecar(
             continue;
         };
         if let Some(target_ref) = revision_target_ref {
-            if fold_revision_message(&mut messages, &target_ref, message.clone()) {
+            if fold_revision_message(&mut messages, &target_ref, message.clone()).is_some() {
                 continue;
             }
             pending_revisions.push((target_ref, message));
             continue;
         }
-        messages.push(message);
+        push_or_merge_create_message(&mut messages, message);
         let mut index = 0;
         while index < pending_revisions.len() {
             let (target_ref, revision) = &pending_revisions[index];
-            if fold_revision_message(&mut messages, target_ref, revision.clone()) {
+            if fold_revision_message(&mut messages, target_ref, revision.clone()).is_some() {
                 pending_revisions.remove(index);
             } else {
                 index += 1;
@@ -803,6 +891,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             .map(ToOwned::to_owned),
         body,
         timestamp: short_message_time(first_string_in_candidates(&candidates, &["created_at"])),
+        created_at: message_created_at_from_candidates(&candidates),
         strand_id,
         reply_to: first_string_in_candidates(&candidates, &["reply_to", "thread_id"])
             .map(ToOwned::to_owned),

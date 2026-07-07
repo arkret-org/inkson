@@ -478,6 +478,7 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
         executed_by: None,
         body: "hello".to_owned(),
         timestamp: "10:00".to_owned(),
+        created_at: None,
         strand_id: "ck:strand:demo".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
@@ -507,6 +508,7 @@ fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
         executed_by: None,
         body: "edited".to_owned(),
         timestamp: "10:00".to_owned(),
+        created_at: None,
         strand_id: "ck:strand:demo".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
@@ -882,6 +884,58 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
 }
 
 #[test]
+fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
+    let message_id = "ck:message:019f3b27-f521-70f0-84f3-e06f95177dbf";
+    let reply_to = "ck:message:019f3b27-e366-7d70-9fe4-fb3e8442b449";
+    let events = vec![
+        json!({
+            "event_id": "ck:event:019f3b27-fb61-7ed3-af84-04cc68eac2f6",
+            "kind": "ck.message.create",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-07-07T05:58:23Z",
+            "strand_id": "ck:strand:topic",
+            "message_id": message_id,
+            "content": {"kind": "ck.content.text", "body": "edited body"}
+        }),
+        json!({
+            "event_id": "ck:event:019f3b27-f523-7571-89cb-5e27479d5e6d",
+            "kind": "ck.message.create",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-07-07T05:58:22Z",
+            "payload": {
+                "content": {"kind": "ck.content.text", "body": "original body"},
+                "message_id": message_id,
+                "reply_to": reply_to,
+                "strand_id": "ck:strand:topic",
+                "track_name": "discussion"
+            }
+        }),
+        json!({
+            "event_id": "ck:event:019f3b27-fb61-7ed3-af84-04cc68eac2f6",
+            "kind": "ck.message.revise",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-07-07T05:58:23Z",
+            "payload": {
+                "content": {"kind": "ck.content.text", "body": "edited body"},
+                "target_ref": message_id
+            }
+        }),
+    ];
+
+    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].protocol_message_id.as_deref(), Some(message_id));
+    assert_eq!(messages[0].body, "edited body");
+    assert_eq!(messages[0].reply_to.as_deref(), Some(reply_to));
+    assert!(messages[0].edited);
+    assert_eq!(messages[0].revisions, vec!["original body".to_owned()]);
+}
+
+#[test]
 fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
     let events = vec![
         json!({
@@ -976,6 +1030,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
             executed_by: None,
             body: String::new(),
             timestamp: "10:05".to_owned(),
+            created_at: None,
             strand_id: "ck:strand:topic".to_owned(),
             reply_to: None,
             reactions: Vec::new(),
@@ -1020,6 +1075,67 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
     assert!(matching[0].edited);
     assert_eq!(matching[0].revisions, vec!["v1".to_owned()]);
     assert!(target.iter().any(|message| message.id == "ck:event:other"));
+}
+
+#[test]
+fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
+    fn at(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        Some(
+            chrono::DateTime::parse_from_rfc3339(value)
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        )
+    }
+
+    fn message(id: &str, protocol_message_id: &str, body: &str, created_at: &str) -> ChatMessage {
+        ChatMessage {
+            realm_id: "ck:realm:r1".to_owned(),
+            id: id.to_owned(),
+            protocol_message_id: Some(protocol_message_id.to_owned()),
+            sender: "did:web:bob.example".to_owned(),
+            executed_by: None,
+            body: body.to_owned(),
+            timestamp: "10:00".to_owned(),
+            created_at: at(created_at),
+            strand_id: "ck:strand:topic".to_owned(),
+            reply_to: Some("ck:message:m1".to_owned()),
+            reactions: Vec::new(),
+            redacted: false,
+            edited: false,
+            revisions: Vec::new(),
+            pending: false,
+            failed: false,
+            error: None,
+            mentions: Vec::new(),
+            crypto_state: MessageCryptoState::Plaintext,
+        }
+    }
+
+    let protocol_message_id = "ck:message:m2";
+    let mut target = vec![message(
+        "ck:event:msg-2-rev-1",
+        protocol_message_id,
+        "edited body",
+        "2026-07-07T06:19:22Z",
+    )];
+    target[0].edited = true;
+
+    merge_chat_messages(
+        &mut target,
+        vec![message(
+            "ck:event:msg-2",
+            protocol_message_id,
+            "original body",
+            "2026-07-07T06:19:20Z",
+        )],
+    );
+
+    assert_eq!(target.len(), 1);
+    assert_eq!(target[0].id, "ck:event:msg-2-rev-1");
+    assert_eq!(target[0].body, "edited body");
+    assert!(target[0].edited);
+    assert_eq!(target[0].revisions, vec!["original body"]);
+    assert_eq!(target[0].reply_to.as_deref(), Some("ck:message:m1"));
 }
 
 #[test]
@@ -1146,6 +1262,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         executed_by: None,
         body: "secret".to_owned(),
         timestamp: "10:00".to_owned(),
+        created_at: None,
         strand_id: "ck:strand:topic".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
@@ -1326,6 +1443,7 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
         executed_by: None,
         body: String::new(),
         timestamp: "10:00".to_owned(),
+        created_at: None,
         strand_id: strand.to_owned(),
         reply_to: None,
         reactions: Vec::new(),
@@ -1952,6 +2070,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         executed_by: None,
         body: "@alice:example.com/summary".to_owned(),
         timestamp: "10:00".to_owned(),
+        created_at: None,
         strand_id: "ck:strand:demo".to_owned(),
         reply_to: None,
         reactions: Vec::new(),

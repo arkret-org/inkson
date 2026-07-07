@@ -125,6 +125,7 @@ pub(crate) struct ChatMessage {
     pub(crate) executed_by: Option<String>,
     pub(crate) body: String,
     pub(crate) timestamp: String,
+    pub(crate) created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) strand_id: String,
     pub(crate) reply_to: Option<String>,
     pub(crate) reactions: Vec<(String, Vec<String>)>,
@@ -176,6 +177,18 @@ impl ChatMessage {
             .map(str::trim)
             .filter(|value| is_schema_message_id(value))
             .unwrap_or(self.id.as_str())
+    }
+
+    pub(crate) fn is_newer_or_same_lifecycle_version_than(&self, existing: &Self) -> bool {
+        match (existing.created_at.as_ref(), self.created_at.as_ref()) {
+            (Some(existing_at), Some(incoming_at)) if incoming_at != existing_at => {
+                incoming_at > existing_at
+            }
+            (Some(_), Some(_)) => self.id.as_str() >= existing.id.as_str(),
+            (Some(_), None) => false,
+            (None, Some(_)) => true,
+            (None, None) => true,
+        }
     }
 }
 
