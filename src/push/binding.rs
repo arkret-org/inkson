@@ -236,11 +236,3 @@ pub fn build_register_request_with_secure_store(
     }
     Ok(request)
 }
-
-/// Hex-encoded SHA-256 of `value`. Helper kept here so the rotation
-/// tests can compare push-token hashes without dragging in a full
-/// hashing surface from chime's wire module.
-#[cfg(test)]
-pub(crate) fn sha256_hex(value: &str) -> String {
-    cokret_sdk::canonical::sha256_hex(value.as_bytes())
-}

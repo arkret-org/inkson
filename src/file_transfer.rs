@@ -437,7 +437,7 @@ fn prepare_actor_private_file(
             },
         )
         .map_err(|error| anyhow::anyhow!("file-transfer encrypt failed: {error}"))?;
-    let content_digest = sha256_digest(&ciphertext);
+    let content_digest = crate::canonical::sha256_digest(&ciphertext);
     Ok(PreparedFileTransfer {
         account_data_key,
         transfer_id,
@@ -621,7 +621,7 @@ fn build_file_transfer_device_key_dispatch(
             scheme: cokret_sdk::FILE_TRANSFER_KEY_ENVELOPE_SCHEME.to_owned(),
             enc: URL_SAFE_NO_PAD.encode(sealed.enc),
             ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
-            aad_digest: sha256_digest(&aad),
+            aad_digest: crate::canonical::sha256_digest(&aad),
         },
         expires_at: expires_at.to_owned(),
     };
@@ -677,7 +677,7 @@ fn open_file_transfer_device_key_message(
         recipient_device_id,
         key_message.expires_at.as_str(),
     )?;
-    if key_message.key_envelope.aad_digest != sha256_digest(&aad) {
+    if key_message.key_envelope.aad_digest != crate::canonical::sha256_digest(&aad) {
         anyhow::bail!("file-transfer key envelope aad_digest mismatch");
     }
     let enc = URL_SAFE_NO_PAD
@@ -896,7 +896,7 @@ fn validate_ciphertext_blob_binding(
     record
         .validate()
         .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
-    let digest = sha256_digest(ciphertext);
+    let digest = crate::canonical::sha256_digest(ciphertext);
     if record.content_digest != digest {
         anyhow::bail!("file-transfer ciphertext digest mismatch");
     }
@@ -965,10 +965,6 @@ fn random_base64url(bytes_len: usize) -> anyhow::Result<String> {
     getrandom::fill(&mut bytes)
         .map_err(|error| anyhow::anyhow!("file-transfer transfer-id rng: {error}"))?;
     Ok(URL_SAFE_NO_PAD.encode(bytes))
-}
-
-fn sha256_digest(bytes: &[u8]) -> String {
-    cokret_sdk::canonical::sha256_digest(bytes)
 }
 
 fn decode_fixed<const N: usize>(value: &str) -> anyhow::Result<[u8; N]> {

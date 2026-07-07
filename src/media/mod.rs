@@ -19,10 +19,6 @@ impl MediaPreviewPolicy {
     }
 }
 
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    cokret_sdk::canonical::sha256_hex(bytes)
-}
-
 pub fn media_type_preview_policy(media_type: &str) -> MediaPreviewPolicy {
     let media_type = media_type
         .split(';')
@@ -43,7 +39,7 @@ pub fn media_type_preview_policy(media_type: &str) -> MediaPreviewPolicy {
 }
 
 pub fn hash_matches(expected_sha256: &str, bytes: &[u8]) -> bool {
-    normalize_sha256(expected_sha256) == sha256_hex(bytes)
+    normalize_sha256(expected_sha256) == crate::canonical::sha256_hex(bytes)
 }
 
 fn normalize_sha256(value: &str) -> String {
@@ -61,7 +57,7 @@ mod tests {
     #[test]
     fn sha256_hex_matches_known_bytes() {
         assert_eq!(
-            sha256_hex(b"yougen encrypted bytes"),
+            crate::canonical::sha256_hex(b"yougen encrypted bytes"),
             "01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91"
         );
         assert!(hash_matches(

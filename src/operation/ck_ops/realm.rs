@@ -25,26 +25,43 @@ pub fn realm_archive(realm_id: &str, actor: &str, container_space_id: &str) -> O
     .body(json!({ "space_id": container_space_id }))
 }
 
-/// Build a `ck.message.revise` patch operation. Spec: revise is
-/// supposed to carry `payload.patch` like the other `*.update`
-/// events. New clients emit patches; full-content revise payloads are
-/// outside the client write contract.
-pub fn message_revise_patch(
+/// Build a `ck.message.revise` operation carrying the replacement content
+/// block required by `message_revise_payload`.
+pub fn message_revise_content(
     realm_id: &str,
     actor: &str,
-    message_id: &str,
-    patch: serde_json::Value,
-) -> OperationBuilder {
-    OperationBuilder::new(
+    target_ref: &str,
+    content: cokret_sdk::ContentBlock,
+) -> anyhow::Result<OperationBuilder> {
+    let mut payload = cokret_sdk::MessageRevisePayload {
+        message_id: None,
+        target_ref: None,
+        revision_of: None,
+        track_name: None,
+        content: Some(content),
+        encrypted_content: None,
+        metadata: None,
+        encrypted_metadata: None,
+        reason: None,
+    };
+    if target_ref.starts_with("ck:message:") {
+        payload.message_id = Some(
+            cokret_sdk::MessageId::new(target_ref.to_owned())
+                .map_err(|err| anyhow::anyhow!("invalid message_id {target_ref:?}: {err}"))?,
+        );
+    } else {
+        payload.target_ref = Some(target_ref.to_owned());
+    }
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("serialize message revise payload: {err}"))?;
+
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::MessageRevise,
     )
-    .target_ref(message_id)
-    .body(json!({
-        "message_id": message_id,
-        "patch": patch,
-    }))
+    .target_ref(target_ref)
+    .body(body))
 }
 
 /// Build a `ck.realm.update` patch operation. The reducer accepts

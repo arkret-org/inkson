@@ -1169,7 +1169,7 @@ pub fn build_signed_device_verification_proof(
             "kind": proof.kind,
             "alg": proof.alg,
             "verification_method": proof.verification_method,
-            "payload_digest": proof.event_digest.as_str(),
+            "event_digest": proof.event_digest.as_str(),
             "jws": proof.jws,
         }
     }))

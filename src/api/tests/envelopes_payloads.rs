@@ -772,6 +772,13 @@ fn device_verification_proof_requires_signed_envelope() {
         Some("ck.device.verification.proof.v1")
     );
     assert_eq!(proof["signature"]["alg"].as_str(), Some("EdDSA"));
+    assert!(
+        proof["signature"]["event_digest"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert!(proof["signature"].get("payload_digest").is_none());
     assert_eq!(
         proof["signature"]["jws"]
             .as_str()

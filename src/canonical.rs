@@ -7,7 +7,7 @@
 pub use cokret_sdk::canonical::{
     canonical_json_bytes as sdk_canonical_json_bytes,
     canonical_json_string as sdk_canonical_json_string, canonical_sha256 as sdk_canonical_sha256,
-    sha256_digest as sdk_sha256_digest, validate_timestamp_canonical,
+    sha256_digest as sdk_sha256_digest, sha256_hex as sdk_sha256_hex, validate_timestamp_canonical,
 };
 use serde::Serialize;
 
@@ -35,6 +35,10 @@ pub fn sha256_digest(bytes: impl AsRef<[u8]>) -> String {
     sdk_sha256_digest(bytes)
 }
 
+pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
+    sdk_sha256_hex(bytes.as_ref())
+}
+
 /// YOU-05-007: the crate's single lowercase-hex encoder — fixed width per
 /// byte, no separator, matching the SDK's `canonical::sha256_digest` hex
 /// tail style. Previously copied verbatim in `cross_signing`,
@@ -47,6 +51,28 @@ pub fn hex_encode(bytes: &[u8]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+pub fn hex_decode(value: &str) -> Option<Vec<u8>> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(value.len() / 2);
+    for chunk in value.as_bytes().chunks(2) {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Some(out)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Helper: digest of a canonical operation/event body for proof binding.
@@ -123,6 +149,14 @@ mod tests {
     fn timestamp_validation_pass_through() {
         assert!(validate_timestamp_canonical("2026-05-14T00:00:00Z").is_ok());
         assert!(validate_timestamp_canonical("2026-05-14T00:00:00+00:00").is_err());
+    }
+
+    #[test]
+    fn hex_decode_round_trips_and_rejects_invalid_input() {
+        assert_eq!(hex_decode("00ffA5").unwrap(), vec![0x00, 0xff, 0xa5]);
+        assert_eq!(hex_encode(&hex_decode("deadbeef").unwrap()), "deadbeef");
+        assert!(hex_decode("abc").is_none());
+        assert!(hex_decode("zz").is_none());
     }
 
     // ── F-CANONICAL-1 ────────────────────────────────────────────────

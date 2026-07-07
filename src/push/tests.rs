@@ -1,4 +1,4 @@
-use super::binding::{push_token_entry_key, sha256_hex};
+use super::binding::push_token_entry_key;
 use super::token_source::current_platform;
 use super::*;
 
@@ -401,5 +401,8 @@ fn build_register_request_with_secure_store_persists_token() {
     // Compare via hash to avoid printing the token if the test
     // logs are leaked anywhere — sha256_hex is also used for the
     // `push_key_hash` field in the registration state.
-    assert_eq!(sha256_hex(&loaded), sha256_hex(&request.push_key));
+    assert_eq!(
+        crate::canonical::sha256_hex(loaded.as_bytes()),
+        crate::canonical::sha256_hex(request.push_key.as_bytes())
+    );
 }

@@ -615,16 +615,19 @@ mod tests {
     }
 
     #[test]
-    fn agent_result_body_carries_audit_binding() {
+    fn agent_result_body_carries_audit_binding_artifact() {
         let op = crate::operation::ck_ops::agent_interop_session_result(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "ck:session:test",
+            "ck:agent_interop_session:0196419b-0000-7000-8000-000000000002",
             serde_json::json!({"summary": "ok"}),
             serde_json::json!({"merkle_root": "sha256:abc"}),
         )
         .build("yougen");
-        assert_eq!(op.content["audit_binding"]["merkle_root"], "sha256:abc");
+        assert_eq!(op.content["status"], "completed");
+        assert_eq!(op.content["result_objects"][0]["summary"], "ok");
+        assert_eq!(op.content["artifacts"][0]["merkle_root"], "sha256:abc");
+        assert!(op.content.get("audit_binding").is_none());
     }
 
     // Pin the verify helper's outcomes for each canonical wire

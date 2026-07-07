@@ -254,9 +254,9 @@ pub(crate) enum CardEditScope {
 }
 
 pub(crate) const TOAST_EDITOR_SCRIPT_URL: &str =
-    "https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js";
+    "https://uicdn.toast.com/editor/3.2.2/toastui-editor-all.min.js";
 pub(crate) const TOAST_EDITOR_CSS_URL: &str =
-    "https://uicdn.toast.com/editor/latest/toastui-editor.min.css";
+    "https://uicdn.toast.com/editor/3.2.2/toastui-editor.min.css";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CardState {

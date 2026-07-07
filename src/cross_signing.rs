@@ -436,31 +436,8 @@ pub fn load_signing_key(
     Ok(Some(SigningKey::from_bytes(&seed)))
 }
 
-// YOU-05-007: shared lowercase-hex encoder lives in `crate::canonical`.
-use crate::canonical::hex_encode;
-
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(s.len() / 2);
-    let bytes = s.as_bytes();
-    for chunk in bytes.chunks(2) {
-        let hi = hex_nibble(chunk[0])?;
-        let lo = hex_nibble(chunk[1])?;
-        out.push((hi << 4) | lo);
-    }
-    Some(out)
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
+// YOU-05-007: shared lowercase-hex codec lives in `crate::canonical`.
+use crate::canonical::{hex_decode, hex_encode};
 
 impl CrossSigningExecutor {
     pub fn new(

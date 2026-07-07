@@ -101,7 +101,7 @@ pub fn load_organization_control_key(
     let Some(value) = store.get_secret(&organization_control_seed_key(org_did))? else {
         return Ok(None);
     };
-    let bytes = hex_decode(&value).ok_or_else(|| {
+    let bytes = crate::canonical::hex_decode(&value).ok_or_else(|| {
         SecureKeyStoreError::Backend("organization control seed hex decode failed".to_owned())
     })?;
     if bytes.len() != 32 {
@@ -113,22 +113,6 @@ pub fn load_organization_control_key(
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
     Ok(Some(SigningKey::from_bytes(&seed)))
-}
-
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(s.len() / 2);
-    let bytes = s.as_bytes();
-    let mut idx = 0;
-    while idx < bytes.len() {
-        let hi = (bytes[idx] as char).to_digit(16)?;
-        let lo = (bytes[idx + 1] as char).to_digit(16)?;
-        out.push(((hi << 4) | lo) as u8);
-        idx += 2;
-    }
-    Some(out)
 }
 
 /// Result of a successful organization mint (D2): the artefacts the caller

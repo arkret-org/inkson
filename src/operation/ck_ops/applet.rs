@@ -106,8 +106,9 @@ pub fn applet_interop_session_start(
 pub fn applet_interop_session_status(
     realm_id: &str,
     actor: &str,
+    applet_id: &str,
     session_id: &str,
-    status: &str,
+    runtime_status: &str,
     detail: serde_json::Value,
 ) -> OperationBuilder {
     OperationBuilder::new(
@@ -117,8 +118,9 @@ pub fn applet_interop_session_status(
     )
     .target_ref(session_id)
     .body(json!({
+        "applet_id": applet_id,
         "session_id": session_id,
-        "status": status,
+        "runtime_status": runtime_status,
         "detail": detail,
     }))
 }
@@ -128,8 +130,12 @@ pub fn applet_interop_session_status(
 pub fn applet_bridge_error(
     realm_id: &str,
     actor: &str,
-    session_id: &str,
+    applet_id: &str,
+    failed_transaction_ref: &str,
+    error_class: &str,
     error_code: &str,
+    retriable: bool,
+    visibility_scope: &str,
     message: &str,
 ) -> OperationBuilder {
     OperationBuilder::new(
@@ -137,10 +143,15 @@ pub fn applet_bridge_error(
         actor,
         cokret_sdk::events::kinds::EventKind::AppletBridgeError,
     )
-    .target_ref(session_id)
+    .target_ref(failed_transaction_ref)
     .body(json!({
-        "session_id": session_id,
+        "applet_id": applet_id,
+        "realm_id": realm_id,
+        "failed_transaction_ref": failed_transaction_ref,
+        "error_class": error_class,
         "error_code": error_code,
+        "retriable": retriable,
+        "visibility_scope": visibility_scope,
         "message": message,
     }))
 }

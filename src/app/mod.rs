@@ -1496,23 +1496,39 @@ pub fn RouterView() -> Element {
                                     &mut store, &actor, backup_id,
                                 );
                             }
-                            let _ = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                            let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                                 &payload,
                                 &mut store,
                                 secure_store.as_ref(),
                                 &actor,
                                 &device,
                             );
+                            if report.failed > 0 {
+                                tracing::warn!(
+                                    failed = report.failed,
+                                    restored = report.restored,
+                                    first_error = ?report.first_error,
+                                    "mls history restore from local secret failed"
+                                );
+                            }
                             if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
                                 let sidecar_payload =
                                     serde_json::json!({ "backups": [sidecar_body.clone()] });
-                                let _ = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                                     &sidecar_payload,
                                     &mut store,
                                     secure_store.as_ref(),
                                     &actor,
                                     &device,
                                 );
+                                if report.failed > 0 {
+                                    tracing::warn!(
+                                        failed = report.failed,
+                                        restored = report.restored,
+                                        first_error = ?report.first_error,
+                                        "mls sidecar restore from local secret failed"
+                                    );
+                                }
                             }
                         }
                         let should_unlock = {
@@ -2705,23 +2721,39 @@ pub fn RouterView() -> Element {
                                     backup_id,
                                 );
                             }
-                            let _ = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                            let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                                 &payload,
                                 &mut store,
                                 secure_store.as_ref(),
                                 &detect_actor,
                                 &detect_device,
                             );
+                            if report.failed > 0 {
+                                tracing::warn!(
+                                    failed = report.failed,
+                                    restored = report.restored,
+                                    first_error = ?report.first_error,
+                                    "mls history restore from local secret failed"
+                                );
+                            }
                             if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
                                 let sidecar_payload =
                                     serde_json::json!({ "backups": [sidecar_body.clone()] });
-                                let _ = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                                     &sidecar_payload,
                                     &mut store,
                                     secure_store.as_ref(),
                                     &detect_actor,
                                     &detect_device,
                                 );
+                                if report.failed > 0 {
+                                    tracing::warn!(
+                                        failed = report.failed,
+                                        restored = report.restored,
+                                        first_error = ?report.first_error,
+                                        "mls sidecar restore from local secret failed"
+                                    );
+                                }
                             }
                         }
                         let should_unlock = {

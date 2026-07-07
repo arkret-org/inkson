@@ -619,7 +619,7 @@ pub fn AgentsPanel(
                                         ));
                                         spawn(async move {
                                             let session_id = format!(
-                                                "ck:session:{}",
+                                                "ck:agent_interop_session:{}",
                                                 crate::operation::uuid_v7()
                                             );
                                             let op = crate::operation::ck_ops::agent_interop_session_start(

@@ -963,10 +963,9 @@ pub fn AppletsPanel(
 #[cfg(test)]
 mod tests {
 
-    /// Pin that the registry row body shape matches the canonical wire
-    /// `body.service_did` / `body.namespace` schema the
-    /// ck_ops::applet_registration builder emits. If the builder changes
-    /// shape this test catches the view drift.
+    /// Pin the current lightweight registration form. The full durable
+    /// `ck.applet.registration` payload still requires controller proof and
+    /// package metadata that this panel does not collect yet.
     #[test]
     fn applet_registration_body_keys_pin_canonical_wire() {
         let op = crate::operation::ck_ops::applet_registration(

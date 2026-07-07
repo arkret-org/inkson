@@ -481,18 +481,8 @@ fn is_protocol_device_id(value: &str) -> bool {
         })
 }
 
-// YOU-05-007: shared lowercase-hex encoder lives in `crate::canonical`.
-use crate::canonical::hex_encode;
-
-fn hex_decode(hex: &str) -> Option<Vec<u8>> {
-    if !hex.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
-        .collect()
-}
+// YOU-05-007: shared lowercase-hex codec lives in `crate::canonical`.
+use crate::canonical::{hex_decode, hex_encode};
 
 #[cfg(test)]
 mod tests {

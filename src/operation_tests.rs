@@ -876,6 +876,7 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
 fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     let service_did = "did:web:applet.example";
     let session_id = "ck:session:01904100-0000-7000-8000-aa55aa55aa55";
+    let applet_id = "did:web:applet.example";
     let realm = "ck:realm:0196419b-0000-7000-8000-0000000000aa";
     let actor = "did:web:alice.example";
 
@@ -896,43 +897,61 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     let start = ck_ops::applet_interop_session_start(
         realm,
         actor,
-        "ck:applet:dummy",
+        applet_id,
         session_id,
         json!({"op": "ping"}),
     )
     .build("node");
     assert_eq!(start.kind.as_str(), "ck.applet.interop_session.start");
+    assert_eq!(start.content["applet_id"], applet_id);
     assert_eq!(start.content["session_id"], session_id);
     assert_eq!(start.local_target_ref(), Some(session_id));
+    assert_registered_payload_valid(&start);
 
     let status = ck_ops::applet_interop_session_status(
         realm,
         actor,
+        applet_id,
         session_id,
         "running",
-        json!({"progress": 0.5}),
+        json!({"progress_basis_points": 5000}),
     )
     .build("node");
     assert_eq!(status.kind.as_str(), "ck.applet.interop_session.status");
-    assert_eq!(status.content["status"], "running");
+    assert_eq!(status.content["applet_id"], applet_id);
+    assert_eq!(status.content["runtime_status"], "running");
+    assert!(status.content.get("status").is_none());
+    assert_registered_payload_valid(&status);
 
     let err = ck_ops::applet_bridge_error(
         realm,
         actor,
-        session_id,
+        applet_id,
+        "ck:event:01904100-0000-7000-8000-aa55aa55aa56",
+        "external_network",
         "applet_unavailable",
+        true,
+        "realm_admins",
         "service did not respond",
     )
     .build("node");
     assert_eq!(err.kind.as_str(), "ck.applet.bridge_error");
+    assert_eq!(err.content["applet_id"], applet_id);
+    assert_eq!(
+        err.content["failed_transaction_ref"],
+        "ck:event:01904100-0000-7000-8000-aa55aa55aa56"
+    );
+    assert_eq!(err.content["error_class"], "external_network");
     assert_eq!(err.content["error_code"], "applet_unavailable");
+    assert!(err.content.get("session_id").is_none());
+    assert_registered_payload_valid(&err);
 }
 
 /// Same pinning at the agent layer.
 #[test]
 fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     let agent = "did:web:researcher.agent.example";
-    let session_id = "ck:session:01904100-0000-7000-8000-bb66bb66bb66";
+    let session_id = "ck:agent_interop_session:01904100-0000-7000-8000-bb66bb66bb66";
     let realm = "ck:realm:0196419b-0000-7000-8000-0000000000aa";
     let actor = "did:web:alice.example";
 
@@ -958,11 +977,16 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
         start.content["capability_grant"],
         "ck:grant:01904100-0000-7000-8000-000000000099"
     );
+    assert!(start.content.get("params").is_none());
+    assert_registered_payload_valid(&start);
 
     let status =
-        ck_ops::agent_interop_session_status(realm, actor, session_id, "thinking", json!({}))
+        ck_ops::agent_interop_session_status(realm, actor, session_id, "working", json!({}))
             .build("node");
     assert_eq!(status.kind.as_str(), "ck.agent.interop_session.status");
+    assert_eq!(status.content["status"], "working");
+    assert!(status.content.get("detail").is_none());
+    assert_registered_payload_valid(&status);
 
     let result = ck_ops::agent_interop_session_result(
         realm,
@@ -973,7 +997,32 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     )
     .build("node");
     assert_eq!(result.kind.as_str(), "ck.agent.interop_session.result");
-    assert_eq!(result.content["audit_binding"]["merkle_root"], "sha256:abc");
+    assert_eq!(result.content["status"], "completed");
+    assert_eq!(result.content["result_objects"][0]["summary"], "TL;DR");
+    assert_eq!(result.content["artifacts"][0]["merkle_root"], "sha256:abc");
+    assert!(result.content.get("result").is_none());
+    assert!(result.content.get("audit_binding").is_none());
+    assert_registered_payload_valid(&result);
+}
+
+#[test]
+fn message_revise_builder_uses_content_payload_schema() {
+    let message_id = "ck:message:01904100-0000-7000-8000-000000000123";
+    let event = ck_ops::message_revise_content(
+        "ck:realm:0196419b-0000-7000-8000-0000000000aa",
+        "did:web:alice.example",
+        message_id,
+        cokret_sdk::ContentBlock::text("updated body"),
+    )
+    .expect("builds")
+    .build("node");
+
+    assert_eq!(event.kind.as_str(), "ck.message.revise");
+    assert_eq!(event.content["message_id"], message_id);
+    assert_eq!(event.content["content"]["kind"], "ck.content.text");
+    assert_eq!(event.content["content"]["body"], "updated body");
+    assert!(event.content.get("patch").is_none());
+    assert_registered_payload_valid(&event);
 }
 
 // ── YGN-ORG-05 — ck.realm.organization builder snapshot + negative tests ──

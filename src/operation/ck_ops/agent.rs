@@ -51,7 +51,7 @@ pub fn agent_interop_session_start(
     counterparty_agent: &str,
     session_id: &str,
     protocol: &str,
-    params: serde_json::Value,
+    _params: serde_json::Value,
     capability_grant: &str,
 ) -> OperationBuilder {
     OperationBuilder::new(
@@ -64,7 +64,6 @@ pub fn agent_interop_session_start(
         "counterparty_agent": counterparty_agent,
         "session_id": session_id,
         "protocol": protocol,
-        "params": params,
         "capability_grant": capability_grant,
     }))
 }
@@ -102,7 +101,7 @@ pub fn agent_interop_session_status(
     actor: &str,
     session_id: &str,
     status: &str,
-    detail: serde_json::Value,
+    _detail: serde_json::Value,
 ) -> OperationBuilder {
     OperationBuilder::new(
         realm_id,
@@ -113,12 +112,11 @@ pub fn agent_interop_session_status(
     .body(json!({
         "session_id": session_id,
         "status": status,
-        "detail": detail,
     }))
 }
 
 /// `ck.agent.interop_session.result` — terminal event carrying the
-/// agent's signed result + the audit-binding proof.
+/// agent's result objects and any artifact objects emitted by the session.
 pub fn agent_interop_session_result(
     realm_id: &str,
     actor: &str,
@@ -126,17 +124,31 @@ pub fn agent_interop_session_result(
     result: serde_json::Value,
     audit_binding: serde_json::Value,
 ) -> OperationBuilder {
+    let result_objects = match result {
+        serde_json::Value::Array(values) => values,
+        serde_json::Value::Null => Vec::new(),
+        value => vec![value],
+    };
+    let artifacts = match audit_binding {
+        serde_json::Value::Array(values) => values,
+        serde_json::Value::Null => Vec::new(),
+        value => vec![value],
+    };
+    let mut body = json!({
+        "session_id": session_id,
+        "status": "completed",
+        "result_objects": result_objects,
+    });
+    if !artifacts.is_empty() {
+        body["artifacts"] = json!(artifacts);
+    }
     OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::AgentInteropSessionResult,
     )
     .target_ref(session_id)
-    .body(json!({
-        "session_id": session_id,
-        "result": result,
-        "audit_binding": audit_binding,
-    }))
+    .body(body)
 }
 
 /// Build the publish-to-source `ck.strand.create` operation for an
