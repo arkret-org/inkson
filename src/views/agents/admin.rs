@@ -4,6 +4,8 @@
 //! calls: the agent directory row, runtime pairing/key state, lifecycle,
 //! capability grants, and per-Realm participation policy.
 
+use std::time::Duration;
+
 use cokret_sdk::RealmId;
 use cokret_sdk::models::{
     AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentParticipation,
@@ -25,7 +27,8 @@ use super::model::{
     requested_scope_for_presets, runtime_key_pairing_error_message,
     summarize_runtime_key_approval_request,
 };
-use crate::ui::button::{Button, ButtonVariant};
+use crate::components::UiIcon;
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -139,6 +142,7 @@ fn spawn_refresh_agents(
     let request_epoch = (*refresh_epoch.peek()).saturating_add(1);
     refresh_epoch.set(request_epoch);
     spawn(async move {
+        crate::api::sleep_for(Duration::from_millis(1)).await;
         if api_token.trim().is_empty() {
             if *refresh_epoch.peek() != request_epoch {
                 return;
@@ -164,7 +168,7 @@ fn spawn_refresh_agents(
                     .filter_map(agent_view_from_directory_row)
                     .collect();
                 let skipped = total.saturating_sub(rows.len());
-                let current = selected_agent_id();
+                let current = selected_agent_id.peek().clone();
                 if current.is_empty() || !rows.iter().any(|row| agent_principal_id(row) == current)
                 {
                     selected_agent_id.set(
@@ -280,12 +284,22 @@ pub fn PersonalAgentAdminPanel(
 
     let selected_id_now = selected_agent_id();
     let is_create_mode = create_mode();
-    let selected_agent = {
+    let active_agent_filter = agent_list_filter();
+    let (selected_agent, visible_agents, has_any_agents) = {
         let rows = agents.read();
-        rows.iter()
+        let selected_agent = rows
+            .iter()
             .find(|agent| agent_principal_id(agent) == selected_id_now)
+            .cloned();
+        let visible_agents = rows
+            .iter()
+            .filter(|agent| agent_matches_filter(&agent.status, &active_agent_filter))
             .cloned()
+            .collect::<Vec<_>>();
+        (selected_agent, visible_agents, !rows.is_empty())
     };
+    let last_op_status_message = last_op_status();
+    let list_status_message = list_status();
     let selected_title = selected_agent
         .as_ref()
         .map(agent_display_name)
@@ -336,14 +350,6 @@ pub fn PersonalAgentAdminPanel(
         "pending_runtime_key" | "pairing_expired"
     ) && (selected_has_pairing_handle
         || selected_pairing_is_expired);
-    let active_agent_filter = agent_list_filter();
-    let visible_agents = {
-        let rows = agents.read();
-        rows.iter()
-            .filter(|agent| agent_matches_filter(&agent.status, &active_agent_filter))
-            .cloned()
-            .collect::<Vec<_>>()
-    };
     let selected_created_at = selected_agent
         .as_ref()
         .map(|agent| agent_field(agent, "created_at"))
@@ -353,8 +359,9 @@ pub fn PersonalAgentAdminPanel(
         .map(|agent| agent_field(agent, "updated_at"))
         .unwrap_or_default();
     let owner_label = short_protocol_id(&controller_did);
+    let runtime_key_request_text = runtime_key_request_json();
     let runtime_key_request_preview = {
-        let raw = runtime_key_request_json();
+        let raw = runtime_key_request_text.clone();
         if raw.trim().is_empty() {
             None
         } else {
@@ -364,11 +371,13 @@ pub fn PersonalAgentAdminPanel(
             )
         }
     };
+    let selected_grants_snapshot = selected_grants();
+    let participation_entries_snapshot = participation_entries();
 
     rsx! {
         div { class: "agent-admin-page", "data-testid": "personal-agent-admin",
-            if !last_op_status().is_empty() {
-                div { class: "agent-admin-status", "data-testid": "agent-admin-last-op", "{last_op_status}" }
+            if !last_op_status_message.is_empty() {
+                div { class: "agent-admin-status", "data-testid": "agent-admin-last-op", "{last_op_status_message}" }
             }
 
             div { class: "agent-admin-layout",
@@ -378,7 +387,11 @@ pub fn PersonalAgentAdminPanel(
                         div { class: "actions agent-admin-list-actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
+                                size: ButtonSize::IconSm,
+                                class: "btn icon",
                                 "data-testid": "agent-admin-refresh-button",
+                                title: "Refresh agents",
+                                "aria-label": "Refresh agents",
                                 onclick: {
                                     let base = base_url.clone();
                                     move |_| {
@@ -392,13 +405,21 @@ pub fn PersonalAgentAdminPanel(
                                         );
                                     }
                                 },
-                                "Refresh"
+                                UiIcon { name: "refresh" }
                             }
                             Button {
-                                variant: if is_create_mode { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                                variant: if is_create_mode {
+                                    ButtonVariant::Primary
+                                } else {
+                                    ButtonVariant::Secondary
+                                },
+                                size: ButtonSize::IconSm,
+                                class: "btn icon",
                                 "data-testid": "agent-admin-create-open-button",
+                                title: "Create agent",
+                                "aria-label": "Create agent",
                                 onclick: move |_| create_mode.set(true),
-                                "Create"
+                                UiIcon { name: "plus" }
                             }
                         }
                     }
@@ -426,14 +447,14 @@ pub fn PersonalAgentAdminPanel(
                             }
                         }
                     }
-                    if !list_status().is_empty() {
-                        div { class: "muted", "data-testid": "agent-admin-list-status", "{list_status}" }
+                    if !list_status_message.is_empty() {
+                        div { class: "muted", "data-testid": "agent-admin-list-status", "{list_status_message}" }
                     }
                     div { class: "agent-admin-list-rows",
                         if visible_agents.is_empty() {
                             div { class: "members-empty compact", "data-testid": "agent-admin-list-empty",
                                 div { class: "members-empty-title",
-                                    if agents.read().is_empty() {
+                                    if !has_any_agents {
                                         "No agents yet."
                                     } else {
                                         "No agents match this filter."
@@ -980,7 +1001,7 @@ pub fn PersonalAgentAdminPanel(
                                     class: "agent-admin-url",
                                     "data-testid": "agent-admin-runtime-key-request-json",
                                     placeholder: "Runtime key request JSON",
-                                    value: "{runtime_key_request_json}",
+                                    value: "{runtime_key_request_text}",
                                     oninput: move |event: FormEvent| runtime_key_request_json.set(event.value()),
                                 }
                                 if let Some(Ok(summary)) = runtime_key_request_preview.as_ref() {
@@ -1021,7 +1042,7 @@ pub fn PersonalAgentAdminPanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "agent-admin-approve-runtime-key-button",
-                                        disabled: runtime_key_request_json().trim().is_empty(),
+                                        disabled: runtime_key_request_text.trim().is_empty(),
                                         onclick: {
                                             let base = base_url.clone();
                                             let key_state = selected_key_state_value.clone();
@@ -1273,13 +1294,13 @@ pub fn PersonalAgentAdminPanel(
                                 strong { "Capability grants" }
                                 span { class: "muted", "Loaded from selected agent" }
                             }
-                            if selected_grants.read().is_empty() {
+                            if selected_grants_snapshot.is_empty() {
                                 div { class: "muted", "data-testid": "agent-admin-grant-empty",
                                     "No grants returned for this agent."
                                 }
                             } else {
                                 div { class: "agent-admin-grant-list", "data-testid": "agent-admin-grant-list",
-                                    for grant in selected_grants.read().iter() {
+                                    for grant in selected_grants_snapshot.iter() {
                                         {
                                             let grant_id = grant_identifier(grant);
                                             let grant_status = grant
@@ -1540,9 +1561,9 @@ pub fn PersonalAgentAdminPanel(
                                         "Load"
                                     }
                                 }
-                                if !participation_entries.read().is_empty() {
+                                if !participation_entries_snapshot.is_empty() {
                                     div { class: "agent-admin-participation-entries", "data-testid": "agent-admin-participation-entries",
-                                        for entry in participation_entries.read().iter() {
+                                        for entry in participation_entries_snapshot.iter() {
                                             {
                                                 let key = entry.scope.scope_key();
                                                 let sel = entry.selection;
