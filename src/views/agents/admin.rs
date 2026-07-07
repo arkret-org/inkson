@@ -297,11 +297,6 @@ pub fn PersonalAgentAdminPanel(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    let selected_requested_scope_value = selected_key_state_value
-        .get("requested_scope")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let selected_requested_scope = json_inline(&selected_requested_scope_value);
     let selected_authorized_event_ref = selected_key_state_value
         .get("authorized_event_ref")
         .and_then(Value::as_str)
@@ -354,25 +349,6 @@ pub fn PersonalAgentAdminPanel(
 
     rsx! {
         div { class: "agent-admin-page", "data-testid": "personal-agent-admin",
-            div { class: "agent-admin-saved-scope", "data-testid": "agent-admin-saved-scope",
-                div { class: "metric",
-                    strong { "Agent record" }
-                    span { "Saved on the server. Name, slug, DID, and status are shared across devices." }
-                }
-                div { class: "metric",
-                    strong { "Runtime access" }
-                    span { "Pairing and key rotation authorize the runtime key for this agent." }
-                }
-                div { class: "metric",
-                    strong { "Realm behavior" }
-                    span { "Per-Realm reply, @mention, and act-on-behalf policy is saved server-side and used by Realm members views." }
-                }
-                div { class: "metric",
-                    strong { "Capability grants" }
-                    span { "Starter permissions and grant revocation update the agent's server-side authorization state." }
-                }
-            }
-
             if !last_op_status().is_empty() {
                 div { class: "agent-admin-status", "data-testid": "agent-admin-last-op", "{last_op_status}" }
             }
@@ -812,7 +788,6 @@ pub fn PersonalAgentAdminPanel(
                                     build_agent_pairing_deep_link(&base_url, &pairing_token)
                                 };
                                 let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
-                                let requested_scope = selected_requested_scope.clone();
                                 let display_name = selected_title.clone();
                                 let bootstrap_json = pairing_outcome()
                                     .and_then(|outcome| {
@@ -838,7 +813,7 @@ pub fn PersonalAgentAdminPanel(
                                             div {
                                                 class: "agent-admin-status error",
                                                 "data-testid": "agent-admin-pairing-expired-message",
-                                                "This pairing request expired. The expired handle cannot be used again; create a replacement agent to get a fresh pairing request. Expired agents do not reserve the slug."
+                                                "This pairing request expired. The expired handle cannot be used again; pair again to get a fresh pairing request. Expired agents do not reserve the slug."
                                             }
                                         } else {
                                             div { class: "muted",
@@ -873,14 +848,6 @@ pub fn PersonalAgentAdminPanel(
                                                 } else {
                                                     span { class: "mono", "data-testid": "agent-admin-pairing-expires-at", "{expires_at}" }
                                                 }
-                                            }
-                                        }
-                                        div { class: "metric",
-                                            strong { "Requested scope" }
-                                            span {
-                                                class: "mono agent-admin-json",
-                                                "data-testid": "agent-admin-pairing-requested-scope",
-                                                "{requested_scope}"
                                             }
                                         }
                                         if !selected_pairing_is_expired {
@@ -959,7 +926,7 @@ pub fn PersonalAgentAdminPanel(
                                                             create_mode.set(true);
                                                         }
                                                     },
-                                                    "Create replacement"
+                                                    "Pair again"
                                                 }
                                             }
                                         }
@@ -1013,14 +980,6 @@ pub fn PersonalAgentAdminPanel(
                                             } else {
                                                 span { class: "mono", "{summary.proof_expires_at}" }
                                             }
-                                        }
-                                    }
-                                    div { class: "metric",
-                                        strong { "Requested scope" }
-                                        span {
-                                            class: "mono agent-admin-json",
-                                            "data-testid": "agent-admin-runtime-requested-scope",
-                                            "{selected_requested_scope}"
                                         }
                                     }
                                 } else if let Some(Err(message)) = runtime_key_request_preview.as_ref() {

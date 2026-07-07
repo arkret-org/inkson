@@ -618,7 +618,7 @@ pub fn SettingsPanel(
         });
     }
     rsx! {
-        div { class: "settings", "data-testid": "settings-panel",
+        div { class: "settings settings-page", "data-testid": "settings-panel",
             div { class: "settings-shell",
                 aside { class: "settings-sidebar-column",
                     {
@@ -635,6 +635,7 @@ pub fn SettingsPanel(
                                     oninput: move |event: FormEvent| settings_nav_filter.set(event.value()),
                                 }
                             }
+                            div { class: "settings-nav-list",
                             {
                                 let visible_groups: Vec<_> = SETTINGS_NAV_GROUPS
                                     .iter()
@@ -682,6 +683,7 @@ pub fn SettingsPanel(
                                         }
                                     }
                                 }
+                            }
                             }
                         }
                     }

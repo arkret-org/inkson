@@ -170,6 +170,51 @@
   width: 100%;
   min-width: 0;
 }
+@media (min-width: 901px) {
+  .workspace-body > .settings-page {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workspace-body > .settings-page > .settings-shell {
+    height: 100%;
+    min-height: 0;
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .workspace-body > .settings-page .settings-sidebar-column {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workspace-body > .settings-page .settings-nav-search {
+    margin: 0;
+  }
+
+  .workspace-body > .settings-page .settings-nav-list {
+    min-height: 0;
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+
+  .workspace-body > .settings-page .settings-content-column {
+    height: 100%;
+    min-height: 0;
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+}
 .settings,
 .settings-sidebar-column,
 .settings-content-column,
@@ -565,4 +610,3 @@
     grid-column: auto;
   }
 }
-
