@@ -413,12 +413,50 @@
 }
 
 .agent-admin-list-actions {
-  justify-content: flex-start;
+  margin-left: auto;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.agent-admin-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-admin-filter-button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.agent-admin-filter-button:hover,
+.agent-admin-filter-button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  color: var(--text);
+  outline: none;
+}
+
+.agent-admin-filter-button.active {
+  border-color: color-mix(in srgb, var(--accent) 74%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface));
+  color: var(--accent-ink);
 }
 
 .agent-admin-list-rows {
   display: grid;
   gap: 6px;
+  grid-auto-rows: max-content;
+  align-content: start;
   max-height: 44vh;
   overflow: auto;
   min-width: 0;

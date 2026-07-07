@@ -104,6 +104,30 @@ fn agent_status_hidden_by_default(status: &str) -> bool {
     matches!(status, "pairing_expired" | "deactivated")
 }
 
+const AGENT_LIST_FILTERS: [(&str, &str); 4] = [
+    ("all", "All"),
+    ("active", "Active"),
+    ("pending", "Pending"),
+    ("inactive", "Inactive"),
+];
+
+fn agent_status_is_pending(status: &str) -> bool {
+    matches!(status, "pending" | "pending_runtime_key")
+}
+
+fn agent_status_is_inactive(status: &str) -> bool {
+    matches!(status, "paused" | "pairing_expired" | "deactivated")
+}
+
+fn agent_matches_filter(status: &str, filter: &str) -> bool {
+    match filter {
+        "active" => status == "active",
+        "pending" => agent_status_is_pending(status),
+        "inactive" => agent_status_is_inactive(status),
+        _ => true,
+    }
+}
+
 fn spawn_refresh_agents(
     base: String,
     api_token: String,
@@ -227,7 +251,7 @@ pub fn PersonalAgentAdminPanel(
     let mut pairing_bootstrap_json = use_signal(|| Option::<String>::None);
     let mut runtime_key_request_json = use_signal(String::new);
     let mut selected_grants = use_signal(Vec::<Value>::new);
-    let mut show_inactive_agents = use_signal(|| false);
+    let mut agent_list_filter = use_signal(|| "all".to_owned());
     let mut agent_list_refresh_epoch = use_signal(|| 0_u64);
     let mut rotate_body_json = use_signal(String::new);
     let mut grant_json = use_signal(|| "{}".to_owned());
@@ -312,19 +336,13 @@ pub fn PersonalAgentAdminPanel(
         "pending_runtime_key" | "pairing_expired"
     ) && (selected_has_pairing_handle
         || selected_pairing_is_expired);
-    let show_inactive = show_inactive_agents();
-    let (visible_agents, hidden_agent_count) = {
+    let active_agent_filter = agent_list_filter();
+    let visible_agents = {
         let rows = agents.read();
-        let hidden_count = rows
-            .iter()
-            .filter(|agent| agent_status_hidden_by_default(&agent.status))
-            .count();
-        let visible = rows
-            .iter()
-            .filter(|agent| show_inactive || !agent_status_hidden_by_default(&agent.status))
+        rows.iter()
+            .filter(|agent| agent_matches_filter(&agent.status, &active_agent_filter))
             .cloned()
-            .collect::<Vec<_>>();
-        (visible, hidden_count)
+            .collect::<Vec<_>>()
     };
     let selected_created_at = selected_agent
         .as_ref()
@@ -357,42 +375,53 @@ pub fn PersonalAgentAdminPanel(
                 section { class: "event agent-admin-list-pane", "data-testid": "agent-admin-list",
                     div { class: "event-head",
                         span { "Agents" }
-                        span { class: "badge", "{visible_agents.len()} shown" }
-                    }
-                    div { class: "actions agent-admin-list-actions",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "agent-admin-refresh-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                move |_| {
-                                    spawn_refresh_agents(
-                                        base.clone(),
-                                        token(),
-                                        agents,
-                                        selected_agent_id,
-                                        list_status,
-                                        agent_list_refresh_epoch,
-                                    );
-                                }
-                            },
-                            "Refresh"
-                        }
-                        Button {
-                            variant: if is_create_mode { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                            "data-testid": "agent-admin-create-open-button",
-                            onclick: move |_| create_mode.set(true),
-                            "Create"
-                        }
-                        if hidden_agent_count > 0 {
+                        div { class: "actions agent-admin-list-actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
-                                "data-testid": "agent-admin-toggle-inactive-button",
-                                onclick: move |_| show_inactive_agents.set(!show_inactive_agents()),
-                                if show_inactive {
-                                    "Hide inactive"
+                                "data-testid": "agent-admin-refresh-button",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    move |_| {
+                                        spawn_refresh_agents(
+                                            base.clone(),
+                                            token(),
+                                            agents,
+                                            selected_agent_id,
+                                            list_status,
+                                            agent_list_refresh_epoch,
+                                        );
+                                    }
+                                },
+                                "Refresh"
+                            }
+                            Button {
+                                variant: if is_create_mode { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                                "data-testid": "agent-admin-create-open-button",
+                                onclick: move |_| create_mode.set(true),
+                                "Create"
+                            }
+                        }
+                    }
+                    div { class: "agent-admin-filter-bar", role: "tablist", "aria-label": "Agent filters",
+                        for (filter, label) in AGENT_LIST_FILTERS {
+                            {
+                                let filter_value = filter.to_owned();
+                                let is_active_filter = active_agent_filter == filter;
+                                let filter_class = if is_active_filter {
+                                    "agent-admin-filter-button active"
                                 } else {
-                                    "Show inactive"
+                                    "agent-admin-filter-button"
+                                };
+                                rsx! {
+                                    button {
+                                        r#type: "button",
+                                        class: "{filter_class}",
+                                        "data-testid": "agent-admin-filter-{filter}",
+                                        role: "tab",
+                                        "aria-selected": if is_active_filter { "true" } else { "false" },
+                                        onclick: move |_| agent_list_filter.set(filter_value.clone()),
+                                        "{label}"
+                                    }
                                 }
                             }
                         }
@@ -400,17 +429,16 @@ pub fn PersonalAgentAdminPanel(
                     if !list_status().is_empty() {
                         div { class: "muted", "data-testid": "agent-admin-list-status", "{list_status}" }
                     }
-                    if hidden_agent_count > 0 && !show_inactive {
-                        div {
-                            class: "muted",
-                            "data-testid": "agent-admin-hidden-inactive-count",
-                            "{hidden_agent_count} inactive agent(s) hidden."
-                        }
-                    }
                     div { class: "agent-admin-list-rows",
                         if visible_agents.is_empty() {
                             div { class: "members-empty compact", "data-testid": "agent-admin-list-empty",
-                                div { class: "members-empty-title", "No agents yet." }
+                                div { class: "members-empty-title",
+                                    if agents.read().is_empty() {
+                                        "No agents yet."
+                                    } else {
+                                        "No agents match this filter."
+                                    }
+                                }
                             }
                         }
                         for agent in visible_agents.iter() {

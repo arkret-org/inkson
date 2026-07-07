@@ -249,6 +249,15 @@ test("account settings split account/server info and surface personal agents", a
   await page.getByTestId("settings-nav-item-agents").click();
   await expect(page).toHaveURL(/\/settings\/agents$/);
   await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-list").getByText(/\d+ shown/)).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-toggle-inactive-button")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-filter-all")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByTestId("agent-admin-filter-active")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-filter-pending")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-filter-inactive")).toBeVisible();
   await expect.poll(() => agentListRequests, { timeout: 5_000 }).toBe(1);
   await page.waitForTimeout(750);
   expect(agentListRequests).toBe(1);
@@ -392,7 +401,7 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-participation-mention")).toBeVisible();
 });
 
-test("expired personal agent pairing shows actionable runtime key error", async ({ page }) => {
+test("expired personal agent pairing shows pair-again guidance", async ({ page }) => {
   await writeSessionGrantInjection(page);
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissBlockingRecoveryModal(page);
@@ -403,37 +412,17 @@ test("expired personal agent pairing shows actionable runtime key error", async 
   await page.getByTestId("agent-admin-provision-button").click();
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Expired");
-
   await expect(page.getByTestId("agent-admin-pairing-bootstrap-json")).toHaveCount(0);
-  const pairingRequestId = (
-    await page.getByTestId("agent-admin-pairing-request-id").innerText()
-  ).trim();
-  const agentPrincipalId =
-    (await page.getByTestId("agent-admin-row").first().getAttribute("data-agent-principal-id")) ??
-    "";
-  const runtimeVerificationMethod = `${agentPrincipalId}#runtime-key-1`;
-  await page.getByTestId("agent-admin-runtime-key-request-json").fill(
-    JSON.stringify({
-      pairing_request_id: pairingRequestId,
-      agent_principal_id: agentPrincipalId,
-      verification_method: runtimeVerificationMethod,
-      public_key: {
-        kty: "OKP",
-        kid: runtimeVerificationMethod,
-        alg: "Ed25519",
-        key: Buffer.from(new Uint8Array(32).fill(9)).toString("base64url"),
-      },
-      proof_of_possession: {
-        challenge: pairingRequestId,
-        audience: "did:web:server.local",
-        request_canonical_digest: `sha256:${"0".repeat(64)}`,
-        expires_at: "2099-07-06T00:15:00.000Z",
-        signature: Buffer.from(new Uint8Array(64).fill(1)).toString("base64url"),
-      },
-    }),
+  await expect(page.getByTestId("agent-admin-runtime-key-request-json")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-pairing-expired-message")).toContainText(
+    "pair again",
   );
-  await page.getByTestId("agent-admin-approve-runtime-key-button").click();
-  await expect(page.getByTestId("agent-admin-last-op")).toContainText("Pairing expired");
+  await page.getByTestId("agent-admin-create-replacement-button").click();
+  await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-provision-display-name")).toHaveValue(
+    "my-personal-agent",
+  );
+  await expect(page.getByTestId("agent-admin-provision-agent-slug")).toHaveValue("summary");
 });
 
 test("diagnostic and preview surfaces stay behind clear user-facing states", async ({ page }) => {

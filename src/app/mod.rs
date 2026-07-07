@@ -4645,42 +4645,6 @@ pub fn RouterView() -> Element {
                         }
                     }
                     div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            size: ButtonSize::Sm,
-                            class: "btn icon theme-toggle-button",
-                            "data-testid": "theme-toggle",
-                            title: "{theme_toggle_title}",
-                            "aria-label": "{theme_toggle_title}",
-                            onclick: move |_| {
-                                let current_theme = theme();
-                                let next = next_manual_theme(&current_theme);
-                                theme.set(next.clone());
-                                state_store.write().save_private_data(&account_did(), "theme", next.clone());
-                                // A4a — best-effort cross-device sync
-                                // via `ck.account_data.set(client.ui)`.
-                                crate::views::settings::push_client_ui_account_data(
-                                    base_url(),
-                                    token(),
-                                    next,
-                                );
-                            },
-                            UiIcon { name: theme_toggle_icon }
-                        }
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            size: ButtonSize::Sm,
-                            r#type: "button",
-                            class: "btn icon",
-                            "data-testid": "topbar-shortcuts-button",
-                            title: crate::i18n::tr("shortcuts.title"),
-                            "aria-label": crate::i18n::tr("shortcuts.title"),
-                            onclick: move |event: dioxus::events::MouseEvent| {
-                                event.stop_propagation();
-                                shortcut_help_open.set(true);
-                            },
-                            UiIcon { name: "keyboard" }
-                        }
                         button {
                             class: "sr-only",
                             r#type: "button",
@@ -4758,20 +4722,6 @@ pub fn RouterView() -> Element {
                                         },
                                     }
                                     kbd { "⌘K" }
-                                    Button {
-                                        variant: ButtonVariant::Ghost,
-                                        size: ButtonSize::Sm,
-                                        r#type: "button",
-                                        class: "btn icon topbar-command-search-close",
-                                        title: crate::i18n::tr("common.close"),
-                                        "aria-label": crate::i18n::tr("common.close"),
-                                        onclick: move |_| {
-                                            palette_open.set(false);
-                                            topbar_search_expanded.set(false);
-                                            global_query.set(String::new());
-                                        },
-                                        UiIcon { name: "x" }
-                                    }
                                 }
                                 if palette_open() {
                                     CommandPalette {
@@ -4800,6 +4750,42 @@ pub fn RouterView() -> Element {
                                     }
                                 }
                             }
+                        }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            class: "btn icon theme-toggle-button",
+                            "data-testid": "theme-toggle",
+                            title: "{theme_toggle_title}",
+                            "aria-label": "{theme_toggle_title}",
+                            onclick: move |_| {
+                                let current_theme = theme();
+                                let next = next_manual_theme(&current_theme);
+                                theme.set(next.clone());
+                                state_store.write().save_private_data(&account_did(), "theme", next.clone());
+                                // A4a — best-effort cross-device sync
+                                // via `ck.account_data.set(client.ui)`.
+                                crate::views::settings::push_client_ui_account_data(
+                                    base_url(),
+                                    token(),
+                                    next,
+                                );
+                            },
+                            UiIcon { name: theme_toggle_icon }
+                        }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            r#type: "button",
+                            class: "btn icon",
+                            "data-testid": "topbar-shortcuts-button",
+                            title: crate::i18n::tr("shortcuts.title"),
+                            "aria-label": crate::i18n::tr("shortcuts.title"),
+                            onclick: move |event: dioxus::events::MouseEvent| {
+                                event.stop_propagation();
+                                shortcut_help_open.set(true);
+                            },
+                            UiIcon { name: "keyboard" }
                         }
                         div { class: "sr-only", "data-testid": "connection-status", role: "status", "aria-live": "polite",
                             span { "data-testid": "status-label", "{connection_status}" }
