@@ -311,7 +311,10 @@ test("account settings split account/server info and surface personal agents", a
   // Deep link is a standard HTTPS universal link (no custom scheme, no product name).
   const pairingLink = (await page.getByTestId("agent-admin-pairing-link").innerText()).trim();
   expect(pairingLink.startsWith("https://")).toBe(true);
-  expect(pairingLink).toContain("/_cokret/open/agent-pairing#request=");
+  expect(pairingLink).toContain("/_cokret/open/agent-pairing/resolve#token=");
+  expect(pairingLink).not.toContain("agent_principal_id");
+  expect(pairingLink).not.toContain("pairing_code");
+  expect(pairingLink.length).toBeLessThan(260);
   expect(pairingLink.toLowerCase()).not.toContain("savfox");
   const runtimeVerificationMethod = `${bootstrap.agent_principal_id}#runtime-key-1`;
   const runtimeKeyRequest = {

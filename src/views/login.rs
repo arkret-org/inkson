@@ -222,7 +222,16 @@ pub fn LoginPanel(
         auth_status.set("Opening server sign-in...".to_owned());
         spawn(async move {
             #[cfg(target_arch = "wasm32")]
-            let _ = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await;
+            if let Err(error) =
+                crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await
+            {
+                tracing::warn!(%error, "secure store unavailable before sign-in");
+                is_busy.set(false);
+                auth_status.set(format!(
+                    "Could not open browser secure storage for sign-in: {error}. Close other Yougen tabs and try again."
+                ));
+                return;
+            }
             let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
             if let Err(error) =
                 crate::secure_key_store::reset_device_seed_scope_for_signin(secure_store.as_ref())

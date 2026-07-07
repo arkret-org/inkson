@@ -108,6 +108,7 @@ impl IndexedDbSecureKeyStore {
     /// benefit from raising it.
     const PBKDF2_ITERATIONS: u32 = 100_000;
     const SALT_BYTES: usize = 16;
+    const OPEN_DB_TIMEOUT_MS: i32 = 12_000;
 
     /// Open / create the IndexedDB database, derive (or recover) the
     /// non-extractable AES-GCM wrapping key, then decrypt every
@@ -254,18 +255,166 @@ impl IndexedDbSecureKeyStore {
             },
         );
         open_req.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
-        let result = Self::idb_request_result(open_req.as_ref())
-            .await
-            .map_err(|err| {
-                SecureKeyStoreError::Backend(format!("indexedDB open awaited: {err:?}"))
-            })?;
+        let open_result = Self::idb_open_request_result(&open_req, Self::OPEN_DB_TIMEOUT_MS).await;
         // The upgrade handler may fire before success; keep it alive until
-        // the open has settled, then relinquish it to JS (fires at most once).
-        on_upgrade.forget();
+        // the open has settled, then detach and drop it. If the open was
+        // blocked / timed out, the handler must not outlive its Rust closure.
+        open_req.set_onupgradeneeded(None);
+        let result = open_result.map_err(|err| {
+            SecureKeyStoreError::Backend(format!("indexedDB open awaited: {err:?}"))
+        })?;
         let db: web_sys::IdbDatabase = result.dyn_into().map_err(|_| {
             SecureKeyStoreError::Backend("open did not return IdbDatabase".to_owned())
         })?;
         Ok(db)
+    }
+
+    async fn idb_open_request_result(
+        request: &web_sys::IdbOpenDbRequest,
+        timeout_ms: i32,
+    ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::{JsCast, JsValue};
+        use wasm_bindgen_futures::JsFuture;
+        type EventClosure = Closure<dyn FnMut(web_sys::Event)>;
+        type TimerClosure = Closure<dyn FnMut()>;
+
+        let on_success: std::rc::Rc<std::cell::RefCell<Option<EventClosure>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let on_error: std::rc::Rc<std::cell::RefCell<Option<EventClosure>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let on_blocked: std::rc::Rc<std::cell::RefCell<Option<EventClosure>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let on_timeout: std::rc::Rc<std::cell::RefCell<Option<TimerClosure>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let timer_handle = std::rc::Rc::new(std::cell::Cell::new(None::<i32>));
+        let settled = std::rc::Rc::new(std::cell::Cell::new(false));
+        let window = web_sys::window()
+            .ok_or_else(|| JsValue::from_str("indexedDB open: browser window unavailable"))?;
+
+        let on_success_slot = on_success.clone();
+        let on_error_slot = on_error.clone();
+        let on_blocked_slot = on_blocked.clone();
+        let on_timeout_slot = on_timeout.clone();
+        let timer_handle_slot = timer_handle.clone();
+        let request_for_handlers = request.clone();
+        let promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let success_settled = settled.clone();
+            let success_resolve = resolve.clone();
+            let success_reject = reject.clone();
+            let success_window = window.clone();
+            let success_timer_handle = timer_handle.clone();
+            let success = Closure::wrap(Box::new(move |event: web_sys::Event| {
+                if success_settled.replace(true) {
+                    return;
+                }
+                if let Some(handle) = success_timer_handle.get() {
+                    success_window.clear_timeout_with_handle(handle);
+                }
+                match event
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
+                {
+                    Some(req) => match req.result() {
+                        Ok(value) => {
+                            let _ = success_resolve.call1(&JsValue::NULL, &value);
+                        }
+                        Err(err) => {
+                            let _ = success_reject.call1(&JsValue::NULL, &err);
+                        }
+                    },
+                    None => {
+                        let _ = success_reject.call1(
+                            &JsValue::NULL,
+                            &JsValue::from_str(
+                                "indexedDB open: event has no IdbOpenDbRequest target",
+                            ),
+                        );
+                    }
+                }
+            }) as Box<dyn FnMut(web_sys::Event)>);
+
+            let error_settled = settled.clone();
+            let error_reject = reject.clone();
+            let error_window = window.clone();
+            let error_timer_handle = timer_handle.clone();
+            let error = Closure::wrap(Box::new(move |event: web_sys::Event| {
+                if error_settled.replace(true) {
+                    return;
+                }
+                if let Some(handle) = error_timer_handle.get() {
+                    error_window.clear_timeout_with_handle(handle);
+                }
+                let err = event
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
+                    .and_then(|req| req.error().ok().flatten())
+                    .map(JsValue::from)
+                    .unwrap_or_else(|| JsValue::from_str("indexedDB open request error"));
+                let _ = error_reject.call1(&JsValue::NULL, &err);
+            }) as Box<dyn FnMut(web_sys::Event)>);
+
+            let blocked_settled = settled.clone();
+            let blocked_reject = reject.clone();
+            let blocked_window = window.clone();
+            let blocked_timer_handle = timer_handle.clone();
+            let blocked = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+                if blocked_settled.replace(true) {
+                    return;
+                }
+                if let Some(handle) = blocked_timer_handle.get() {
+                    blocked_window.clear_timeout_with_handle(handle);
+                }
+                let _ = blocked_reject.call1(
+                    &JsValue::NULL,
+                    &JsValue::from_str(
+                        "indexedDB open blocked by another tab or stale database connection",
+                    ),
+                );
+            }) as Box<dyn FnMut(web_sys::Event)>);
+
+            let timeout_settled = settled.clone();
+            let timeout_reject = reject.clone();
+            let timeout = Closure::wrap(Box::new(move || {
+                if timeout_settled.replace(true) {
+                    return;
+                }
+                let _ = timeout_reject.call1(
+                    &JsValue::NULL,
+                    &JsValue::from_str(&format!("indexedDB open timed out after {timeout_ms}ms")),
+                );
+            }) as Box<dyn FnMut()>);
+
+            request_for_handlers.set_onsuccess(Some(success.as_ref().unchecked_ref()));
+            request_for_handlers.set_onerror(Some(error.as_ref().unchecked_ref()));
+            request_for_handlers.set_onblocked(Some(blocked.as_ref().unchecked_ref()));
+            match window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                timeout.as_ref().unchecked_ref(),
+                timeout_ms,
+            ) {
+                Ok(handle) => timer_handle_slot.set(Some(handle)),
+                Err(err) => {
+                    let _ = reject.call1(&JsValue::NULL, &err);
+                }
+            }
+            *on_success_slot.borrow_mut() = Some(success);
+            *on_error_slot.borrow_mut() = Some(error);
+            *on_blocked_slot.borrow_mut() = Some(blocked);
+            *on_timeout_slot.borrow_mut() = Some(timeout);
+        });
+
+        let settled_result = JsFuture::from(promise).await;
+        request.set_onsuccess(None);
+        request.set_onerror(None);
+        request.set_onblocked(None);
+        if let Some(handle) = timer_handle.get() {
+            window.clear_timeout_with_handle(handle);
+        }
+        drop(on_success);
+        drop(on_error);
+        drop(on_blocked);
+        drop(on_timeout);
+        settled_result
     }
 
     async fn load_or_derive_wrapping_key(
@@ -922,6 +1071,14 @@ pub async fn upgrade_wasm_secure_key_store_async(
     // on the next load, silently dropping secrets like the MLS KeyPackage init
     // key). `ensure_wasm_secure_key_store_ready` guards its own call site, but
     // `upgrade_*` is also invoked directly (app boot), so it must guard too.
+    if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
+        return Ok(Some(store.clone()));
+    }
+    static UPGRADE_MUTEX: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let _upgrade_guard = UPGRADE_MUTEX
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
         return Ok(Some(store.clone()));
     }

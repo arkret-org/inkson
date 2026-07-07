@@ -5,8 +5,9 @@ mod personal_agent_tests {
     use super::super::*;
     use crate::views::agents::model::{
         build_agent_key_authorize_event_for_pairing, build_agent_pairing_deep_link,
-        parse_runtime_key_approval_request, render_agent_pairing_qr_svg,
-        runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
+        build_agent_pairing_handoff_token, parse_runtime_key_approval_request,
+        render_agent_pairing_qr_svg, runtime_key_pairing_error_message,
+        summarize_runtime_key_approval_request,
     };
 
     #[test]
@@ -258,7 +259,7 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn deep_link_is_https_universal_link_wrapping_the_bootstrap_json() {
+    fn deep_link_is_https_universal_link_wrapping_a_short_pairing_token() {
         let outcome = cokret_sdk::AgentProvisionOutcome {
             agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             pairing_request_id: "0197-req".to_owned(),
@@ -274,21 +275,28 @@ mod personal_agent_tests {
         )
         .unwrap();
 
-        let deep_link = build_agent_pairing_deep_link("https://cokret.example/", &raw);
+        let token = build_agent_pairing_handoff_token("0197-req", "123456");
+        let deep_link = build_agent_pairing_deep_link("https://cokret.example/", &token);
         let encoded = deep_link
-            .strip_prefix("https://cokret.example/_cokret/open/agent-pairing#request=")
-            .expect("deep link is an https universal link with the request in the fragment");
-        let decoded = cokret_sdk::base64url_decode(encoded).unwrap();
+            .strip_prefix("https://cokret.example/_cokret/open/agent-pairing/resolve#token=")
+            .expect("deep link is an https universal link with the token in the fragment");
+        let decoded: serde_json::Value =
+            serde_json::from_slice(&cokret_sdk::base64url_decode(encoded).unwrap()).unwrap();
 
-        assert_eq!(String::from_utf8(decoded).unwrap(), raw);
+        assert_eq!(
+            decoded,
+            serde_json::json!({ "r": "0197-req", "c": "123456" })
+        );
+        assert!(deep_link.len() < raw.len());
         assert!(!deep_link.contains("savfox"));
+        assert!(!deep_link.contains("agent_principal_id"));
         assert!(!deep_link.contains("private_key"));
     }
 
     #[test]
     fn pairing_qr_renders_deep_link_svg() {
         let svg = render_agent_pairing_qr_svg(
-            "https://cokret.example/_cokret/open/agent-pairing#request=abc",
+            "https://cokret.example/_cokret/open/agent-pairing/resolve#token=abc",
         );
 
         assert!(svg.contains("<svg"));

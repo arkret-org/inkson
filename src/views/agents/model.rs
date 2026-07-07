@@ -302,13 +302,22 @@ pub fn build_agent_pairing_bootstrap_json(
 }
 
 /// Wraps the bootstrap into a standard HTTPS Universal/App Link whose host is the
-/// deployment's `cokret_base_url` (CKP-0008 forbids a custom URI scheme). The
-/// payload rides in the URL fragment so the one-time `pairing_code` never reaches
-/// the server; any installed runtime can claim the host to intercept the link.
-pub fn build_agent_pairing_deep_link(base_url: &str, bootstrap_json: &str) -> String {
+/// deployment's `cokret_base_url` (CKP-0008 forbids a custom URI scheme).
+/// The fragment carries only a short handoff token; runtimes resolve it through
+/// `POST /_cokret/open/agent-pairing/resolve` to obtain the six-field bootstrap.
+pub fn build_agent_pairing_deep_link(base_url: &str, pairing_token: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    let encoded = cokret_sdk::base64url_encode(bootstrap_json.as_bytes());
-    format!("{base}/_cokret/open/agent-pairing#request={encoded}")
+    format!("{base}/_cokret/open/agent-pairing/resolve#token={pairing_token}")
+}
+
+pub fn build_agent_pairing_handoff_token(pairing_request_id: &str, pairing_code: &str) -> String {
+    cokret_sdk::base64url_encode(
+        serde_json::to_vec(&json!({
+            "r": pairing_request_id,
+            "c": pairing_code,
+        }))
+        .unwrap_or_default(),
+    )
 }
 
 pub fn render_agent_pairing_qr_svg(deep_link: &str) -> String {
