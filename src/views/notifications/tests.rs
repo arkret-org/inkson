@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn mention_notification_survives_realm_mute_hydration() {
+    fn mention_notification_respects_realm_mute_hydration() {
         let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000aa";
         let mut local_state = ClientLocalState::default();
         local_state
@@ -249,14 +249,14 @@ mod tests {
 
         let hydrated = hydrate_notifications(raw, &local_state, None, None);
 
-        assert_eq!(hydrated.len(), 1);
-        assert_eq!(hydrated[0].kind, "mention");
-        assert_eq!(hydrated[0].body, "@bob muted mention override");
-        assert!(notification_overrides_realm_mute(&hydrated[0]));
+        assert!(
+            hydrated.is_empty(),
+            "muted realms suppress ordinary and directed message notifications"
+        );
     }
 
     #[test]
-    fn assignment_and_schedule_notifications_survive_realm_mute_hydration() {
+    fn assignment_and_schedule_notifications_respect_realm_mute_hydration() {
         let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000ab";
         let mut local_state = ClientLocalState::default();
         local_state
@@ -281,17 +281,10 @@ mod tests {
 
         let hydrated = hydrate_notifications(raw, &local_state, None, None);
 
-        assert_eq!(hydrated.len(), 2);
-        assert!(hydrated.iter().any(|notification| {
-            notification.kind == "assignment"
-                && notification.title == "notifications.default_title.assignment"
-                && notification_overrides_realm_mute(notification)
-        }));
-        assert!(hydrated.iter().any(|notification| {
-            notification.kind == "schedule"
-                && notification.title == "notifications.default_title.schedule"
-                && notification_overrides_realm_mute(notification)
-        }));
+        assert!(
+            hydrated.is_empty(),
+            "muted realms suppress assignment and schedule notifications"
+        );
     }
 
     #[test]
